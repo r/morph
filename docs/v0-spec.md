@@ -42,6 +42,17 @@ Morph v0 will NOT include:
 
 Those can come later.
 
+### Morph is pure VCS (v0)
+
+Morph does **not** execute programs or run evaluations. All LLM calls, tool execution, and test runs happen in external tools (IDEs, agents, CI). Morph's role is to:
+
+- **Store** immutable content-addressed objects
+- **Record** execution evidence that external tools report (runs, traces, metrics)
+- **Version** programs with behavioral contracts (commits)
+- **Gate** merges on metric dominance
+
+Commands like `morph run record` and `morph eval record` **ingest** results; they do not run anything. The primary write path from the IDE is the **Cursor MCP server**, which reports session data into Morph. Reading and inspection happen via the CLI.
+
 ---
 
 # 2. Relationship to Theory
@@ -532,8 +543,10 @@ morph commit -m "message"
 
 - Program graph integrity (DAG, valid node/edge kinds)
 - Eval suite presence and hash integrity
-- Runs eval suite to record observed metrics
+- Uses **recorded** observed metrics (from external evaluation or prior `morph eval record`) to form the eval contract
 - Creates commit with eval contract
+
+Morph does not run the eval suite; external tools do. Morph applies its **metrics validation layer** (aggregation, threshold checks) to reported scores.
 
 ## 6.5 Branching
 
@@ -544,26 +557,21 @@ morph checkout <name>
 
 Branches are pointers to commits.
 
-## 6.6 Run Execution
+## 6.6 Run ingestion
 
 ```
-morph run <program>
+morph run record <file>
 ```
 
-Produces:
+**Ingests** a Run object (JSON). Does not execute any program. External tools (IDE, agent, CI) produce the run and report it. Morph stores the Run, its Trace, and Artifacts. Used to record execution receipts.
 
-- Run object
-- Artifact(s)
-- Trace
-- Metrics
-
-## 6.7 Evaluation
+## 6.7 Eval ingestion
 
 ```
-morph eval <program>
+morph eval record <file>
 ```
 
-Runs eval suite and produces metrics summary.
+**Ingests** evaluation results (metrics against an EvalSuite). Does not run tests. External tools run the eval and report scores. Morph validates aggregation and thresholds and records the metrics for use in commits and merge dominance checks.
 
 ## 6.8 Merge
 
@@ -575,11 +583,11 @@ Merge procedure:
 
 1. Structural merge of program graphs
 2. Determine the merge eval contract: **union** of both parents' eval suites (all metrics from both must be satisfied)
-3. Run the merged eval suite
+3. Merged program's **recorded** observed metrics (from external evaluation) must be supplied or already present
 4. Validate **dominance**: merged program's observed metrics must meet or exceed both parents' `observed_metrics` (not merely the base thresholds)
 5. Create merge commit if satisfied
 
-If evaluation fails or dominance is not achieved, merge aborts.
+If dominance is not achieved, merge aborts. Morph does not run evaluations; external tools do and report results.
 
 This realizes THEORY.md §13.3: merge candidate R must satisfy R ⪰ P and R ⪰ Q under the behavioral preorder.
 
@@ -627,11 +635,13 @@ IDE must emit:
 
 - Prompt object definitions
 - Program graph updates
-- Run execution metadata
+- Run execution metadata (runs, traces, metrics)
 - Filesystem diffs (working-space changes)
 - Environment descriptor
 
-IDE writes to Morph via local CLI or API.
+**Primary write path:** Cursor MCP server. Cursor (or other IDEs) write to Morph via an MCP server that exposes morph-core operations as tools: record run, record eval, stage, commit, annotate. This is how the development environment reports execution evidence into Morph.
+
+**Read path:** CLI. Users inspect history, status, annotations, and object contents via `morph log`, `morph status`, `morph annotations`, etc.
 
 Morph is the source of truth. The filesystem is a projection.
 
@@ -702,3 +712,13 @@ v0 must:
 Complexity can grow later.
 
 Correct foundations cannot.
+
+---
+
+# 13. Implementation: Rust (v0)
+
+The reference v0 implementation is in Rust.
+
+- **Storage default:** Flat JSON files on the local filesystem (`.morph/objects/<sha256>.json`). Trait-based store interface allows future backends (e.g. SQLite).
+- **Metrics validation:** Built-in aggregation (mean, min, p95, lower_ci_bound) and threshold/dominance checks. Morph does not execute tests; it validates and compares reported metric vectors.
+- **Crates:** `morph-core` (library), `morph-cli` (read path + manual writes), `morph-mcp` (Cursor MCP server, primary write path from the IDE).

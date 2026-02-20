@@ -1,0 +1,331 @@
+//! Cursor MCP server: primary write path from the IDE.
+//! Exposes morph-core operations as MCP tools.
+
+use morph_core::{find_repo, FsStore, Hash, Store};
+use rmcp::{
+    handler::server::tool::ToolRouter,
+    handler::server::wrapper::Parameters,
+    model::*,
+    tool, tool_handler, tool_router,
+    transport::stdio,
+    ErrorData as McpError,
+    ServerHandler, ServiceExt,
+};
+use schemars::JsonSchema;
+use serde::Deserialize;
+use std::path::PathBuf;
+
+#[derive(Clone)]
+pub struct MorphServer {
+    tool_router: ToolRouter<Self>,
+}
+
+#[tool_router]
+impl MorphServer {
+    fn new() -> Self {
+        Self {
+            tool_router: Self::tool_router(),
+        }
+    }
+
+    fn repo_store(&self, workspace_path: Option<&str>) -> Result<(PathBuf, FsStore), String> {
+        let start = workspace_path
+            .map(PathBuf::from)
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        let repo_root = find_repo(&start).ok_or_else(|| "not a morph repository".to_string())?;
+        let store = FsStore::new(repo_root.join(".morph"));
+        Ok((repo_root, store))
+    }
+
+    #[tool(description = "Initialize a Morph repository in the given path (default: current directory)")]
+    async fn morph_init(
+        &self,
+        params: Parameters<InitParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        let path = params.0.path.unwrap_or_else(|| ".".to_string());
+        let path = PathBuf::from(&path);
+        morph_core::init_repo(&path).map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        Ok(CallToolResult::success(vec![Content::text(format!(
+            "Initialized Morph repository in {}",
+            path.display()
+        ))]))
+    }
+
+    #[tool(description = "Record a Run object from JSON (execution receipt). Optional: trace_path, artifact_paths as JSON array.")]
+    async fn morph_record_run(
+        &self,
+        params: Parameters<RecordRunParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        let (repo_root, store) = self.repo_store(params.0.workspace_path.as_deref())
+            .map_err(|e| McpError::invalid_params(e, None))?;
+        let run_path = PathBuf::from(&params.0.run_file);
+        let run_path = if run_path.is_absolute() {
+            run_path
+        } else {
+            repo_root.join(run_path)
+        };
+        let trace_path = params.0.trace_file.map(|p| {
+            let pb = PathBuf::from(p);
+            if pb.is_absolute() {
+                pb
+            } else {
+                repo_root.join(pb)
+            }
+        });
+        let artifact_paths: Vec<_> = params
+            .0
+            .artifact_files
+            .unwrap_or_default()
+            .into_iter()
+            .map(|p| {
+                let pb = PathBuf::from(p);
+                if pb.is_absolute() {
+                    pb
+                } else {
+                    repo_root.join(pb)
+                }
+            })
+            .collect();
+        let refs: Vec<&std::path::Path> = artifact_paths.iter().map(PathBuf::as_path).collect();
+        let hash = morph_core::record_run(&store, &run_path, trace_path.as_deref(), &refs)
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        Ok(CallToolResult::success(vec![Content::text(hash.to_string())]))
+    }
+
+    #[tool(description = "Record evaluation metrics from a JSON file with a 'metrics' key")]
+    async fn morph_record_eval(
+        &self,
+        params: Parameters<RecordEvalParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        let (repo_root, _store) = self.repo_store(params.0.workspace_path.as_deref())
+            .map_err(|e| McpError::invalid_params(e, None))?;
+        let path = PathBuf::from(&params.0.file);
+        let path = if path.is_absolute() { path } else { repo_root.join(path) };
+        let metrics = morph_core::record_eval_metrics(&path)
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let json = serde_json::to_string_pretty(&metrics).unwrap_or_default();
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(description = "Stage paths into the object store (paths: array of paths, default [\".\"])")]
+    async fn morph_stage(
+        &self,
+        params: Parameters<StageParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        let (repo_root, store) = self.repo_store(params.0.workspace_path.as_deref())
+            .map_err(|e| McpError::invalid_params(e, None))?;
+        let paths: Vec<PathBuf> = params
+            .0
+            .paths
+            .unwrap_or_else(|| vec![".".into()])
+            .into_iter()
+            .map(PathBuf::from)
+            .collect();
+        let hashes = morph_core::add_paths(&store, &repo_root, &paths)
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let out = hashes.iter().map(|h| h.to_string()).collect::<Vec<_>>().join("\n");
+        Ok(CallToolResult::success(vec![Content::text(out)]))
+    }
+
+    #[tool(description = "Create a commit. Required: message, program (hash), eval_suite (hash). Optional: metrics (JSON object), author.")]
+    async fn morph_commit(
+        &self,
+        params: Parameters<CommitParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref())
+            .map_err(|e| McpError::invalid_params(e, None))?;
+        let store_fs = FsStore::new(_repo_root.join(".morph"));
+        let prog_hash = Hash::from_hex(&params.0.program).map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let suite_hash =
+            Hash::from_hex(&params.0.eval_suite).map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let metrics = params
+            .0
+            .metrics
+            .unwrap_or_default();
+        let hash = morph_core::create_commit(
+            &store,
+            &store_fs,
+            &prog_hash,
+            &suite_hash,
+            metrics,
+            params.0.message,
+            params.0.author,
+        )
+        .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        Ok(CallToolResult::success(vec![Content::text(hash.to_string())]))
+    }
+
+    #[tool(description = "Attach an annotation to an object. Required: target_hash, kind, data (JSON object). Optional: target_sub (e.g. event_id), author.")]
+    async fn morph_annotate(
+        &self,
+        params: Parameters<AnnotateParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref())
+            .map_err(|e| McpError::invalid_params(e, None))?;
+        let target = Hash::from_hex(&params.0.target_hash).map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let ann = morph_core::create_annotation(
+            &target,
+            params.0.target_sub,
+            params.0.kind,
+            params.0.data.unwrap_or_default(),
+            params.0.author,
+        );
+        let hash = store.put(&ann).map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        Ok(CallToolResult::success(vec![Content::text(hash.to_string())]))
+    }
+
+    #[tool(description = "Create a new branch at current HEAD")]
+    async fn morph_branch(
+        &self,
+        params: Parameters<BranchParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref())
+            .map_err(|e| McpError::invalid_params(e, None))?;
+        let store_fs = FsStore::new(_repo_root.join(".morph"));
+        let head = morph_core::resolve_head(&store_fs)
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))?
+            .ok_or_else(|| McpError::invalid_params("no commit yet".to_string(), None))?;
+        store
+            .ref_write(&format!("heads/{}", params.0.name), &head)
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        Ok(CallToolResult::success(vec![Content::text(format!(
+            "Created branch {}",
+            params.0.name
+        ))]))
+    }
+
+    #[tool(description = "Switch HEAD to a branch or detached commit (ref_name: branch name or 64-char hash)")]
+    async fn morph_checkout(
+        &self,
+        params: Parameters<CheckoutParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref())
+            .map_err(|e| McpError::invalid_params(e, None))?;
+        let store_fs = FsStore::new(_repo_root.join(".morph"));
+        let ref_name = params.0.ref_name;
+        if ref_name.len() == 64 && ref_name.chars().all(|c| c.is_ascii_hexdigit()) {
+            let hash = Hash::from_hex(&ref_name).map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+            morph_core::set_head_detached(&store_fs, &hash)
+                .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+            Ok(CallToolResult::success(vec![Content::text(format!("Detached HEAD at {}", hash))]))
+        } else {
+            let path = if ref_name.starts_with("heads/") {
+                ref_name.clone()
+            } else {
+                format!("heads/{}", ref_name)
+            };
+            store
+                .ref_read(&path)
+                .map_err(|e| McpError::invalid_params(e.to_string(), None))?
+                .ok_or_else(|| McpError::invalid_params(format!("branch not found: {}", ref_name), None))?;
+            let branch_name = ref_name.trim_start_matches("heads/").to_string();
+            morph_core::set_head_branch(&store_fs, &branch_name)
+                .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+            Ok(CallToolResult::success(vec![Content::text(format!(
+                "Switched to branch {}",
+                branch_name
+            ))]))
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Default)]
+struct InitParams {
+    path: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct RecordRunParams {
+    run_file: String,
+    #[serde(default)]
+    workspace_path: Option<String>,
+    #[serde(default)]
+    trace_file: Option<String>,
+    #[serde(default)]
+    artifact_files: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct RecordEvalParams {
+    file: String,
+    #[serde(default)]
+    workspace_path: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct StageParams {
+    #[serde(default)]
+    workspace_path: Option<String>,
+    #[serde(default)]
+    paths: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct CommitParams {
+    message: String,
+    program: String,
+    eval_suite: String,
+    #[serde(default)]
+    workspace_path: Option<String>,
+    #[serde(default)]
+    metrics: Option<std::collections::BTreeMap<String, f64>>,
+    #[serde(default)]
+    author: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct AnnotateParams {
+    target_hash: String,
+    kind: String,
+    #[serde(default)]
+    data: Option<std::collections::BTreeMap<String, serde_json::Value>>,
+    #[serde(default)]
+    target_sub: Option<String>,
+    #[serde(default)]
+    workspace_path: Option<String>,
+    #[serde(default)]
+    author: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct BranchParams {
+    name: String,
+    #[serde(default)]
+    workspace_path: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct CheckoutParams {
+    ref_name: String,
+    #[serde(default)]
+    workspace_path: Option<String>,
+}
+
+#[tool_handler]
+impl ServerHandler for MorphServer {
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo {
+            server_info: rmcp::model::Implementation {
+                name: "morph-mcp".into(),
+                version: env!("CARGO_PKG_VERSION").into(),
+                ..Default::default()
+            },
+            instructions: Some(
+                "Morph VCS write path: init repos, record runs and evals, stage, commit, annotate, branch, checkout."
+                    .into(),
+            ),
+            capabilities: ServerCapabilities::builder().enable_tools().build(),
+            ..Default::default()
+        }
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let service = MorphServer::new()
+        .serve(stdio())
+        .await
+        .inspect_err(|e| eprintln!("morph-mcp error: {}", e))?;
+    service.waiting().await?;
+    Ok(())
+}

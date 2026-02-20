@@ -97,7 +97,7 @@ Morph merge:
 
 1. **Structural merge** of program graphs (like Git merges text).
 2. **Union the eval contracts.** The merge suite is the union of both parents' suites. Every metric from both parents must be satisfied.
-3. **Run the merged program** against the combined eval suite.
+3. **Recorded metrics** for the merged program (from external evaluation) are checked.
 4. **Check dominance.** The merged program's scores must meet or exceed both parents' `observed_metrics` — not just pass base thresholds, but actually be as good as what each parent achieved.
 5. **If dominance holds**, create the merge commit. **If not**, merge fails.
 
@@ -132,13 +132,13 @@ morph program create              # create a program definition
 morph program show                # inspect a program
 
 morph add .                       # stage working space changes
-morph commit -m "message"         # evaluate and commit (runs eval, records metrics)
+morph commit -m "message"         # create commit with eval contract (uses recorded metrics)
 
 morph branch <name>               # create a branch
 morph checkout <name>             # switch branches
 
-morph run <program>               # execute a program, produce a Run + Trace
-morph eval <program>              # run eval suite, show metrics
+morph run record <file>           # ingest a Run object (external tools do execution)
+morph eval record <file>          # ingest evaluation results (external tools run evals)
 
 morph merge <branch>              # behavioral merge (eval-gated)
 morph rollup <range>              # collapse exploratory history
@@ -147,7 +147,7 @@ morph annotate <hash> --kind feedback --data '{"rating": "good"}'
 morph annotations <hash>          # list annotations on an object
 ```
 
-The key behavioral difference from Git: `commit` and `merge` both involve running evaluations and recording metric scores. A commit isn't just a snapshot — it's a certified behavioral claim.
+The key behavioral difference from Git: `commit` and `merge` use **recorded** metric scores (from external evals). Morph does not execute programs or run tests — IDEs, agents, and CI do that and report results. The **Cursor MCP server** is the primary way the IDE writes into Morph (record runs, traces, commits). You read via the CLI.
 
 ---
 

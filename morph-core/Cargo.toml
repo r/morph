@@ -1,0 +1,18 @@
+[package]
+name = "morph-core"
+version = "0.1.0"
+edition = "2021"
+description = "Morph VCS core: object model, content addressing, storage"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "1.0"
+hex = "0.4"
+walkdir = "2.4"
+
+[dev-dependencies]
+proptest = "1.4"
+tempfile = "3.10"
