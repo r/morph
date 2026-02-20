@@ -1,91 +1,81 @@
 # Morph
 
-**Version control for prompt programs.**
+**Version control for transformation programs. Git for behavior, not just bytes.**
 
 ---
 
-## Why Morph Exists
+## The Problem
 
-Git solved version control for deterministic source code. You write code, commit it, diff it, branch it, merge it. Two commits are the same if their bytes are the same. Reproducibility means running the same code produces the same output.
+Git versions deterministic source code. Identity is byte equality. Reproducibility means same input → same output. Merge is text reconciliation.
 
-That model breaks down for AI-native systems.
+That model breaks when your software involves LLMs, agents, retrieval pipelines, and tool-calling workflows:
 
-When your software involves prompts, LLM calls, retrieval pipelines, and autonomous agents:
+- **Same code, different outputs.** Models are stochastic. Run a prompt twice, get two results.
+- **Behavior depends on the environment.** Model version, decoding params, retrieval corpus, tool availability — all affect output. None of this lives in a file tree.
+- **"Did it get better?" is a statistical question.** You can't eyeball a diff. You need to run evals and compare scores.
+- **Agents produce patches.** You need provenance: which agent, which model, which prompt, and whether the result actually works.
+- **Merge can silently regress behavior.** Two branches merge cleanly at the text level while producing worse outputs than either parent.
 
-- **The same prompt can produce different outputs.** Models are stochastic. Run the same prompt twice, get two different results.
-- **Behavior depends on things outside the code.** Model version, decoding parameters, retrieval corpus, tool availability — all affect what happens.
-- **"Did it get better?" is a statistical question.** You can't just eyeball a diff. You need to run evaluations and compare metric distributions.
-- **Agents are writing code.** When an AI agent produces a patch, you need to know which agent, which model, which prompt, and whether the result actually works.
-- **Merging can silently regress behavior.** Two branches can merge cleanly at the text level while producing worse outputs than either parent.
+Git tracks *what changed in your files*. It has no concept of *what your program does* or *whether it got better*.
 
-Git tracks *what changed* in your files. It has no concept of *what your program does* or *whether it got better*. For prompt-driven systems, that's the thing that matters most.
-
-Morph extends version control to track behavior — not just text.
+Morph extends version control to track **certified behavior** — not just text.
 
 ---
 
-## What Morph Actually Is
+## Git → Morph Mental Model
 
-Morph is a content-addressed version control system, structured like Git, but designed for prompt programs instead of source files.
+If you know Git internals, you already know 80% of Morph. Here's the mapping:
 
-If you know Git, here's the mapping:
-
-| Git | Morph |
-|---|---|
-| Source files | Prompt programs (DAGs of prompt calls, tool calls, retrieval steps) |
-| Commit = snapshot of file tree | Commit = snapshot of a program + its evaluation scores |
-| Diff = text comparison | Diff = behavioral comparison (metric scores under an eval suite) |
-| Merge = reconcile text | Merge = reconcile text **and** prove behavior didn't regress |
-| `.git/objects/` | `.morph/objects/` (same idea: content-addressed, immutable, Merkle DAG) |
-| Working tree | Working space (prompts, programs, evals as editable files) |
-
-The key difference: every Morph commit carries an **evaluation contract**. The commit records not just the program definition, but the eval suite it was tested against and the metric scores it achieved. This is what makes behavioral comparison, gated merges, and regression detection possible.
+| Git | Morph | What changed |
+|---|---|---|
+| Source files | **Programs** — DAGs of operators (prompt calls, tool calls, retrieval, transforms) | The versioned unit is a pipeline, not a text file |
+| `blob` / `tree` | `blob` / `tree` (same idea) | Unchanged |
+| `commit` = snapshot of tree | `commit` = snapshot of program + eval contract + certified metric scores | Commits are behavioral *claims* backed by evidence |
+| `diff` = text comparison | `diff` = behavioral comparison (metric deltas under an eval suite) | Semantic, not syntactic |
+| `merge` = reconcile text | `merge` = reconcile text **and** prove behavior didn't regress | Merge is eval-gated |
+| `.git/objects/` | `.morph/objects/` (content-addressed, immutable, Merkle DAG) | Same architecture |
+| Working tree | Working space (`prompts/`, `programs/`, `evals/`) | Same role |
+| — | **Run** — immutable execution receipt (env, inputs, outputs, trace, metrics) | New: execution evidence is first-class |
+| — | **EvalSuite** — versioned eval definition (test cases, metrics, thresholds) | New: behavioral contracts are first-class |
+| — | **Trace** — typed, addressable event log of a run | New: fine-grained execution records |
+| — | **Annotation** — metadata on any object without changing its hash | New: feedback, tags, bookmarks layered on the immutable graph |
 
 ---
 
-## How It Works
+## Object Model
 
-### The Object Model
+Everything is immutable and content-addressed (SHA-256), stored in `.morph/objects/`. Same principles as Git's object store.
 
-Morph stores everything as immutable, content-addressed objects (SHA-256), just like Git. The core object types are:
+**Blob** — Atomic content: prompt templates, tool schemas, configs, policies. Has an open `kind` field (`prompt`, `schema`, `config`, etc.).
 
-- **Blob** — an atomic content unit. Prompts, tool schemas, configs, policies. Each blob has a `kind` (e.g., `prompt`, `schema`, `config`).
-- **Tree** — a structured grouping of objects. Analogous to Git trees (directories).
-- **Program** — the thing you're versioning. A directed acyclic graph of operators: prompt calls, tool calls, retrieval steps, transforms. This is Morph's equivalent of a source file, but it represents a *pipeline* rather than static text.
-- **EvalSuite** — a versioned evaluation definition. Test cases, metrics, aggregation methods, pass thresholds. This is what defines "did the program get better or worse."
-- **Commit** — a program snapshot plus an evaluation contract. Records the program hash, the eval suite hash, and the observed metric scores. Commits are *claims* about behavior.
-- **Run** — an execution receipt. Records exactly what happened when a program was executed: inputs, outputs, environment (model, version, parameters), metrics, and a full trace. Runs are *evidence* for claims.
-- **Trace** — the detailed execution record of a run. A sequence of typed, addressable events (prompt calls, tool calls, file edits, errors). Each event has an ID, so you can annotate individual steps.
-- **Annotation** — metadata attached to any object (or a specific event within a trace) without changing its hash. Feedback ratings, bookmarks, tags, notes, cross-references. This is how human judgment enters the system.
+**Tree** — Structured grouping of objects. Analogous to Git trees.
 
-### Programs, Not Files
+**Program** — The core versioned unit. A DAG of typed operators (`prompt_call`, `tool_call`, `retrieval`, `transform`, `identity`) connected by `data` or `control` edges. Tracks provenance: was it hand-written, extracted from an agent session, or composed from sub-programs?
 
-In Git, the unit of versioning is a file. In Morph, it's a **program** — a graph of operations that transforms some input state into output state, potentially involving LLM calls, tool use, and retrieval along the way.
+**EvalSuite** — A versioned evaluation definition. Test cases, metrics (with aggregation and thresholds), and the contract that defines "better" vs "worse." This is what makes behavioral comparison possible.
 
-A program node might be:
+**Commit** — A program snapshot + evaluation contract. Records the program hash, eval suite hash, and observed metric scores. The scores are a *contract*: merge must meet or exceed them.
 
-- `prompt_call` — sends a prompt to an LLM
-- `tool_call` — invokes an external tool
-- `retrieval` — fetches context from a document store
-- `transform` — a deterministic data transformation
-- `identity` — a no-op pass-through
+**Run** — An execution receipt. Records exactly what happened: program hash, full environment (model, version, decoding params, toolchain), input state, output artifacts, metrics, trace reference, agent identity. Runs never modify commits. They're evidence.
 
-Nodes connected by edges execute sequentially (output of one feeds into the next). Nodes with no edges between them can execute in parallel. This gives you composable pipelines where the structure is explicit and versionable.
+**Trace** — The detailed execution record of a run. A sequence of typed, addressable events (each with an ID). You can annotate individual events.
 
-Programs also track **provenance**: was this program written by hand, extracted from a successful agent session, or composed from existing programs? If it came from a run, the source run and trace are recorded.
+**Annotation** — Metadata attached to any object (or a specific event within a trace) without altering its hash. Feedback ratings, bookmarks, tags, notes, cross-references. How human judgment enters the system.
 
-### Commits Are Behavioral Claims
+---
 
-A Git commit says: "here's what the files looked like at this point."
+## How Commits Work
 
-A Morph commit says: "here's a program, here's the eval suite I tested it against, and here are the scores it achieved."
+A Git commit says: "here's what the files looked like."
+
+A Morph commit says: "here's a program, the eval suite I tested it against, and the scores it achieved."
 
 ```
 Commit
 ├── program: <hash>          # the program definition
 ├── eval_contract:
 │   ├── suite: <hash>        # which eval suite
-│   └── observed_metrics:    # what scores were achieved
+│   └── observed_metrics:    # certified scores
 │       ├── accuracy: 0.92
 │       └── latency_p95: 1.2s
 ├── parents: [<hash>, ...]   # parent commits (same as Git)
@@ -93,67 +83,42 @@ Commit
 └── author, timestamp, ...
 ```
 
-The `observed_metrics` are not just a record — they're a *contract*. When you merge, the merge commit must meet or exceed these scores. This is what prevents behavioral regression.
-
-### Runs Are Execution Receipts
-
-Every time you execute a program, Morph records a **Run** object capturing:
-
-- Which program was run (hash)
-- The full environment (model ID, version, decoding parameters, toolchain versions)
-- Input state
-- Output artifacts
-- Metric scores
-- A link to the full Trace
-- Agent identity (if an agent ran it)
-
-Runs are immutable. They never modify commits or history. They're evidence — receipts you can point to when someone asks "how do you know this program works?"
-
-### Evaluation-Gated Merge
-
-This is where Morph diverges most from Git.
-
-In Git, merge is a text operation: reconcile the diffs, resolve conflicts, done.
-
-In Morph, merge is a **behavioral operation**:
-
-1. Structurally merge the program graphs (like Git merges text).
-2. Determine the merge eval contract: the **union** of both parents' eval suites. Every metric from both parents must be satisfied.
-3. Run the merged program against this combined eval suite.
-4. Check **dominance**: the merged program's scores must meet or exceed both parents' observed metrics — not just pass the base thresholds, but actually be as good as what each parent achieved.
-5. If dominance holds, create the merge commit. If not, merge fails.
-
-This means merge can fail even when there are no text conflicts. If parent A achieved 0.95 accuracy and parent B achieved 0.90 latency, the merge must achieve at least 0.95 accuracy *and* 0.90 latency. If the combined program can't hit both, you have a behavioral conflict that needs resolution — just like a text conflict in Git, but at the semantic level.
-
-### Working Space vs. Commit Space
-
-Morph separates exploration from stabilization, similar to Git's working tree vs. committed history:
-
-- **Working space** (`prompts/`, `programs/`, `evals/`) — where you edit prompt files, tweak program definitions, and iterate on eval suites. This is your scratchpad. Nothing here is versioned until you commit.
-- **Commit space** (`.morph/objects/`, the commit graph) — stabilized, evaluation-certified snapshots. Once committed, objects are immutable and content-addressed.
-
-A **rollup** (analogous to squash) collapses a sequence of exploratory commits into a single stable commit. Unlike Git squash, rollup never deletes traces — it just creates a new commit that supersedes the old ones. The old commits and their evidence remain addressable by hash.
-
-### Annotations
-
-Morph objects are immutable, but the world's understanding of them evolves. Annotations solve this.
-
-An annotation attaches metadata to any object — a program, a commit, a run, or even a specific event within a trace — without altering that object's hash. Annotations are themselves immutable and content-addressed.
-
-Use cases:
-
-- **Feedback**: "this prompt pattern works well" (rating on a trace event)
-- **Bookmarks**: "this is the run where we found the fix" (marking a notable moment)
-- **Tags**: categorizing programs by domain, team, or purpose
-- **Cross-references**: linking a program to the run it was extracted from
-
-Because annotations never rewrite history, they're safe for human feedback loops: rate outputs, tag good patterns, bookmark key moments — all layered on top of the immutable object graph.
+The `observed_metrics` are not decorative — they're the merge contract. A merge commit must dominate these values.
 
 ---
 
-## The CLI
+## How Merge Works
 
-Morph's CLI mirrors Git where it makes sense:
+This is where Morph diverges most from Git.
+
+Git merge: reconcile text diffs, resolve conflicts, done.
+
+Morph merge:
+
+1. **Structural merge** of program graphs (like Git merges text).
+2. **Union the eval contracts.** The merge suite is the union of both parents' suites. Every metric from both parents must be satisfied.
+3. **Run the merged program** against the combined eval suite.
+4. **Check dominance.** The merged program's scores must meet or exceed both parents' `observed_metrics` — not just pass base thresholds, but actually be as good as what each parent achieved.
+5. **If dominance holds**, create the merge commit. **If not**, merge fails.
+
+Merge can fail with zero text conflicts. If parent A achieved 0.95 accuracy and parent B achieved 0.90 latency, the merge must hit *both*. If it can't, you have a behavioral conflict — analogous to a text conflict in Git, but at the semantic level.
+
+---
+
+## Working Space vs Commit Space
+
+Same idea as Git's working tree vs committed history:
+
+- **Working space** (`prompts/`, `programs/`, `evals/`) — your scratchpad. Edit prompts, tweak programs, iterate on evals. Nothing is versioned until you commit.
+- **Commit space** (`.morph/objects/`, the commit graph) — stabilized, eval-certified snapshots. Immutable and content-addressed once committed.
+
+**Rollup** (analogous to squash) collapses exploratory commits into a single stable commit. Unlike Git squash, rollup never deletes traces — it creates a new commit that supersedes the old ones while keeping all evidence addressable by hash.
+
+---
+
+## CLI
+
+Mirrors Git where it makes sense:
 
 ```
 morph init                        # initialize a repository
@@ -161,13 +126,13 @@ morph status                      # show working space status
 morph log                         # show commit history
 
 morph prompt create               # create a prompt object
-morph prompt materialize <hash>   # write a prompt to the filesystem for review
+morph prompt materialize <hash>   # write a prompt to filesystem for review
 
 morph program create              # create a program definition
 morph program show                # inspect a program
 
 morph add .                       # stage working space changes
-morph commit -m "message"         # evaluate and commit (runs eval suite, records metrics)
+morph commit -m "message"         # evaluate and commit (runs eval, records metrics)
 
 morph branch <name>               # create a branch
 morph checkout <name>             # switch branches
@@ -182,24 +147,27 @@ morph annotate <hash> --kind feedback --data '{"rating": "good"}'
 morph annotations <hash>          # list annotations on an object
 ```
 
-If you know Git, most of this is familiar. The main additions are `run`, `eval`, `prompt`, `program`, `annotate`, and `rollup`.
-
-The biggest behavioral difference is `commit` and `merge`: both involve running evaluations and recording metric scores. A commit isn't just a snapshot — it's a certified behavioral claim.
+The key behavioral difference from Git: `commit` and `merge` both involve running evaluations and recording metric scores. A commit isn't just a snapshot — it's a certified behavioral claim.
 
 ---
 
 ## What Morph Is Not
 
-- **Not a prompt registry.** Morph versions programs (pipelines of operations), not just individual prompt templates.
+- **Not a prompt registry.** Morph versions programs (pipelines of operations), not individual prompt templates.
 - **Not a logging dashboard.** Runs and traces are first-class versioned objects, not ephemeral logs.
-- **Not a replacement for Git.** Morph complements Git. Your source code still lives in Git. Morph handles the prompt programs, evaluations, and behavioral contracts that Git can't express.
+- **Not a replacement for Git.** Morph complements Git. Source code stays in Git. Morph handles transformation programs, evaluations, and behavioral contracts that Git can't express.
 
 ---
 
-## What to Read Next
+## Document Map
 
-- **`THEORY.md`** — The formal mathematical foundations: how programs compose, what behavioral equivalence means precisely, and the axioms that make the system coherent.
-- **`v0-spec.md`** — The concrete v0 system specification: object schemas, storage backend, CLI details, and how each theoretical concept maps to an implementation construct.
+| Document | Purpose |
+|---|---|
+| **This README** | Engineering overview — what Morph is, how it works, the Git analogy |
+| **[THEORY.md](THEORY.md)** | Formal mathematical foundations — how programs compose, what behavioral equivalence means, the axioms that make the system coherent |
+| **[v0-spec.md](v0-spec.md)** | Concrete v0 system specification — object schemas, storage backend, CLI details, how each theoretical concept maps to an implementation construct |
+
+The README explains the *why* and the *what*. THEORY.md provides the algebraic underpinnings. v0-spec.md is the buildable blueprint.
 
 ---
 
