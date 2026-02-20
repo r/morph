@@ -50,20 +50,25 @@ This section maps THEORY.md concepts to v0 constructs.
 
 | Theory Concept | v0 Construct |
 |---|---|
-| State S = (D, C, M) | Tree (D), execution context in Run (C), Commit/Run metadata (M) |
-| Prompt program P : S → F(S) | Program object (operator graph over Prompt blobs) |
-| Effect functor F | Run execution: the act of running a Program produces probabilistic outputs |
-| Identity program I | Built-in no-op Program (identity hash, passes state through unchanged) |
-| Sequential composition Q ∘ P | Graph edges (data flow between operator nodes) |
-| Parallel composition P ⊗ Q | Independent subgraphs within a Program graph |
-| Evaluation suite T | EvalSuite object |
-| Behavioral equivalence ≈ₜ | Eval pass: metrics within thresholds relative to a suite |
-| Behavioral preorder P ⪯ Q | Metric dominance: Q meets or exceeds P's observed scores |
-| Merge dominance | Merge commit must dominate both parents' observed metrics |
-| Commit = behavioral identity | Commit object (program hash + eval contract) |
-| Run = execution receipt | Run object (environment, metrics, trace, artifacts) |
-| Annotations (metadata on objects) | Annotation object (feedback, bookmarks, tags on any object) |
-| Trace events (addressable steps) | Trace events with IDs, types, and sequential ordering |
+| State S = (D, C, M) (§4) | Tree (D), execution context in Run (C), Commit/Run metadata (M) |
+| Environment E (§4.2) | Run `environment` field (model, version, parameters, toolchain) |
+| Prompt program P : S → F(S) (§5) | Program object (operator graph over Prompt blobs) |
+| Effect functor F (§5) | Run execution: the act of running a Program produces probabilistic outputs |
+| Identity program η (§7.3) | Built-in no-op Program (identity hash, passes state through unchanged) |
+| Sequential composition Q ∘ P (§6) | Graph edges (data flow between operator nodes) |
+| Parallel composition P ⊗ Q (§8) | Independent subgraphs within a Program graph |
+| Evaluation suite T (§10) | EvalSuite object |
+| Contract satisfaction (§11.1) | Eval pass: aggregated metrics meet declared thresholds |
+| Behavioral equivalence ≈ₜ (§11.2–11.3) | Approximate: metrics within thresholds relative to a suite |
+| Certificate vector v ∈ V_T (§12) | `observed_metrics` in Commit's eval contract |
+| Behavioral preorder P ⪯ Q (§12.2) | Metric dominance: Q meets or exceeds P's certified scores |
+| Certificate lattice join (§13) | Componentwise max of parent metrics during merge |
+| Merge as behavioral join (§15) | Merge commit must dominate both parents' observed metrics |
+| Commit = behavioral certificate (§14) | Commit object (program hash + eval contract + observed metrics) |
+| Run = execution receipt (§9) | Run object (environment, metrics, trace, artifacts) |
+| Trace as DAG of events (§9.1) | Trace events with IDs, types, and sequential ordering (v0 simplifies to linear) |
+| Annotations (§17) | Annotation object (feedback, bookmarks, tags on any object) |
+| Program provenance (§18) | Program `provenance` field (derived_from_run, method, etc.) |
 
 ---
 
@@ -360,7 +365,7 @@ Runs do not modify commit history.
 
 The `commit` field is null for exploratory runs in working space. It references a commit hash when the run serves as evidence for a committed program.
 
-Environment recording is mandatory (Theory Axiom 8).
+Environment recording is mandatory (Theory Axiom 12).
 
 ---
 
@@ -576,7 +581,7 @@ Merge procedure:
 
 If evaluation fails or dominance is not achieved, merge aborts.
 
-This realizes Theory §11: merge candidate R must satisfy R ⪰ P and R ⪰ Q under the behavioral preorder.
+This realizes Theory §15: merge candidate R must satisfy R ⪰ P and R ⪰ Q under the behavioral preorder.
 
 ## 6.9 Rollup (Squash)
 
@@ -612,7 +617,7 @@ Morph v0 defines reproducibility as:
 - **Explicit environment recording**: all runs record environment E (model, version, parameters, toolchain).
 - **Deterministic replay is optional**: some environments support it; Morph does not require it.
 
-This aligns with Theory Axiom 10: reproducibility is behavioral, not byte-level.
+This aligns with Theory Axiom 14: reproducibility is behavioral, not byte-level.
 
 ---
 
@@ -638,16 +643,25 @@ How v0 satisfies each Morph axiom:
 
 | # | Axiom | v0 Mechanism |
 |---|---|---|
+| **A. Immutability and Identity** | | |
 | 1 | Immutable Objects | All objects (including Annotations) content-addressed by SHA-256, stored in `.morph/objects/` |
-| 2 | Associative Composition | Program graph edges define sequential composition; DAG structure ensures associativity |
-| 3 | Identity Program | Well-known identity Program object (§5) |
-| 4 | Evaluation-Relative Equivalence | EvalSuite objects define T; pass/fail is relative to suite |
-| 5 | Behavioral Preorder | Observed metrics define ordering; dominance checked at merge |
-| 6 | Merge Dominance | Merge requires metric dominance over both parents (§6.8) |
-| 7 | Runs Don't Rewrite Commits | Run objects are separate; commit history is immutable |
-| 8 | Explicit Environment Recording | Run object records full environment |
-| 9 | Decentralization | Content-addressed store requires no central authority; v0 is local-only but the design extends to distributed remotes |
-| 10 | Behavioral Reproducibility | Reproducibility = eval contract preservation, not byte equality |
+| 2 | Evidence Immutability | Run and Trace objects are separate from commits; evidence never mutates prior objects |
+| **B. State and Effects** | | |
+| 3 | State Spaces Support Product | State modeled as (Tree, execution context, metadata); composition via Trees |
+| 4 | Effect Monad | Program execution produces `F(S)` — probabilistic outputs with traces; sequential composition via graph edges and bind semantics |
+| 5 | Zip for Parallelism | Independent subgraphs within a Program DAG execute in parallel; results combined |
+| **C. Program Algebra** | | |
+| 6 | Associative Sequential Composition | Program graph edges define sequential composition; DAG structure ensures associativity |
+| 7 | Identity Program | Well-known identity Program object (§5) |
+| 8 | Parallel Composition | Independent subgraphs within a Program graph; monoidal laws hold via DAG structure |
+| **D. Behavioral Semantics** | | |
+| 9 | Evaluation Suites Define Observations | EvalSuite objects define T with metrics, ordering, and thresholds |
+| 10 | Certificates Live in a Product Preorder | Observed metrics in commits form certificate vectors; dominance is componentwise |
+| 11 | Merge as Join in Contract Space | Merge requires metric dominance (componentwise max) over both parents (§6.8) |
+| **E. Reproducibility and Decentralization** | | |
+| 12 | Explicit Environment Recording | Run object records full environment (model, version, params, toolchain) |
+| 13 | Decentralization | Content-addressed store requires no central authority; v0 is local-only but the design extends to distributed remotes |
+| 14 | Behavioral Reproducibility | Reproducibility = eval contract preservation, not byte equality |
 
 ---
 

@@ -1,56 +1,59 @@
 # Morph Theory
-## The Algebraic Foundations of a Distributed Version Control System for Prompt Programs
+
+**The Algebraic Foundations of a Distributed Version Control System for Prompt Programs**
+
+*(Corrected, formalized, and engineer-readable edition)*
 
 ---
 
-# 1. Purpose of This Document
+## 1. Purpose of This Document
 
-This document defines the theoretical foundation of Morph.
+This document defines the mathematical model of Morph.
 
 It explains:
 
 - What Morph versions
 - How Morph generalizes Git
 - How probabilistic prompt programs can be version-controlled
-- The algebra underlying commits, merges, and evaluation
-- The minimal axioms that define the Morph system
+- The algebra underlying programs, commits, evaluation, and merges
+- The minimal axioms that make the system coherent
 
 This is not an implementation document.
 See `v0-spec.md` for concrete system design.
 
-This document defines the model.
+This document is the "why the system makes sense" layer.
 
 ---
 
-# 2. The Problem Morph Solves
+## 2. The Problem Morph Solves
 
-Git versions deterministic source code.
+Git versions deterministic text.
 
 Prompt-driven systems are not deterministic.
 
 Modern AI systems:
 
-- Transform document trees (codebases, datasets, files)
+- Transform structured document state (codebases, datasets, trees of files, retrieved context)
 - Use effectful operators (LLM calls, retrieval, tools)
 - Produce probabilistic outputs
 - Depend on model versions and runtime environments
-- Are increasingly authored by agents
+- Are increasingly authored by agents and swarms
 
 Git assumes:
 
 - Byte equality defines identity
 - Reproducibility means identical outputs
-- Merges are syntactic
+- Merges are syntactic (diff + patch)
 
 Prompt systems violate all three.
 
 Morph generalizes version control to:
 
-> Effectful, probabilistic transformations over structured document state.
+> Effectful, probabilistic transformations over structured state, with evaluation-defined semantics.
 
 ---
 
-# 3. Core Intuition
+## 3. Core Intuition
 
 In Git:
 
@@ -60,451 +63,720 @@ In Git:
 In Morph:
 
 - Programs are versioned.
-- Commits freeze behavioral identities.
+- Commits freeze a program plus a behavioral contract.
 
 A Morph commit represents:
 
-> A stabilized prompt program together with its declared behavioral contract.
+> A stabilized prompt program together with an explicit behavioral certificate:
+> "Under this evaluation contract (and stated environment constraints), this program achieves at least these metric levels."
 
-Commits are not merely text snapshots.
-They are semantic identities.
+Commits are not only text snapshots.
+They are semantic stabilization events backed by evidence.
 
 ---
 
-# 4. State Model
+## 4. State and Environment
 
-Morph operates over structured state.
+Morph is about programs that transform state under an environment.
 
-Define state:
+### 4.1 State
 
-S = (D, C, M)
+We model "everything the program can read/write" as structured state.
+
+Let state be a product type:
+
+$$S = D \times C \times M$$
 
 Where:
 
-- **D** — Document tree (code, inputs, retrieved documents)
-- **C** — Execution context (scratchpad, intermediate memory)
-- **M** — Metadata (environment, provenance, trace references)
+- $D$ — Document tree (code, inputs, retrieved documents, datasets)
+- $C$ — Execution context (scratchpad, intermediate memory, cached sub-results)
+- $M$ — Metadata (provenance pointers, trace references, run IDs, etc.)
 
-This state generalizes Git's file tree.
+Engineer translation: think of $S$ as a strongly-typed "workspace object" with three fields: documents, working memory, metadata.
 
-In the v0 spec, D is realized as Tree objects, C is captured in Run execution context, and M is distributed across Commit and Run metadata fields.
+We will not require any particular internal representation — only that state can be composed and partitioned (more in §8).
+
+### 4.2 Environment
+
+Programs also depend on an environment:
+
+$$E = \text{(model id/version, decoding params, toolchain versions, policy refs, \ldots)}$$
+
+Crucially, the environment is not state in the version-control sense. It is an input parameter that must be recorded.
+
+We will write:
+
+- A program as a family of state transformers parameterized by environment:
+
+$$P_E : S \to F(S)$$
+
+Equivalently:
+
+$$P : (E, S) \to F(S)$$
+
+Both are the same idea; we'll use whichever is clearer.
 
 ---
 
-# 5. Prompt Programs as Transformations
+## 5. Prompt Programs as Effectful Transformations
 
-A prompt program transforms state.
+A prompt program is not "just a function," because it may:
 
-If everything were deterministic:
-
-
-P : S → S
-
-
-But prompt programs:
-
-- Call models
 - Sample tokens
-- Use tools
-- Depend on external services
+- Call tools
+- Branch
+- Log traces
+- Fail and retry
+- Consult retrieval
 
-Thus the true form is:
+So the correct type is:
 
+$$P_E : S \to F(S)$$
 
-P : S → F(S)
+Where $F$ is a type constructor describing computational effects.
 
+Examples of what $F(X)$ might mean:
 
-Where F is an endofunctor representing computational effects — nondeterminism, randomness, logging, external calls, or distributions over outputs.
+- "a probability distribution over $X$"
+- "$X$ plus a trace"
+- "$X$ plus logs and tool calls"
+- "$X$ or an error"
+- combinations of the above
 
-This is the foundational abstraction of Morph.
+A particularly useful mental model is:
 
----
+$$F(X) \approx \text{Distribution}\big(\text{Trace} \times X\big)$$
 
-# 6. Effect Structure
+Meaning: running the program produces a trace and a resulting state, but probabilistically.
 
-Programs of type S → F(S) do not compose by ordinary function composition.
-
-To compose P : S → F(S) and Q : S → F(S) into Q ∘ P, we need structure on F:
-
-- A **unit** η : S → F(S) that embeds pure values into the effect (this is the identity program)
-- A **join** μ : F(F(S)) → F(S) that flattens nested effects
-
-Together, (F, η, μ) form a **monad**.
-
-Composition of effectful programs is then defined by:
-
-Q ∘ P = μ ∘ F(Q) ∘ P
-
-This is the Kleisli composition. Programs P : S → F(S) are morphisms in the **Kleisli category** of the monad F.
-
-We require F to be a monad, but we do not fix which monad. Different deployment environments may instantiate F differently:
-
-- Pure distributions (for testing)
-- IO with randomness (for production)
-- Traced computations (for auditing)
-
-The theory is parametric in F. The v0 spec realizes F operationally: running a Program produces a Run, and the Run records the effectful outcome.
+Engineer translation: $F(S)$ is "$S$ inside a box" that also carries randomness and receipts.
+If you know `Promise<T>`, `Result<T>`, `Generator<T>`, `Observable<T>`, `IO<T>`, etc. — this is the same pattern.
 
 ---
 
-# 7. Minimal Category Theory (Required for Morph)
+## 6. Sequential Composition Requires a Monad
 
-We introduce only what is necessary.
+If you have:
 
-## 7.1 The Kleisli Category
+- $P : A \to F(B)$
+- $Q : B \to F(C)$
 
-A category consists of:
+you can't compose them with ordinary function composition, because the types don't match.
 
-- Objects
-- Morphisms (arrows between objects)
-- Composition
-- Identity morphisms
+To compose effectful computations, we need the standard structure:
 
-In Morph's Kleisli category:
+- **pure / return**: $\eta_A : A \to F(A)$
+- **bind** (or equivalently join + map)
 
-- **Object**: State S
-- **Morphism**: Prompt program P : S → F(S)
-- **Composition**: Kleisli composition (§6)
-- **Identity**: The unit η : S → F(S) (the no-op program)
+This is precisely a monad.
 
-Composition is associative:
+### 6.1 The Monad Interface (Engineer-Friendly)
 
-(R ∘ Q) ∘ P = R ∘ (Q ∘ P)
+A monad gives you:
 
-And the identity program satisfies:
+```
+pure : A -> F[A]
+map  : (A -> B) -> F[A] -> F[B]
+bind : F[A] -> (A -> F[B]) -> F[B]
+```
 
-I ∘ P = P ∘ I = P
+Then sequential composition is:
 
-These are the only structural requirements for sequential program chaining.
+$$(Q \circ P)(a) = \text{bind}(P(a), Q)$$
+
+Engineer translation:
+`bind` is `flatMap`.
+Sequential composition is "run P, then feed its result into Q."
+
+### 6.2 The Monad Laws (What Makes the Algebra Work)
+
+We require the standard laws:
+
+1. **Left identity**: $\text{bind}(\text{pure}(a), f) = f(a)$
+2. **Right identity**: $\text{bind}(x, \text{pure}) = x$
+3. **Associativity**: $\text{bind}(\text{bind}(x, f), g) = \text{bind}(x, (a \Rightarrow \text{bind}(f(a), g)))$
+
+These imply:
+
+- Sequential program chaining is associative
+- There is an identity/no-op program
+
+This is the minimum structure needed for "pipelines of prompt ops" to have reliable algebra.
 
 ---
 
-# 8. Parallel Composition
+## 7. The Category of Programs (Kleisli Category)
 
-Morph must support:
+Now we can define the mathematical universe Morph lives in.
 
-- Multiple agents
-- Parallel prompt branches
-- Independent experimental variants
+### 7.1 Objects: State Spaces (Not Just One State)
 
-We define a parallel operator:
+To speak correctly about parallelism, composition, and modularity, we allow many state types:
 
+- Objects are types/schemas $A, B, C, \ldots$ (state spaces)
 
-P ⊗ Q
+In practice, Morph often uses one "big state" $S$, but mathematically it is cleaner (and more powerful) to allow sub-states and product states.
 
+### 7.2 Morphisms: Effectful Programs
 
-Which runs P and Q independently and combines results.
+Morphisms are:
 
-Sequential and parallel composition together form a **monoidal category**:
+$$A \to F(B)$$
 
-- The monoidal product is ⊗
-- The unit object is the trivial state (empty document tree, no context)
-- Associativity: (P ⊗ Q) ⊗ R ≅ P ⊗ (Q ⊗ R)
+i.e., programs that transform an input state-space $A$ into an output state-space $B$, inside effects.
 
-This enables:
+### 7.3 Composition and Identity
+
+Composition is Kleisli composition via bind:
+
+- If $P : A \to F(B)$ and $Q : B \to F(C)$, then $Q \circ P : A \to F(C)$
+
+Identity on object $A$ is:
+
+$$\eta_A : A \to F(A)$$
+
+This category is the Kleisli category of the monad $F$, written $\mathrm{Kl}(F)$.
+
+Engineer translation:
+The Kleisli category is "the world where functions returning `F[...]` are treated like normal arrows."
+
+---
+
+## 8. Parallel Composition Requires Product State + a "Zip" for Effects
+
+Morph needs parallel execution:
 
 - Agent swarms
-- Ensemble prompting
-- Concurrent evaluation
+- Branching experiments
+- Ensembles
+- Independent subgraphs in a DAG
 
-In the v0 spec, parallel composition is realized by independent subgraphs within a Program's operator DAG: nodes with no connecting edges execute in parallel.
+To do this mathematically correctly, we need two ingredients:
 
----
+1. A way to combine state spaces (product)
+2. A way to combine effects (zip)
 
-# 9. Behavioral Semantics
+### 8.1 Product of State Spaces
 
-Git equality = byte equality.
+Assume state spaces support a product:
 
-Morph equality = behavioral equivalence.
+$$A \times B$$
 
----
+and a unit/empty state:
 
-## 9.1 Evaluation-Relative Equivalence
+$$1$$
 
-Let T be a test suite (realized as an EvalSuite object in v0).
+This is just the standard "tuple/product" idea:
+
+- $A \times B$ holds both an $A$ and a $B$
+- $1$ holds no information (unit type)
+
+This makes the base category of state spaces cartesian monoidal.
+
+Engineer translation:
+$A \times B$ is a struct/tuple `(A, B)`.
+The unit $1$ is like `()`.
+
+### 8.2 Zipping Effects
+
+To run two effectful computations "independently" and combine their results, we need a natural operation:
+
+$$\text{zip}_{A,B} : F(A) \times F(B) \to F(A \times B)$$
+
+This is the effectful version of "pair these results."
+
+- For promises, this is like `Promise.all`.
+- For distributions, it's the product distribution (independent sampling).
+- For traced computations, it means "combine traces + pair outputs."
+
+To make the algebra work, zip must satisfy coherence laws (associativity/unitality, plus symmetry if you want commutativity). This structure is commonly packaged as:
+
+- an **applicative functor**, or
+- a **strong monad**, and if symmetric:
+- a **commutative strong monad** (also called a symmetric monoidal monad)
+
+Morph's "parallel semantics" assumes at least this much structure when you claim parallel algebraic laws.
+
+**Key point:**
+Sequential composition needs a monad.
+Parallel composition needs a monad plus a lawful zip.
+
+### 8.3 Defining Parallel Composition
+
+Given:
+
+- $P : A \to F(B)$
+- $Q : C \to F(D)$
 
 Define:
 
-P ≈ₜ Q
+$$P \otimes Q : (A \times C) \to F(B \times D)$$
 
-If:
+by:
 
-Under T, the observable outputs of P and Q are statistically indistinguishable within required thresholds.
+$$(P \otimes Q)(a, c) = \text{zip}(P(a),\, Q(c))$$
 
-More precisely, for each metric m defined by T with threshold τ:
+This is the mathematically clean form of "run both branches and pair outputs."
 
-|score(P, m) − score(Q, m)| is small enough that both satisfy τ, and neither dominates the other in a practically significant way.
+**Same-input branching** (common in agent systems)
 
-Equivalence is relative to T.
+Often you want $P, Q : S \to F(S)$ to both read the same input state.
 
-It is not absolute.
+Use the diagonal function:
 
-**v0 simplification**: In v0, ≈ₜ is approximated by both programs passing the same EvalSuite thresholds. Future versions may implement proper two-sample equivalence testing (e.g., permutation tests or equivalence bounds).
+$$\Delta : S \to S \times S, \quad \Delta(s) = (s, s)$$
 
-**Metric source agnosticism**: Evaluation metrics may originate from automated scoring (model outputs against expected results), human feedback (ratings collected via Annotations), or any combination. The behavioral preorder is agnostic to metric source. What matters is that scores are comparable and thresholds are meaningful. This allows the same algebraic framework to support both automated evaluation pipelines and human-in-the-loop curation workflows.
+Then:
 
----
+$$\text{branch}(P, Q) = (P \otimes Q) \circ \Delta : S \to F(S \times S)$$
 
-## 9.2 Congruence Requirement
+Now you have both branch outputs side-by-side.
 
-For ≈ₜ to interact correctly with composition, it should be a **congruence**:
+If you want to reconcile them into one state, you add an explicit join program:
 
-If P ≈ₜ P', then Q ∘ P ≈ₜ Q ∘ P' (for suitable Q and T).
+$$J : (S \times S) \to F(S)$$
 
-This is not guaranteed for arbitrary stochastic programs. In practice, Morph enforces this by requiring evaluation at each commit boundary rather than relying on compositional equivalence propagation. Each commit independently certifies its behavioral contract.
+and define:
 
----
+$$\text{fork-join}(P, Q) = J \circ \text{branch}(P, Q)$$
 
-## 9.3 Behavioral Preorder
+This matches real systems: parallel branches produce separate artifacts, and a later step merges them.
 
-We define improvement:
-
-P ⪯ Q
-
-If Q meets or exceeds P's observed metric scores across all metrics in the evaluation suite.
-
-This defines a preorder:
-
-- Reflexive: P ⪯ P
-- Transitive: if P ⪯ Q and Q ⪯ R then P ⪯ R
-
-Not necessarily symmetric: P ⪯ Q does not imply Q ⪯ P.
-
-**Critical distinction**: dominance is measured against observed metrics, not base thresholds. If P scores 0.95 on a metric with threshold 0.8, then Q must score ≥ 0.95 to satisfy Q ⪰ P. Merely passing the 0.8 threshold is not sufficient.
-
-The v0 spec records `observed_metrics` in each Commit for exactly this purpose.
+Engineer translation:
+Parallelism is not "two threads racing on the same memory."
+It's "fork state into two sandboxes, run both, then explicitly join."
 
 ---
 
-# 10. Commits as Behavioral Identities
+## 9. Runs and Traces
 
-In Git:
+A run is one execution instance of a program under a concrete environment and initial state:
 
-A commit freezes a file tree.
+$$\text{Run}(P, E, s_0)$$
 
-In Morph:
+Conceptually, if $F$ is distribution-like, a run is a sample from:
 
-A commit freezes:
+$$P_E(s_0) \in F(S)$$
 
-- A prompt program definition (by hash)
-- An evaluation contract (suite + observed metrics)
-- Optional environment constraints
-
-A commit represents a point in the behavioral preorder — a certified claim that the program achieves specific metric levels under the declared evaluation suite.
-
-Commits are semantic stabilization events.
-
----
-
-# 11. Merge as Behavioral Join
-
-Given two commits with programs P and Q:
-
-A merge candidate R must satisfy:
-
-R ⪰ P
-R ⪰ Q
-
-Under the behavioral preorder.
-
-That is: R must dominate both parents' observed metric scores across all evaluation dimensions.
-
-When P and Q have different evaluation suites T₁ and T₂, the merge eval contract is the **union** T₁ ∪ T₂. The merged program must satisfy all metrics from both suites and dominate both parents' observed scores.
-
-If such R does not exist (or cannot be found), merge fails.
-
-Thus merge is not purely structural.
-It is behavioral.
-
----
-
-# 12. Runs and Traces
-
-A run is an execution instance:
-
-
-Run = P(E, S₀)
-
-
-Where:
-
-- E = environment (model, decoding parameters, toolchain)
-- S₀ = initial state
+### 9.1 Trace as a First-Class Receipt
 
 A run records:
 
 - Inputs
 - Environment
 - Outputs
+- Tool calls
+- Intermediate events
 - Metrics
-- Trace
+- Timing, costs, etc.
 
-Runs are immutable.
+A **Trace** is the detailed execution record.
 
-Commits are claims.
-Runs are receipts.
+To support parallelism cleanly, it is helpful to model Trace as a DAG of events (partial order), not necessarily a single linear log. Parallel branches then combine traces by DAG union (with coherence).
 
-A Trace is the detailed execution record of a Run. In v0, Trace events are typed and individually addressable by ID, enabling fine-grained annotation of specific steps within an execution.
+Runs and traces are immutable evidence.
 
 ---
 
-# 13. Annotations
+## 10. Behavioral Observations and Evaluation Suites
 
-An annotation attaches metadata to an immutable object without altering its hash.
+Git observes "bytes."
 
-Annotations are themselves immutable, content-addressed objects. They form a separate layer of metadata over the primary object graph (Programs, Commits, Runs, Traces, Blobs).
+Morph observes "behavior," but behavior must be made operational: you need a defined observation function.
+
+### 10.1 Evaluation Suite
+
+An evaluation suite $T$ defines:
+
+- A set of test inputs / scenarios (if applicable)
+- A set of metrics $m \in T$
+- For each metric:
+  - How to compute it from a run (scoring function)
+  - Which direction is better (maximize/minimize)
+  - Thresholds (contract targets)
+  - Statistical method / confidence (how claims are certified)
+
+Formally, each metric $m$ provides a scoring function:
+
+$$\mathrm{score}_m : \text{(Run evidence)} \to V_m$$
+
+where $V_m$ is an ordered value domain (often $\mathbb{R}$, but could be categories, booleans, etc.).
+
+And each metric includes an order $\le_m$ meaning "no better than," so we can compare correctly even when "lower is better."
+
+Engineer translation:
+A metric is not just a number; it's a number with an ordering direction and a definition.
+
+### 10.2 From Program to Metric Distributions
+
+A program is probabilistic, so metric values are random variables.
+
+Running $P$ under $(E, s_0)$ induces a distribution over runs, and pushing that through scoring induces a distribution over metric vectors:
+
+$$\mathcal{D}_{P,E,s_0,T}$$
+
+This is the semantic behavior of the program with respect to suite $T$.
+
+---
+
+## 11. Contracts, Satisfaction, and Equivalence (Separated Correctly)
+
+This section fixes a common pitfall: "passing tests" is not the same thing as "being equivalent."
+
+### 11.1 Contract Satisfaction
+
+A contract is a predicate a program must satisfy under a suite $T$.
+
+Because behavior is stochastic, satisfaction must specify how uncertainty is handled.
+
+Morph does not force one method, but the contract must declare its rule, e.g.:
+
+- **Expectation-based**: $\mathbb{E}[\mathrm{score}_m] \ge \tau_m$
+- **Quantile-based**: $\Pr(\mathrm{score}_m \ge \tau_m) \ge 1 - \delta$
+- **Confidence-bound-based**: lower confidence bound $\ge$ threshold
+
+We write:
+
+$$P \models_{E,s_0} T$$
+
+to mean "$P$ satisfies contract $T$ under environment $E$ and initial state $s_0$" (using $T$'s declared certification method).
+
+Engineer translation:
+"Passes the suite" means the contract's statistical rule says "yes," not just "the point estimate looks good."
+
+### 11.2 Observational Equivalence (Mathematically Real Equivalence)
+
+Define the observable behavior of a program under $T$ as the induced metric distribution:
+
+$$\mathcal{D}_{P,E,s_0,T}$$
+
+Then define exact equivalence:
+
+$$P \equiv_{E,s_0,T} Q \quad\text{iff}\quad \mathcal{D}_{P,E,s_0,T} = \mathcal{D}_{Q,E,s_0,T}$$
+
+This is a true equivalence relation (reflexive, symmetric, transitive).
+
+It is also very strict — rarely true in practice — but it is the correct mathematical anchor.
+
+### 11.3 Approximate Equivalence (Useful, but Not a True Equivalence)
+
+In practice you want "close enough."
+
+Choose a distance $d$ on distributions (e.g., Wasserstein distance, total variation, MMD, etc.) and define:
+
+$$P \approx^{\varepsilon}_{E,s_0,T} Q \quad\text{iff}\quad d(\mathcal{D}_{P,E,s_0,T},\, \mathcal{D}_{Q,E,s_0,T}) \le \varepsilon$$
+
+This is a tolerance/closeness relation. It is not generally transitive for a fixed $\varepsilon$, but it is still very useful.
+
+Engineer translation:
+Exact equivalence is the "physics."
+Approximate equivalence is the "engineering."
+
+---
+
+## 12. Certified Scores and the Behavioral Preorder
+
+Morph needs an ordering notion for "better than / dominates."
+
+Doing this directly on distributions is possible but can get heavy.
+
+Instead, Morph uses certificates: conservative summaries produced by the evaluation contract's certification procedure.
+
+### 12.1 The Certificate Vector
+
+For a suite $T$, define the certificate space:
+
+$$V_T = \prod_{m \in T} V_m$$
+
+Each metric domain $V_m$ comes with its order $\le_m$.
+The product order $\le_T$ is defined componentwise:
+
+$$x \le_T y \quad\text{iff}\quad \forall m \in T,\; x_m \le_m y_m$$
+
+A certification procedure produces a certificate:
+
+$$\mathrm{cert}_T(P, E, s_0) \in V_T$$
+
+Examples of cert outputs:
+
+- Expected score vector
+- Lower confidence bound vector (recommended)
+- "Guaranteed pass margins" vector
+
+### 12.2 Behavioral Preorder (Dominance)
+
+Now define:
+
+$$P \preceq_{E,s_0,T} Q \quad\text{iff}\quad \mathrm{cert}_T(P, E, s_0) \le_T \mathrm{cert}_T(Q, E, s_0)$$
+
+This is a preorder (and becomes a partial order if certificates are compared by exact equality).
+
+This definition has two key advantages:
+
+1. It's mathematically clean (product order).
+2. It matches engineering reality: commits store certified summaries, not true unknown distributions.
+
+**Critical distinction** (kept from your original, but now formal):
+Dominance is defined against the certificate values, not merely "both pass thresholds."
+
+---
+
+## 13. Contract Space is a Lattice (Where "Join" Actually Lives)
+
+The phrase "merge is a join" is only mathematically correct if we say what is being joined.
+
+The correct place is the **certificate lattice**.
+
+Because $V_T$ is a product of ordered sets, it has natural pointwise operations.
+
+If each metric domain supports joins (true for real numbers with max/min under the chosen order), then $V_T$ forms a lattice with:
+
+- **Join** (least upper bound): componentwise max (under the metric's order)
+- **Meet** (greatest lower bound): componentwise min
+
+We write the join as:
+
+$$x \sqcup y$$
+
+This is always well-defined in certificate space.
+
+**Important:** This join is about required performance claims, not about syntax, and not even necessarily about the existence of a program that achieves it.
+
+---
+
+## 14. Commits as Behavioral Certificates
+
+In Git:
+
+> A commit freezes a file tree.
+
+In Morph:
+
+A commit freezes:
+
+- A program definition (by hash)
+- A contract definition (suite(s), scoring, statistical method)
+- A certificate vector produced under that contract
+- Evidence references (runs/traces) supporting the certificate
+- Environment constraints (what $E$ this claim is intended to hold under)
+
+So a commit is:
+
+$$\text{Commit} = (\text{program\_id},\; T,\; \text{env\_constraints},\; v,\; \text{evidence\_refs})$$
+
+where:
+
+- $v \in V_T$ is the certificate vector stored in the commit.
+
+Commits are claims. Runs are receipts.
+Everything is immutable and content-addressed.
+
+---
+
+## 15. Merge as Behavioral Join in Contract Space
+
+Now we can define merge correctly, with real math behind it.
+
+### 15.1 When Suites Differ: Union of Metrics
+
+If two parent commits use suites $T_1$ and $T_2$, the merge contract uses:
+
+$$T = T_1 \uplus T_2$$
+
+A disjoint union keyed by metric IDs, not just names.
+
+(If two metrics share a name but differ in definition, they are different IDs and both appear.)
+
+### 15.2 The Required Certificate is a Join
+
+Let the parent certificates be:
+
+- $v_P \in V_{T_1}$
+- $v_Q \in V_{T_2}$
+
+Embed them into $V_T$ (by aligning metrics by ID), then define:
+
+$$v_{\text{req}} = \mathrm{embed}(v_P) \sqcup \mathrm{embed}(v_Q)$$
+
+This $v_{\text{req}}$ is the least certificate that dominates both parents' certified claims.
+
+That is the correct sense in which "merge is a join."
+
+### 15.3 Valid Merge Candidate
+
+A merge candidate program $R$ is valid if:
+
+$$\mathrm{cert}_T(R, E, s_0) \ge_T v_{\text{req}}$$
+
+Equivalently: it dominates both parents on their metrics, under the unified suite.
+
+If no such $R$ exists (or you can't certify one), merge fails.
+
+Engineer translation:
+Git merge is a text-level reconciliation.
+Morph merge is: "find a program whose certified behavior is at least the componentwise max of the parents' certificates."
+
+This also explains why merges can fail even when syntax merges cleanly: behavior constraints may be incompatible.
+
+---
+
+## 16. Runs Do Not Rewrite Commits
+
+Axiomatically and operationally:
+
+- Runs are immutable evidence.
+- Commits are immutable claims.
+
+If later evidence changes your belief about performance (models shift, tools drift), you do not mutate the old commit. You create a new commit with a new certificate under a stated environment.
+
+This is the behavioral analogue of "history doesn't rewrite."
+
+---
+
+## 17. Annotations (Metadata Without Hash Mutation)
+
+Annotations attach metadata to immutable objects without altering their hash.
+
+Annotations are themselves immutable, content-addressed objects.
+
+They can target:
+
+- Programs
+- Commits
+- Runs
+- Trace events
+- Blobs/Trees
 
 Annotations enable:
 
-- Human feedback signals (ratings, bookmarks, notes) on runs and trace events
-- Categorical tagging of objects
-- Cross-references and links between objects
-- Provenance chains (linking derived programs to their source runs)
-- Any domain-specific metadata a higher-level tool needs to attach
+- Human feedback (ratings, notes, tags)
+- Provenance links
+- Curation
+- Dataset labeling
+- Policy/audit links
 
-Annotations do not participate in the behavioral preorder directly. However, feedback annotations may be aggregated into evaluation metrics by higher-level tools, closing the loop between human judgment and automated evaluation.
-
-This design preserves Axiom 1 (immutable objects) while enabling rich, extensible metadata layering. Because annotations reference their targets by hash, they compose naturally with content-addressed storage and decentralized distribution.
-
-In the v0 spec, Annotations are realized as a core object type (§4.10) with open `kind` and `data` fields.
+Annotations don't directly change certificates, but they can be used by evaluation suites as inputs.
 
 ---
 
-# 14. Program Provenance
+## 18. Program Provenance
 
-Programs may be created in multiple ways:
+Programs can be created by:
 
-- Written by hand
-- Extracted from a successful run or trace
-- Composed from existing programs
+- Manual authorship
+- Extraction from a run/trace
+- Composition of existing programs
 
-When a program is derived from execution evidence — for example, distilling an agent session into a reusable workflow — the derivation chain should be recorded.
+Provenance is recorded by references to:
 
-Provenance is tracked via an optional field on the Program object that references the source Run, Trace, and specific event (if applicable). This enables higher-level tools to answer: "Where did this program come from? Which session produced it? Which moment was it extracted from?"
+- Source Run
+- Source Trace
+- Possibly an event ID
 
-Provenance complements Annotations: the Program records its origin, while Annotations on that Program (or its source Trace) provide human curation signals (ratings, notes, tags).
+This allows answering:
 
----
-
-# 15. Environment Parameterization
-
-Programs depend on environment E:
-
-
-P : (E, S) → F(S)
-
-
-Environment includes:
-
-- Model identifier
-- Model version (if available)
-- Decoding parameters
-- Toolchain versions
-- Policy references (where applicable)
-
-Reproducibility is defined relative to E.
-
-The v0 spec mandates that every Run object records its full environment.
+- "Where did this program come from?"
+- "Which session produced it?"
+- "What evidence led to this workflow?"
 
 ---
 
-# 16. Prompts as Objects
+## 19. Prompts as Objects, Files as Projections
 
-Prompts are first-class Morph objects (Blob objects with kind "prompt" in v0).
+Prompts are first-class Morph objects (blobs of kind "prompt").
 
-However, they may be materialized as files for:
+They can be materialized as files for:
 
 - Diffing
-- Code review
-- Pull requests
+- Review
+- PR workflows
 
-The object store is canonical.
+But the canonical identity is the object store (content-addressed).
 Filesystem views are projections.
-
-The Blob `kind` field is an open string, allowing downstream tools to introduce their own content types (templates, examples, resources) without modifying Morph's core schema.
 
 ---
 
-# 17. Working Space vs Commit Space
+## 20. Working Space vs Commit Space, and Rollups Without Rewriting
 
 Morph separates:
 
-### Working Space
-- Exploratory prompt evolution
+**Working Space**
+
+- Exploratory program evolution
 - Agent experimentation
-- Trace accumulation
-- Non-stabilized programs
+- Many runs/traces
+- Unstable variants
 
-### Commit Space
-- Stabilized program definitions
-- Evaluation-certified behavioral identities
+**Commit Space**
 
-Rollup collapses exploratory commits into stable identities.
+- Stabilized program objects
+- Evaluation-certified commits
+- Merge-gated coordination
 
-Traces are never rewritten.
-They may be summarized via TraceRollup objects.
+A rollup is implemented by creating a new commit that supersedes (references) a set of earlier work-in-progress commits.
 
-In the v0 spec, working space is the filesystem (`prompts/`, `programs/`, `evals/`). Commit space is the `.morph/objects/` store and the commit DAG.
+Nothing is deleted or rewritten. Older commits remain addressable by hash.
 
 ---
 
-# 18. Agent-Native Assumptions
+## 21. Agent-Native Assumptions
 
 Morph assumes:
 
-- Agents generate code
-- Agents modify prompt programs
-- Agents produce extensive trace trees
+- Agents generate and modify prompt programs
+- Agent sessions create large trace DAGs
+- Evaluation gating is mandatory for merge
+- Receipts (runs/traces) accompany proposed commits
 
 Thus:
 
-- Agent identity is recorded in Run manifests
-- Policy references are versioned where applicable
-- Evaluation gating is mandatory for merge
-- Receipts accompany proposed commits
+- Agent identity is recorded in runs
+- Policy references are versioned (when applicable)
+- Evidence is first-class
 
-Morph is not merely auditing.
-It is coordination and accountability infrastructure.
+Morph is coordination infrastructure, not only auditing.
 
 ---
 
-# 19. Minimal Axioms of Morph
+## 22. Minimal Axioms of Morph (Corrected)
 
-Morph requires the following axioms:
+Morph requires the following axioms.
 
-1. **Immutable Objects**
-   All blobs, trees, commits, runs, traces, and annotations are content-addressed and immutable.
+### A. Immutability and Identity
 
-2. **Associative Composition**
-   Prompt programs compose associatively under Kleisli composition.
+1. **Immutable Objects** — All blobs, trees, programs, commits, runs, traces, and annotations are content-addressed and immutable.
+2. **Evidence Immutability** — Runs and traces are immutable receipts. Evidence never mutates prior objects.
 
-3. **Identity Program**
-   There exists a no-op program I (the monadic unit η) such that I ∘ P = P ∘ I = P.
+### B. State and Effects
 
-4. **Evaluation-Relative Equivalence**
-   Equivalence between programs is defined relative to evaluation suites.
+3. **State Spaces Support Product** — State spaces form a cartesian monoidal structure with product $\times$ and unit object $1$.
+4. **Effect Monad** — There exists an endofunctor $F$ over state spaces that is a monad (pure + bind), enabling sequential composition.
+5. **Zip for Parallelism** — To support lawful parallel composition, $F$ provides a natural zip:
+   $$\text{zip}_{A,B} : F(A) \times F(B) \to F(A \times B)$$
+   satisfying associativity/unitality (and symmetry if you want commutative parallelism).
 
-5. **Behavioral Preorder**
-   There exists a preorder ⪯ defined by observed metric dominance.
+### C. Program Algebra
 
-6. **Merge Dominance Requirement**
-   A merge commit must dominate both parents' observed metrics under ⪯.
+6. **Associative Sequential Composition** — Kleisli composition is associative.
+7. **Identity Program** — For every state space $A$, $\eta_A : A \to F(A)$ acts as the identity program.
+8. **Parallel Composition (When Zip Exists)** — Parallel composition $\otimes$ is defined using zip and obeys monoidal laws up to the usual tuple isomorphisms.
 
-7. **Runs Do Not Rewrite Commits**
-   Execution evidence does not alter commit history.
+### D. Behavioral Semantics
 
-8. **Explicit Environment Recording**
-   All runs must record environment E.
+9. **Evaluation Suites Define Observations** — An evaluation suite $T$ defines metrics with explicit ordering and a certification rule.
+10. **Certificates Live in a Product Preorder** — Each commit stores a certificate vector $v \in V_T$ and dominance is componentwise order.
+11. **Merge as Join in Contract Space** — Merge validity is defined by dominating the join of parent certificates under the unified suite.
 
-9. **Decentralization**
-   No global authority is required for commits or runs.
+### E. Reproducibility and Decentralization
 
-10. **Behavioral Reproducibility**
-    Reproducibility is defined by preservation of evaluation contract, not byte equality.
+12. **Explicit Environment Recording** — Every run records environment $E$; commits declare environment constraints for which their certificate is intended.
+13. **Decentralization** — No global authority is required for object creation or verification; content addressing + evidence suffice.
+14. **Behavioral Reproducibility** — Reproducibility means preserving the evaluation contract and being able to reproduce (or re-certify) the behavioral claim under stated environment constraints — not byte-identical outputs.
 
 ---
 
-# 20. What Morph Is
+## 23. What Morph Is
 
 Morph is:
 
@@ -512,10 +784,11 @@ Morph is:
 - A behavioral version control system
 - A probabilistic generalization of Git
 - A foundation for agentic software development
+- A system where merges are behavioral constraints, not only text reconciliation
 
 ---
 
-# 21. What Morph Is Not
+## 24. What Morph Is Not
 
 Morph is not:
 
@@ -526,11 +799,9 @@ Morph is not:
 
 It complements Git by extending version control into probabilistic systems.
 
-Higher-level tools — session capture, curation, workflow extraction, registries — can be built on Morph's object model and annotation layer without requiring changes to the core system.
-
 ---
 
-# 22. Closing Statement
+## 25. Closing Statement
 
 Git versioned deterministic source code.
 
@@ -538,4 +809,15 @@ Morph versions stochastic transformations.
 
 Git tracked files.
 
-Morph tracks meaning.
+Morph tracks behavior — as certified contracts backed by immutable receipts.
+
+---
+
+## Appendix: "Engineer Superpowers" Cheat Sheet
+
+- **Program type**: `A -> F[B]` — a transformer that returns results "in a box" with effects
+- **Sequential composition**: `flatMap` / `bind` — pipelines are lawful because monad laws
+- **Parallel composition**: `zip` / `Promise.all` / "pair the effects" — lawful because zip obeys coherence rules
+- **Evaluation**: a function from runs to metrics + a certification rule — behavior becomes something you can compare
+- **Commit**: program hash + contract + certificate + evidence refs
+- **Merge**: unify suites, take certificate join (componentwise max), require candidate dominates it
