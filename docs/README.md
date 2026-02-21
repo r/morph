@@ -2,6 +2,8 @@
 
 **Version control for transformation programs. Git for behavior, not just bytes.**
 
+At its base, Morph works like Git: `morph init` creates only `.morph/` (like `git init` creates only `.git/`), and you can put any directory under Morph control. **Without prompts or evals, Morph behaves like a plain VCS.** Prompts, evals, and behavioral contracts are optional capabilities layered on top.
+
 ---
 
 ## The Problem
@@ -34,7 +36,7 @@ If you know Git internals, you already know 80% of Morph. Here's the mapping:
 | `diff` = text comparison | `diff` = behavioral comparison (metric deltas under an eval suite) | Semantic, not syntactic |
 | `merge` = reconcile text | `merge` = reconcile text **and** prove behavior didn't regress | Merge is eval-gated |
 | `.git/objects/` | `.morph/objects/` (content-addressed, immutable, Merkle DAG) | Same architecture |
-| Working tree | Working space (`prompts/`, `programs/`, `evals/`) | Same role |
+| Working tree | Your working directory (any files) | Same role |
 | — | **Run** — immutable execution receipt (env, inputs, outputs, trace, metrics) | New: execution evidence is first-class |
 | — | **EvalSuite** — versioned eval definition (test cases, metrics, thresholds) | New: behavioral contracts are first-class |
 | — | **Trace** — typed, addressable event log of a run | New: fine-grained execution records |
@@ -109,7 +111,9 @@ Merge can fail with zero text conflicts. If parent A achieved 0.95 accuracy and 
 
 Same idea as Git's working tree vs committed history:
 
-- **Working space** (`prompts/`, `programs/`, `evals/`) — your scratchpad. Edit prompts, tweak programs, iterate on evals. Nothing is versioned until you commit.
+- **Working space** — your working directory. It *is* the working space. Edit any files, iterate on your code. Nothing is versioned until you commit. `morph add` works like `git add` — it stages any file from the working directory.
+- **Optional Morph metadata** — `.morph/prompts/` and `.morph/evals/` hold optional prompt and eval definitions. These are not required; Morph works as a plain VCS without them.
+- **Program manifests** — there is no top-level `programs/` directory. Programs are created via `morph program create <file>` and exist only in the object store.
 - **Commit space** (`.morph/objects/`, the commit graph) — stabilized, eval-certified snapshots. Immutable and content-addressed once committed.
 
 **Rollup** (analogous to squash) collapses exploratory commits into a single stable commit. Unlike Git squash, rollup never deletes traces — it creates a new commit that supersedes the old ones while keeping all evidence addressable by hash.
@@ -121,17 +125,17 @@ Same idea as Git's working tree vs committed history:
 Mirrors Git where it makes sense:
 
 ```
-morph init                        # initialize a repository
-morph status                      # show working space status
+morph init                        # initialize a repository (creates only .morph/)
+morph status                      # show working directory status
 morph log                         # show commit history
 
-morph prompt create               # create a prompt object
+morph prompt create               # create a prompt object (stored in .morph/prompts/)
 morph prompt materialize <hash>   # write a prompt to filesystem for review
 
-morph program create              # create a program definition
+morph program create <file>       # create a program manifest from a file (stored in object store)
 morph program show                # inspect a program
 
-morph add .                       # stage working space changes
+morph add .                       # stage any files from working directory (like git add)
 morph commit -m "message"         # create commit with eval contract (uses recorded metrics)
 
 morph branch <name>               # create a branch

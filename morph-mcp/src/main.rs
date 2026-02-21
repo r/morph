@@ -352,6 +352,23 @@ impl ServerHandler for MorphServer {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        eprintln!(
+            "morph-mcp {}\n\n\
+             MCP server for Morph. Not meant to be run directly from a terminal.\n\
+             Cursor (or another MCP host) starts this process and talks to it over stdio.\n\n\
+             Usage: configured in Cursor MCP settings (e.g. ~/.cursor/mcp.json)\n\
+             Verify install: morph-mcp --version",
+            env!("CARGO_PKG_VERSION")
+        );
+        return Ok(());
+    }
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        eprintln!("morph-mcp {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     let service = MorphServer::new()
         .serve(stdio())
         .await

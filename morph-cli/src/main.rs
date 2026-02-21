@@ -123,6 +123,17 @@ enum RunCmd {
         #[arg(long)]
         artifact: Vec<PathBuf>,
     },
+    /// Record a single prompt/response session (Run + Trace) into the store
+    RecordSession {
+        #[arg(long)]
+        prompt: String,
+        #[arg(long)]
+        response: String,
+        #[arg(long)]
+        model_name: Option<String>,
+        #[arg(long)]
+        agent_id: Option<String>,
+    },
 }
 
 #[derive(clap::Subcommand)]
@@ -189,7 +200,7 @@ fn main() -> anyhow::Result<()> {
                 let (repo_root, store) = get_store()?;
                 let h = parse_hash(&hash)?;
                 let dest = output.unwrap_or_else(|| {
-                    repo_root.join("prompts").join(format!("{}.prompt", hash))
+                    repo_root.join(".morph").join("prompts").join(format!("{}.prompt", hash))
                 });
                 morph_core::materialize_blob(&store, &h, &dest)?;
                 println!("Materialized to {}", dest.display());
@@ -215,7 +226,7 @@ fn main() -> anyhow::Result<()> {
             let (repo_root, store) = get_store()?;
             let entries = morph_core::status(&store, &repo_root)?;
             if entries.is_empty() {
-                println!("No working-space files in prompts/, programs/, or evals/");
+                println!("No files to track");
                 return Ok(());
             }
             for e in entries {
@@ -311,6 +322,17 @@ fn main() -> anyhow::Result<()> {
                     &full_run,
                     trace_opt.as_deref(),
                     &refs,
+                )?;
+                println!("{}", hash);
+            }
+            RunCmd::RecordSession { prompt, response, model_name, agent_id } => {
+                let (_repo_root, store) = get_store()?;
+                let hash = morph_core::record_session(
+                    &store,
+                    &prompt,
+                    &response,
+                    model_name.as_deref(),
+                    agent_id.as_deref(),
                 )?;
                 println!("{}", hash);
             }

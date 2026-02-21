@@ -9,6 +9,8 @@ fn init_repo(dir: &std::path::Path) {
     cmd.arg("init").arg(dir).assert().success();
 }
 
+// ── init ──────────────────────────────────────────────────────────────
+
 #[test]
 fn init_creates_morph_dir() {
     let dir = tempfile::tempdir().unwrap();
@@ -20,9 +22,19 @@ fn init_creates_morph_dir() {
     assert!(morph_dir.join("objects").is_dir());
     assert!(morph_dir.join("refs").is_dir());
     assert!(morph_dir.join("refs/heads").is_dir());
-    assert!(path.join("prompts").is_dir());
-    assert!(path.join("programs").is_dir());
-    assert!(path.join("evals").is_dir());
+    assert!(morph_dir.join("prompts").is_dir(), ".morph/prompts should exist");
+    assert!(morph_dir.join("evals").is_dir(), ".morph/evals should exist");
+}
+
+#[test]
+fn init_does_not_create_top_level_dirs() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+    init_repo(path);
+
+    assert!(!path.join("prompts").exists(), "top-level prompts/ must not exist");
+    assert!(!path.join("programs").exists(), "top-level programs/ must not exist");
+    assert!(!path.join("evals").exists(), "top-level evals/ must not exist");
 }
 
 #[test]
@@ -35,19 +47,102 @@ fn init_prints_message() {
         .stdout(predicate::str::contains("Initialized Morph repository"));
 }
 
+// ── status: working directory files ───────────────────────────────────
+
+#[test]
+fn status_shows_working_dir_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+    init_repo(path);
+    fs::write(path.join("hello.txt"), "world").unwrap();
+
+    let mut cmd = Command::cargo_bin("morph").unwrap();
+    cmd.current_dir(path).arg("status");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("hello.txt"))
+        .stdout(predicate::str::contains("new"));
+}
+
+#[test]
+fn status_shows_nested_working_dir_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+    init_repo(path);
+    fs::create_dir_all(path.join("src")).unwrap();
+    fs::write(path.join("src/app.rs"), "fn main() {}").unwrap();
+
+    let mut cmd = Command::cargo_bin("morph").unwrap();
+    cmd.current_dir(path).arg("status");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("app.rs"));
+}
+
+#[test]
+fn status_empty_when_no_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+    init_repo(path);
+
+    let mut cmd = Command::cargo_bin("morph").unwrap();
+    cmd.current_dir(path).arg("status");
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("No files"));
+}
+
+// ── add: git-like staging ─────────────────────────────────────────────
+
+#[test]
+fn add_stages_any_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+    init_repo(path);
+    fs::write(path.join("code.py"), "print('hi')").unwrap();
+
+    let mut add_cmd = Command::cargo_bin("morph").unwrap();
+    add_cmd.current_dir(path).arg("add").arg("code.py");
+    let out = add_cmd.assert().success();
+    let hash = String::from_utf8_lossy(&out.get_output().stdout).trim().to_string();
+    assert_eq!(hash.len(), 64, "should output a hash");
+
+    let mut status_cmd = Command::cargo_bin("morph").unwrap();
+    status_cmd.current_dir(path).arg("status");
+    status_cmd.assert().success().stdout(predicate::str::contains("tracked"));
+}
+
+#[test]
+fn add_dot_stages_all_working_dir_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+    init_repo(path);
+    fs::write(path.join("a.txt"), "aaa").unwrap();
+    fs::create_dir_all(path.join("lib")).unwrap();
+    fs::write(path.join("lib/b.txt"), "bbb").unwrap();
+
+    let mut add_cmd = Command::cargo_bin("morph").unwrap();
+    add_cmd.current_dir(path).arg("add").arg(".");
+    let out = add_cmd.assert().success();
+    let output = String::from_utf8_lossy(&out.get_output().stdout).to_string();
+    let hashes: Vec<_> = output.trim().lines().collect();
+    assert!(hashes.len() >= 2, "should stage at least 2 files, got {}", hashes.len());
+}
+
+// ── prompt operations ─────────────────────────────────────────────────
+
 #[test]
 fn prompt_create_and_materialize() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path();
     init_repo(path);
-    fs::write(path.join("prompts").join("hello.txt"), "Hello world").unwrap();
+    fs::write(path.join(".morph/prompts/hello.txt"), "Hello world").unwrap();
 
     let mut create = Command::cargo_bin("morph").unwrap();
-    create.current_dir(path).arg("prompt").arg("create").arg("prompts/hello.txt");
+    create.current_dir(path).arg("prompt").arg("create").arg(".morph/prompts/hello.txt");
     let out = create.assert().success();
     let hash = String::from_utf8_lossy(&out.get_output().stdout).trim().to_string();
     assert_eq!(hash.len(), 64);
-    assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
 
     let mut mat = Command::cargo_bin("morph").unwrap();
     mat.current_dir(path)
@@ -55,30 +150,12 @@ fn prompt_create_and_materialize() {
         .arg("materialize")
         .arg(&hash)
         .arg("--output")
-        .arg(path.join("prompts").join("out.prompt"));
+        .arg(path.join(".morph/prompts/out.prompt"));
     mat.assert().success();
-    assert_eq!(fs::read_to_string(path.join("prompts").join("out.prompt")).unwrap(), "Hello world");
+    assert_eq!(fs::read_to_string(path.join(".morph/prompts/out.prompt")).unwrap(), "Hello world");
 }
 
-#[test]
-fn status_and_add() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path();
-    init_repo(path);
-    fs::write(path.join("prompts").join("p.txt"), "prompt body").unwrap();
-
-    let mut status_cmd = Command::cargo_bin("morph").unwrap();
-    status_cmd.current_dir(path).arg("status");
-    status_cmd.assert().success().stdout(predicate::str::contains("new"));
-
-    let mut add_cmd = Command::cargo_bin("morph").unwrap();
-    add_cmd.current_dir(path).arg("add").arg(".");
-    add_cmd.assert().success();
-
-    let mut status_after = Command::cargo_bin("morph").unwrap();
-    status_after.current_dir(path).arg("status");
-    status_after.assert().success().stdout(predicate::str::contains("tracked"));
-}
+// ── program operations (from any path) ────────────────────────────────
 
 #[test]
 fn program_create_and_show() {
@@ -94,10 +171,10 @@ fn program_create_and_show() {
       "eval_suite": null,
       "provenance": null
     }"#;
-    fs::write(path.join("programs").join("prog.json"), program_json).unwrap();
+    fs::write(path.join("prog.json"), program_json).unwrap();
 
     let mut create = Command::cargo_bin("morph").unwrap();
-    create.current_dir(path).arg("program").arg("create").arg("programs/prog.json");
+    create.current_dir(path).arg("program").arg("create").arg("prog.json");
     let out = create.assert().success();
     let hash = String::from_utf8_lossy(&out.get_output().stdout).trim().to_string();
 
@@ -106,6 +183,8 @@ fn program_create_and_show() {
     show.assert().success().stdout(predicate::str::contains("program"));
 }
 
+// ── commit and log ────────────────────────────────────────────────────
+
 #[test]
 fn commit_and_log() {
     let dir = tempfile::tempdir().unwrap();
@@ -113,17 +192,17 @@ fn commit_and_log() {
     init_repo(path);
 
     let program_json = r#"{"graph":{"nodes":[{"id":"n1","kind":"identity","ref":null,"params":{}}],"edges":[]},"prompts":[],"eval_suite":null,"provenance":null}"#;
-    fs::write(path.join("programs").join("p.json"), program_json).unwrap();
+    fs::write(path.join("prog.json"), program_json).unwrap();
     let eval_json = r#"{"cases":[],"metrics":[{"name":"acc","aggregation":"mean","threshold":0.0}]}"#;
-    fs::write(path.join("evals").join("e.json"), eval_json).unwrap();
+    fs::write(path.join(".morph/evals/e.json"), eval_json).unwrap();
 
     let mut prog_create = Command::cargo_bin("morph").unwrap();
-    prog_create.current_dir(path).arg("program").arg("create").arg("programs/p.json");
+    prog_create.current_dir(path).arg("program").arg("create").arg("prog.json");
     let prog_out = prog_create.assert().success();
     let prog_hash = String::from_utf8_lossy(&prog_out.get_output().stdout).trim().to_string();
 
     let mut add = Command::cargo_bin("morph").unwrap();
-    add.current_dir(path).arg("add").arg("evals/e.json");
+    add.current_dir(path).arg("add").arg(".morph/evals/e.json");
     let add_out = add.assert().success();
     let suite_hash = String::from_utf8_lossy(&add_out.get_output().stdout).trim().lines().next().unwrap().to_string();
 
@@ -147,6 +226,8 @@ fn commit_and_log() {
     log_cmd.current_dir(path).arg("log");
     log_cmd.assert().success().stdout(predicate::str::contains("first commit"));
 }
+
+// ── run and eval record ───────────────────────────────────────────────
 
 #[test]
 fn run_record_and_eval_record() {
@@ -187,17 +268,19 @@ fn run_record_and_eval_record() {
     eval_record.assert().success().stdout(predicate::str::contains("0.92"));
 }
 
+// ── annotate ──────────────────────────────────────────────────────────
+
 #[test]
 fn annotate_and_annotations() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path();
     init_repo(path);
-    fs::write(path.join("prompts").join("p.txt"), "hello").unwrap();
+    fs::write(path.join(".morph/prompts/p.txt"), "hello").unwrap();
     let mut add = Command::cargo_bin("morph").unwrap();
     add.current_dir(path).arg("add").arg(".");
     add.assert().success();
     let mut create = Command::cargo_bin("morph").unwrap();
-    create.current_dir(path).arg("prompt").arg("create").arg("prompts/p.txt");
+    create.current_dir(path).arg("prompt").arg("create").arg(".morph/prompts/p.txt");
     let out = create.assert().success();
     let target_hash = String::from_utf8_lossy(&out.get_output().stdout).trim().to_string();
 

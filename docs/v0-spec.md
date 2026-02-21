@@ -93,12 +93,12 @@ A Morph repository contains:
   refs/           # branch pointers and tags
   runs/           # local run cache
   traces/         # trace payload storage
+  prompts/        # optional: prompt metadata
+  evals/          # optional: evaluation suite metadata
   config.json
-
-prompts/          # working-space prompt files
-programs/         # working-space program definitions
-evals/            # working-space evaluation suites
 ```
+
+`morph init` creates only `.morph/` (like `git init`). The working directory — the user's project directory — is the working space. There are no top-level `prompts/`, `programs/`, or `evals/` directories.
 
 ### `.morph/objects/`
 Content-addressed objects (by hash):
@@ -125,7 +125,9 @@ Trace payload storage (content-addressed).
 
 ### Working Space
 
-The top-level `prompts/`, `programs/`, and `evals/` directories are the **working space** — the filesystem projection of objects under active development. These are analogous to Git's working tree.
+The **working directory** (the user's project directory) is the working space — analogous to Git's working tree. `morph add` works like `git add`: it stages any file from the working directory into the object store.
+
+`.morph/prompts/` and `.morph/evals/` are optional metadata directories for prompt and eval suite definitions. The `programs/` directory is eliminated: program manifests are created via `morph program create <file>` and exist only in the object store. Morph can be used as a plain VCS without prompts or evals.
 
 Changes in working space are not versioned until committed.
 
@@ -520,15 +522,17 @@ morph prompt create
 morph prompt materialize <hash>
 ```
 
-Prompts are canonical objects. Materialization writes them to the filesystem working space for review.
+Prompts are canonical objects. Materialization writes them to the working directory (or `.morph/prompts/`) for review.
 
 ## 6.3 Program Management
 
 ```
-morph program create
+morph program create <file>
 morph program edit
 morph program show
 ```
+
+Program manifests are created via `morph program create <file>` and exist only in the object store. There is no `programs/` directory.
 
 ## 6.4 Commit Workflow
 
@@ -537,7 +541,7 @@ morph add .
 morph commit -m "message"
 ```
 
-`morph add` stages working-space changes into the object store.
+`morph add` stages any file from the working directory into the object store (like `git add`).
 
 `morph commit` validates:
 
