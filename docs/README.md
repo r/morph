@@ -166,8 +166,10 @@ The key behavioral difference from Git: `commit` and `merge` use **recorded** me
 | **This README** | Engineering overview — what Morph is, how it works, the Git analogy |
 | **[THEORY.md](THEORY.md)** | Formal mathematical foundations — how programs compose, what behavioral equivalence means, the axioms that make the system coherent |
 | **[v0-spec.md](v0-spec.md)** | Concrete v0 system specification — object schemas, storage backend, CLI details, how each theoretical concept maps to an implementation construct |
+| **[CURSOR-SETUP.md](CURSOR-SETUP.md)** | How to set up the Morph MCP server in Cursor and record Cursor sessions as Runs, then explicitly commit the filesystem |
+| **[MORPH-AND-GIT.md](MORPH-AND-GIT.md)** | Running Morph and Git in the same repo (Morph for behavior, Git for backup) |
 
-The README explains the *why* and the *what*. THEORY.md provides the algebraic underpinnings. v0-spec.md is the buildable blueprint.
+The README explains the *why* and the *what*. THEORY.md provides the algebraic underpinnings. v0-spec.md is the buildable blueprint. CURSOR-SETUP.md is the get-started guide for using Morph from Cursor. MORPH-AND-GIT.md covers using both version systems side by side.
 
 ---
 

@@ -92,6 +92,24 @@ impl MorphServer {
         Ok(CallToolResult::success(vec![Content::text(hash.to_string())]))
     }
 
+    #[tool(description = "Record a single prompt/response session into Morph (Run + Trace). Use this so the agent can send the full model response text. Optional: workspace_path, model_name, agent_id.")]
+    async fn morph_record_session(
+        &self,
+        params: Parameters<RecordSessionParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref())
+            .map_err(|e| McpError::invalid_params(e, None))?;
+        let hash = morph_core::record_session(
+            &store,
+            &params.0.prompt,
+            &params.0.response,
+            params.0.model_name.as_deref(),
+            params.0.agent_id.as_deref(),
+        )
+        .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        Ok(CallToolResult::success(vec![Content::text(hash.to_string())]))
+    }
+
     #[tool(description = "Record evaluation metrics from a JSON file with a 'metrics' key")]
     async fn morph_record_eval(
         &self,
@@ -243,6 +261,18 @@ struct RecordRunParams {
     trace_file: Option<String>,
     #[serde(default)]
     artifact_files: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct RecordSessionParams {
+    prompt: String,
+    response: String,
+    #[serde(default)]
+    workspace_path: Option<String>,
+    #[serde(default)]
+    model_name: Option<String>,
+    #[serde(default)]
+    agent_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

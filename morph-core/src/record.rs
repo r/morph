@@ -1,8 +1,11 @@
 //! Ingest execution evidence: run record and eval record (v0-spec §6.6, §6.7).
 
-use crate::objects::MorphObject;
+use crate::hash::content_hash;
+use crate::identity::identity_program;
+use crate::objects::{AgentInfo, MorphObject, Run, RunEnvironment, Trace, TraceEvent};
 use crate::store::{MorphError, Store};
 use crate::Hash;
+use std::collections::BTreeMap;
 use std::path::Path;
 
 /// Ingest a Run from JSON. Optionally ingest trace and artifacts first so refs resolve.
@@ -53,4 +56,93 @@ pub fn record_eval_metrics(path: &Path) -> Result<std::collections::BTreeMap<Str
         out.insert(k.clone(), num);
     }
     Ok(out)
+}
+
+/// Record a single prompt/response session as a Run with a Trace (no files).
+/// Uses the identity program. Call this from the IDE so the agent can pass its own response text.
+pub fn record_session(
+    store: &dyn Store,
+    prompt: &str,
+    response: &str,
+    model_name: Option<&str>,
+    agent_id: Option<&str>,
+) -> Result<Hash, MorphError> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut prompt_payload = BTreeMap::new();
+    prompt_payload.insert("text".to_string(), serde_json::Value::String(prompt.to_string()));
+    let mut response_payload = BTreeMap::new();
+    response_payload.insert("text".to_string(), serde_json::Value::String(response.to_string()));
+
+    let trace = MorphObject::Trace(Trace {
+        events: vec![
+            TraceEvent {
+                id: "evt_prompt".to_string(),
+                seq: 0,
+                ts: now.clone(),
+                kind: "prompt".to_string(),
+                payload: prompt_payload,
+            },
+            TraceEvent {
+                id: "evt_response".to_string(),
+                seq: 1,
+                ts: now,
+                kind: "response".to_string(),
+                payload: response_payload,
+            },
+        ],
+    });
+
+    let trace_hash = content_hash(&trace)?;
+    store.put(&trace)?;
+
+    let identity = identity_program();
+    let program_hash = content_hash(&identity)?;
+    // Ensure identity program exists in store so refs to it are valid.
+    store.put(&identity)?;
+
+    let run = MorphObject::Run(Run {
+        program: program_hash.to_string(),
+        commit: None,
+        environment: RunEnvironment {
+            model: model_name.unwrap_or("cursor").to_string(),
+            version: "1.0".to_string(),
+            parameters: BTreeMap::new(),
+            toolchain: BTreeMap::new(),
+        },
+        input_state_hash: "0".repeat(64),
+        output_artifacts: vec![],
+        metrics: BTreeMap::new(),
+        trace: trace_hash.to_string(),
+        agent: AgentInfo {
+            id: agent_id.unwrap_or("cursor").to_string(),
+            version: "1.0".to_string(),
+            policy: None,
+        },
+    });
+
+    let run_hash = store.put(&run)?;
+    Ok(run_hash)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::FsStore;
+
+    #[test]
+    fn record_session_stores_run_and_trace() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FsStore::new(dir.path().to_path_buf());
+        let hash = record_session(
+            &store,
+            "What is 2+2?",
+            "2+2 equals 4.",
+            Some("test-model"),
+            Some("test-agent"),
+        )
+        .unwrap();
+        assert_eq!(hash.to_string().len(), 64);
+        let run_obj = store.get(&hash).unwrap();
+        assert!(matches!(run_obj, MorphObject::Run(_)));
+    }
 }
