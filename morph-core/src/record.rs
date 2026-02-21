@@ -2,7 +2,7 @@
 
 use crate::hash::content_hash;
 use crate::identity::identity_program;
-use crate::objects::{AgentInfo, MorphObject, Run, RunEnvironment, Trace, TraceEvent};
+use crate::objects::{AgentInfo, Blob, MorphObject, Run, RunEnvironment, Trace, TraceEvent};
 use crate::store::{MorphError, Store};
 use crate::Hash;
 use std::collections::BTreeMap;
@@ -85,7 +85,7 @@ pub fn record_session(
             TraceEvent {
                 id: "evt_response".to_string(),
                 seq: 1,
-                ts: now,
+                ts: now.clone(),
                 kind: "response".to_string(),
                 payload: response_payload,
             },
@@ -97,8 +97,17 @@ pub fn record_session(
 
     let identity = identity_program();
     let program_hash = content_hash(&identity)?;
-    // Ensure identity program exists in store so refs to it are valid.
     store.put(&identity)?;
+
+    let prompt_blob = MorphObject::Blob(Blob {
+        kind: "prompt".to_string(),
+        content: serde_json::json!({
+            "text": prompt,
+            "response": response,
+            "timestamp": now,
+        }),
+    });
+    store.put(&prompt_blob)?;
 
     let run = MorphObject::Run(Run {
         program: program_hash.to_string(),
@@ -144,5 +153,42 @@ mod tests {
         assert_eq!(hash.to_string().len(), 64);
         let run_obj = store.get(&hash).unwrap();
         assert!(matches!(run_obj, MorphObject::Run(_)));
+    }
+
+    #[test]
+    fn record_session_populates_type_index_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = crate::init_repo(dir.path()).unwrap();
+        let run_hash = record_session(
+            &store,
+            "Hello",
+            "Hi there!",
+            None,
+            None,
+        )
+        .unwrap();
+
+        let morph = dir.path().join(".morph");
+        let prompts: Vec<_> = std::fs::read_dir(morph.join("prompts"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .collect();
+        assert!(!prompts.is_empty(), "prompts/ should contain at least one file");
+
+        let runs: Vec<_> = std::fs::read_dir(morph.join("runs"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .collect();
+        assert_eq!(runs.len(), 1, "runs/ should contain exactly one file");
+        assert!(
+            runs[0].file_name().to_string_lossy().contains(&run_hash.to_string()),
+            "runs/ entry should match the run hash"
+        );
+
+        let traces: Vec<_> = std::fs::read_dir(morph.join("traces"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .collect();
+        assert_eq!(traces.len(), 1, "traces/ should contain exactly one file");
     }
 }

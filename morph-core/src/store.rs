@@ -85,16 +85,44 @@ impl FsStore {
     }
 }
 
+fn type_index_dir(object: &MorphObject) -> Option<&'static str> {
+    match object {
+        MorphObject::Run(_) => Some("runs"),
+        MorphObject::Trace(_) => Some("traces"),
+        MorphObject::EvalSuite(_) => Some("evals"),
+        MorphObject::Blob(b) if b.kind == "prompt" => Some("prompts"),
+        _ => None,
+    }
+}
+
 impl Store for FsStore {
     fn put(&self, object: &MorphObject) -> Result<Hash, MorphError> {
         let hash = crate::content_hash(object)?;
         let path = self.object_path(&hash);
-        if path.exists() {
-            return Ok(hash);
+        let json = if path.exists() {
+            None
+        } else {
+            std::fs::create_dir_all(path.parent().unwrap())?;
+            let json = crate::canonical_json(object)?;
+            std::fs::write(&path, &json)?;
+            Some(json)
+        };
+
+        if let Some(dir_name) = type_index_dir(object) {
+            let index_path = self.root.join(dir_name).join(format!("{}.json", hash));
+            if !index_path.exists() {
+                if let Some(parent) = index_path.parent() {
+                    if parent.is_dir() {
+                        let content = match json {
+                            Some(ref j) => j.clone(),
+                            None => std::fs::read_to_string(&path)?,
+                        };
+                        std::fs::write(&index_path, content)?;
+                    }
+                }
+            }
         }
-        std::fs::create_dir_all(path.parent().unwrap())?;
-        let json = crate::canonical_json(object)?;
-        std::fs::write(&path, json)?;
+
         Ok(hash)
     }
 

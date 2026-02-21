@@ -1,0 +1,15 @@
+---
+description: Record Morph sessions with full prompt and response when a task is done
+globs: ["**/*"]
+---
+
+When you complete a substantive task in this project and the project has a `.morph` directory:
+
+1. Call the MCP tool **morph_record_session** with:
+   - **prompt**: the user's exact request (the message that started this turn or task).
+   - **response**: your full reply text (what you wrote back to the user). Do not truncate; include the complete response so it is stored in Morph.
+   Optionally set model_name, agent_id, or workspace_path if needed.
+
+2. Do this as the last step before you conclude your reply (e.g. after summarizing what you did).
+
+Do not skip this step when the user asked for code or changes and you have finished the work.
