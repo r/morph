@@ -112,13 +112,12 @@ impl Store for FsStore {
             let index_path = self.root.join(dir_name).join(format!("{}.json", hash));
             if !index_path.exists() {
                 if let Some(parent) = index_path.parent() {
-                    if parent.is_dir() {
-                        let content = match json {
-                            Some(ref j) => j.clone(),
-                            None => std::fs::read_to_string(&path)?,
-                        };
-                        std::fs::write(&index_path, content)?;
-                    }
+                    std::fs::create_dir_all(parent)?;
+                    let content = match json {
+                        Some(ref j) => j.clone(),
+                        None => std::fs::read_to_string(&path)?,
+                    };
+                    std::fs::write(&index_path, content)?;
                 }
             }
         }
@@ -211,6 +210,22 @@ mod tests {
         let got = store.get(&hash).unwrap();
         assert!(matches!(got, MorphObject::Blob(_)));
         assert!(store.has(&hash).unwrap());
+    }
+
+    #[test]
+    fn put_prompt_blob_creates_type_index_even_without_prompts_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("objects")).unwrap();
+        let store = FsStore::new(dir.path());
+        let blob = MorphObject::Blob(Blob {
+            kind: "prompt".into(),
+            content: serde_json::json!({"text": "hello"}),
+        });
+        let hash = store.put(&blob).unwrap();
+        let prompts_dir = dir.path().join("prompts");
+        assert!(prompts_dir.is_dir(), "put() should create prompts/ when missing");
+        let index_file = prompts_dir.join(format!("{}.json", hash));
+        assert!(index_file.is_file(), "prompts/<hash>.json should exist");
     }
 
     #[test]

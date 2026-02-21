@@ -156,7 +156,12 @@ From the **project root** (the directory that contains `.morph/`):
 `morph status` reports **filesystem files** in the working directory (like `git status`)—source code, config, etc. Recorded sessions from the MCP tool (`morph_record_session`) are stored as **objects** in `.morph/objects/` (one `.json` file per object), not as working-tree files. So to verify recording worked, use `ls .morph/objects`—those files are your runs and traces. There is no `morph run list` command yet; the object store is the source of truth.
 
 **Why didn't my last chat get recorded? (number of files in `.morph/objects` didn't grow)**  
-Recording only happens when something **calls** `morph_record_session`. The agent does not call it automatically unless (1) you have added a Cursor rule that tells the agent to call it when it finishes a task (§4.3, Rule A), or (2) you explicitly asked in that chat (e.g. "call morph_record_session with this prompt and your response"). If the agent didn't invoke the tool, nothing is written. To record a session after the fact you can:
+Recording only happens when something **calls** `morph_record_session`. The agent does not call it automatically unless (1) you have added a Cursor rule that tells the agent to call it when it finishes a task (§4.3, Rule A), or (2) you explicitly asked in that chat (e.g. "call morph_record_session with this prompt and your response"). If the agent didn't invoke the tool, nothing is written.
+
+**Nothing in `.morph/prompts/` — is the rule working?**  
+A successful `morph_record_session` call stores a prompt Blob into `.morph/prompts/<hash>.json` as well as Run/Trace in `.morph/objects/`, `.morph/runs/`, `.morph/traces/`. If `.morph/prompts/` (and `.morph/runs/`) are empty, the agent is likely not calling the tool. Ensure the rule in `.cursor/rules/morph-record.mdc` is present and that the agent is instructed to invoke the tool as the last step; if the tool returns "not a morph repository", have the agent pass **workspace_path** with the full path to the project root that contains `.morph/`.
+
+To record a session after the fact you can:
 
 - **From a new chat:** Ask the agent to call `morph_record_session` with the previous prompt and the previous response (paste them in).
 - **From the terminal:** Run `morph run record-session --prompt "your prompt text" --response "the model's response text"` from the project root. This writes a Run and Trace into `.morph/objects/` without going through MCP. Use this when the agent didn't record the last turn and you want to capture it.

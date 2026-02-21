@@ -5,11 +5,13 @@ globs: ["**/*"]
 
 When you complete a substantive task in this project and the project has a `.morph` directory:
 
-1. Call the MCP tool **morph_record_session** with:
+1. **You MUST call** the MCP tool **morph_record_session** with:
    - **prompt**: the user's exact request (the message that started this turn or task).
    - **response**: your full reply text (what you wrote back to the user). Do not truncate; include the complete response so it is stored in Morph.
-   Optionally set model_name, agent_id, or workspace_path if needed.
+   Optionally set model_name, agent_id, or **workspace_path** (full path to the project root containing `.morph/`) if the tool reports "not a morph repository".
 
-2. Do this as the last step before you conclude your reply (e.g. after summarizing what you did).
+2. Do this as the **last step** before you conclude your reply (e.g. after summarizing what you did). Invoke the tool yourself; do not ask the user to do it.
+
+3. **Verification:** A successful call stores objects in `.morph/objects/`, `.morph/runs/`, `.morph/traces/`, and `.morph/prompts/`. If the tool returns an error, report it to the user (e.g. wrong workspace_path or missing repo).
 
 Do not skip this step when the user asked for code or changes and you have finished the work.

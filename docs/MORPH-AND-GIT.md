@@ -6,7 +6,7 @@ You can use Morph and Git in the **same directory**: Morph tracks behavioral ver
 
 ## 1. Same repo, two systems
 
-- **Morph** uses only `.morph/` (objects, refs, config; optional metadata like `.morph/prompts/` and `.morph/evals/` live inside it). It does not touch `.git/`.
+- **Morph** uses only `.morph/` (objects, refs, config, runs, traces, prompts, evals — see [v0-spec.md](v0-spec.md) §3). It does not touch `.git/`.
 - **Git** uses `.git/` and the working tree. It does not care about Morph.
 
 Initialize both in the same project:

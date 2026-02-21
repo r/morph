@@ -89,19 +89,21 @@ A Morph repository contains:
 
 ```
 .morph/
-  objects/        # content-addressed objects (by hash)
-  refs/           # branch pointers and tags
-  runs/           # local run cache
-  traces/         # trace payload storage
-  prompts/        # optional: prompt metadata
-  evals/          # optional: evaluation suite metadata
-  config.json
+  objects/        # canonical content-addressed store: one <hash>.json per object
+  refs/
+    HEAD          # symbolic ref (e.g. "ref: heads/main\n")
+    heads/        # branch refs: heads/<branch> contains commit hash
+  runs/           # type index: copy of each Run as <hash>.json (also in objects/)
+  traces/         # type index: copy of each Trace as <hash>.json (also in objects/)
+  prompts/        # optional: user prompt files; type index: <hash>.json for prompt Blobs
+  evals/          # optional: user eval JSON; type index: <hash>.json for EvalSuites
+  config.json     # repo config (empty object by default)
 ```
 
-`morph init` creates only `.morph/` (like `git init`). The working directory — the user's project directory — is the working space. There are no top-level `prompts/`, `programs/`, or `evals/` directories.
+`morph init` creates only `.morph/` (like `git init`): `objects/`, `refs/heads/`, `runs/`, `traces/`, `prompts/`, `evals/`, `config.json`, and `refs/HEAD` (pointing at `heads/main`). The working directory — the user's project directory — is the working space. There are no top-level `prompts/`, `programs/`, or `evals/` directories.
 
 ### `.morph/objects/`
-Content-addressed objects (by hash):
+The single source of truth. Every object is stored here as `<sha256>.json` (content-addressed). Object types:
 
 - Blobs
 - Trees
@@ -115,13 +117,14 @@ Content-addressed objects (by hash):
 - Annotations
 
 ### `.morph/refs/`
-Branch pointers and tags.
+- **HEAD** — symbolic ref to the current branch (e.g. `ref: heads/main\n`).
+- **heads/<branch>** — each file contains the commit hash for that branch.
 
-### `.morph/runs/`
-Local run cache (may mirror object store).
+### `.morph/runs/` and `.morph/traces/`
+When a Run or Trace is stored via `put()`, it is written to `objects/<hash>.json`. A copy is also written to `runs/<hash>.json` or `traces/<hash>.json` so runs and traces can be listed by type without scanning all objects. Same content as in `objects/`.
 
-### `.morph/traces/`
-Trace payload storage (content-addressed).
+### `.morph/prompts/` and `.morph/evals/`
+User-facing: optional prompt files (e.g. `.prompt`) and eval JSON files. When a prompt Blob or EvalSuite is stored, a copy is also written to `prompts/<hash>.json` or `evals/<hash>.json` (type index). `morph status` and `morph add` include these directories; other `.morph/` internals (objects, refs, config) are excluded.
 
 ### Working Space
 
@@ -146,7 +149,7 @@ Morph's core logic depends on an abstract storage interface, not on a specific b
 - **ref_read(name) → hash** — resolve a named reference (branch, tag)
 - **ref_write(name, hash)** — update a named reference
 
-The v0 default backend is **flat files on the local filesystem** — the `.morph/` directory layout described above. This is the simplest possible implementation: objects are individual JSON files named by their SHA-256 hash, refs are files containing a hash, and traces are stored as separate files due to size.
+The v0 default backend is **flat files on the local filesystem** — the `.morph/` directory layout described in §3. All objects (including Runs and Traces) are JSON files in `objects/<hash>.json`; refs are files (HEAD symbolic, heads/<branch> with hash); type-index copies for Runs, Traces, etc. live under `runs/`, `traces/`, `prompts/`, `evals/`.
 
 Other backends are explicitly anticipated:
 

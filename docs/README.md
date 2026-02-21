@@ -112,7 +112,8 @@ Merge can fail with zero text conflicts. If parent A achieved 0.95 accuracy and 
 Same idea as Git's working tree vs committed history:
 
 - **Working space** — your working directory. It *is* the working space. Edit any files, iterate on your code. Nothing is versioned until you commit. `morph add` works like `git add` — it stages any file from the working directory.
-- **Optional Morph metadata** — `.morph/prompts/` and `.morph/evals/` hold optional prompt and eval definitions. These are not required; Morph works as a plain VCS without them.
+- **Optional Morph metadata** — `.morph/prompts/` and `.morph/evals/` hold optional prompt and eval definitions (and type-index copies of stored prompt/EvalSuite objects). These are not required; Morph works as a plain VCS without them.
+- **Type indexes** — `.morph/runs/` and `.morph/traces/` hold copies of Run and Trace objects (by hash) for listing by type; the canonical copy of every object is in `.morph/objects/`.
 - **Program manifests** — there is no top-level `programs/` directory. Programs are created via `morph program create <file>` and exist only in the object store.
 - **Commit space** (`.morph/objects/`, the commit graph) — stabilized, eval-certified snapshots. Immutable and content-addressed once committed.
 
