@@ -12,6 +12,8 @@ chrono = { version = "0.4", features = ["serde"] }
 thiserror = "1.0"
 hex = "0.4"
 walkdir = "2.4"
+ignore = "0.4"
+base64 = "0.22"
 
 [dev-dependencies]
 proptest = "1.4"

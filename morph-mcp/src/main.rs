@@ -1,7 +1,7 @@
 //! Cursor MCP server: primary write path from the IDE.
 //! Exposes morph-core operations as MCP tools.
 
-use morph_core::{find_repo, FsStore, Hash, Store};
+use morph_core::{find_repo, open_store, require_store_version, Hash, Store, STORE_VERSION_0_2, STORE_VERSION_INIT};
 use rmcp::{
     handler::server::tool::ToolRouter,
     handler::server::wrapper::Parameters,
@@ -43,7 +43,7 @@ impl MorphServer {
         }
     }
 
-    fn repo_store(&self, workspace_path: Option<&str>) -> Result<(PathBuf, FsStore), String> {
+    fn repo_store(&self, workspace_path: Option<&str>) -> Result<(PathBuf, Box<dyn Store>), String> {
         let start = workspace_path
             .map(PathBuf::from)
             .or_else(|| self.default_workspace.clone())
@@ -56,7 +56,10 @@ impl MorphServer {
                 tried
             )
         })?;
-        let store = FsStore::new(repo_root.join(".morph"));
+        let morph_dir = repo_root.join(".morph");
+        // MCP cannot upgrade; older repos must be upgraded explicitly via morph-cli.
+        require_store_version(&morph_dir, &[STORE_VERSION_INIT, STORE_VERSION_0_2]).map_err(|e| e.to_string())?;
+        let store = open_store(&morph_dir).map_err(|e| e.to_string())?;
         Ok((repo_root, store))
     }
 
@@ -175,7 +178,6 @@ impl MorphServer {
     ) -> Result<rmcp::model::CallToolResult, McpError> {
         let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref())
             .map_err(|e| McpError::invalid_params(e, None))?;
-        let store_fs = FsStore::new(_repo_root.join(".morph"));
         let prog_hash = Hash::from_hex(&params.0.program).map_err(|e| McpError::invalid_params(e.to_string(), None))?;
         let suite_hash =
             Hash::from_hex(&params.0.eval_suite).map_err(|e| McpError::invalid_params(e.to_string(), None))?;
@@ -185,7 +187,6 @@ impl MorphServer {
             .unwrap_or_default();
         let hash = morph_core::create_commit(
             &store,
-            &store_fs,
             &prog_hash,
             &suite_hash,
             metrics,
@@ -222,8 +223,7 @@ impl MorphServer {
     ) -> Result<rmcp::model::CallToolResult, McpError> {
         let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref())
             .map_err(|e| McpError::invalid_params(e, None))?;
-        let store_fs = FsStore::new(_repo_root.join(".morph"));
-        let head = morph_core::resolve_head(&store_fs)
+        let head = morph_core::resolve_head(&store)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?
             .ok_or_else(|| McpError::invalid_params("no commit yet".to_string(), None))?;
         store
@@ -242,11 +242,10 @@ impl MorphServer {
     ) -> Result<rmcp::model::CallToolResult, McpError> {
         let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref())
             .map_err(|e| McpError::invalid_params(e, None))?;
-        let store_fs = FsStore::new(_repo_root.join(".morph"));
         let ref_name = params.0.ref_name;
         if ref_name.len() == 64 && ref_name.chars().all(|c| c.is_ascii_hexdigit()) {
             let hash = Hash::from_hex(&ref_name).map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-            morph_core::set_head_detached(&store_fs, &hash)
+            morph_core::set_head_detached(&store, &hash)
                 .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
             Ok(CallToolResult::success(vec![Content::text(format!("Detached HEAD at {}", hash))]))
         } else {
@@ -260,7 +259,7 @@ impl MorphServer {
                 .map_err(|e| McpError::invalid_params(e.to_string(), None))?
                 .ok_or_else(|| McpError::invalid_params(format!("branch not found: {}", ref_name), None))?;
             let branch_name = ref_name.trim_start_matches("heads/").to_string();
-            morph_core::set_head_branch(&store_fs, &branch_name)
+            morph_core::set_head_branch(&store, &branch_name)
                 .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
             Ok(CallToolResult::success(vec![Content::text(format!(
                 "Switched to branch {}",

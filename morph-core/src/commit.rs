@@ -9,19 +9,9 @@ use std::collections::BTreeMap;
 const HEAD_REF: &str = "HEAD";
 const DEFAULT_BRANCH: &str = "main";
 
-/// Read raw ref file content (e.g. for HEAD which may be "ref: heads/main").
-fn ref_read_raw(store: &crate::store::FsStore, name: &str) -> Result<Option<String>, MorphError> {
-    let path = store.refs_dir().join(name);
-    if !path.exists() {
-        return Ok(None);
-    }
-    let s = std::fs::read_to_string(&path)?.trim().to_string();
-    Ok(if s.is_empty() { None } else { Some(s) })
-}
-
 /// Resolve HEAD to a commit hash. HEAD may be "ref: heads/main" or a raw hash (detached).
-pub fn resolve_head(store: &crate::store::FsStore) -> Result<Option<Hash>, MorphError> {
-    let content = match ref_read_raw(store, HEAD_REF)? {
+pub fn resolve_head(store: &dyn Store) -> Result<Option<Hash>, MorphError> {
+    let content = match store.ref_read_raw(HEAD_REF)? {
         Some(c) => c,
         None => return Ok(None),
     };
@@ -34,8 +24,8 @@ pub fn resolve_head(store: &crate::store::FsStore) -> Result<Option<Hash>, Morph
 }
 
 /// Current branch name if HEAD is symbolic, else None.
-pub fn current_branch(store: &crate::store::FsStore) -> Result<Option<String>, MorphError> {
-    let content = match ref_read_raw(store, HEAD_REF)? {
+pub fn current_branch(store: &dyn Store) -> Result<Option<String>, MorphError> {
+    let content = match store.ref_read_raw(HEAD_REF)? {
         Some(c) => c,
         None => return Ok(None),
     };
@@ -52,14 +42,13 @@ pub fn current_branch(store: &crate::store::FsStore) -> Result<Option<String>, M
 /// Create a commit and update the current branch (or create refs/heads/main if first commit).
 pub fn create_commit(
     store: &dyn Store,
-    store_fs: &crate::store::FsStore,
     program_hash: &Hash,
     eval_suite_hash: &Hash,
     observed_metrics: BTreeMap<String, f64>,
     message: String,
     author: Option<String>,
 ) -> Result<Hash, MorphError> {
-    let parent_list: Vec<String> = resolve_head(store_fs)?
+    let parent_list: Vec<String> = resolve_head(store)?
         .map(|h| vec![h.to_string()])
         .unwrap_or_default();
     let timestamp = Utc::now().to_rfc3339();
@@ -77,34 +66,26 @@ pub fn create_commit(
     });
     let hash = store.put(&commit)?;
 
-    let branch = current_branch(store_fs)?.unwrap_or_else(|| DEFAULT_BRANCH.to_string());
+    let branch = current_branch(store)?.unwrap_or_else(|| DEFAULT_BRANCH.to_string());
     store.ref_write(&format!("heads/{}", branch), &hash)?;
 
     Ok(hash)
 }
 
 /// Set HEAD to a branch (symbolic ref).
-pub fn set_head_branch(store: &crate::store::FsStore, branch: &str) -> Result<(), MorphError> {
-    let path = store.refs_dir().join(HEAD_REF);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(path, format!("ref: heads/{}\n", branch))?;
-    Ok(())
+pub fn set_head_branch(store: &dyn Store, branch: &str) -> Result<(), MorphError> {
+    store.ref_write_raw(HEAD_REF, &format!("ref: heads/{}", branch))
 }
 
 /// Set HEAD to a commit hash (detached HEAD).
-pub fn set_head_detached(store: &crate::store::FsStore, hash: &Hash) -> Result<(), MorphError> {
-    let path = store.refs_dir().join(HEAD_REF);
-    std::fs::write(path, format!("{}\n", hash))?;
-    Ok(())
+pub fn set_head_detached(store: &dyn Store, hash: &Hash) -> Result<(), MorphError> {
+    store.ref_write_raw(HEAD_REF, &hash.to_string())
 }
 
 /// Create a merge commit. Validates that merged_observed_metrics dominate both parents.
 /// other_branch: name of branch to merge in (e.g. "feature"). Current HEAD is the other parent.
 pub fn create_merge_commit(
     store: &dyn Store,
-    store_fs: &crate::store::FsStore,
     other_branch: &str,
     merged_program_hash: &Hash,
     merged_observed_metrics: BTreeMap<String, f64>,
@@ -112,7 +93,7 @@ pub fn create_merge_commit(
     message: String,
     author: Option<String>,
 ) -> Result<Hash, MorphError> {
-    let head_hash = resolve_head(store_fs)?.ok_or_else(|| MorphError::Serialization("no HEAD commit".into()))?;
+    let head_hash = resolve_head(store)?.ok_or_else(|| MorphError::Serialization("no HEAD commit".into()))?;
     let other_ref = if other_branch.starts_with("heads/") {
         other_branch.to_string()
     } else {
@@ -152,7 +133,7 @@ pub fn create_merge_commit(
     });
     let hash = store.put(&commit)?;
 
-    let branch = current_branch(store_fs)?.unwrap_or_else(|| DEFAULT_BRANCH.to_string());
+    let branch = current_branch(store)?.unwrap_or_else(|| DEFAULT_BRANCH.to_string());
     store.ref_write(&format!("heads/{}", branch), &hash)?;
 
     Ok(hash)
@@ -161,13 +142,12 @@ pub fn create_merge_commit(
 /// Rollup (squash) a range: one new commit with parent = base, program and eval_contract from tip.
 pub fn rollup(
     store: &dyn Store,
-    store_fs: &crate::store::FsStore,
     base_ref: &str,
     tip_ref: &str,
     message: Option<String>,
 ) -> Result<Hash, MorphError> {
     let base_path = if base_ref == "HEAD" {
-        resolve_head(store_fs)?
+        resolve_head(store)?
     } else {
         let p = if base_ref.starts_with("heads/") { base_ref.to_string() } else { format!("heads/{}", base_ref) };
         store.ref_read(&p)?
@@ -175,7 +155,7 @@ pub fn rollup(
     let base_hash = base_path.ok_or_else(|| MorphError::NotFound(base_ref.into()))?;
 
     let tip_path = if tip_ref == "HEAD" {
-        resolve_head(store_fs)?
+        resolve_head(store)?
     } else {
         let p = if tip_ref.starts_with("heads/") { tip_ref.to_string() } else { format!("heads/{}", tip_ref) };
         store.ref_read(&p)?
@@ -199,16 +179,16 @@ pub fn rollup(
     });
     let hash = store.put(&commit)?;
 
-    let branch = current_branch(store_fs)?.unwrap_or_else(|| DEFAULT_BRANCH.to_string());
+    let branch = current_branch(store)?.unwrap_or_else(|| DEFAULT_BRANCH.to_string());
     store.ref_write(&format!("heads/{}", branch), &hash)?;
 
     Ok(hash)
 }
 
 /// List commit hashes from a starting ref (e.g. HEAD or heads/main), following parents.
-pub fn log_from(store: &dyn Store, store_fs: &crate::store::FsStore, start_ref: &str) -> Result<Vec<Hash>, MorphError> {
+pub fn log_from(store: &dyn Store, start_ref: &str) -> Result<Vec<Hash>, MorphError> {
     let mut current = if start_ref == "HEAD" {
-        resolve_head(store_fs)?
+        resolve_head(store)?
     } else {
         let path = if start_ref.starts_with("heads/") {
             start_ref.to_string()
@@ -243,7 +223,7 @@ mod tests {
         let store = FsStore::new(dir.path());
         std::fs::create_dir_all(store.objects_dir()).unwrap();
         std::fs::create_dir_all(store.refs_dir()).unwrap();
-        std::fs::write(store.refs_dir().join("HEAD"), "ref: heads/main\n").unwrap();
+        store.ref_write_raw("HEAD", "ref: heads/main").unwrap();
 
         let prog = MorphObject::Blob(Blob { kind: "x".into(), content: serde_json::json!({}) });
         let prog_hash = store.put(&prog).unwrap();
@@ -253,7 +233,6 @@ mod tests {
         let mut metrics = BTreeMap::new();
         metrics.insert("acc".to_string(), 0.9);
         let hash = create_commit(
-            &store,
             &store,
             &prog_hash,
             &suite_hash,
@@ -274,7 +253,7 @@ mod tests {
         let store = FsStore::new(dir.path());
         std::fs::create_dir_all(store.objects_dir()).unwrap();
         std::fs::create_dir_all(store.refs_dir()).unwrap();
-        std::fs::write(store.refs_dir().join("HEAD"), "ref: heads/main\n").unwrap();
+        store.ref_write_raw("HEAD", "ref: heads/main").unwrap();
 
         let prog = MorphObject::Blob(Blob { kind: "p".into(), content: serde_json::json!({}) });
         let prog_hash = store.put(&prog).unwrap();
@@ -283,20 +262,19 @@ mod tests {
 
         let mut m1 = BTreeMap::new();
         m1.insert("acc".to_string(), 0.9);
-        let c1 = create_commit(&store, &store, &prog_hash, &suite_hash, m1.clone(), "main".into(), None).unwrap();
+        let c1 = create_commit(&store, &prog_hash, &suite_hash, m1.clone(), "main".into(), None).unwrap();
 
         store.ref_write("heads/feature", &c1).unwrap();
         let mut m2 = BTreeMap::new();
         m2.insert("acc".to_string(), 0.85);
-        let c2 = create_commit(&store, &store, &prog_hash, &suite_hash, m2, "feature".into(), None).unwrap();
+        let c2 = create_commit(&store, &prog_hash, &suite_hash, m2, "feature".into(), None).unwrap();
         store.ref_write("heads/feature", &c2).unwrap();
         store.ref_write("heads/main", &c1).unwrap();
-        std::fs::write(store.refs_dir().join("HEAD"), "ref: heads/main\n").unwrap();
+        store.ref_write_raw("HEAD", "ref: heads/main").unwrap();
 
         let mut merged_bad = BTreeMap::new();
         merged_bad.insert("acc".to_string(), 0.88);
         let r = create_merge_commit(
-            &store,
             &store,
             "feature",
             &prog_hash,
@@ -310,7 +288,6 @@ mod tests {
         let mut merged_good = BTreeMap::new();
         merged_good.insert("acc".to_string(), 0.92);
         let merge_hash = create_merge_commit(
-            &store,
             &store,
             "feature",
             &prog_hash,

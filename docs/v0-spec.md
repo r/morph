@@ -124,7 +124,7 @@ The single source of truth. Every object is stored here as `<sha256>.json` (cont
 When a Run or Trace is stored via `put()`, it is written to `objects/<hash>.json`. A copy is also written to `runs/<hash>.json` or `traces/<hash>.json` so runs and traces can be listed by type without scanning all objects. Same content as in `objects/`.
 
 ### `.morph/prompts/` and `.morph/evals/`
-User-facing: optional prompt files (e.g. `.prompt`) and eval JSON files. When a prompt Blob or EvalSuite is stored, a copy is also written to `prompts/<hash>.json` or `evals/<hash>.json` (type index). `morph status` and `morph add` include these directories; other `.morph/` internals (objects, refs, config) are excluded.
+User-facing: optional prompt files (e.g. `.prompt`) and eval JSON files. When a prompt Blob or EvalSuite is stored, a copy is also written to `prompts/<hash>.json` or `evals/<hash>.json` (type index). `morph status` and `morph add` include these directories; other `.morph/` internals (objects, refs, config) are excluded. Paths matching `.morphignore` (see §3 Working Space) are also excluded.
 
 ### Working Space
 
@@ -133,6 +133,16 @@ The **working directory** (the user's project directory) is the working space �
 `.morph/prompts/` and `.morph/evals/` are optional metadata directories for prompt and eval suite definitions. The `programs/` directory is eliminated: program manifests are created via `morph program create <file>` and exist only in the object store. Morph can be used as a plain VCS without prompts or evals.
 
 Changes in working space are not versioned until committed.
+
+### `.morphignore`
+
+A **`.morphignore`** file at the repository root (same directory as `.morph/`) specifies paths that Morph will not include in `morph status` or `morph add`. Same syntax and semantics as [`.gitignore`](https://git-scm.com/docs/gitignore): one pattern per line, `#` comments, blank lines ignored, and patterns are relative to the repo root. Examples:
+
+- `target/` — ignore the `target` directory and everything under it
+- `*.log` — ignore any file ending in `.log`
+- `node_modules/` — ignore dependency trees you do not want to version as content
+
+If `.morphignore` is missing, nothing is excluded beyond the built-in rules (e.g. `.morph/` internals). This keeps working-space scans and commits focused on the files that define your programs, prompts, and evals.
 
 ### Commit Space
 

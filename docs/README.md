@@ -136,7 +136,7 @@ morph prompt materialize <hash>   # write a prompt to filesystem for review
 morph program create <file>       # create a program manifest from a file (stored in object store)
 morph program show                # inspect a program
 
-morph add .                       # stage any files from working directory (like git add)
+morph add .                       # stage any files from working directory (like git add; respects .morphignore)
 morph commit -m "message"         # create commit with eval contract (uses recorded metrics)
 
 morph branch <name>               # create a branch
@@ -150,6 +150,8 @@ morph rollup <range>              # collapse exploratory history
 
 morph annotate <hash> --kind feedback --data '{"rating": "good"}'
 morph annotations <hash>          # list annotations on an object
+
+morph visualize [path]           # serve repo in browser (commit strip, prompts, tree); optional --port, --interface
 ```
 
 The key behavioral difference from Git: `commit` and `merge` use **recorded** metric scores (from external evals). Morph does not execute programs or run tests — IDEs, agents, and CI do that and report results. The **Cursor MCP server** is the primary way the IDE writes into Morph (record runs, traces, commits). You read via the CLI.

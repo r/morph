@@ -1,7 +1,17 @@
-//! Repository operations: init, directory layout.
+//! Repository operations: init, directory layout, store versioning.
+//!
+//! Interacting with an older store version requires an explicit upgrade via `morph upgrade` (CLI).
+//! MCP and other tools must not perform upgrades; they call [require_store_version] and error if the
+//! repo is older than supported.
 
-use crate::store::{FsStore, MorphError};
+use crate::store::{FsStore, GixStore, MorphError, Store};
 use std::path::Path;
+
+/// Store version written by init and read for upgrade checks. "0.0" = FsStore layout.
+pub const STORE_VERSION_INIT: &str = "0.0";
+
+/// Store version after migration to Git-format hashes. "0.2" = GixStore.
+pub const STORE_VERSION_0_2: &str = "0.2";
 
 /// Directory names under .morph/
 const OBJECTS_DIR: &str = "objects";
@@ -11,6 +21,7 @@ const TRACES_DIR: &str = "traces";
 const CONFIG_FILE: &str = "config.json";
 const PROMPTS_DIR: &str = "prompts";
 const EVALS_DIR: &str = "evals";
+const REPO_VERSION_KEY: &str = "repo_version";
 
 /// Initialize a Morph repository at `root`. Creates only `.morph/` — the
 /// working directory itself is the user's project and is not modified.
@@ -36,12 +47,52 @@ pub fn init_repo(root: impl AsRef<Path>) -> Result<FsStore, MorphError> {
     std::fs::create_dir_all(morph_dir.join(PROMPTS_DIR))?;
     std::fs::create_dir_all(morph_dir.join(EVALS_DIR))?;
 
-    let config = serde_json::json!({});
+    let config = serde_json::json!({ REPO_VERSION_KEY: STORE_VERSION_INIT });
     std::fs::write(morph_dir.join(CONFIG_FILE), serde_json::to_string_pretty(&config).unwrap())?;
 
     std::fs::write(morph_dir.join("refs").join("HEAD"), "ref: heads/main\n")?;
 
     Ok(FsStore::new(morph_dir))
+}
+
+/// Read the store version from `.morph/config.json`. Returns `"0.0"` if the file or key is missing (legacy repos).
+pub fn read_repo_version(morph_dir: &Path) -> Result<String, MorphError> {
+    let config_path = morph_dir.join(CONFIG_FILE);
+    if !config_path.exists() {
+        return Ok(STORE_VERSION_INIT.to_string());
+    }
+    let data = std::fs::read_to_string(&config_path)?;
+    let config: serde_json::Value =
+        serde_json::from_str(&data).map_err(|e| MorphError::Serialization(e.to_string()))?;
+    let v = config
+        .get(REPO_VERSION_KEY)
+        .and_then(|v| v.as_str())
+        .unwrap_or(STORE_VERSION_INIT);
+    Ok(v.to_string())
+}
+
+/// Ensure the repo's store version is one of `allowed`. If not, returns [MorphError::UpgradeRequired]
+/// with a message that the user must run `morph upgrade` in the project directory (CLI only; MCP cannot upgrade).
+pub fn require_store_version(morph_dir: &Path, allowed: &[&str]) -> Result<(), MorphError> {
+    let current = read_repo_version(morph_dir)?;
+    if allowed.contains(&current.as_str()) {
+        return Ok(());
+    }
+    Err(MorphError::UpgradeRequired(format!(
+        "Repo store version is {}; this tool requires one of [{}]. Run `morph upgrade` in the project directory (morph-cli only), then retry.",
+        current,
+        allowed.join(", ")
+    )))
+}
+
+/// Open the store for an existing repo at `morph_dir`. Returns the backend appropriate for
+/// the repo's `repo_version` (0.0 → FsStore, 0.2 → GixStore).
+pub fn open_store(morph_dir: &Path) -> Result<Box<dyn Store>, MorphError> {
+    let version = read_repo_version(morph_dir)?;
+    Ok(match version.as_str() {
+        STORE_VERSION_0_2 => Box::new(GixStore::new(morph_dir)),
+        _ => Box::new(FsStore::new(morph_dir)),
+    })
 }
 
 #[cfg(test)]
@@ -89,5 +140,102 @@ mod tests {
         let _ = init_repo(dir.path()).unwrap();
         let store2 = init_repo(dir.path()).unwrap();
         assert!(store2.objects_dir().exists());
+    }
+
+    #[test]
+    fn init_writes_repo_version_0_0() {
+        let dir = tempfile::tempdir().unwrap();
+        let _ = init_repo(dir.path()).unwrap();
+        let config_path = dir.path().join(".morph/config.json");
+        let data = std::fs::read_to_string(&config_path).unwrap();
+        let config: serde_json::Value = serde_json::from_str(&data).unwrap();
+        assert_eq!(config.get("repo_version").and_then(|v| v.as_str()), Some("0.0"));
+    }
+
+    #[test]
+    fn read_repo_version_returns_0_0_after_init() {
+        let dir = tempfile::tempdir().unwrap();
+        let _ = init_repo(dir.path()).unwrap();
+        let v = read_repo_version(&dir.path().join(".morph")).unwrap();
+        assert_eq!(v, "0.0");
+    }
+
+    #[test]
+    fn read_repo_version_defaults_to_0_0_when_config_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".morph")).unwrap();
+        // No config.json
+        let v = read_repo_version(&dir.path().join(".morph")).unwrap();
+        assert_eq!(v, "0.0");
+    }
+
+    #[test]
+    fn require_store_version_ok_when_allowed() {
+        let dir = tempfile::tempdir().unwrap();
+        let _ = init_repo(dir.path()).unwrap();
+        let morph_dir = dir.path().join(".morph");
+        assert!(require_store_version(&morph_dir, &["0.0"]).is_ok());
+    }
+
+    #[test]
+    fn require_store_version_err_when_not_allowed() {
+        let dir = tempfile::tempdir().unwrap();
+        let _ = init_repo(dir.path()).unwrap();
+        let morph_dir = dir.path().join(".morph");
+        let err = require_store_version(&morph_dir, &["0.1"]).unwrap_err();
+        assert!(matches!(err, MorphError::UpgradeRequired(_)));
+    }
+
+    #[test]
+    fn open_store_0_0_returns_fs_store_behavior() {
+        let dir = tempfile::tempdir().unwrap();
+        let _ = init_repo(dir.path()).unwrap();
+        let morph_dir = dir.path().join(".morph");
+        let store = open_store(&morph_dir).unwrap();
+        let blob = crate::objects::MorphObject::Blob(crate::objects::Blob {
+            kind: "x".into(),
+            content: serde_json::json!({}),
+        });
+        let hash = store.put(&blob).unwrap();
+        assert!(store.has(&hash).unwrap());
+    }
+
+    #[test]
+    fn open_store_0_2_after_migrate_returns_gix_store_behavior() {
+        let dir = tempfile::tempdir().unwrap();
+        let _ = init_repo(dir.path()).unwrap();
+        let morph_dir = dir.path().join(".morph");
+        let fs = FsStore::new(&morph_dir);
+        let blob = crate::objects::MorphObject::Blob(crate::objects::Blob {
+            kind: "p".into(),
+            content: serde_json::json!({}),
+        });
+        let blob_hash = fs.put(&blob).unwrap();
+        let suite = crate::objects::MorphObject::EvalSuite(crate::objects::EvalSuite {
+            cases: vec![],
+            metrics: vec![],
+        });
+        let suite_hash = fs.put(&suite).unwrap();
+        let commit = crate::objects::MorphObject::Commit(crate::objects::Commit {
+            program: blob_hash.to_string(),
+            parents: vec![],
+            message: "m".into(),
+            timestamp: "2020-01-01T00:00:00Z".into(),
+            author: "a".into(),
+            eval_contract: crate::objects::EvalContract {
+                suite: suite_hash.to_string(),
+                observed_metrics: std::collections::BTreeMap::new(),
+            },
+        });
+        let commit_hash = fs.put(&commit).unwrap();
+        fs.ref_write_raw("HEAD", "ref: heads/main").unwrap();
+        fs.ref_write("heads/main", &commit_hash).unwrap();
+        crate::migrate::migrate_0_0_to_0_2(&morph_dir).unwrap();
+
+        let store = open_store(&morph_dir).unwrap();
+        let head = crate::commit::resolve_head(store.as_ref()).unwrap();
+        assert!(head.is_some());
+        let obj = store.get(&head.unwrap()).unwrap();
+        assert!(matches!(obj, crate::objects::MorphObject::Commit(_)));
     }
 }

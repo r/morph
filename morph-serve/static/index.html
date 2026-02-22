@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Morph repo browser</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      background: #0f0f12;
+      color: #e4e4e7;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid #27272a;
+      font-weight: 600;
+    }
+    main {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+    #strip {
+      width: 320px;
+      min-width: 280px;
+      border-right: 1px solid #27272a;
+      overflow-y: auto;
+      padding: 0.5rem;
+    }
+    .commit-card {
+      padding: 0.6rem 0.75rem;
+      margin-bottom: 0.25rem;
+      border-radius: 8px;
+      cursor: pointer;
+      border: 1px solid transparent;
+      background: #18181b;
+    }
+    .commit-card:hover { background: #27272a; }
+    .commit-card.selected { border-color: #3b82f6; background: #1e3a5f33; }
+    .commit-hash { font-family: ui-monospace, monospace; font-size: 0.7rem; color: #71717a; }
+    .commit-msg { font-size: 0.9rem; margin-top: 0.2rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .commit-meta { font-size: 0.75rem; color: #a1a1aa; margin-top: 0.15rem; }
+    #detail {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1rem;
+    }
+    #detail .section { margin-bottom: 1rem; }
+    #detail h2 { font-size: 0.85rem; color: #a1a1aa; margin: 0 0 0.4rem 0; text-transform: uppercase; letter-spacing: 0.05em; }
+    #detail .hash { font-family: ui-monospace, monospace; font-size: 0.8rem; word-break: break-all; }
+    #detail .hash a { color: #3b82f6; text-decoration: none; }
+    #detail .hash a:hover { text-decoration: underline; }
+    .metrics { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .metric { padding: 0.25rem 0.5rem; background: #27272a; border-radius: 4px; font-size: 0.8rem; }
+    .prompt-row { margin-bottom: 0.5rem; }
+    .prompt-row .hash-link { color: #3b82f6; cursor: pointer; font-family: ui-monospace, monospace; font-size: 0.8rem; }
+    .prompt-body {
+      margin-top: 0.35rem; padding: 0.5rem; background: #18181b; border-radius: 6px;
+      font-family: ui-monospace, monospace; font-size: 0.8rem; white-space: pre-wrap; word-break: break-word;
+      border: 1px solid #27272a;
+    }
+    .object-browser { margin-top: 0.5rem; }
+    .object-browser input { width: 100%; max-width: 400px; padding: 0.4rem 0.6rem; border-radius: 6px; border: 1px solid #27272a; background: #18181b; color: #e4e4e7; font-family: ui-monospace, monospace; }
+    .object-browser button { margin-left: 0.5rem; padding: 0.4rem 0.75rem; border-radius: 6px; border: none; background: #3b82f6; color: #fff; cursor: pointer; }
+    .tree-entries { list-style: none; padding: 0; margin: 0.25rem 0 0 0; }
+    .tree-entries li { padding: 0.25rem 0; font-family: ui-monospace, monospace; font-size: 0.85rem; }
+    .tree-entries li a { color: #3b82f6; cursor: pointer; text-decoration: none; }
+    .tree-entries li a:hover { text-decoration: underline; }
+    .empty-detail { color: #71717a; font-size: 0.9rem; }
+    .error { color: #f87171; font-size: 0.85rem; }
+    .loading { color: #a1a1aa; }
+  </style>
+</head>
+<body>
+  <header>Morph repo browser</header>
+  <main>
+    <section id="strip" aria-label="Commit history"></section>
+    <section id="detail" aria-label="Detail">
+      <p class="empty-detail">Select a commit or fetch an object by hash.</p>
+    </section>
+  </main>
+  <script>
+    const strip = document.getElementById('strip');
+    const detail = document.getElementById('detail');
+
+    async function api(path) {
+      const r = await fetch(path);
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    }
+
+    function renderDetail(content) {
+      detail.innerHTML = content;
+    }
+
+    function renderCommitDetail(commit, program) {
+      let metricsHtml = '';
+      if (commit.eval_contract && commit.eval_contract.observed_metrics) {
+        const m = commit.eval_contract.observed_metrics;
+        metricsHtml = '<div class="metrics">' + Object.entries(m).map(([k, v]) => `<span class="metric">${k}: ${v}</span>`).join('') + '</div>';
+      }
+      let promptsHtml = '';
+      if (program && program.prompts && program.prompts.length) {
+        promptsHtml = '<div class="section"><h2>Prompts</h2>' + program.prompts.map(h => `
+          <div class="prompt-row" data-prompt-hash="${h}">
+            <span class="hash-link" data-fetch="${h}">${h.slice(0,12)}… (expand)</span>
+            <div class="prompt-body" data-prompt-body="${h}" style="display:none"></div>
+          </div>`).join('') + '</div>';
+      }
+      const treeLink = program ? `<div class="section"><h2>Browse object</h2><div class="object-browser"><input type="text" id="objHash" placeholder="Paste any object hash" /><button type="button" id="fetchObj">Fetch</button></div><div id="objectResult"></div></div>` : '';
+      renderDetail(`
+        <div class="section"><h2>Commit</h2><p class="hash">${commit.hash}</p><p>${escapeHtml(commit.message)}</p><p class="commit-meta">${escapeHtml(commit.author)} · ${commit.timestamp}</p></div>
+        <div class="section"><h2>Program</h2><p class="hash"><a href="#" data-fetch="${commit.program}">${commit.program}</a></p></div>
+        <div class="section"><h2>Eval contract</h2><p class="hash">Suite: <a href="#" data-fetch="${commit.eval_contract.suite}">${commit.eval_contract.suite}</a></p>${metricsHtml}</div>
+        ${promptsHtml}
+        ${treeLink}
+      `);
+      detail.querySelectorAll('[data-fetch]').forEach(el => {
+        el.addEventListener('click', (e) => { e.preventDefault(); fetchAndShowObject(el.dataset.fetch); });
+      });
+      const fetchBtn = detail.querySelector('#fetchObj');
+      const objInput = detail.querySelector('#objHash');
+      if (fetchBtn && objInput) {
+        fetchBtn.addEventListener('click', () => fetchAndShowObject(objInput.value.trim()));
+      }
+      detail.querySelectorAll('[data-prompt-hash]').forEach(row => {
+        const link = row.querySelector('.hash-link');
+        const bodyEl = row.querySelector('[data-prompt-body]');
+        link.addEventListener('click', async (e) => {
+          e.preventDefault();
+          if (bodyEl.style.display === 'none') {
+            try {
+              const obj = await api('/api/object/' + link.dataset.fetch);
+              const body = obj.content && obj.content.body != null ? obj.content.body : JSON.stringify(obj.content, null, 2);
+              bodyEl.textContent = body;
+              bodyEl.style.display = 'block';
+              link.textContent = link.dataset.fetch.slice(0, 12) + '… (collapse)';
+            } catch (err) {
+              bodyEl.textContent = 'Error: ' + err.message;
+              bodyEl.style.display = 'block';
+            }
+          } else {
+            bodyEl.style.display = 'none';
+            bodyEl.textContent = '';
+            link.textContent = link.dataset.fetch.slice(0, 12) + '… (expand)';
+          }
+        });
+      });
+    }
+
+    function escapeHtml(s) {
+      const div = document.createElement('div');
+      div.textContent = s;
+      return div.innerHTML;
+    }
+
+    async function fetchAndShowObject(hash) {
+      if (!hash) return;
+      const resultEl = detail.querySelector('#objectResult');
+      const container = resultEl ? resultEl.parentElement : detail;
+      const target = resultEl || detail;
+      if (resultEl) resultEl.innerHTML = '<span class="loading">Loading…</span>';
+      try {
+        const obj = await api('/api/object/' + hash);
+        if (obj.type === 'tree') {
+          const entries = obj.entries || [];
+          target.innerHTML = (resultEl ? '' : '<div class="section"><h2>Object</h2></div>') + '<ul class="tree-entries">' + entries.map(e => `<li><a href="#" data-fetch="${e.hash}">${escapeHtml(e.name)}</a> <span class="hash">${e.hash.slice(0,12)}…</span></li>`).join('') + '</ul>';
+          target.querySelectorAll('[data-fetch]').forEach(a => { a.addEventListener('click', (e) => { e.preventDefault(); fetchAndShowObject(a.dataset.fetch); }); });
+        } else if (obj.type === 'blob') {
+          const body = obj.content && obj.content.body != null ? obj.content.body : JSON.stringify(obj.content, null, 2);
+          target.innerHTML = (resultEl ? '' : '<div class="section"><h2>Object</h2></div>') + '<pre class="prompt-body">' + escapeHtml(body) + '</pre>';
+        } else {
+          target.innerHTML = (resultEl ? '' : '<div class="section"><h2>Object</h2></div>') + '<pre class="prompt-body">' + escapeHtml(JSON.stringify(obj, null, 2)) + '</pre>';
+        }
+      } catch (err) {
+        (resultEl || detail).innerHTML = (resultEl ? '' : '') + '<p class="error">' + escapeHtml(err.message) + '</p>';
+      }
+    }
+
+    (async () => {
+      strip.innerHTML = '<span class="loading">Loading log…</span>';
+      try {
+        const log = await api('/api/log');
+        strip.innerHTML = '';
+        if (!log.length) { strip.innerHTML = '<p class="empty-detail">No commits.</p>'; return; }
+        log.forEach(c => {
+          const card = document.createElement('div');
+          card.className = 'commit-card';
+          card.innerHTML = `<div class="commit-hash">${c.hash.slice(0,12)}…</div><div class="commit-msg">${escapeHtml(c.message.split('\n')[0] || '(no message)')}</div><div class="commit-meta">${escapeHtml(c.author)}</div>`;
+          card.addEventListener('click', async () => {
+            strip.querySelectorAll('.commit-card').forEach(x => x.classList.remove('selected'));
+            card.classList.add('selected');
+            detail.innerHTML = '<span class="loading">Loading…</span>';
+            let program = null;
+            try {
+              program = await api('/api/object/' + c.program);
+            } catch (_) {}
+            renderCommitDetail(c, program);
+          });
+          strip.appendChild(card);
+        });
+      } catch (err) {
+        strip.innerHTML = '<p class="error">' + escapeHtml(err.message) + '</p>';
+      }
+    })();
+  </script>
+</body>
+</html>

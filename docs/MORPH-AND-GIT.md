@@ -22,8 +22,9 @@ You now have:
 - `.git/` — Git’s object store and refs
 - `.morph/` — Morph’s object store and refs
 - Your source files — shared working tree
+- **`.morphignore`** — paths Morph excludes from `status` and `add` (same syntax as `.gitignore`; see [v0-spec.md](v0-spec.md) §3)
 
-Since Morph uses only `.morph/`, the separation from Git is even cleaner: each system touches only its own dot-directory.
+Since Morph uses only `.morph/`, the separation from Git is even cleaner: each system touches only its own dot-directory. You can keep `.gitignore` and `.morphignore` in sync (e.g. both ignoring `target/`, `node_modules/`) or let them differ if you want Morph to track something Git ignores (or vice versa).
 
 ---
 

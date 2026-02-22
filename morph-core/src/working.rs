@@ -1,9 +1,11 @@
 //! Working-space operations: create blobs from files, materialize, status, add.
 
+use crate::morphignore::{is_ignored, load_morphignore};
 use crate::objects::{Blob, EvalSuite, MorphObject, Program};
 use crate::Hash;
 use crate::store::{MorphError, Store};
 use crate::content_hash;
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use std::path::Path;
 
 /// Find repository root by walking up from `from` until we find a directory containing `.morph`.
@@ -29,10 +31,14 @@ pub fn blob_from_prompt_file(path: &Path) -> Result<MorphObject, MorphError> {
     }))
 }
 
-/// Create a Blob from file with given kind. Content is {"body": "<utf8 contents>"}.
+/// Create a Blob from file with given kind.
+/// Content is {"body": "<utf8 contents>"} for text, or {"body": "<base64>", "encoding": "base64"} for binary.
 pub fn blob_from_file(path: &Path, kind: &str) -> Result<MorphObject, MorphError> {
-    let body = std::fs::read_to_string(path)?;
-    let content = serde_json::json!({ "body": body });
+    let bytes = std::fs::read(path)?;
+    let content = match std::str::from_utf8(&bytes) {
+        Ok(s) => serde_json::json!({ "body": s }),
+        Err(_) => serde_json::json!({ "body": BASE64.encode(&bytes), "encoding": "base64" }),
+    };
     Ok(MorphObject::Blob(Blob {
         kind: kind.to_string(),
         content,
@@ -40,22 +46,26 @@ pub fn blob_from_file(path: &Path, kind: &str) -> Result<MorphObject, MorphError
 }
 
 /// Materialize a Blob from the store to a file path. Extracts "body" from content or whole content as JSON string.
+/// If content has "encoding": "base64", decodes body and writes raw bytes.
 pub fn materialize_blob(store: &dyn Store, hash: &Hash, dest: &Path) -> Result<(), MorphError> {
     let obj = store.get(hash)?;
     let blob = match &obj {
         MorphObject::Blob(b) => b,
         _ => return Err(MorphError::Serialization("object is not a blob".into())),
     };
-    let body = blob
-        .content
-        .get("body")
-        .and_then(|v| v.as_str())
-        .map(String::from)
-        .unwrap_or_else(|| serde_json::to_string(&blob.content).unwrap_or_default());
+    let body_str: std::borrow::Cow<str> = match blob.content.get("body").and_then(|v| v.as_str()) {
+        Some(s) => std::borrow::Cow::Borrowed(s),
+        None => std::borrow::Cow::Owned(serde_json::to_string(&blob.content).unwrap_or_default()),
+    };
+    let bytes: Vec<u8> = if blob.content.get("encoding").and_then(|v| v.as_str()) == Some("base64") {
+        BASE64.decode(body_str.as_ref().as_bytes()).map_err(|e| MorphError::Serialization(format!("invalid base64: {}", e)))?
+    } else {
+        body_str.as_bytes().to_vec()
+    };
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(dest, body)?;
+    std::fs::write(dest, bytes)?;
     Ok(())
 }
 
@@ -120,10 +130,12 @@ fn resolve_morph_paths(repo_root: &Path) -> (std::path::PathBuf, std::path::Path
 }
 
 /// Compute status: scan the working directory and `.morph/prompts/`, `.morph/evals/`.
-/// Files inside `.morph/` internals (objects, refs, etc.) are excluded.
+/// Files inside `.morph/` internals (objects, refs, etc.) and paths matching `.morphignore` are excluded.
 pub fn status(store: &dyn Store, repo_root: &Path) -> Result<Vec<StatusEntry>, MorphError> {
     let mut entries = Vec::new();
+    let canonical_root = repo_root.canonicalize().unwrap_or_else(|_| repo_root.to_path_buf());
     let (morph_dir, morph_prompts, morph_evals) = resolve_morph_paths(repo_root);
+    let morphignore = load_morphignore(&canonical_root);
 
     for entry in walkdir::WalkDir::new(repo_root)
         .min_depth(1)
@@ -131,7 +143,10 @@ pub fn status(store: &dyn Store, repo_root: &Path) -> Result<Vec<StatusEntry>, M
         .filter_entry(|e| {
             let p = e.path();
             let canonical = p.canonicalize().unwrap_or(p.to_path_buf());
-            canonical != morph_dir
+            if canonical == morph_dir {
+                return false;
+            }
+            !is_ignored(morphignore.as_ref(), &canonical_root, &canonical, e.file_type().is_dir())
         })
         .filter_map(|e| e.ok())
     {
@@ -139,6 +154,10 @@ pub fn status(store: &dyn Store, repo_root: &Path) -> Result<Vec<StatusEntry>, M
             continue;
         }
         let path = entry.path();
+        let canonical = path.canonicalize().unwrap_or(path.to_path_buf());
+        if is_ignored(morphignore.as_ref(), &canonical_root, &canonical, false) {
+            continue;
+        }
         let kind = classify_file(path, &morph_prompts, &morph_evals);
         if let Some(obj) = object_from_file(path, kind).ok() {
             let hash = content_hash(&obj)?;
@@ -158,12 +177,20 @@ pub fn status(store: &dyn Store, repo_root: &Path) -> Result<Vec<StatusEntry>, M
         for entry in walkdir::WalkDir::new(dir_path)
             .min_depth(1)
             .into_iter()
+            .filter_entry(|e| {
+                let canonical = e.path().canonicalize().unwrap_or(e.path().to_path_buf());
+                !is_ignored(morphignore.as_ref(), &canonical_root, &canonical, e.file_type().is_dir())
+            })
             .filter_map(|e| e.ok())
         {
             if !entry.file_type().is_file() {
                 continue;
             }
             let path = entry.path();
+            let canonical = path.canonicalize().unwrap_or(path.to_path_buf());
+            if is_ignored(morphignore.as_ref(), &canonical_root, &canonical, false) {
+                continue;
+            }
             let kind = classify_file(path, &morph_prompts, &morph_evals);
             if let Some(obj) = object_from_file(path, kind).ok() {
                 let hash = content_hash(&obj)?;
@@ -191,7 +218,8 @@ pub fn add_paths(
     paths: &[std::path::PathBuf],
 ) -> Result<Vec<Hash>, MorphError> {
     let (morph_dir, morph_prompts, morph_evals) = resolve_morph_paths(repo_root);
-    let canonical_root = repo_root.canonicalize().unwrap_or(repo_root.to_path_buf());
+    let canonical_root = repo_root.canonicalize().unwrap_or_else(|_| repo_root.to_path_buf());
+    let morphignore = load_morphignore(&canonical_root);
     let mut hashes = Vec::new();
 
     for p in paths {
@@ -202,19 +230,52 @@ pub fn add_paths(
             let is_repo_root = full == canonical_root || p.as_os_str() == ".";
 
             if is_repo_root {
-                add_directory(&full, &morph_dir, &morph_prompts, &morph_evals, store, &mut hashes, true)?;
+                add_directory(
+                    &full,
+                    &morph_dir,
+                    &morph_prompts,
+                    &morph_evals,
+                    morphignore.as_ref(),
+                    &canonical_root,
+                    store,
+                    &mut hashes,
+                    true,
+                )?;
                 for md in &[&morph_prompts, &morph_evals] {
                     if md.is_dir() {
-                        add_directory(md, &morph_dir, &morph_prompts, &morph_evals, store, &mut hashes, false)?;
+                        add_directory(
+                            md,
+                            &morph_dir,
+                            &morph_prompts,
+                            &morph_evals,
+                            morphignore.as_ref(),
+                            &canonical_root,
+                            store,
+                            &mut hashes,
+                            false,
+                        )?;
                     }
                 }
             } else if is_morph_internal(&full, &morph_dir, &morph_prompts, &morph_evals) {
                 continue;
             } else {
-                add_directory(&full, &morph_dir, &morph_prompts, &morph_evals, store, &mut hashes, true)?;
+                add_directory(
+                    &full,
+                    &morph_dir,
+                    &morph_prompts,
+                    &morph_evals,
+                    morphignore.as_ref(),
+                    &canonical_root,
+                    store,
+                    &mut hashes,
+                    true,
+                )?;
             }
         } else if full.is_file() {
             if is_morph_internal(&full, &morph_dir, &morph_prompts, &morph_evals) {
+                continue;
+            }
+            if is_ignored(morphignore.as_ref(), &canonical_root, &full, false) {
                 continue;
             }
             let kind = classify_file(&full, &morph_prompts, &morph_evals);
@@ -230,6 +291,8 @@ fn add_directory(
     morph_dir: &Path,
     morph_prompts: &Path,
     morph_evals: &Path,
+    morphignore: Option<&ignore::gitignore::Gitignore>,
+    repo_root: &Path,
     store: &dyn Store,
     hashes: &mut Vec<Hash>,
     skip_morph: bool,
@@ -244,7 +307,8 @@ fn add_directory(
                     return false;
                 }
             }
-            true
+            let canonical = e.path().canonicalize().unwrap_or(e.path().to_path_buf());
+            !is_ignored(morphignore, repo_root, &canonical, e.file_type().is_dir())
         })
         .filter_map(|e| e.ok())
     {
@@ -254,6 +318,9 @@ fn add_directory(
         let path = entry.path();
         let canonical = path.canonicalize().unwrap_or(path.to_path_buf());
         if is_morph_internal(&canonical, morph_dir, morph_prompts, morph_evals) {
+            continue;
+        }
+        if is_ignored(morphignore, repo_root, &canonical, false) {
             continue;
         }
         let kind = classify_file(&canonical, morph_prompts, morph_evals);
@@ -361,6 +428,23 @@ mod tests {
     }
 
     #[test]
+    fn status_excludes_morphignore_paths() {
+        let (dir, store) = setup_repo();
+        let root = dir.path();
+        std::fs::write(root.join("included.txt"), "yes").unwrap();
+        std::fs::write(root.join("skip.txt"), "no").unwrap();
+        std::fs::create_dir_all(root.join("vendor")).unwrap();
+        std::fs::write(root.join("vendor/lib.rs"), "ignored").unwrap();
+        std::fs::write(root.join(".morphignore"), "skip.txt\nvendor/\n").unwrap();
+
+        let entries = status(&store, root).unwrap();
+        let paths: Vec<_> = entries.iter().map(|e| e.path.to_string_lossy().into_owned()).collect();
+        assert!(paths.iter().any(|p| p.ends_with("included.txt")), "should see included.txt, got: {:?}", paths);
+        assert!(!paths.iter().any(|p| p.ends_with("skip.txt")), "should not see skip.txt, got: {:?}", paths);
+        assert!(!paths.iter().any(|p| p.contains("vendor")), "should not see vendor/, got: {:?}", paths);
+    }
+
+    #[test]
     fn status_after_add_shows_tracked() {
         let (dir, store) = setup_repo();
         let root = dir.path();
@@ -391,6 +475,27 @@ mod tests {
             }
             _ => panic!("expected blob, got: {:?}", obj),
         }
+    }
+
+    #[test]
+    fn add_and_materialize_binary_blob() {
+        let (dir, store) = setup_repo();
+        let root = dir.path();
+        let binary: Vec<u8> = (0u8..=255).collect();
+        std::fs::write(root.join("data.bin"), &binary).unwrap();
+
+        let hashes = add_paths(&store, root, &[std::path::PathBuf::from("data.bin")]).unwrap();
+        assert_eq!(hashes.len(), 1);
+        let obj = store.get(&hashes[0]).unwrap();
+        let blob = match &obj {
+            MorphObject::Blob(b) => b,
+            _ => panic!("expected blob"),
+        };
+        assert_eq!(blob.content.get("encoding").and_then(|v| v.as_str()), Some("base64"));
+
+        let dest = root.join("restored.bin");
+        materialize_blob(&store, &hashes[0], &dest).unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), binary);
     }
 
     #[test]
@@ -462,5 +567,25 @@ mod tests {
 
         let hashes = add_paths(&store, root, &[std::path::PathBuf::from("src")]).unwrap();
         assert_eq!(hashes.len(), 2, "should stage 2 files from src/");
+    }
+
+    #[test]
+    fn add_respects_morphignore() {
+        let (dir, store) = setup_repo();
+        let root = dir.path();
+        std::fs::write(root.join("staged.txt"), "staged").unwrap();
+        std::fs::write(root.join("ignored.txt"), "ignored").unwrap();
+        std::fs::write(root.join(".morphignore"), "ignored.txt\n").unwrap();
+
+        let hashes = add_paths(&store, root, &[std::path::PathBuf::from(".")]).unwrap();
+        // staged.txt and .morphignore are staged; ignored.txt is not
+        assert!(hashes.len() >= 1 && hashes.len() <= 2, "staged.txt (and optionally .morphignore), got {}", hashes.len());
+        let staged: Vec<String> = hashes
+            .iter()
+            .filter_map(|h| store.get(h).ok())
+            .filter_map(|o| match &o { MorphObject::Blob(b) => b.content.get("body").and_then(|v| v.as_str()).map(String::from), _ => None })
+            .collect();
+        assert!(staged.iter().any(|s| s == "staged"), "staged.txt should be in store, got: {:?}", staged);
+        assert!(!staged.iter().any(|s| s == "ignored"), "ignored.txt should not be staged");
     }
 }

@@ -62,10 +62,26 @@ impl Hash {
     }
 }
 
-/// Compute SHA-256 hash of canonical JSON bytes for a Morph object.
+/// Compute SHA-256 hash of canonical JSON bytes for a Morph object (0.0/0.1 format).
 pub fn content_hash(obj: &crate::objects::MorphObject) -> Result<Hash, crate::store::MorphError> {
     let json = canonical_json(obj)?;
     let digest = Sha256::digest(json.as_bytes());
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(&digest);
+    Ok(Hash(arr))
+}
+
+/// Compute Git-format content hash for a Morph object (0.2 format).
+/// Hash = SHA-256 of "blob " + decimal_len + "\0" + canonical_json.
+/// This matches the hash gix produces when writing a blob.
+pub fn content_hash_git(obj: &crate::objects::MorphObject) -> Result<Hash, crate::store::MorphError> {
+    let json = canonical_json(obj)?;
+    let bytes = json.as_bytes();
+    let header = format!("blob {}\0", bytes.len());
+    let mut hasher = Sha256::new();
+    hasher.update(header.as_bytes());
+    hasher.update(bytes);
+    let digest = hasher.finalize();
     let mut arr = [0u8; 32];
     arr.copy_from_slice(&digest);
     Ok(Hash(arr))
@@ -137,5 +153,40 @@ mod tests {
         assert!(Hash::from_hex(&"f".repeat(63)).is_err());
         assert!(Hash::from_hex(&"g".repeat(64)).is_err());
         assert!(Hash::from_hex(&"0".repeat(64)).is_ok());
+    }
+
+    // --- content_hash_git (Option B / 0.2) ---
+
+    #[test]
+    fn content_hash_git_deterministic() {
+        let blob = MorphObject::Blob(Blob {
+            kind: "prompt".into(),
+            content: serde_json::json!({"x": 1}),
+        });
+        let h1 = content_hash_git(&blob).unwrap();
+        let h2 = content_hash_git(&blob).unwrap();
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn content_hash_git_different_from_content_hash() {
+        let blob = MorphObject::Blob(Blob {
+            kind: "prompt".into(),
+            content: serde_json::json!({"x": 1}),
+        });
+        let h_legacy = content_hash(&blob).unwrap();
+        let h_git = content_hash_git(&blob).unwrap();
+        assert_ne!(h_legacy, h_git, "Git format includes blob header so hashes differ");
+    }
+
+    #[test]
+    fn content_hash_git_roundtrip_same_hash() {
+        let blob = MorphObject::Blob(Blob {
+            kind: "prompt".into(),
+            content: serde_json::json!({"template": "Hello {{name}}"}),
+        });
+        let json = canonical_json(&blob).unwrap();
+        let parsed: MorphObject = serde_json::from_str(&json).unwrap();
+        assert_eq!(content_hash_git(&blob).unwrap(), content_hash_git(&parsed).unwrap());
     }
 }
