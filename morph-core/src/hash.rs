@@ -129,4 +129,13 @@ mod tests {
         let parsed: MorphObject = serde_json::from_str(&json).unwrap();
         assert_eq!(content_hash(&tree).unwrap(), content_hash(&parsed).unwrap());
     }
+
+    #[test]
+    fn from_hex_invalid_rejected() {
+        assert!(Hash::from_hex("").is_err());
+        assert!(Hash::from_hex("ab").is_err());
+        assert!(Hash::from_hex(&"f".repeat(63)).is_err());
+        assert!(Hash::from_hex(&"g".repeat(64)).is_err());
+        assert!(Hash::from_hex(&"0".repeat(64)).is_ok());
+    }
 }

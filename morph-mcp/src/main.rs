@@ -15,24 +15,47 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use std::path::PathBuf;
 
+/// Resolve default workspace: env MORPH_WORKSPACE, then CURSOR_WORKSPACE_FOLDER / WORKSPACE_FOLDER, then optional first arg.
+fn default_workspace_from_env_and_args(args: &[String]) -> Option<PathBuf> {
+    std::env::var_os("MORPH_WORKSPACE")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("CURSOR_WORKSPACE_FOLDER").map(PathBuf::from))
+        .or_else(|| std::env::var_os("WORKSPACE_FOLDER").map(PathBuf::from))
+        .or_else(|| {
+            // First non-flag arg can be workspace path (e.g. morph-mcp /path or morph-mcp .)
+            args.get(1).filter(|a| !a.starts_with('-')).map(PathBuf::from)
+        })
+}
+
 #[derive(Clone)]
 pub struct MorphServer {
     tool_router: ToolRouter<Self>,
+    /// Default workspace when tool call omits workspace_path (from env or args at startup).
+    default_workspace: Option<PathBuf>,
 }
 
 #[tool_router]
 impl MorphServer {
-    fn new() -> Self {
+    fn new(default_workspace: Option<PathBuf>) -> Self {
         Self {
             tool_router: Self::tool_router(),
+            default_workspace,
         }
     }
 
     fn repo_store(&self, workspace_path: Option<&str>) -> Result<(PathBuf, FsStore), String> {
         let start = workspace_path
             .map(PathBuf::from)
+            .or_else(|| self.default_workspace.clone())
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-        let repo_root = find_repo(&start).ok_or_else(|| "not a morph repository".to_string())?;
+        let repo_root = find_repo(&start).ok_or_else(|| {
+            let tried = start.canonicalize().unwrap_or(start).display().to_string();
+            format!(
+                "not a morph repository (no .morph/ found from {}). \
+                Fix: (1) run 'morph init' in the project root, or (2) set MORPH_WORKSPACE in .cursor/mcp.json to the project root, or (3) pass workspace_path with the full path to the project root.",
+                tried
+            )
+        })?;
         let store = FsStore::new(repo_root.join(".morph"));
         Ok((repo_root, store))
     }
@@ -92,7 +115,7 @@ impl MorphServer {
         Ok(CallToolResult::success(vec![Content::text(hash.to_string())]))
     }
 
-    #[tool(description = "Record a single prompt/response session into Morph (Run + Trace). Use this so the agent can send the full model response text. Optional: workspace_path, model_name, agent_id.")]
+    #[tool(description = "Record a single prompt/response session into Morph (Run + Trace). Call this at the end of every task/turn with the user's exact prompt and your complete response text (do not truncate). Optional: workspace_path (if tool reports 'not a morph repository'), model_name, agent_id.")]
     async fn morph_record_session(
         &self,
         params: Parameters<RecordSessionParams>,
@@ -358,7 +381,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             "morph-mcp {}\n\n\
              MCP server for Morph. Not meant to be run directly from a terminal.\n\
              Cursor (or another MCP host) starts this process and talks to it over stdio.\n\n\
-             Usage: configured in Cursor MCP settings (e.g. ~/.cursor/mcp.json)\n\
+             Usage: configured in Cursor MCP settings (e.g. ~/.cursor/mcp.json).\n\
+             Optional: set MORPH_WORKSPACE to the repo root, or pass it as first arg.\n\
              Verify install: morph-mcp --version",
             env!("CARGO_PKG_VERSION")
         );
@@ -369,7 +393,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         return Ok(());
     }
 
-    let service = MorphServer::new()
+    let default_workspace = default_workspace_from_env_and_args(&args);
+    let service = MorphServer::new(default_workspace)
         .serve(stdio())
         .await
         .inspect_err(|e| eprintln!("morph-mcp error: {}", e))?;

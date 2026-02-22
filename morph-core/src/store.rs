@@ -243,4 +243,40 @@ mod tests {
         let read = store.ref_read("heads/main").unwrap();
         assert_eq!(read, Some(hash));
     }
+
+    #[test]
+    fn get_missing_returns_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("objects")).unwrap();
+        let store = FsStore::new(dir.path());
+        let hash = Hash::from_hex(&"0".repeat(64)).unwrap();
+        let err = store.get(&hash).unwrap_err();
+        assert!(matches!(err, MorphError::NotFound(_)));
+    }
+
+    #[test]
+    fn list_filters_by_object_type() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FsStore::new(dir.path());
+        let blob = MorphObject::Blob(Blob {
+            kind: "prompt".into(),
+            content: serde_json::json!({"body": "x"}),
+        });
+        let tree = MorphObject::Tree(Tree {
+            entries: vec![TreeEntry {
+                name: "f".into(),
+                hash: "0".repeat(64),
+            }],
+        });
+        let blob_hash = store.put(&blob).unwrap();
+        let tree_hash = store.put(&tree).unwrap();
+
+        let blobs = store.list(ObjectType::Blob).unwrap();
+        assert!(blobs.contains(&blob_hash));
+        assert!(!blobs.contains(&tree_hash));
+
+        let trees = store.list(ObjectType::Tree).unwrap();
+        assert!(trees.contains(&tree_hash));
+        assert!(!trees.contains(&blob_hash));
+    }
 }

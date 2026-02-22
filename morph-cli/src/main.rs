@@ -111,6 +111,10 @@ enum Command {
         #[arg(long)]
         sub: Option<String>,
     },
+    /// Read a Morph object from a JSON file, store it, and print its content hash (for hook scripts)
+    HashObject {
+        path: PathBuf,
+    },
 }
 
 #[derive(clap::Subcommand)]
@@ -168,6 +172,8 @@ enum ProgramCmd {
     Show {
         hash: String,
     },
+    /// Print the identity program hash (and ensure it exists in the store). Use from repo root for hook scripts.
+    IdentityHash,
 }
 
 fn get_store() -> anyhow::Result<(PathBuf, FsStore)> {
@@ -212,6 +218,12 @@ fn main() -> anyhow::Result<()> {
                 let full = if path.is_absolute() { path } else { repo_root.join(&path) };
                 let obj = morph_core::program_from_file(&full)?;
                 let hash = store.put(&obj)?;
+                println!("{}", hash);
+            }
+            ProgramCmd::IdentityHash => {
+                let (_repo_root, store) = get_store()?;
+                let identity = morph_core::identity_program();
+                let hash = store.put(&identity)?;
                 println!("{}", hash);
             }
             ProgramCmd::Show { hash } => {
@@ -387,6 +399,14 @@ fn main() -> anyhow::Result<()> {
             for (h, a) in list {
                 println!("{} {} {} {}", h, a.kind, a.author, serde_json::to_string(&a.data).unwrap_or_default());
             }
+        }
+        Command::HashObject { path } => {
+            let (repo_root, store) = get_store()?;
+            let full = if path.is_absolute() { path } else { repo_root.join(&path) };
+            let json = std::fs::read_to_string(&full)?;
+            let obj: morph_core::MorphObject = serde_json::from_str(&json).map_err(|e| anyhow::anyhow!("invalid Morph object JSON: {}", e))?;
+            let hash = store.put(&obj)?;
+            println!("{}", hash);
         }
     }
     Ok(())

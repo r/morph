@@ -109,6 +109,30 @@ On macOS with a user install in `~/bin`, use `"/Users/yourusername/bin/morph-mcp
 
 4. **Restart Cursor** (or reload MCP) so it starts the `morph-mcp` process.
 
+**Optional: Default workspace (so the agent doesn't need to pass `workspace_path`)**  
+Cursor often starts the MCP server with a working directory that is *not* your project root, so tools can return "not a morph repository" unless the agent passes `workspace_path`. You can set the repo root once so all tools use it by default:
+
+- **Env var (recommended):** In your MCP config, set `MORPH_WORKSPACE` to the **absolute path** of the project that contains `.morph/`. Use **project-level** `.cursor/mcp.json` so each repo can point at itself:
+
+  ```json
+  {
+    "mcpServers": {
+      "morph": {
+        "command": "morph-mcp",
+        "args": [],
+        "env": {
+          "MORPH_WORKSPACE": "/Users/you/my-project"
+        }
+      }
+    }
+  }
+  ```
+  Replace `/Users/you/my-project` with your real project root (the folder that has `.morph/`). You can use a different path per machine; the important part is that it is absolute.
+
+- **First argument:** You can pass the workspace path as the first argument instead: `"args": ["/Users/you/my-project"]`. Same idea—use the absolute path to the repo root.
+
+The server uses, in order: the `workspace_path` argument from the tool call (if present), then `MORPH_WORKSPACE`, then `CURSOR_WORKSPACE_FOLDER` / `WORKSPACE_FOLDER` if set by the host, then the process current directory. Setting `MORPH_WORKSPACE` in project-level config makes recording work without the agent having to pass `workspace_path`.
+
 **Troubleshooting (ENOENT):** If Cursor logs `spawn .../morph-mcp ENOENT`, the `command` path does not exist or is wrong. Use the **full path** to the binary (e.g. `/usr/local/bin/morph-mcp` or `$HOME/.cargo/bin/morph-mcp`). Do not use `~/.cursor/bin/morph-mcp` unless you have put the binary there. After fixing the config, restart Cursor or reload MCP.
 
 ---
@@ -159,7 +183,7 @@ From the **project root** (the directory that contains `.morph/`):
 Recording only happens when something **calls** `morph_record_session`. The agent does not call it automatically unless (1) you have added a Cursor rule that tells the agent to call it when it finishes a task (§4.3, Rule A), or (2) you explicitly asked in that chat (e.g. "call morph_record_session with this prompt and your response"). If the agent didn't invoke the tool, nothing is written.
 
 **Nothing in `.morph/prompts/` — is the rule working?**  
-A successful `morph_record_session` call stores a prompt Blob into `.morph/prompts/<hash>.json` as well as Run/Trace in `.morph/objects/`, `.morph/runs/`, `.morph/traces/`. If `.morph/prompts/` (and `.morph/runs/`) are empty, the agent is likely not calling the tool. Ensure the rule in `.cursor/rules/morph-record.mdc` is present and that the agent is instructed to invoke the tool as the last step; if the tool returns "not a morph repository", have the agent pass **workspace_path** with the full path to the project root that contains `.morph/`.
+A successful `morph_record_session` call stores a prompt Blob into `.morph/prompts/<hash>.json` as well as Run/Trace in `.morph/objects/`, `.morph/runs/`, `.morph/traces/`. If `.morph/prompts/` (and `.morph/runs/`) are empty, the agent is likely not calling the tool. Ensure the rule in `.cursor/rules/morph-record.mdc` is present and that the agent is instructed to invoke the tool as the last step. If the tool returns "not a morph repository", either have the agent pass **workspace_path** with the full path to the project root, or set **MORPH_WORKSPACE** in your MCP config (§2) so the server knows the repo root without the agent passing it.
 
 To record a session after the fact you can:
 
@@ -320,21 +344,35 @@ To have the agent record a session when it finishes a task, add a Cursor rule th
 ---
 description: Record Morph sessions with full prompt and response when a task is done
 globs: ["**/*"]
+alwaysApply: true
 ---
 
 When you complete a substantive task in this project and the project has a `.morph` directory:
 
-1. Call the MCP tool **morph_record_session** with:
-   - **prompt**: the user's exact request (the message that started this turn or task).
-   - **response**: your full reply text (what you wrote back to the user). Do not truncate; include the complete response so it is stored in Morph.
-   Optionally set model_name, agent_id, or **workspace_path** (full path to the project root that contains `.morph/`) if needed. If the tool returns "not a morph repository", set **workspace_path** to the workspace root path.
-
-2. Do this as the last step before you conclude your reply (e.g. after summarizing what you did).
+1. Call the MCP tool **morph_record_session** as the **last action** before you end your reply. Do not conclude your turn without calling it.
+2. **Parameters:** **prompt** = the user's exact request; **response** = your **entire** reply (first to last character—do not truncate or summarize). If the tool returns "not a morph repository", set **workspace_path** to the full path of the project root, or set MORPH_WORKSPACE in `.cursor/mcp.json` (§2).
 
 Do not skip this step when the user asked for code or changes and you have finished the work.
 ```
 
 That gives you a Run and a Trace (one prompt event, one response event) in Morph with the full response text.
+
+**Making session recording reliable:** Recording depends on the agent actually calling the tool. To make it more stable:
+
+1. **Set `alwaysApply: true`** in the rule's frontmatter so Cursor is supposed to include the rule in every chat. Rules with only `globs` or "Apply Intelligently" are agent-decided and may be skipped.
+2. **Set a default workspace** so the tool doesn't fail with "not a morph repository". In the **project's** `.cursor/mcp.json`, set `env.MORPH_WORKSPACE` to the **absolute path** of the project root (the folder that contains `.morph/`). Then the MCP server always knows the repo even when its process cwd is wrong. See §2 (Optional: Default workspace).
+3. **Keep the rule in `.cursor/rules/`** with `globs: ["**/*"]` so it applies in every conversation. If the agent still doesn't call the tool, remind it in chat (e.g. "When you're done, record this session with morph_record_session").
+4. **If a turn wasn't recorded**, you can record after the fact: from a new chat, ask the agent to call `morph_record_session` with the previous prompt and response (paste them), or from the project root run:  
+   `morph run record-session --prompt "..." --response "..."`
+
+**Debugging rule application (do rules fire?):** Cursor does not guarantee that rules are applied every time, and there is no built-in way to see the raw context or which rules were injected.
+
+- **Rule types:** Only **Always Apply** (`alwaysApply: true`) is intended to run on every chat; even that can sometimes be skipped on the first request. Rules that use only globs or "Apply Intelligently" are chosen by the agent and are non-deterministic.
+- **Check rule status:** **Cursor → Settings → Rules, Commands** shows project rules and whether they're enabled. The "Active Rules" tooltip in chat is buggy: it only lists always-apply rules, not glob- or description-based ones.
+- **Verify frontmatter:** The `.mdc` file must have valid YAML frontmatter between `---` markers. A missing closing `---` or invalid YAML can cause the rule to be ignored with no error.
+- **Probe in chat:** To see if the rule was loaded, ask the agent: "Which project rules do you have in context? List their names or key instructions." If the morph rule is listed, it was injected; if not, it may have been skipped.
+- **Fallback:** Manually mention the rule in chat (e.g. `@morph-record` or "follow the morph-record rule") to force it into context when recording is critical.
+
 
 #### Rule B: Call morph_record_run when you finish (file-based)
 
@@ -390,7 +428,7 @@ For ad‑hoc Cursor work you can use the **identity program** and a minimal **ev
 
 ## 6. Automatic recording with Cursor hooks
 
-Cursor **hooks** run scripts when certain events happen. They receive JSON on stdin (e.g. `conversation_id`, `generation_id`, `prompt`, `workspace_roots`). You can use them to record sessions into Morph without relying on the agent.
+Cursor **hooks** run scripts when certain events happen. The **Cursor app** invokes them at those events—the agent (LLM) never sees or decides whether a hook runs, so **the agent cannot ignore a hook**. They receive JSON on stdin (e.g. `conversation_id`, `generation_id`, `prompt`, `workspace_roots`). You can use them to record sessions into Morph without relying on the agent.
 
 **Relevant events:**
 
@@ -427,17 +465,23 @@ Cursor **hooks** run scripts when certain events happen. They receive JSON on st
 
 **Limitation:** Hook payloads do not include the model’s response text. So your Trace will have accurate “prompt” events and a “task completed” (or placeholder “response”) event, but not the actual assistant text. **To get the full model response text**, use agent-driven recording: a rule that tells the agent to call **morph_record_session** with the user's prompt and the agent's full reply (§4.3).
 
+**Debug and log files (morph repo):** The hook scripts in the morph repo write logs under `.morph/hooks/` so you can separate "Cursor called the script" from "Morph accepted the run." Check **`.morph/hooks/logs/cursor-invoke.log`** for one line per hook run (timestamp, hook name, conversation_id)—if lines appear there, Cursor is invoking the hooks. Check **`.morph/hooks/logs/morph-record.log`** for one line per successful record (conversation_id, run_hash)—if lines appear there, the script called `morph run record` and Morph stored the run. Inspect **`.morph/hooks/debug/last-beforeSubmitPrompt.json`** and **`last-stop.json`** to see the last payload Cursor sent. See `cursor/README.md` in the morph repo for the full table.
+
+**Where hook scripts live (morph repo):** All Cursor support is in the tree: **`cursor/`** holds the canonical hook scripts and a README; **`.cursor/hooks.json`** points at `../cursor/morph-record-prompt.sh` and `../cursor/morph-record-stop.sh`. Use the same layout in your own repo if you want one directory that contains everything needed for Cursor (hooks + optional rules/MCP).
+
 **Making it easy:** A Cursor **plugin** could bundle (1) these hook scripts, (2) the Morph MCP server config, and (3) a small helper to compute Trace hashes, so that “install Morph plugin” gives you automatic session recording and MCP in one step. See the next section.
 
 ---
 
-## 7. Can we build a plugin that intercepts agent windows?
+## 7. Can we build a plugin or VS Code extension that hooks into the agent lifecycle?
 
-**Short answer:** There is no public Cursor (or VS Code) API to “intercept” or read the contents of every agent/composer message from a separate process or UI overlay. Cursor does not expose a way for a plugin to subscribe to raw chat messages as they are sent or received.
+**Short answer:** There is no public Cursor (or VS Code) API to "intercept" or read the contents of every agent/composer message from a separate process or UI overlay. Cursor does not expose a way for a plugin or extension to subscribe to raw chat messages as they are sent or received.
+
+**VS Code extension?** Cursor runs VS Code extensions (same core). The standard [VS Code Chat Participant API](https://code.visualstudio.com/api/extension-guides/ai/chat) only lets you *add* your own participant (e.g. `@morph`): you see prompts and responses only when users talk to *your* participant. There is no documented API to subscribe to the *default* Cursor agent's traffic (e.g. `onDidSendPrompt` or "every agent turn"). So a VS Code extension cannot reliably capture all prompts and responses unless Cursor adds a custom extension API (none is documented as of now).
 
 **What you can do:**
 
-- **Hooks** (see §6) are the supported way to react to agent lifecycle. They fire when you submit a prompt (`beforeSubmitPrompt`), when a task stops (`stop`), and at other points (e.g. `afterFileEdit`, `beforeReadFile`). They receive structured JSON (conversation id, prompt text, file paths, etc.) on stdin. So “automatic recording” is implemented by **hook scripts** that build Run/Trace and call `morph run record` (or the MCP tool), not by intercepting the chat UI.
+- **Hooks** (see §6) are the supported way to react to agent lifecycle. The app runs them; the agent cannot ignore them. They fire when you submit a prompt (`beforeSubmitPrompt`), when a task stops (`stop`), and at other points (e.g. `afterFileEdit`, `beforeReadFile`). They receive structured JSON (conversation id, prompt text, file paths, etc.) on stdin. So “automatic recording” is implemented by **hook scripts** that build Run/Trace and call `morph run record` (or the MCP tool), not by intercepting the chat UI.
 
 - **Cursor plugins** (marketplace) can bundle **MCP servers**, **rules**, **commands**, and **hooks**. So you can build a “Morph” plugin that:
   - Registers the Morph MCP server (or points to it),

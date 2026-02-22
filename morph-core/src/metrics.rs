@@ -161,4 +161,40 @@ mod tests {
         parent.insert("acc".into(), 0.9);
         assert!(!check_dominance(&merged, &parent));
     }
+
+    #[test]
+    fn aggregate_empty_scores_err() {
+        let s: [f64; 0] = [];
+        assert!(aggregate(&s, "mean").is_err());
+    }
+
+    #[test]
+    fn aggregate_unknown_method_err() {
+        let s = [1.0, 2.0];
+        assert!(aggregate(&s, "unknown").is_err());
+    }
+
+    #[test]
+    fn aggregate_lower_ci_bound() {
+        let s = [1.0, 2.0, 3.0, 4.0, 5.0];
+        let out = aggregate(&s, "lower_ci_bound").unwrap();
+        assert!(out < 3.0 && out > 1.0);
+    }
+
+    #[test]
+    fn aggregate_suite_roundtrip() {
+        let suite = EvalSuite {
+            cases: vec![],
+            metrics: vec![
+                EvalMetric { name: "a".into(), aggregation: "mean".into(), threshold: 0.0 },
+                EvalMetric { name: "b".into(), aggregation: "min".into(), threshold: 0.0 },
+            ],
+        };
+        let mut per_case = BTreeMap::new();
+        per_case.insert("a".into(), vec![1.0, 2.0, 3.0]);
+        per_case.insert("b".into(), vec![5.0, 1.0, 3.0]);
+        let out = aggregate_suite(&per_case, &suite).unwrap();
+        assert!((out.get("a").copied().unwrap() - 2.0).abs() < 1e-9);
+        assert_eq!(out.get("b").copied().unwrap(), 1.0);
+    }
 }
