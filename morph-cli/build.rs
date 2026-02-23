@@ -91,6 +91,8 @@ enum Assertion {
     DirExists { path: String },
     #[serde(rename = "dir_not_exists")]
     DirNotExists { path: String },
+    #[serde(rename = "dir_not_empty")]
+    DirNotEmpty { path: String },
     #[serde(rename = "file_exists")]
     FileExists { path: String },
     #[serde(rename = "file_not_exists")]
@@ -334,6 +336,14 @@ fn emit_assertion(code: &mut String, a: &Assertion) {
                 code,
                 "    assert!(!path.join({:?}).exists(), \"{} should not exist\");",
                 path, path
+            )
+            .unwrap();
+        }
+        Assertion::DirNotEmpty { path } => {
+            writeln!(
+                code,
+                "    {{ let p = path.join({:?}); assert!(p.is_dir(), \"{} should be a directory\"); assert!(!std::fs::read_dir(&p).unwrap().next().is_none(), \"{} should not be empty\"); }}",
+                path, path, path
             )
             .unwrap();
         }

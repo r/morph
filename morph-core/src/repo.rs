@@ -40,7 +40,9 @@ pub fn init_repo(root: impl AsRef<Path>) -> Result<FsStore, MorphError> {
                 ".morph exists and is not a directory",
             )));
         }
-        return Ok(FsStore::new(&morph_dir));
+        return Err(MorphError::Serialization(
+            "already a morph repository (directory .morph exists)".into(),
+        ));
     }
 
     std::fs::create_dir_all(morph_dir.join(OBJECTS_DIR))?;
@@ -138,11 +140,17 @@ mod tests {
     }
 
     #[test]
-    fn init_idempotent_if_exists() {
+    fn init_errors_when_already_initialized() {
         let dir = tempfile::tempdir().unwrap();
         let _ = init_repo(dir.path()).unwrap();
-        let store2 = init_repo(dir.path()).unwrap();
-        assert!(store2.objects_dir().exists());
+        let second = init_repo(dir.path());
+        match &second {
+            Err(e) => {
+                assert!(matches!(e, MorphError::Serialization(_)));
+                assert!(e.to_string().contains("already a morph repository"));
+            }
+            Ok(_) => panic!("second init should error when .morph already exists"),
+        }
     }
 
     #[test]

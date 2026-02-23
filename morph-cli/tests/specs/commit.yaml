@@ -15,3 +15,53 @@
 
     - morph: [log]
       stdout_contains: first commit
+
+# Commit project files only (no prompt/response yet). Check filesystem and CLI.
+- name: commit_project_files_only
+  files:
+    foo.txt: "hello"
+    bar.txt: "world"
+    prog.json: '{"graph":{"nodes":[{"id":"n1","kind":"identity","ref":null,"params":{}}],"edges":[]},"prompts":[],"eval_suite":null,"provenance":null}'
+    .morph/evals/e.json: '{"cases":[],"metrics":[{"name":"acc","aggregation":"mean","threshold":0.0}]}'
+  steps:
+    - morph: [add, foo.txt, bar.txt]
+    - morph: [program, create, prog.json]
+      capture: prog_hash
+    - morph: [add, .morph/evals/e.json]
+      capture_first_line: suite_hash
+    - morph: [commit, -m, first commit, --program, "${prog_hash}", --eval-suite, "${suite_hash}", --metrics, "{}"]
+      capture: commit_hash
+      assert_hash: true
+    - morph: [log]
+      stdout_contains: first commit
+  assert:
+    - kind: file_exists
+      path: .morph/refs/heads/main
+
+# Record session then commit files. Check filesystem and CLI.
+- name: record_session_then_commit
+  files:
+    code.txt: "fn main() {}"
+    prog.json: '{"graph":{"nodes":[{"id":"n1","kind":"identity","ref":null,"params":{}}],"edges":[]},"prompts":[],"eval_suite":null,"provenance":null}'
+    .morph/evals/e.json: '{"cases":[],"metrics":[{"name":"acc","aggregation":"mean","threshold":0.0}]}'
+  steps:
+    - morph: [run, record-session, --prompt, "Fix the bug", --response, "Done."]
+      capture: run_hash
+      assert_hash: true
+    - morph: [add, code.txt]
+    - morph: [program, create, prog.json]
+      capture: prog_hash
+    - morph: [add, .morph/evals/e.json]
+      capture_first_line: suite_hash
+    - morph: [commit, -m, with session, --program, "${prog_hash}", --eval-suite, "${suite_hash}", --metrics, "{}"]
+      capture: commit_hash
+      assert_hash: true
+    - morph: [log]
+      stdout_contains: with session
+  assert:
+    - kind: dir_not_empty
+      path: .morph/runs
+    - kind: dir_not_empty
+      path: .morph/prompts
+    - kind: file_exists
+      path: .morph/refs/heads/main

@@ -30,3 +30,24 @@
   steps:
     - morph: [init, "${repo}"]
       stdout_contains: "Initialized Morph repository"
+
+# After fresh init, CLI commands in repo root should behave sensibly (Cursor perspective).
+- name: init_then_cli_sane
+  init: false
+  steps:
+    - morph: [init, "${repo}"]
+      stdout_contains: "Initialized Morph repository"
+    - morph: [status]
+      stdout_contains: "No files"
+    - morph: [log]
+      # No commits yet; log is empty (success, no output)
+
+# Init in already-initialized directory must error with a clear message.
+- name: init_already_initialized
+  init: false
+  steps:
+    - morph: [init, "${repo}"]
+      stdout_contains: "Initialized Morph repository"
+    - morph: [init, "${repo}"]
+      expect_exit: 1
+      stderr_contains: "already a morph repository"

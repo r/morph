@@ -1,0 +1,16 @@
+# Agent prompt+response recording on a fresh init (Cursor/MCP perspective).
+# Verifies filesystem and CLI: record-session, then sanity-check with status.
+- name: record_session_on_fresh_init
+  steps:
+    - morph: [run, record-session, --prompt, "What is 2+2?", --response, "4"]
+      capture: run_hash
+      assert_hash: true
+    - morph: [status]
+      stdout_contains: "prompts"
+  assert:
+    - kind: dir_not_empty
+      path: .morph/prompts
+    - kind: dir_not_empty
+      path: .morph/runs
+    - kind: dir_not_empty
+      path: .morph/traces
