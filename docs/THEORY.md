@@ -533,12 +533,12 @@ A Morph commit freezes:
 - A **certificate vector** \( v \in V_T \)
 - **Evidence references** (eval runs, raw observations, traces)
 - **Environment constraints** (runner/toolchain/model assumptions)
-- Optionally: **artifact tree hashes** (materialized outputs for diff/review)
+- **File tree hash** — the root hash of the working directory tree at commit time (same role as Git's tree)
 
 Conceptually:
 
 \[
-\mathrm{Commit} = (\mathrm{program\_id},\; T,\; v,\; \mathrm{env\_constraints},\; \mathrm{evidence\_refs},\; \mathrm{artifact\_refs?})
+\mathrm{Commit} = (\mathrm{program\_id},\; T,\; v,\; \mathrm{env\_constraints},\; \mathrm{evidence\_refs},\; \mathrm{tree\_hash})
 \]
 
 Commits are claims. Evidence is receipts.

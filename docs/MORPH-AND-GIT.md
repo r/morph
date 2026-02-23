@@ -1,6 +1,6 @@
 # Running Morph and Git Side by Side
 
-You can use Morph and Git in the **same directory**: Morph tracks behavioral versions (programs, runs, eval contracts); Git tracks the same tree for backup, collaboration, or CI. They do not conflict.
+You can use Morph and Git in the **same directory**: Morph now stores file tree snapshots in commits (like Git) in addition to behavioral versions. Morph can serve as a standalone VCS or complement Git for backup and collaboration.
 
 ---
 

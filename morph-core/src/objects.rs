@@ -21,6 +21,12 @@ pub struct Tree {
 pub struct TreeEntry {
     pub name: String,
     pub hash: String,
+    #[serde(default = "default_entry_type")]
+    pub entry_type: String,
+}
+
+fn default_entry_type() -> String {
+    "blob".to_string()
 }
 
 // ---------- 4.3 Program ----------
@@ -91,12 +97,16 @@ pub struct EvalMetric {
 // ---------- 4.5 Commit ----------
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Commit {
+    #[serde(default)]
+    pub tree: Option<String>,
     pub program: String,
     pub parents: Vec<String>,
     pub message: String,
     pub timestamp: String,
     pub author: String,
     pub eval_contract: EvalContract,
+    #[serde(default)]
+    pub morph_version: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -118,6 +128,8 @@ pub struct Run {
     pub metrics: BTreeMap<String, f64>,
     pub trace: String,
     pub agent: AgentInfo,
+    #[serde(default)]
+    pub morph_version: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

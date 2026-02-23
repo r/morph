@@ -1,7 +1,7 @@
 //! Cursor MCP server: primary write path from the IDE.
 //! Exposes morph-core operations as MCP tools.
 
-use morph_core::{find_repo, open_store, require_store_version, Hash, Store, STORE_VERSION_0_2, STORE_VERSION_INIT};
+use morph_core::{find_repo, open_store, read_repo_version, require_store_version, Hash, Store, STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_INIT};
 use rmcp::{
     handler::server::tool::ToolRouter,
     handler::server::wrapper::Parameters,
@@ -57,8 +57,7 @@ impl MorphServer {
             )
         })?;
         let morph_dir = repo_root.join(".morph");
-        // MCP cannot upgrade; older repos must be upgraded explicitly via morph-cli.
-        require_store_version(&morph_dir, &[STORE_VERSION_INIT, STORE_VERSION_0_2]).map_err(|e| e.to_string())?;
+        require_store_version(&morph_dir, &[STORE_VERSION_INIT, STORE_VERSION_0_2, STORE_VERSION_0_3]).map_err(|e| e.to_string())?;
         let store = open_store(&morph_dir).map_err(|e| e.to_string())?;
         Ok((repo_root, store))
     }
@@ -176,22 +175,33 @@ impl MorphServer {
         &self,
         params: Parameters<CommitParams>,
     ) -> Result<rmcp::model::CallToolResult, McpError> {
-        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref())
+        let (repo_root, store) = self.repo_store(params.0.workspace_path.as_deref())
             .map_err(|e| McpError::invalid_params(e, None))?;
-        let prog_hash = Hash::from_hex(&params.0.program).map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        let suite_hash =
-            Hash::from_hex(&params.0.eval_suite).map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let morph_dir = repo_root.join(".morph");
+        let version = read_repo_version(&morph_dir).map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let prog_hash = params.0.program
+            .as_deref()
+            .map(Hash::from_hex)
+            .transpose()
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let suite_hash = params.0.eval_suite
+            .as_deref()
+            .map(Hash::from_hex)
+            .transpose()
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
         let metrics = params
             .0
             .metrics
             .unwrap_or_default();
-        let hash = morph_core::create_commit(
+        let hash = morph_core::create_tree_commit(
             &store,
-            &prog_hash,
-            &suite_hash,
+            &repo_root,
+            prog_hash.as_ref(),
+            suite_hash.as_ref(),
             metrics,
             params.0.message,
             params.0.author,
+            Some(&version),
         )
         .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
         Ok(CallToolResult::success(vec![Content::text(hash.to_string())]))
@@ -240,32 +250,22 @@ impl MorphServer {
         &self,
         params: Parameters<CheckoutParams>,
     ) -> Result<rmcp::model::CallToolResult, McpError> {
-        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref())
+        let (repo_root, store) = self.repo_store(params.0.workspace_path.as_deref())
             .map_err(|e| McpError::invalid_params(e, None))?;
-        let ref_name = params.0.ref_name;
-        if ref_name.len() == 64 && ref_name.chars().all(|c| c.is_ascii_hexdigit()) {
-            let hash = Hash::from_hex(&ref_name).map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-            morph_core::set_head_detached(&store, &hash)
-                .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-            Ok(CallToolResult::success(vec![Content::text(format!("Detached HEAD at {}", hash))]))
+        let ref_name = &params.0.ref_name;
+        let (hash, tree_restored) = morph_core::checkout_tree(&store, &repo_root, ref_name)
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let msg = if ref_name.len() == 64 && ref_name.chars().all(|c| c.is_ascii_hexdigit()) {
+            format!("Detached HEAD at {}", hash)
         } else {
-            let path = if ref_name.starts_with("heads/") {
-                ref_name.clone()
-            } else {
-                format!("heads/{}", ref_name)
-            };
-            store
-                .ref_read(&path)
-                .map_err(|e| McpError::invalid_params(e.to_string(), None))?
-                .ok_or_else(|| McpError::invalid_params(format!("branch not found: {}", ref_name), None))?;
-            let branch_name = ref_name.trim_start_matches("heads/").to_string();
-            morph_core::set_head_branch(&store, &branch_name)
-                .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-            Ok(CallToolResult::success(vec![Content::text(format!(
-                "Switched to branch {}",
-                branch_name
-            ))]))
-        }
+            format!("Switched to branch {}", ref_name.trim_start_matches("heads/"))
+        };
+        let tree_msg = if tree_restored {
+            " (working tree restored)"
+        } else {
+            " (no file tree in commit; working tree unchanged)"
+        };
+        Ok(CallToolResult::success(vec![Content::text(format!("{}{}", msg, tree_msg))]))
     }
 }
 
@@ -315,8 +315,10 @@ struct StageParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 struct CommitParams {
     message: String,
-    program: String,
-    eval_suite: String,
+    #[serde(default)]
+    program: Option<String>,
+    #[serde(default)]
+    eval_suite: Option<String>,
     #[serde(default)]
     workspace_path: Option<String>,
     #[serde(default)]

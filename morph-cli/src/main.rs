@@ -1,7 +1,7 @@
 //! Morph CLI: read path and manual write operations.
 
 use clap::Parser;
-use morph_core::{find_repo, migrate_0_0_to_0_2, open_store, read_repo_version, require_store_version, Hash, Store, STORE_VERSION_0_2, STORE_VERSION_INIT};
+use morph_core::{find_repo, migrate_0_0_to_0_2, migrate_0_2_to_0_3, open_store, read_repo_version, require_store_version, Hash, Store, STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_INIT};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -40,14 +40,14 @@ enum Command {
         #[arg(default_value = ".")]
         paths: Vec<PathBuf>,
     },
-    /// Create a commit with program and eval contract
+    /// Create a commit (snapshots the staged file tree; program and eval suite are optional)
     Commit {
         #[arg(short, long)]
         message: String,
         #[arg(long)]
-        program: String,
+        program: Option<String>,
         #[arg(long)]
-        eval_suite: String,
+        eval_suite: Option<String>,
         #[arg(long)]
         metrics: Option<String>,
         #[arg(long)]
@@ -200,7 +200,7 @@ fn get_store(verbose: bool) -> anyhow::Result<(PathBuf, Box<dyn Store>)> {
     if verbose {
         verbose_msg(verbose, &format!("repo {} (store version {})", repo_root.display(), version));
     }
-    require_store_version(&morph_dir, &[STORE_VERSION_INIT, STORE_VERSION_0_2])?;
+    require_store_version(&morph_dir, &[STORE_VERSION_INIT, STORE_VERSION_0_2, STORE_VERSION_0_3])?;
     let store = open_store(&morph_dir)?;
     Ok((repo_root, store))
 }
@@ -232,12 +232,18 @@ fn main() -> anyhow::Result<()> {
             let morph_dir = repo_root.join(".morph");
             let version = read_repo_version(&morph_dir)?;
             verbose_msg(verbose, &format!("store version {}", version));
-            if version == STORE_VERSION_0_2 {
+            if version == STORE_VERSION_0_3 {
                 println!("Store version is {} (latest). No upgrade needed.", version);
+            } else if version == STORE_VERSION_0_2 {
+                verbose_msg(verbose, "migrating 0.2 → 0.3 (adding tree commit support)");
+                migrate_0_2_to_0_3(&morph_dir)?;
+                println!("Migrated store from {} to {}. Old commits have no file tree; new commits will.", STORE_VERSION_0_2, STORE_VERSION_0_3);
             } else if version == STORE_VERSION_INIT {
                 verbose_msg(verbose, "migrating 0.0 → 0.2 (rewriting object hashes)");
                 migrate_0_0_to_0_2(&morph_dir)?;
-                println!("Migrated store from {} to {}. Hashes have changed.", STORE_VERSION_INIT, STORE_VERSION_0_2);
+                verbose_msg(verbose, "migrating 0.2 → 0.3 (adding tree commit support)");
+                migrate_0_2_to_0_3(&morph_dir)?;
+                println!("Migrated store from {} to {}. Hashes changed; old commits have no file tree.", STORE_VERSION_INIT, STORE_VERSION_0_3);
             } else {
                 println!("Store version is {}. No upgrade path from this version.", version);
             }
@@ -326,23 +332,35 @@ fn main() -> anyhow::Result<()> {
             }
         }
         Command::Commit { message, program, eval_suite, metrics, author } => {
-            let (_repo_root, store) = get_store(verbose)?;
-            verbose_msg(verbose, &format!("commit program={} eval_suite={}", program, eval_suite));
-            let prog_hash = parse_hash(&program)?;
-            let suite_hash = parse_hash(&eval_suite)?;
+            let (repo_root, store) = get_store(verbose)?;
+            let morph_dir = repo_root.join(".morph");
+            let version = read_repo_version(&morph_dir)?;
+            let prog_hash = program
+                .as_deref()
+                .map(parse_hash)
+                .transpose()?;
+            let suite_hash = eval_suite
+                .as_deref()
+                .map(parse_hash)
+                .transpose()?;
+            verbose_msg(verbose, &format!("commit (program={}, eval_suite={})",
+                program.as_deref().unwrap_or("identity"),
+                eval_suite.as_deref().unwrap_or("empty")));
             let observed_metrics = metrics
                 .as_deref()
                 .map(|s| serde_json::from_str(s))
                 .transpose()
                 .map_err(|e| anyhow::anyhow!("invalid --metrics JSON: {}", e))?
                 .unwrap_or_default();
-            let hash = morph_core::create_commit(
+            let hash = morph_core::create_tree_commit(
                 &store,
-                &prog_hash,
-                &suite_hash,
+                &repo_root,
+                prog_hash.as_ref(),
+                suite_hash.as_ref(),
                 observed_metrics,
                 message,
                 author,
+                Some(&version),
             )?;
             verbose_msg(verbose, &format!("created commit {}", hash));
             println!("{}", hash);
@@ -354,7 +372,12 @@ fn main() -> anyhow::Result<()> {
             for h in hashes {
                 let obj = store.get(&h)?;
                 if let morph_core::MorphObject::Commit(c) = obj {
-                    println!("{} {} {}", h, c.message.lines().next().unwrap_or(""), c.author);
+                    let ver_tag = match c.morph_version.as_deref() {
+                        Some(v) => format!("[v{}]", v),
+                        None => "[pre-tree]".to_string(),
+                    };
+                    let tree_tag = if c.tree.is_some() { "" } else { " (no file tree)" };
+                    println!("{} {} {}{} {}", h, ver_tag, c.message.lines().next().unwrap_or(""), tree_tag, c.author);
                 }
             }
         }
@@ -379,18 +402,18 @@ fn main() -> anyhow::Result<()> {
             }
         }
         Command::Checkout { ref_name } => {
-            let (_repo_root, store) = get_store(verbose)?;
+            let (repo_root, store) = get_store(verbose)?;
             verbose_msg(verbose, &format!("checkout {}", ref_name));
+            let (hash, tree_restored) = morph_core::checkout_tree(&store, &repo_root, &ref_name)?;
             if ref_name.len() == 64 && ref_name.chars().all(|c| c.is_ascii_hexdigit()) {
-                let hash = parse_hash(&ref_name)?;
-                morph_core::set_head_detached(&store, &hash)?;
                 println!("Detached HEAD at {}", hash);
             } else {
-                let ref_path = if ref_name.starts_with("heads/") { ref_name.clone() } else { format!("heads/{}", ref_name) };
-                let _hash = store.ref_read(&ref_path)?.ok_or_else(|| anyhow::anyhow!("branch or ref not found: {}", ref_name))?;
-                let branch_name = ref_name.trim_start_matches("heads/").to_string();
-                morph_core::set_head_branch(&store, &branch_name)?;
-                println!("Switched to branch {}", branch_name);
+                println!("Switched to branch {}", ref_name.trim_start_matches("heads/"));
+            }
+            if tree_restored {
+                verbose_msg(verbose, "working tree restored from commit tree");
+            } else {
+                verbose_msg(verbose, "commit has no file tree (pre-0.3); working tree unchanged");
             }
         }
         Command::Run { sub } => match sub {

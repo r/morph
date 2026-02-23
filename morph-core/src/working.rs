@@ -207,7 +207,7 @@ pub fn status(store: &dyn Store, repo_root: &Path) -> Result<Vec<StatusEntry>, M
     Ok(entries)
 }
 
-/// Add path(s) to the store. Works like `git add`:
+/// Add path(s) to the store and update the staging index. Works like `git add`:
 /// - `"."` stages all working-directory files (excluding `.morph/` internals)
 ///   plus `.morph/prompts/*` and `.morph/evals/*`.
 /// - A specific file is staged according to its location (prompt, eval, or blob).
@@ -221,6 +221,7 @@ pub fn add_paths(
     let canonical_root = repo_root.canonicalize().unwrap_or_else(|_| repo_root.to_path_buf());
     let morphignore = load_morphignore(&canonical_root);
     let mut hashes = Vec::new();
+    let mut staged_entries: Vec<(String, Hash)> = Vec::new();
 
     for p in paths {
         let full = if p.is_absolute() { p.clone() } else { repo_root.join(p) };
@@ -239,6 +240,7 @@ pub fn add_paths(
                     &canonical_root,
                     store,
                     &mut hashes,
+                    &mut staged_entries,
                     true,
                 )?;
                 for md in &[&morph_prompts, &morph_evals] {
@@ -252,6 +254,7 @@ pub fn add_paths(
                             &canonical_root,
                             store,
                             &mut hashes,
+                            &mut staged_entries,
                             false,
                         )?;
                     }
@@ -268,6 +271,7 @@ pub fn add_paths(
                     &canonical_root,
                     store,
                     &mut hashes,
+                    &mut staged_entries,
                     true,
                 )?;
             }
@@ -280,10 +284,30 @@ pub fn add_paths(
             }
             let kind = classify_file(&full, &morph_prompts, &morph_evals);
             let obj = object_from_file(&full, kind)?;
-            hashes.push(store.put(&obj)?);
+            let hash = store.put(&obj)?;
+            if let Some(rel) = relative_path(&canonical_root, &full) {
+                staged_entries.push((rel, hash));
+            }
+            hashes.push(hash);
         }
     }
+
+    if !staged_entries.is_empty() {
+        let mut index = crate::index::read_index(&morph_dir)?;
+        for (rel, hash) in &staged_entries {
+            index.entries.insert(rel.clone(), hash.to_string());
+        }
+        crate::index::write_index(&morph_dir, &index)?;
+    }
+
     Ok(hashes)
+}
+
+fn relative_path(root: &Path, full: &Path) -> Option<String> {
+    full.strip_prefix(root)
+        .ok()
+        .and_then(|p| p.to_str())
+        .map(|s| s.replace('\\', "/"))
 }
 
 fn add_directory(
@@ -295,6 +319,7 @@ fn add_directory(
     repo_root: &Path,
     store: &dyn Store,
     hashes: &mut Vec<Hash>,
+    staged_entries: &mut Vec<(String, Hash)>,
     skip_morph: bool,
 ) -> Result<(), MorphError> {
     for entry in walkdir::WalkDir::new(dir)
@@ -325,7 +350,11 @@ fn add_directory(
         }
         let kind = classify_file(&canonical, morph_prompts, morph_evals);
         let obj = object_from_file(path, kind)?;
-        hashes.push(store.put(&obj)?);
+        let hash = store.put(&obj)?;
+        if let Some(rel) = relative_path(repo_root, &canonical) {
+            staged_entries.push((rel, hash));
+        }
+        hashes.push(hash);
     }
     Ok(())
 }
@@ -587,5 +616,37 @@ mod tests {
             .collect();
         assert!(staged.iter().any(|s| s == "staged"), "staged.txt should be in store, got: {:?}", staged);
         assert!(!staged.iter().any(|s| s == "ignored"), "ignored.txt should not be staged");
+    }
+
+    #[test]
+    fn add_updates_staging_index() {
+        let (dir, store) = setup_repo();
+        let root = dir.path();
+        std::fs::write(root.join("hello.txt"), "world").unwrap();
+
+        let hashes = add_paths(&store, root, &[std::path::PathBuf::from("hello.txt")]).unwrap();
+        assert_eq!(hashes.len(), 1);
+
+        let morph_dir = root.join(".morph");
+        let index = crate::index::read_index(&morph_dir).unwrap();
+        assert_eq!(index.entries.len(), 1);
+        assert!(index.entries.contains_key("hello.txt"), "index should contain hello.txt");
+        assert_eq!(index.entries["hello.txt"], hashes[0].to_string());
+    }
+
+    #[test]
+    fn add_dot_updates_staging_index_for_all_files() {
+        let (dir, store) = setup_repo();
+        let root = dir.path();
+        std::fs::write(root.join("a.txt"), "aaa").unwrap();
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::write(root.join("sub/b.txt"), "bbb").unwrap();
+
+        add_paths(&store, root, &[std::path::PathBuf::from(".")]).unwrap();
+
+        let morph_dir = root.join(".morph");
+        let index = crate::index::read_index(&morph_dir).unwrap();
+        assert!(index.entries.contains_key("a.txt"), "index should contain a.txt, got: {:?}", index.entries.keys().collect::<Vec<_>>());
+        assert!(index.entries.contains_key("sub/b.txt"), "index should contain sub/b.txt, got: {:?}", index.entries.keys().collect::<Vec<_>>());
     }
 }

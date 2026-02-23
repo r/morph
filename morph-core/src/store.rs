@@ -482,6 +482,7 @@ mod tests {
             entries: vec![TreeEntry {
                 name: "f".into(),
                 hash: "0".repeat(64),
+                entry_type: "blob".into(),
             }],
         });
         let blob_hash = store.put(&blob).unwrap();
@@ -571,6 +572,7 @@ mod tests {
             entries: vec![TreeEntry {
                 name: "f".into(),
                 hash: "0".repeat(64),
+                entry_type: "blob".into(),
             }],
         });
         let blob_hash = store.put(&blob).unwrap();

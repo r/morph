@@ -72,6 +72,8 @@ async fn api_log(State(state): State<AppState>) -> Result<Json<Vec<CommitEntry>>
             program: commit.program.clone(),
             parents: commit.parents.clone(),
             eval_contract: commit.eval_contract.clone(),
+            tree: commit.tree.clone(),
+            morph_version: commit.morph_version.clone(),
         });
     }
     Ok(Json(out))
@@ -86,6 +88,8 @@ struct CommitEntry {
     program: String,
     parents: Vec<String>,
     eval_contract: morph_core::objects::EvalContract,
+    tree: Option<String>,
+    morph_version: Option<String>,
 }
 
 async fn api_object(

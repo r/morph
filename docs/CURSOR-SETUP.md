@@ -240,7 +240,7 @@ If the agent invokes a Morph tool and gets **"not a morph repository"** (or the 
   Each “session” (your prompt + the model’s replies and actions) can be stored as a **Run** with an optional **Trace**. Morph only ingests Run/Trace data; it does not run the model.
 
 - **Explicitly commit the filesystem**  
-  When you’re happy with the working tree, **stage** and **commit** in Morph (e.g. via MCP tools `morph_stage` and `morph_commit`). That creates a Morph commit (program + eval contract + metrics), separate from Git.
+  When you’re happy with the working tree, **stage** and **commit** in Morph (e.g. via MCP tools `morph_stage` and `morph_commit`). That creates a Morph commit (snapshots the file tree + optional program/eval contract), separate from Git.
 
 “Every prompt recorded” is not automatic at the Cursor app level. You can get close by **(1)** having the **agent** call Morph’s MCP tools when it finishes a task (§4.3), or **(2)** using **Cursor hooks** to record on submit and on task stop (§6). To capture the **full model response text**, the agent must call **morph_record_session** (§4.3); hooks do not receive the reply.
 
@@ -418,7 +418,7 @@ When you want to snapshot the working tree and record it as a Morph commit:
 1. **Stage** what should go into the next commit (like `git add`—stages any file from the working directory):
    - MCP: **morph_stage** with `paths` (default `["."]`) and optional `workspace_path`.
    - CLI: `morph add [paths...]`
-2. **Commit** (program + eval contract + metrics):
+2. **Commit** (snapshots the file tree + optional program/eval contract):
    - MCP: **morph_commit** with `message`, `program`, `eval_suite`, and optional `metrics`, `author`, `workspace_path`.
    - CLI: `morph commit -m "..." --program <hash> --eval-suite <hash> [--metrics-file ...]`
 
@@ -500,11 +500,11 @@ That gives you “as automatic as Cursor allows” without any unsupported UI in
 | **morph_record_run** | Ingest a Run from JSON file; optional trace and artifact paths. |
 | **morph_record_session** | Record a single prompt/response as a Run + Trace in one call. **Use this to capture the full model response text;** the agent passes `prompt` and `response` strings. |
 | **morph_record_eval** | Ingest metrics from a JSON file with a `metrics` key. |
-| **morph_stage** | Stage working directory files into the object store (like `git add`; default `paths: ["."]`). |
-| **morph_commit** | Create a commit (message, program, eval_suite, optional metrics/author). |
+| **morph_stage** | Stage working directory files into the object store and update the staging index (like git add; default paths: ["."]). |
+| **morph_commit** | Create a commit (snapshots staged file tree; program and eval_suite are optional, default to identity/empty). |
 | **morph_annotate** | Attach an annotation to an object (target_hash, kind, data, etc.). |
 | **morph_branch** | Create a new branch at current HEAD. |
-| **morph_checkout** | Set HEAD to a branch name or commit hash. |
+| **morph_checkout** | Switch HEAD to a branch or commit and restore the working tree from the commit's file tree. |
 
 All tools that need a repo accept an optional **workspace_path**. If omitted, they use the current working directory of the MCP server process (Cursor typically runs it with the project root as cwd). **workspace_path** must be the **full path** to the directory that contains `.morph/` (your project root). If you get "not a morph repository", run `morph init` and/or pass **workspace_path** explicitly (see debugging in §3).
 

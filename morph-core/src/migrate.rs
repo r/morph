@@ -80,6 +80,29 @@ pub fn migrate_0_0_to_0_2(morph_dir: &Path) -> Result<(), MorphError> {
     Ok(())
 }
 
+/// Migrate a 0.2 repo to 0.3. Only bumps the config version; no object rewriting.
+pub fn migrate_0_2_to_0_3(morph_dir: &Path) -> Result<(), MorphError> {
+    set_repo_version(morph_dir, "0.3")
+}
+
+fn set_repo_version(morph_dir: &Path, version: &str) -> Result<(), MorphError> {
+    let config_path = morph_dir.join("config.json");
+    let config = if config_path.exists() {
+        let data = std::fs::read_to_string(&config_path)?;
+        let mut v: serde_json::Value =
+            serde_json::from_str(&data).map_err(|e| MorphError::Serialization(e.to_string()))?;
+        v["repo_version"] = serde_json::Value::String(version.to_string());
+        v
+    } else {
+        serde_json::json!({ "repo_version": version })
+    };
+    std::fs::write(
+        config_path,
+        serde_json::to_string_pretty(&config).map_err(|e| MorphError::Serialization(e.to_string()))?,
+    )?;
+    Ok(())
+}
+
 fn set_repo_version_0_2(morph_dir: &Path) -> Result<(), MorphError> {
     let config_path = morph_dir.join("config.json");
     let config = if config_path.exists() {
@@ -134,6 +157,7 @@ fn rewrite_object(obj: &MorphObject, map: &HashMap<String, Hash>) -> Result<Morp
                 .map(|e| TreeEntry {
                     name: e.name.clone(),
                     hash: subst(map, &e.hash),
+                    entry_type: e.entry_type.clone(),
                 })
                 .collect(),
         }),
@@ -162,6 +186,7 @@ fn rewrite_object(obj: &MorphObject, map: &HashMap<String, Hash>) -> Result<Morp
             }),
         }),
         MorphObject::Commit(c) => MorphObject::Commit(Commit {
+            tree: c.tree.as_ref().map(|s| subst(map, s)),
             program: subst(map, &c.program),
             parents: c.parents.iter().map(|s| subst(map, s)).collect(),
             message: c.message.clone(),
@@ -171,6 +196,7 @@ fn rewrite_object(obj: &MorphObject, map: &HashMap<String, Hash>) -> Result<Morp
                 suite: subst(map, &c.eval_contract.suite),
                 observed_metrics: c.eval_contract.observed_metrics.clone(),
             },
+            morph_version: c.morph_version.clone(),
         }),
         MorphObject::Run(r) => MorphObject::Run(Run {
             program: subst(map, &r.program),
@@ -185,6 +211,7 @@ fn rewrite_object(obj: &MorphObject, map: &HashMap<String, Hash>) -> Result<Morp
                 version: r.agent.version.clone(),
                 policy: r.agent.policy.as_ref().map(|s| subst(map, s)),
             },
+            morph_version: r.morph_version.clone(),
         }),
         MorphObject::TraceRollup(tr) => MorphObject::TraceRollup(TraceRollup {
             trace: subst(map, &tr.trace),
@@ -234,6 +261,7 @@ mod tests {
         });
         let suite_hash = store.put(&suite).unwrap();
         let commit = MorphObject::Commit(Commit {
+            tree: None,
             program: blob_hash.to_string(),
             parents: vec![],
             message: "first".into(),
@@ -243,6 +271,7 @@ mod tests {
                 suite: suite_hash.to_string(),
                 observed_metrics: BTreeMap::new(),
             },
+            morph_version: None,
         });
         let commit_hash = store.put(&commit).unwrap();
         store.ref_write_raw("HEAD", "ref: heads/main").unwrap();

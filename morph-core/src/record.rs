@@ -127,6 +127,7 @@ pub fn record_session(
             version: "1.0".to_string(),
             policy: None,
         },
+        morph_version: None,
     });
 
     let run_hash = store.put(&run)?;

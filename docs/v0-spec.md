@@ -98,6 +98,7 @@ A Morph repository contains:
   prompts/        # optional: user prompt files; type index: <hash>.json for prompt Blobs
   evals/          # optional: user eval JSON; type index: <hash>.json for EvalSuites
   config.json     # repo config (empty object by default)
+  index.json      # staging index: maps working-dir paths to blob hashes (cleared after commit)
 ```
 
 `morph init` creates only `.morph/` (like `git init`): `objects/`, `refs/heads/`, `runs/`, `traces/`, `prompts/`, `evals/`, `config.json`, and `refs/HEAD` (pointing at `heads/main`). The working directory — the user's project directory — is the working space. There are no top-level `prompts/`, `programs/`, or `evals/` directories.
@@ -209,10 +210,12 @@ Represents a structured grouping of objects (maps to the Document tree D in the 
 {
   "type": "tree",
   "entries": [
-    { "name": "file_or_node", "hash": "<object_hash>" }
+    { "name": "file_or_node", "hash": "<object_hash>", "entry_type": "blob | tree" }
   ]
 }
 ```
+
+`entry_type` distinguishes file entries (`blob`) from subdirectory entries (`tree`). Defaults to `blob` for backward compatibility.
 
 ---
 
@@ -340,6 +343,7 @@ Statistical sophistication is minimal in v0. Future versions or custom evaluator
 ```json
 {
   "type": "commit",
+  "tree": "<tree_hash>",
   "program": "<program_hash>",
   "parents": ["<commit_hash>"],
   "message": "string",
@@ -348,11 +352,14 @@ Statistical sophistication is minimal in v0. Future versions or custom evaluator
   "eval_contract": {
     "suite": "<eval_suite_hash>",
     "observed_metrics": { "metric_name": "value" }
-  }
+  },
+  "morph_version": "0.3"
 }
 ```
 
-A Commit does **not** store run evidence. It stores the behavioral contract.
+The `tree` field records the root hash of the file tree at commit time — the same role as Git's tree in a commit. `morph_version` records the store version that created this commit. Commits from before version 0.3 have `tree: null` and `morph_version: null`.
+
+A Commit now stores both the behavioral contract AND the file tree snapshot. `program` and `eval_contract` default to the identity program and empty eval suite when not specified, making `morph commit -m 'message'` work as a plain VCS commit.
 
 The `observed_metrics` field records the metrics achieved at commit time. This is critical for merge: the merge commit must dominate these observed values, not merely pass the suite's base thresholds.
 
@@ -554,14 +561,13 @@ morph add .
 morph commit -m "message"
 ```
 
-`morph add` stages any file from the working directory into the object store (like `git add`).
+`morph add .` stages files and updates the staging index. `morph commit -m "message"` builds the tree from the index, creates the commit, and clears the index.
 
-`morph commit` validates:
+`--program` and `--eval-suite` are optional flags. When omitted, the commit behaves as a plain VCS commit (identity program, empty eval suite). When specified, `morph commit` validates:
 
 - Program graph integrity (DAG, valid node/edge kinds)
 - Eval suite presence and hash integrity
 - Uses **recorded** observed metrics (from external evaluation or prior `morph eval record`) to form the eval contract
-- Creates commit with eval contract
 
 Morph does not run the eval suite; external tools do. Morph applies its **metrics validation layer** (aggregation, threshold checks) to reported scores.
 
@@ -572,7 +578,7 @@ morph branch <name>
 morph checkout <name>
 ```
 
-Branches are pointers to commits.
+Branches are pointers to commits. `morph checkout` restores the working tree from the commit's tree hash.
 
 ## 6.6 Run ingestion
 

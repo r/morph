@@ -139,6 +139,7 @@ mod tests {
             entries: vec![TreeEntry {
                 name: "a".into(),
                 hash: "0".repeat(64),
+                entry_type: "blob".into(),
             }],
         });
         let json = canonical_json(&tree).unwrap();

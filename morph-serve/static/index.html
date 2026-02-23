@@ -45,6 +45,9 @@
     .commit-hash { font-family: ui-monospace, monospace; font-size: 0.7rem; color: #71717a; }
     .commit-msg { font-size: 0.9rem; margin-top: 0.2rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .commit-meta { font-size: 0.75rem; color: #a1a1aa; margin-top: 0.15rem; }
+    .version-badge { display: inline-block; font-size: 0.65rem; padding: 0.1rem 0.35rem; border-radius: 3px; background: #3b82f6; color: #fff; margin-left: 0.4rem; vertical-align: middle; }
+    .version-badge.pre-tree { background: #71717a; }
+    .no-tree-label { font-size: 0.7rem; color: #f59e0b; margin-left: 0.4rem; }
     #detail {
       flex: 1;
       overflow-y: auto;
@@ -112,13 +115,23 @@
             <div class="prompt-body" data-prompt-body="${h}" style="display:none"></div>
           </div>`).join('') + '</div>';
       }
-      const treeLink = program ? `<div class="section"><h2>Browse object</h2><div class="object-browser"><input type="text" id="objHash" placeholder="Paste any object hash" /><button type="button" id="fetchObj">Fetch</button></div><div id="objectResult"></div></div>` : '';
+      const versionHtml = commit.morph_version
+        ? `<span class="version-badge">v${escapeHtml(commit.morph_version)}</span>`
+        : `<span class="version-badge pre-tree">pre-tree</span>`;
+      let treeHtml = '';
+      if (commit.tree) {
+        treeHtml = `<div class="section"><h2>File tree</h2><p class="hash"><a href="#" data-fetch="${commit.tree}">${commit.tree}</a></p></div>`;
+      } else {
+        treeHtml = `<div class="section"><h2>File tree</h2><p class="no-tree-label">This commit predates file tree storage (pre-0.3). No file snapshot available.</p></div>`;
+      }
+      const objectBrowser = `<div class="section"><h2>Browse object</h2><div class="object-browser"><input type="text" id="objHash" placeholder="Paste any object hash" /><button type="button" id="fetchObj">Fetch</button></div><div id="objectResult"></div></div>`;
       renderDetail(`
-        <div class="section"><h2>Commit</h2><p class="hash">${commit.hash}</p><p>${escapeHtml(commit.message)}</p><p class="commit-meta">${escapeHtml(commit.author)} · ${commit.timestamp}</p></div>
+        <div class="section"><h2>Commit ${versionHtml}</h2><p class="hash">${commit.hash}</p><p>${escapeHtml(commit.message)}</p><p class="commit-meta">${escapeHtml(commit.author)} · ${commit.timestamp}</p></div>
+        ${treeHtml}
         <div class="section"><h2>Program</h2><p class="hash"><a href="#" data-fetch="${commit.program}">${commit.program}</a></p></div>
         <div class="section"><h2>Eval contract</h2><p class="hash">Suite: <a href="#" data-fetch="${commit.eval_contract.suite}">${commit.eval_contract.suite}</a></p>${metricsHtml}</div>
         ${promptsHtml}
-        ${treeLink}
+        ${objectBrowser}
       `);
       detail.querySelectorAll('[data-fetch]').forEach(el => {
         el.addEventListener('click', (e) => { e.preventDefault(); fetchAndShowObject(el.dataset.fetch); });
@@ -191,7 +204,11 @@
         log.forEach(c => {
           const card = document.createElement('div');
           card.className = 'commit-card';
-          card.innerHTML = `<div class="commit-hash">${c.hash.slice(0,12)}…</div><div class="commit-msg">${escapeHtml(c.message.split('\n')[0] || '(no message)')}</div><div class="commit-meta">${escapeHtml(c.author)}</div>`;
+          const vBadge = c.morph_version
+            ? `<span class="version-badge">v${escapeHtml(c.morph_version)}</span>`
+            : `<span class="version-badge pre-tree">pre-tree</span>`;
+          const noTree = !c.tree ? `<span class="no-tree-label">no file tree</span>` : '';
+          card.innerHTML = `<div class="commit-hash">${c.hash.slice(0,12)}…${vBadge}${noTree}</div><div class="commit-msg">${escapeHtml(c.message.split('\n')[0] || '(no message)')}</div><div class="commit-meta">${escapeHtml(c.author)}</div>`;
           card.addEventListener('click', async () => {
             strip.querySelectorAll('.commit-card').forEach(x => x.classList.remove('selected'));
             card.classList.add('selected');

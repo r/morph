@@ -2,7 +2,7 @@
 
 **Version control for transformation programs. Git for behavior, not just bytes.**
 
-At its base, Morph works like Git: `morph init` creates only `.morph/` (like `git init` creates only `.git/`), and you can put any directory under Morph control. **Without prompts or evals, Morph behaves like a plain VCS.** Prompts, evals, and behavioral contracts are optional capabilities layered on top.
+At its base, Morph works like Git: `morph init` creates only `.morph/` (like `git init` creates only `.git/`), and you can put any directory under Morph control. **Without prompts or evals, Morph behaves like a plain VCS — it stores file tree snapshots in commits, just like Git.** Prompts, evals, and behavioral contracts are optional capabilities layered on top.
 
 ---
 
@@ -31,8 +31,8 @@ If you know Git internals, you already know 80% of Morph. Here's the mapping:
 | Git | Morph | What changed |
 |---|---|---|
 | Source files | **Programs** — DAGs of operators (prompt calls, tool calls, retrieval, transforms) | The versioned unit is a pipeline, not a text file |
-| `blob` / `tree` | `blob` / `tree` (same idea) | Unchanged |
-| `commit` = snapshot of tree | `commit` = snapshot of program + eval contract + certified metric scores | Commits are behavioral *claims* backed by evidence |
+| `blob` / `tree` | `blob` / `tree` (same idea; Morph trees store the working directory at each commit) | Same idea |
+| `commit` = snapshot of tree | `commit` = snapshot of tree + program + eval contract + certified metric scores | Commits are behavioral *claims* backed by evidence |
 | `diff` = text comparison | `diff` = behavioral comparison (metric deltas under an eval suite) | Semantic, not syntactic |
 | `merge` = reconcile text | `merge` = reconcile text **and** prove behavior didn't regress | Merge is eval-gated |
 | `.git/objects/` | `.morph/objects/` (content-addressed, immutable, Merkle DAG) | Same architecture |
@@ -70,18 +70,20 @@ Everything is immutable and content-addressed (SHA-256), stored in `.morph/objec
 
 A Git commit says: "here's what the files looked like."
 
-A Morph commit says: "here's a program, the eval suite I tested it against, and the scores it achieved."
+A Morph commit says: "here's a file tree snapshot, optionally a program, the eval suite I tested it against, and the scores it achieved."
 
 ```
 Commit
-├── program: <hash>          # the program definition
+├── tree: <hash>             # file tree snapshot (like Git)
+├── program: <hash>          # the program definition (optional; defaults to identity)
 ├── eval_contract:
-│   ├── suite: <hash>        # which eval suite
+│   ├── suite: <hash>        # which eval suite (optional; defaults to empty)
 │   └── observed_metrics:    # certified scores
 │       ├── accuracy: 0.92
 │       └── latency_p95: 1.2s
 ├── parents: [<hash>, ...]   # parent commits (same as Git)
 ├── message: "..."
+├── morph_version: "0.3"     # version that created this commit
 └── author, timestamp, ...
 ```
 
@@ -137,10 +139,10 @@ morph program create <file>       # create a program manifest from a file (store
 morph program show                # inspect a program
 
 morph add .                       # stage any files from working directory (like git add; respects .morphignore)
-morph commit -m "message"         # create commit with eval contract (uses recorded metrics)
+morph commit -m "message"         # create commit (--program and --eval-suite optional; default to identity/empty)
 
 morph branch <name>               # create a branch
-morph checkout <name>             # switch branches
+morph checkout <name>             # switch branches (restores the working tree)
 
 morph run record <file>           # ingest a Run object (external tools do execution)
 morph eval record <file>          # ingest evaluation results (external tools run evals)
@@ -162,7 +164,7 @@ The key behavioral difference from Git: `commit` and `merge` use **recorded** me
 
 - **Not a prompt registry.** Morph versions programs (pipelines of operations), not individual prompt templates.
 - **Not a logging dashboard.** Runs and traces are first-class versioned objects, not ephemeral logs.
-- **Not a replacement for Git.** Morph complements Git. Source code stays in Git. Morph handles transformation programs, evaluations, and behavioral contracts that Git can't express.
+- **Not limited to Git's model.** Morph stores file trees like Git, but also versions transformation programs, evaluations, and behavioral contracts that Git can't express. Morph can serve as a standalone VCS or complement Git.
 
 ---
 

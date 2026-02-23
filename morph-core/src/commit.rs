@@ -1,10 +1,11 @@
 //! Commit creation, HEAD resolution, and ref helpers.
 
-use crate::objects::{Commit, EvalContract, MorphObject};
+use crate::objects::{Commit, EvalContract, EvalSuite, MorphObject};
 use crate::store::{MorphError, Store};
 use crate::Hash;
 use chrono::Utc;
 use std::collections::BTreeMap;
+use std::path::Path;
 
 const HEAD_REF: &str = "HEAD";
 const DEFAULT_BRANCH: &str = "main";
@@ -54,6 +55,7 @@ pub fn create_commit(
     let timestamp = Utc::now().to_rfc3339();
     let author = author.unwrap_or_else(|| "morph".to_string());
     let commit = MorphObject::Commit(Commit {
+        tree: None,
         program: program_hash.to_string(),
         parents: parent_list,
         message: message.clone(),
@@ -63,11 +65,76 @@ pub fn create_commit(
             suite: eval_suite_hash.to_string(),
             observed_metrics,
         },
+        morph_version: None,
     });
     let hash = store.put(&commit)?;
 
     let branch = current_branch(store)?.unwrap_or_else(|| DEFAULT_BRANCH.to_string());
     store.ref_write(&format!("heads/{}", branch), &hash)?;
+
+    Ok(hash)
+}
+
+/// Create a commit with tree built from the staging index.
+/// `program_hash` and `eval_suite_hash` are optional: defaults to identity program / empty eval suite.
+/// Clears the staging index after commit.
+pub fn create_tree_commit(
+    store: &dyn Store,
+    repo_root: &Path,
+    program_hash: Option<&Hash>,
+    eval_suite_hash: Option<&Hash>,
+    observed_metrics: BTreeMap<String, f64>,
+    message: String,
+    author: Option<String>,
+    morph_version: Option<&str>,
+) -> Result<Hash, MorphError> {
+    let morph_dir = repo_root.join(".morph");
+    let index = crate::index::read_index(&morph_dir)?;
+    let tree_hash = crate::tree::build_tree(store, &index.entries)?;
+
+    let prog_hash = match program_hash {
+        Some(h) => h.to_string(),
+        None => {
+            let identity = crate::identity::identity_program();
+            store.put(&identity)?.to_string()
+        }
+    };
+    let suite_hash = match eval_suite_hash {
+        Some(h) => h.to_string(),
+        None => {
+            let empty_suite = MorphObject::EvalSuite(EvalSuite {
+                cases: vec![],
+                metrics: vec![],
+            });
+            store.put(&empty_suite)?.to_string()
+        }
+    };
+
+    let parent_list: Vec<String> = resolve_head(store)?
+        .map(|h| vec![h.to_string()])
+        .unwrap_or_default();
+    let timestamp = Utc::now().to_rfc3339();
+    let author = author.unwrap_or_else(|| "morph".to_string());
+
+    let commit = MorphObject::Commit(Commit {
+        tree: Some(tree_hash.to_string()),
+        program: prog_hash,
+        parents: parent_list,
+        message,
+        timestamp,
+        author,
+        eval_contract: EvalContract {
+            suite: suite_hash,
+            observed_metrics,
+        },
+        morph_version: morph_version.map(String::from),
+    });
+    let hash = store.put(&commit)?;
+
+    let branch = current_branch(store)?.unwrap_or_else(|| DEFAULT_BRANCH.to_string());
+    store.ref_write(&format!("heads/{}", branch), &hash)?;
+
+    crate::index::clear_index(&morph_dir)?;
 
     Ok(hash)
 }
@@ -80,6 +147,48 @@ pub fn set_head_branch(store: &dyn Store, branch: &str) -> Result<(), MorphError
 /// Set HEAD to a commit hash (detached HEAD).
 pub fn set_head_detached(store: &dyn Store, hash: &Hash) -> Result<(), MorphError> {
     store.ref_write_raw(HEAD_REF, &hash.to_string())
+}
+
+/// Checkout a branch or commit: set HEAD and restore the working tree from the commit's tree.
+/// If the commit has no tree (pre-0.3), only sets HEAD without touching the working tree.
+pub fn checkout_tree(
+    store: &dyn Store,
+    repo_root: &Path,
+    ref_name: &str,
+) -> Result<(Hash, bool), MorphError> {
+    let (hash, is_branch) = if ref_name.len() == 64 && ref_name.chars().all(|c| c.is_ascii_hexdigit()) {
+        let h = Hash::from_hex(ref_name)?;
+        set_head_detached(store, &h)?;
+        (h, false)
+    } else {
+        let ref_path = if ref_name.starts_with("heads/") {
+            ref_name.to_string()
+        } else {
+            format!("heads/{}", ref_name)
+        };
+        let h = store
+            .ref_read(&ref_path)?
+            .ok_or_else(|| MorphError::NotFound(ref_name.into()))?;
+        let branch_name = ref_name.trim_start_matches("heads/");
+        set_head_branch(store, branch_name)?;
+        (h, true)
+    };
+
+    let commit = match store.get(&hash)? {
+        MorphObject::Commit(c) => c,
+        _ => return Err(MorphError::Serialization("not a commit".into())),
+    };
+
+    let tree_restored = if let Some(tree_hash_str) = &commit.tree {
+        let tree_hash = Hash::from_hex(tree_hash_str)?;
+        crate::tree::restore_tree(store, &tree_hash, repo_root)?;
+        true
+    } else {
+        false
+    };
+
+    let _ = is_branch;
+    Ok((hash, tree_restored))
 }
 
 /// Create a merge commit. Validates that merged_observed_metrics dominate both parents.
@@ -121,6 +230,7 @@ pub fn create_merge_commit(
     let timestamp = chrono::Utc::now().to_rfc3339();
     let author = author.unwrap_or_else(|| "morph".to_string());
     let commit = MorphObject::Commit(Commit {
+        tree: None,
         program: merged_program_hash.to_string(),
         parents,
         message,
@@ -130,6 +240,7 @@ pub fn create_merge_commit(
             suite: eval_suite_hash.to_string(),
             observed_metrics: merged_observed_metrics,
         },
+        morph_version: None,
     });
     let hash = store.put(&commit)?;
 
@@ -170,12 +281,14 @@ pub fn rollup(
     let message = message.unwrap_or_else(|| format!("Rollup to {}", tip_hash));
     let timestamp = chrono::Utc::now().to_rfc3339();
     let commit = MorphObject::Commit(Commit {
+        tree: None,
         program: tip_commit.program.clone(),
         parents: vec![base_hash.to_string()],
         message,
         timestamp,
         author: tip_commit.author.clone(),
         eval_contract: tip_commit.eval_contract.clone(),
+        morph_version: None,
     });
     let hash = store.put(&commit)?;
 
@@ -301,5 +414,107 @@ mod tests {
             _ => panic!(),
         };
         assert_eq!(merge_commit.parents.len(), 2);
+    }
+
+    #[test]
+    fn create_tree_commit_stores_tree_hash() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let _store = crate::repo::init_repo(root).unwrap();
+        let morph_dir = root.join(".morph");
+        let store = crate::open_store(&morph_dir).unwrap();
+
+        std::fs::write(root.join("file.txt"), "content").unwrap();
+        crate::add_paths(&store, root, &[std::path::PathBuf::from(".")]).unwrap();
+
+        let hash = create_tree_commit(
+            store.as_ref(),
+            root,
+            None,
+            None,
+            BTreeMap::new(),
+            "test commit".into(),
+            None,
+            Some("0.3"),
+        )
+        .unwrap();
+
+        let obj = store.get(&hash).unwrap();
+        let commit = match &obj {
+            MorphObject::Commit(c) => c,
+            _ => panic!("expected commit"),
+        };
+        assert!(commit.tree.is_some(), "commit should have tree");
+        assert_eq!(commit.morph_version.as_deref(), Some("0.3"));
+
+        let tree_hash = Hash::from_hex(commit.tree.as_ref().unwrap()).unwrap();
+        let flat = crate::tree::flatten_tree(store.as_ref(), &tree_hash).unwrap();
+        assert!(flat.contains_key("file.txt"), "tree should contain file.txt");
+    }
+
+    #[test]
+    fn create_tree_commit_defaults_program_and_eval() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let _store = crate::repo::init_repo(root).unwrap();
+        let morph_dir = root.join(".morph");
+        let store = crate::open_store(&morph_dir).unwrap();
+
+        std::fs::write(root.join("x.txt"), "x").unwrap();
+        crate::add_paths(&store, root, &[std::path::PathBuf::from(".")]).unwrap();
+
+        let hash = create_tree_commit(
+            store.as_ref(),
+            root,
+            None,
+            None,
+            BTreeMap::new(),
+            "defaults".into(),
+            None,
+            None,
+        )
+        .unwrap();
+
+        let commit = match store.get(&hash).unwrap() {
+            MorphObject::Commit(c) => c,
+            _ => panic!("expected commit"),
+        };
+        let prog_hash = Hash::from_hex(&commit.program).unwrap();
+        let prog = store.get(&prog_hash).unwrap();
+        assert!(matches!(prog, MorphObject::Program(_)));
+
+        let suite_hash = Hash::from_hex(&commit.eval_contract.suite).unwrap();
+        let suite = store.get(&suite_hash).unwrap();
+        assert!(matches!(suite, MorphObject::EvalSuite(_)));
+    }
+
+    #[test]
+    fn create_tree_commit_clears_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let _store = crate::repo::init_repo(root).unwrap();
+        let morph_dir = root.join(".morph");
+        let store = crate::open_store(&morph_dir).unwrap();
+
+        std::fs::write(root.join("f.txt"), "data").unwrap();
+        crate::add_paths(&store, root, &[std::path::PathBuf::from(".")]).unwrap();
+
+        let index_before = crate::index::read_index(&morph_dir).unwrap();
+        assert!(!index_before.is_empty(), "index should have entries before commit");
+
+        create_tree_commit(
+            store.as_ref(),
+            root,
+            None,
+            None,
+            BTreeMap::new(),
+            "commit".into(),
+            None,
+            None,
+        )
+        .unwrap();
+
+        let index_after = crate::index::read_index(&morph_dir).unwrap();
+        assert!(index_after.is_empty(), "index should be cleared after commit");
     }
 }
