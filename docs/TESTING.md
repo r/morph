@@ -5,7 +5,7 @@
 | Crate | Tests | Location |
 |-------|-------|----------|
 | **morph-core** | 86 unit tests across 12 modules | `#[cfg(test)]` blocks in each source file |
-| **morph-cli** | 13 integration tests | `morph-cli/tests/integration.rs` |
+| **morph-cli** | 13 integration tests | YAML specs in `morph-cli/tests/specs/*.yaml`, compiled by `build.rs` |
 | **morph-mcp** | None yet | -- |
 | **morph-serve** | None yet | -- |
 
@@ -58,7 +58,9 @@ Each morph-core module owns its tests in a `#[cfg(test)] mod tests` block. Tests
 - **make_store()**: Creates a bare store (no repo init) for lower-level store tests.
 - **store_blob()**: Helper to create and store a blob, returning its hash.
 
-Integration tests in `morph-cli/tests/integration.rs` exercise the CLI binary end-to-end using `assert_cmd` and `predicates`.
+CLI integration tests are defined as YAML specs in `morph-cli/tests/specs/*.yaml`. At build time, `morph-cli/build.rs` reads these specs and generates Rust test functions into `$OUT_DIR/spec_tests.rs`, which is `include!`'d from `morph-cli/tests/spec_tests.rs`. The generated code uses `assert_cmd` and `predicates` under the hood.
+
+Each YAML spec supports: file/directory setup (`files`, `dirs`), sequenced CLI commands (`morph` steps), variable capture from stdout (`capture`, `capture_first_line`), variable interpolation (`${var}`), hash computation (`compute_hash`), dynamic file creation (`write_file`), and assertions on exit code, stdout/stderr content, and filesystem state. See any spec file for examples.
 
 ---
 

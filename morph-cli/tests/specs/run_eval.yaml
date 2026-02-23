@@ -1,0 +1,19 @@
+- name: run_record_and_eval_record
+  files:
+    trace.json: '{"type":"trace","events":[{"id":"e1","seq":0,"ts":"2025-01-01T00:00:00Z","kind":"prompt","payload":{}}]}'
+    metrics.json: '{"metrics":{"accuracy":0.92,"latency_p95":1.2}}'
+  steps:
+    - compute_hash:
+        var: trace_hash
+        json: '{"type":"trace","events":[{"id":"e1","seq":0,"ts":"2025-01-01T00:00:00Z","kind":"prompt","payload":{}}]}'
+
+    - write_file:
+        path: run.json
+        content: '{"type":"run","program":"0000000000000000000000000000000000000000000000000000000000000000","commit":null,"environment":{"model":"test","version":"0","parameters":{},"toolchain":{}},"input_state_hash":"0000000000000000000000000000000000000000000000000000000000000000","output_artifacts":[],"metrics":{},"trace":"${trace_hash}","agent":{"id":"cli","version":"0","policy":null}}'
+
+    - morph: [run, record, run.json, --trace, trace.json]
+      capture: run_hash
+      assert_hash: true
+
+    - morph: [eval, record, metrics.json]
+      stdout_contains: "0.92"

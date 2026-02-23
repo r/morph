@@ -1,0 +1,17 @@
+- name: commit_and_log
+  files:
+    prog.json: '{"graph":{"nodes":[{"id":"n1","kind":"identity","ref":null,"params":{}}],"edges":[]},"prompts":[],"eval_suite":null,"provenance":null}'
+    .morph/evals/e.json: '{"cases":[],"metrics":[{"name":"acc","aggregation":"mean","threshold":0.0}]}'
+  steps:
+    - morph: [program, create, prog.json]
+      capture: prog_hash
+
+    - morph: [add, .morph/evals/e.json]
+      capture_first_line: suite_hash
+
+    - morph: [commit, -m, first commit, --program, "${prog_hash}", --eval-suite, "${suite_hash}", --metrics, "{}"]
+      capture: commit_hash
+      assert_hash: true
+
+    - morph: [log]
+      stdout_contains: first commit

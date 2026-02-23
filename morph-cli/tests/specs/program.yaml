@@ -1,0 +1,17 @@
+- name: program_create_and_show
+  files:
+    prog.json: |
+      {
+        "graph": {
+          "nodes": [{"id": "n1", "kind": "identity", "ref": null, "params": {}}],
+          "edges": []
+        },
+        "prompts": [],
+        "eval_suite": null,
+        "provenance": null
+      }
+  steps:
+    - morph: [program, create, prog.json]
+      capture: hash
+    - morph: [program, show, "${hash}"]
+      stdout_contains: program

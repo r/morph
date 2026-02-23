@@ -1,0 +1,22 @@
+- name: add_stages_any_file
+  files:
+    code.py: "print('hi')"
+  steps:
+    - morph: [add, code.py]
+      capture: hash
+      assert_hash: true
+    - morph: [status]
+      stdout_contains: tracked
+
+- name: add_dot_stages_all_working_dir_files
+  dirs:
+    - lib
+  files:
+    a.txt: aaa
+    lib/b.txt: bbb
+  steps:
+    - morph: [add, "."]
+      capture: output
+      assert_line_count_gte:
+        var: output
+        min: 2

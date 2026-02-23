@@ -1,0 +1,12 @@
+- name: prompt_create_and_materialize
+  files:
+    .morph/prompts/hello.txt: "Hello world"
+  steps:
+    - morph: [prompt, create, .morph/prompts/hello.txt]
+      capture: hash
+      assert_hash: true
+    - morph: [prompt, materialize, "${hash}", --output, .morph/prompts/out.prompt]
+  assert:
+    - kind: file_eq
+      path: .morph/prompts/out.prompt
+      content: "Hello world"

@@ -1,0 +1,15 @@
+- name: annotate_and_annotations
+  files:
+    .morph/prompts/p.txt: hello
+  steps:
+    - morph: [add, "."]
+
+    - morph: [prompt, create, .morph/prompts/p.txt]
+      capture: target_hash
+
+    - morph: [annotate, "${target_hash}", --kind, feedback, --data, '{"rating":"good"}']
+      capture: ann_hash
+      assert_hash: true
+
+    - morph: [annotations, "${target_hash}"]
+      stdout_contains: feedback

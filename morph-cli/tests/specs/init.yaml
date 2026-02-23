@@ -1,0 +1,32 @@
+- name: init_creates_morph_dir
+  init: false
+  steps:
+    - morph: [init, "${repo}"]
+  assert:
+    - kind: dir_exists
+      path: .morph
+    - kind: dir_exists
+      path: .morph/objects
+    - kind: dir_exists
+      path: .morph/refs
+    - kind: dir_exists
+      path: .morph/refs/heads
+    - kind: dir_exists
+      path: .morph/prompts
+    - kind: dir_exists
+      path: .morph/evals
+
+- name: init_does_not_create_top_level_dirs
+  assert:
+    - kind: dir_not_exists
+      path: prompts
+    - kind: dir_not_exists
+      path: programs
+    - kind: dir_not_exists
+      path: evals
+
+- name: init_prints_message
+  init: false
+  steps:
+    - morph: [init, "${repo}"]
+      stdout_contains: "Initialized Morph repository"

@@ -1,0 +1,22 @@
+- name: status_shows_working_dir_files
+  files:
+    hello.txt: world
+  steps:
+    - morph: [status]
+      stdout_contains:
+        - hello.txt
+        - new
+
+- name: status_shows_nested_working_dir_files
+  dirs:
+    - src
+  files:
+    src/app.rs: "fn main() {}"
+  steps:
+    - morph: [status]
+      stdout_contains: app.rs
+
+- name: status_empty_when_no_files
+  steps:
+    - morph: [status]
+      stdout_contains: "No files"
