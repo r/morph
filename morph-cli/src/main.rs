@@ -122,6 +122,7 @@ enum Command {
     /// Upgrade the repo store to the latest version (required before using MCP on older repos).
     Upgrade,
     /// Browse repo in browser (commit strip, prompts, tree). Use --port and --interface to bind.
+    #[cfg(feature = "visualize")]
     #[command(name = "visualize")]
     Visualize {
         #[arg(default_value = ".")]
@@ -248,6 +249,7 @@ fn main() -> anyhow::Result<()> {
                 println!("Store version is {}. No upgrade path from this version.", version);
             }
         }
+        #[cfg(feature = "visualize")]
         Command::Visualize { path, port, interface } => {
             let repo_root = path.canonicalize().unwrap_or(path);
             let morph_dir = if repo_root.join(".morph").exists() {
