@@ -83,7 +83,7 @@ Create or edit `.cursor/hooks.json` in your project (paths are relative to proje
 - **afterAgentResponse** — Receives the full agent response in the payload; builds a Run + Trace with prompt(s) and response, runs `morph run record`, then clears the pending file.
 - **stop** — Fallback: if a pending file still exists (e.g. `afterAgentResponse` didn’t fire), records a run with placeholder response text so no prompt is lost.
 
-Copy the hook scripts from the Morph repo into your project’s `cursor/` directory, or symlink them, so that `cursor/morph-record-prompt.sh` etc. resolve correctly.
+Copy the hook scripts from the Morph repo into your project’s `cursor/` directory, or symlink them, so that `cursor/morph-record-prompt.sh` etc. resolve correctly. Make them executable: `chmod +x cursor/morph-record-*.sh`.
 
 ### Agent-driven recording (optional)
 
@@ -155,7 +155,7 @@ When you want a snapshot:
 | `morph_branch` | Create a branch at HEAD |
 | `morph_checkout` | Switch HEAD and restore working tree |
 
-All tools accept optional `workspace_path`. If omitted, uses the resolved workspace (see section 2).
+All tools accept optional `workspace_path`. To get a run's prompt from the CLI, run **`morph prompt latest [REF]`** in the repo. Ref is like Git: **`latest`** (default, most recent run), **`latest~N`** or **`latest-N`** (Nth run back, e.g. `latest~1` = previous), or a **64-char run hash** to show that run's prompt. If omitted, uses the resolved workspace (see section 2).
 
 ---
 

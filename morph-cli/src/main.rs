@@ -177,6 +177,12 @@ enum PromptCmd {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
+    /// Print prompt text from a run. Ref: "latest" (default), "latest~N" / "latest-N" (N back), or run hash (64 hex chars). Like git show for runs.
+    Latest {
+        /// Run ref: latest (default), latest~N / latest-N, or run hash
+        #[arg(default_value = "latest")]
+        run_ref: String,
+    },
 }
 
 #[derive(clap::Subcommand)]
@@ -282,6 +288,60 @@ fn main() -> anyhow::Result<()> {
                 verbose_msg(verbose, &format!("materializing {} to {}", hash, dest.display()));
                 morph_core::materialize_blob(&store, &h, &dest)?;
                 println!("Materialized to {}", dest.display());
+            }
+            PromptCmd::Latest { run_ref } => {
+                let (repo_root, store) = get_store(verbose)?;
+                let morph_dir = repo_root.join(".morph");
+                let runs_dir = morph_dir.join("runs");
+                if !runs_dir.is_dir() {
+                    anyhow::bail!("no runs yet (missing or empty .morph/runs/)");
+                }
+                let mut run_files: Vec<_> = std::fs::read_dir(&runs_dir)?
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
+                    .collect();
+                run_files.sort_by(|a, b| {
+                    let at = a.metadata().and_then(|m| m.modified()).ok();
+                    let bt = b.metadata().and_then(|m| m.modified()).ok();
+                    bt.cmp(&at)
+                });
+                let run_path = if run_ref == "latest" || run_ref.is_empty() {
+                    run_files
+                        .first()
+                        .ok_or_else(|| anyhow::anyhow!("no runs in .morph/runs/"))?
+                        .path()
+                } else if let Some(n_str) = run_ref.strip_prefix("latest~").or_else(|| run_ref.strip_prefix("latest-")) {
+                    let n: usize = n_str.parse().map_err(|_| anyhow::anyhow!("invalid ref '{}': expected latest~N or latest-N with N a non-negative integer", run_ref))?;
+                    run_files
+                        .get(n)
+                        .ok_or_else(|| anyhow::anyhow!("no run at index {} (only {} run(s))", n, run_files.len()))?
+                        .path()
+                } else if run_ref.len() == 64 && run_ref.chars().all(|c| c.is_ascii_hexdigit()) {
+                    let path = runs_dir.join(format!("{}.json", run_ref));
+                    if !path.exists() {
+                        anyhow::bail!("run not found: {}", run_ref);
+                    }
+                    path
+                } else {
+                    anyhow::bail!("invalid ref '{}': use 'latest', 'latest~N' / 'latest-N', or a 64-char run hash", run_ref);
+                };
+                let run_json = std::fs::read_to_string(&run_path)?;
+                let run: morph_core::objects::Run =
+                    serde_json::from_str(&run_json).map_err(|e| anyhow::anyhow!("invalid run JSON: {}", e))?;
+                let trace_hash = parse_hash(&run.trace)?;
+                let obj = store.get(&trace_hash)?;
+                let trace = match &obj {
+                    morph_core::MorphObject::Trace(t) => t,
+                    _ => anyhow::bail!("object {} is not a trace", run.trace),
+                };
+                let prompt_text = trace
+                    .events
+                    .iter()
+                    .filter(|e| e.kind == "prompt")
+                    .last()
+                    .and_then(|e| e.payload.get("text").and_then(|v| v.as_str()))
+                    .unwrap_or("");
+                print!("{}", prompt_text);
             }
         },
         Command::Program { sub } => match sub {
