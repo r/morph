@@ -36,7 +36,7 @@ pub fn migrate_0_0_to_0_2(morph_dir: &Path) -> Result<(), MorphError> {
     }
 
     if old_objects.is_empty() {
-        set_repo_version_0_2(morph_dir)?;
+        set_repo_version(morph_dir, "0.2")?;
         return Ok(());
     }
 
@@ -76,7 +76,7 @@ pub fn migrate_0_0_to_0_2(morph_dir: &Path) -> Result<(), MorphError> {
         }
     }
 
-    set_repo_version_0_2(morph_dir)?;
+    set_repo_version(morph_dir, "0.2")?;
     Ok(())
 }
 
@@ -95,24 +95,6 @@ fn set_repo_version(morph_dir: &Path, version: &str) -> Result<(), MorphError> {
         v
     } else {
         serde_json::json!({ "repo_version": version })
-    };
-    std::fs::write(
-        config_path,
-        serde_json::to_string_pretty(&config).map_err(|e| MorphError::Serialization(e.to_string()))?,
-    )?;
-    Ok(())
-}
-
-fn set_repo_version_0_2(morph_dir: &Path) -> Result<(), MorphError> {
-    let config_path = morph_dir.join("config.json");
-    let config = if config_path.exists() {
-        let data = std::fs::read_to_string(&config_path)?;
-        let mut v: serde_json::Value =
-            serde_json::from_str(&data).map_err(|e| MorphError::Serialization(e.to_string()))?;
-        v["repo_version"] = serde_json::Value::String("0.2".to_string());
-        v
-    } else {
-        serde_json::json!({ "repo_version": "0.2" })
     };
     std::fs::write(
         config_path,

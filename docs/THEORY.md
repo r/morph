@@ -457,10 +457,13 @@ E2E tests fit naturally: they're just evaluators that execute a system-level har
 Each metric `m` in suite `T` defines:
 
 - A scoring function from observations: \( \mathrm{score}_m(\mathrm{Obs}_T) \)
-- An ordering direction (maximize/minimize), formalized as an order \( \leq_m \)
-- A certification method (how to turn samples into a claim)
+- An **ordering direction** (`maximize` or `minimize`), formalized as an order \( \leq_m \). For `maximize` metrics (e.g. accuracy), higher is better: \( x \leq_m y \iff x \leq y \). For `minimize` metrics (e.g. latency), lower is better: \( x \leq_m y \iff x \geq y \).
+- An **aggregation method** (how to reduce per-case scores into a single value)
+- A **threshold** (the minimum certified claim for the metric under its direction)
 
-Examples of certification rules:
+The v0 implementation supports four built-in aggregation methods: `mean`, `min`, `p95`, and `lower_ci_bound`. The direction field defaults to `maximize` when omitted (backward-compatible with pre-direction suites).
+
+Examples of certification rules (future versions may add more):
 
 - Lower confidence bounds
 - Quantile guarantees
@@ -528,26 +531,22 @@ This is a preorder (reflexive, transitive). It matches engineering reality: you 
 
 A Morph commit freezes:
 
+- A **File tree hash** — the root hash of the working directory tree at commit time (same role as Git's tree object in a commit)
 - A **Program ID** (hash of the program DAG + referenced blobs/trees)
-- An **EvalSuite set** (contract IDs)
-- A **certificate vector** \( v \in V_T \)
-- **Evidence references** (eval runs, raw observations, traces)
-- **Environment constraints** (runner/toolchain/model assumptions)
-- **File tree hash** — the root hash of the working directory tree at commit time (same role as Git's tree)
+- An **EvalSuite** (contract ID)
+- A **certificate vector** \( v \in V_T \) (the `observed_metrics`)
+- **Parent commit hashes** (forming the Merkle DAG)
+- **Author and timestamp**
 
 Conceptually:
 
 \[
-\mathrm{Commit} = (\mathrm{program\_id},\; T,\; v,\; \mathrm{env\_constraints},\; \mathrm{evidence\_refs},\; \mathrm{tree\_hash})
+\mathrm{Commit} = (\mathrm{tree\_hash},\; \mathrm{program\_id},\; T,\; v,\; \mathrm{parents},\; \mathrm{metadata})
 \]
 
-Commits are claims. Evidence is receipts.
+A Morph commit is both a file snapshot (like Git) AND a behavioral certificate. The program and eval contract default to the identity program and empty suite when unspecified, making Morph usable as a plain VCS.
 
-This preserves Git's core property:
-
-> History is immutable and verifiable,
-
-but upgrades the meaning of "what a commit represents."
+Commits are claims. Runs are receipts. History is immutable and verifiable.
 
 ---
 
@@ -795,6 +794,7 @@ Git tracked files. Morph tracks certified behavior, with receipts.
 | **Sequential composition** | `bind` / `flatMap` — lawful pipelines because monad laws |
 | **Parallel composition** | `zip` / `Promise.all` — lawful fork-join because state products + zipped effects |
 | **Run** | A realized execution outcome with a trace (immutable receipt) |
-| **EvalSuite** | A reproducible harness + metric definitions + certification (tests can be in-repo, pinned, external, or mixed) |
-| **Commit** | Program hash + contract IDs + certificate + evidence refs (+ optional artifact refs) |
+| **EvalSuite** | Metric definitions (name, aggregation, threshold, direction) + optional test cases |
+| **Commit** | Tree hash + program hash + eval contract (suite + observed metrics) + parents |
 | **Merge** | Candidate must dominate the join of parent certificates under unified contract |
+| **Direction** | Each metric is `maximize` (higher is better) or `minimize` (lower is better) |

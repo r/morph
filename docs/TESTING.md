@@ -1,67 +1,73 @@
-# Testing and coverage
+# Testing
 
-## Current setup
+## Test inventory
 
-- **morph-core**: Unit tests in `hash`, `store`, `repo`, `working`, `commit`, `metrics`, `annotate`, `identity`, `record`. Run with `cargo test -p morph-core`.
-- **morph-cli**: Integration tests in `morph-cli/tests/integration.rs` (init, status, add, prompt, program, commit, log, run record, eval record, annotate). Run with `cargo test -p morph-cli`.
-- **morph-mcp**: No tests yet.
+| Crate | Tests | Location |
+|-------|-------|----------|
+| **morph-core** | 86 unit tests across 12 modules | `#[cfg(test)]` blocks in each source file |
+| **morph-cli** | 13 integration tests | `morph-cli/tests/integration.rs` |
+| **morph-mcp** | None yet | -- |
+| **morph-serve** | None yet | -- |
+
+### morph-core unit test modules
+
+`hash`, `store` (FsStore + GixStore), `repo`, `working`, `commit`, `metrics` (including direction-aware thresholds), `annotate`, `identity`, `record`, `index`, `tree`, `migrate`.
+
+### morph-cli integration tests
+
+`init`, `status`, `add`, `prompt create/materialize`, `program create/show`, `commit + log`, `run record + eval record`, `annotate + annotations`.
+
+---
 
 ## Running tests
 
 ```bash
-cargo test                    # all workspace tests
+cargo test                    # all workspace tests (unit + integration)
 cargo test -p morph-core      # core library only
-cargo test -p morph-cli       # CLI integration tests
+cargo test -p morph-cli       # CLI integration tests only
+cargo test --lib              # unit tests only (no integration)
 ```
 
-## Measuring coverage
+---
 
-1. Install [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) (requires `llvm-tools` component):
+## Coverage
 
-   ```bash
-   rustup component add llvm-tools-preview
-   cargo install cargo-llvm-cov
-   ```
+Install [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov):
 
-2. Run coverage for the library (excludes binaries that have no tests):
+```bash
+rustup component add llvm-tools-preview
+cargo install cargo-llvm-cov
+```
 
-   ```bash
-   cargo llvm-cov -p morph-core --html
-   ```
+Generate reports:
 
-   Open `target/llvm-cov/html/index.html` in a browser.
+```bash
+cargo llvm-cov -p morph-core --html    # core library
+cargo llvm-cov --html                  # full workspace
+```
 
-3. Include integration tests (they exercise the CLI, which pulls in morph-core):
+Open `target/llvm-cov/html/index.html`.
 
-   ```bash
-   cargo llvm-cov -p morph-cli --html
-   ```
+---
 
-4. Workspace-wide report (core + CLI tests):
+## Test architecture notes
 
-   ```bash
-   cargo llvm-cov --html
-   ```
+Each morph-core module owns its tests in a `#[cfg(test)] mod tests` block. Tests use `tempfile::tempdir()` for filesystem isolation. Common test patterns:
 
-## How to improve coverage
+- **setup_repo()**: Creates a temp dir with `init_repo`, returns `(TempDir, FsStore)`.
+- **make_store()**: Creates a bare store (no repo init) for lower-level store tests.
+- **store_blob()**: Helper to create and store a blob, returning its hash.
 
-1. **Run coverage and open the HTML report**  
-   Focus on files with low line coverage and add tests for untested branches (error paths, edge cases).
+Integration tests in `morph-cli/tests/integration.rs` exercise the CLI binary end-to-end using `assert_cmd` and `predicates`.
 
-2. **morph-core**
-   - **store**: Add tests for `list()` by object type, `get()` with missing hash (NotFound), `ref_read` with symbolic ref if any path uses it.
-   - **hash**: Test `Hash::from_hex` with invalid input (wrong length, non-hex).
-   - **metrics**: Test `aggregate` with empty slice (error), unknown aggregation method; `aggregate_suite` and `check_thresholds` missing-metric path.
-   - **record**: Test `record_eval_metrics` with invalid JSON / missing `metrics` key; `record_run` with trace hash mismatch.
-   - **commit**: Test `resolve_head` (detached HEAD, symbolic ref), `rollup`, `log_from` edge cases.
-   - **working**: Remaining branches in `find_repo`, `status`, `add_paths` (e.g. non-UTF-8, permission errors if desired).
+---
 
-3. **morph-cli**
-   - Add integration tests for: `branch`, `checkout`, `morph run record` / `eval record` error cases (invalid JSON, missing files).
-   - Consider testing stderr for failing commands.
+## Known gaps
 
-4. **morph-mcp**
-   - Add integration tests that invoke the MCP server (e.g. via `mcp_test` or a small harness) for the main tools (init, stage, commit, etc.).
-
-5. **CI**
-   - Add a CI job that runs `cargo test` and optionally `cargo llvm-cov --lcov -o lcov.info` and fails if coverage drops below a threshold (e.g. with `cargo-llvm-cov`’s `--fail-under-lines`).
+- **morph-mcp**: No tests. An integration harness that speaks MCP over stdio would cover the primary write path.
+- **morph-serve**: No tests. Could test API endpoints with axum's test utilities.
+- **GixStore-specific paths**: `status()` and `record_session()` are now backend-aware (use `store.hash_object()`), but explicit GixStore integration tests would catch backend-specific regressions.
+- **proptest**: In dev-dependencies but not yet used. Good candidate for property-based tests on hash determinism and serialization round-trips.
+- **Error paths**: Many functions have untested error branches (malformed JSON, permission errors, missing refs).
+- **CLI gaps**: No tests yet for `branch`, `checkout`, `merge`, `rollup`, `upgrade`, or error cases.
+- **Direction-aware dominance**: `check_dominance()` currently assumes all metrics are "maximize". When a suite is available, dominance should respect per-metric direction. Tests exist for direction-aware `check_thresholds()`.

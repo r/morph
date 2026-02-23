@@ -85,6 +85,14 @@ pub struct EvalCase {
     pub input: serde_json::Value,
     pub expected: serde_json::Value,
     pub metric: String,
+    /// Where test data comes from: "candidate", "base", "pinned", or "external".
+    /// See THEORY.md §10.3. Defaults to "candidate" (use the produced tree).
+    #[serde(default = "default_fixture_source")]
+    pub fixture_source: String,
+}
+
+fn default_fixture_source() -> String {
+    "candidate".to_string()
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -92,6 +100,24 @@ pub struct EvalMetric {
     pub name: String,
     pub aggregation: String,
     pub threshold: f64,
+    /// Ordering direction: "maximize" (default) or "minimize". See THEORY.md §10.4.
+    #[serde(default = "default_direction")]
+    pub direction: String,
+}
+
+fn default_direction() -> String {
+    "maximize".to_string()
+}
+
+impl EvalMetric {
+    pub fn new(name: impl Into<String>, aggregation: impl Into<String>, threshold: f64) -> Self {
+        EvalMetric {
+            name: name.into(),
+            aggregation: aggregation.into(),
+            threshold,
+            direction: default_direction(),
+        }
+    }
 }
 
 // ---------- 4.5 Commit ----------

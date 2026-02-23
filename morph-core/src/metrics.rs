@@ -47,6 +47,7 @@ fn lower_ci_95(scores: &[f64]) -> f64 {
 }
 
 /// Check that observed metrics meet or exceed each metric's threshold in the suite.
+/// Respects direction: "maximize" requires val >= threshold, "minimize" requires val <= threshold.
 pub fn check_thresholds(
     observed: &BTreeMap<String, f64>,
     suite: &EvalSuite,
@@ -55,20 +56,88 @@ pub fn check_thresholds(
         let val = observed.get(&m.name).ok_or_else(|| {
             MorphError::Serialization(format!("missing metric: {}", m.name))
         })?;
-        if *val < m.threshold {
+        let passes = if m.direction == "minimize" {
+            *val <= m.threshold
+        } else {
+            *val >= m.threshold
+        };
+        if !passes {
             return Ok(false);
         }
     }
     Ok(true)
 }
 
-/// Check that merged metrics dominate parent (merged >= parent for every key in parent).
-/// Used for merge (v0-spec §6.8).
+/// Check that merged metrics dominate parent for every key in parent.
+/// Assumes all metrics are "maximize" (merged >= parent). Use [check_dominance_with_suite]
+/// when direction information is available.
 pub fn check_dominance(
     merged: &BTreeMap<String, f64>,
     parent: &BTreeMap<String, f64>,
 ) -> bool {
     parent.iter().all(|(k, v)| merged.get(k).map_or(false, |m| *m >= *v))
+}
+
+/// Direction-aware dominance: merged must be "at least as good" as parent for every metric
+/// in parent. For "maximize" metrics, merged >= parent. For "minimize" metrics, merged <= parent.
+/// Falls back to maximize for metrics not found in the suite.
+pub fn check_dominance_with_suite(
+    merged: &BTreeMap<String, f64>,
+    parent: &BTreeMap<String, f64>,
+    suite: &EvalSuite,
+) -> bool {
+    let directions: BTreeMap<&str, &str> = suite
+        .metrics
+        .iter()
+        .map(|m| (m.name.as_str(), m.direction.as_str()))
+        .collect();
+    parent.iter().all(|(k, v)| {
+        merged.get(k).map_or(false, |m| {
+            let dir = directions.get(k.as_str()).copied().unwrap_or("maximize");
+            if dir == "minimize" {
+                *m <= *v
+            } else {
+                *m >= *v
+            }
+        })
+    })
+}
+
+/// Compute the union of two eval suites (THEORY.md §13.1: T = T1 ⊔ T2).
+/// Metrics are merged by name. If both suites define the same metric name, they must agree
+/// on aggregation, threshold, and direction; otherwise returns an error.
+/// Cases are concatenated (deduplicated by id).
+pub fn union_suites(a: &EvalSuite, b: &EvalSuite) -> Result<EvalSuite, MorphError> {
+    let mut metrics_map: BTreeMap<String, &crate::objects::EvalMetric> = BTreeMap::new();
+    for m in &a.metrics {
+        metrics_map.insert(m.name.clone(), m);
+    }
+    for m in &b.metrics {
+        if let Some(existing) = metrics_map.get(&m.name) {
+            if existing.aggregation != m.aggregation
+                || existing.direction != m.direction
+                || (existing.threshold - m.threshold).abs() > f64::EPSILON
+            {
+                return Err(MorphError::Serialization(format!(
+                    "metric '{}' defined differently in both suites",
+                    m.name
+                )));
+            }
+        } else {
+            metrics_map.insert(m.name.clone(), m);
+        }
+    }
+
+    let mut case_ids = std::collections::BTreeSet::new();
+    let mut cases = Vec::new();
+    for c in a.cases.iter().chain(b.cases.iter()) {
+        if case_ids.insert(c.id.clone()) {
+            cases.push(c.clone());
+        }
+    }
+
+    let metrics = metrics_map.values().map(|m| (*m).clone()).collect();
+    Ok(EvalSuite { cases, metrics })
 }
 
 /// Compute aggregated metrics from per-case scores using suite's aggregation methods.
@@ -116,8 +185,8 @@ mod tests {
         let suite = EvalSuite {
             cases: vec![],
             metrics: vec![
-                EvalMetric { name: "acc".into(), aggregation: "mean".into(), threshold: 0.8 },
-                EvalMetric { name: "f1".into(), aggregation: "mean".into(), threshold: 0.0 },
+                EvalMetric::new("acc", "mean", 0.8),
+                EvalMetric::new("f1", "mean", 0.0),
             ],
         };
         let mut obs = BTreeMap::new();
@@ -130,7 +199,7 @@ mod tests {
     fn check_thresholds_fail() {
         let suite = EvalSuite {
             cases: vec![],
-            metrics: vec![EvalMetric { name: "acc".into(), aggregation: "mean".into(), threshold: 0.9 }],
+            metrics: vec![EvalMetric::new("acc", "mean", 0.9)],
         };
         let mut obs = BTreeMap::new();
         obs.insert("acc".to_string(), 0.8);
@@ -163,6 +232,26 @@ mod tests {
     }
 
     #[test]
+    fn check_thresholds_minimize_direction() {
+        let suite = EvalSuite {
+            cases: vec![],
+            metrics: vec![EvalMetric {
+                name: "latency".into(),
+                aggregation: "p95".into(),
+                threshold: 2.0,
+                direction: "minimize".into(),
+            }],
+        };
+        let mut good = BTreeMap::new();
+        good.insert("latency".to_string(), 1.5);
+        assert!(check_thresholds(&good, &suite).unwrap());
+
+        let mut bad = BTreeMap::new();
+        bad.insert("latency".to_string(), 3.0);
+        assert!(!check_thresholds(&bad, &suite).unwrap());
+    }
+
+    #[test]
     fn aggregate_empty_scores_err() {
         let s: [f64; 0] = [];
         assert!(aggregate(&s, "mean").is_err());
@@ -186,8 +275,8 @@ mod tests {
         let suite = EvalSuite {
             cases: vec![],
             metrics: vec![
-                EvalMetric { name: "a".into(), aggregation: "mean".into(), threshold: 0.0 },
-                EvalMetric { name: "b".into(), aggregation: "min".into(), threshold: 0.0 },
+                EvalMetric::new("a", "mean", 0.0),
+                EvalMetric::new("b", "min", 0.0),
             ],
         };
         let mut per_case = BTreeMap::new();
@@ -196,5 +285,131 @@ mod tests {
         let out = aggregate_suite(&per_case, &suite).unwrap();
         assert!((out.get("a").copied().unwrap() - 2.0).abs() < 1e-9);
         assert_eq!(out.get("b").copied().unwrap(), 1.0);
+    }
+
+    // ── check_dominance_with_suite ───────────────────────────────────
+
+    #[test]
+    fn dominance_with_suite_maximize() {
+        let suite = EvalSuite {
+            cases: vec![],
+            metrics: vec![EvalMetric::new("acc", "mean", 0.0)],
+        };
+        let mut merged = BTreeMap::new();
+        merged.insert("acc".into(), 0.95);
+        let mut parent = BTreeMap::new();
+        parent.insert("acc".into(), 0.9);
+        assert!(check_dominance_with_suite(&merged, &parent, &suite));
+    }
+
+    #[test]
+    fn dominance_with_suite_minimize() {
+        let suite = EvalSuite {
+            cases: vec![],
+            metrics: vec![EvalMetric {
+                name: "latency".into(),
+                aggregation: "p95".into(),
+                threshold: 5.0,
+                direction: "minimize".into(),
+            }],
+        };
+        let mut merged_good = BTreeMap::new();
+        merged_good.insert("latency".into(), 1.0);
+        let mut parent = BTreeMap::new();
+        parent.insert("latency".into(), 2.0);
+        assert!(check_dominance_with_suite(&merged_good, &parent, &suite));
+
+        let mut merged_bad = BTreeMap::new();
+        merged_bad.insert("latency".into(), 3.0);
+        assert!(!check_dominance_with_suite(&merged_bad, &parent, &suite));
+    }
+
+    #[test]
+    fn dominance_with_suite_mixed_directions() {
+        let suite = EvalSuite {
+            cases: vec![],
+            metrics: vec![
+                EvalMetric::new("acc", "mean", 0.0),
+                EvalMetric {
+                    name: "cost".into(),
+                    aggregation: "mean".into(),
+                    threshold: 10.0,
+                    direction: "minimize".into(),
+                },
+            ],
+        };
+        let mut parent = BTreeMap::new();
+        parent.insert("acc".into(), 0.9);
+        parent.insert("cost".into(), 5.0);
+
+        let mut both_better = BTreeMap::new();
+        both_better.insert("acc".into(), 0.95);
+        both_better.insert("cost".into(), 3.0);
+        assert!(check_dominance_with_suite(&both_better, &parent, &suite));
+
+        let mut acc_worse = BTreeMap::new();
+        acc_worse.insert("acc".into(), 0.85);
+        acc_worse.insert("cost".into(), 3.0);
+        assert!(!check_dominance_with_suite(&acc_worse, &parent, &suite));
+
+        let mut cost_worse = BTreeMap::new();
+        cost_worse.insert("acc".into(), 0.95);
+        cost_worse.insert("cost".into(), 7.0);
+        assert!(!check_dominance_with_suite(&cost_worse, &parent, &suite));
+    }
+
+    // ── union_suites ─────────────────────────────────────────────────
+
+    #[test]
+    fn union_suites_disjoint() {
+        let a = EvalSuite {
+            cases: vec![],
+            metrics: vec![EvalMetric::new("acc", "mean", 0.8)],
+        };
+        let b = EvalSuite {
+            cases: vec![],
+            metrics: vec![EvalMetric::new("f1", "mean", 0.7)],
+        };
+        let u = union_suites(&a, &b).unwrap();
+        assert_eq!(u.metrics.len(), 2);
+        assert!(u.metrics.iter().any(|m| m.name == "acc"));
+        assert!(u.metrics.iter().any(|m| m.name == "f1"));
+    }
+
+    #[test]
+    fn union_suites_overlapping_identical() {
+        let m = EvalMetric::new("acc", "mean", 0.8);
+        let a = EvalSuite { cases: vec![], metrics: vec![m.clone()] };
+        let b = EvalSuite { cases: vec![], metrics: vec![m] };
+        let u = union_suites(&a, &b).unwrap();
+        assert_eq!(u.metrics.len(), 1);
+    }
+
+    #[test]
+    fn union_suites_conflicting_threshold_errors() {
+        let a = EvalSuite {
+            cases: vec![],
+            metrics: vec![EvalMetric::new("acc", "mean", 0.8)],
+        };
+        let b = EvalSuite {
+            cases: vec![],
+            metrics: vec![EvalMetric::new("acc", "mean", 0.9)],
+        };
+        assert!(union_suites(&a, &b).is_err());
+    }
+
+    #[test]
+    fn union_suites_deduplicates_cases() {
+        let case = crate::objects::EvalCase {
+            id: "c1".into(),
+            input: serde_json::json!({}),
+            expected: serde_json::json!({}),
+            metric: "acc".into(),
+            fixture_source: "candidate".into(),
+        };
+        let a = EvalSuite { cases: vec![case.clone()], metrics: vec![] };
+        let b = EvalSuite { cases: vec![case], metrics: vec![] };
+        let u = union_suites(&a, &b).unwrap();
+        assert_eq!(u.cases.len(), 1);
     }
 }

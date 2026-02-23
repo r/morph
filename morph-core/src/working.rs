@@ -4,7 +4,6 @@ use crate::morphignore::{is_ignored, load_morphignore};
 use crate::objects::{Blob, EvalSuite, MorphObject, Program};
 use crate::Hash;
 use crate::store::{MorphError, Store};
-use crate::content_hash;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use std::path::Path;
 
@@ -160,7 +159,7 @@ pub fn status(store: &dyn Store, repo_root: &Path) -> Result<Vec<StatusEntry>, M
         }
         let kind = classify_file(path, &morph_prompts, &morph_evals);
         if let Some(obj) = object_from_file(path, kind).ok() {
-            let hash = content_hash(&obj)?;
+            let hash = store.hash_object(&obj)?;
             let in_store = store.has(&hash)?;
             entries.push(StatusEntry {
                 path: path.to_path_buf(),
@@ -193,7 +192,7 @@ pub fn status(store: &dyn Store, repo_root: &Path) -> Result<Vec<StatusEntry>, M
             }
             let kind = classify_file(path, &morph_prompts, &morph_evals);
             if let Some(obj) = object_from_file(path, kind).ok() {
-                let hash = content_hash(&obj)?;
+                let hash = store.hash_object(&obj)?;
                 let in_store = store.has(&hash)?;
                 entries.push(StatusEntry {
                     path: path.to_path_buf(),

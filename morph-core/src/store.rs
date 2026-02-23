@@ -72,6 +72,8 @@ pub trait Store {
     fn ref_write_raw(&self, name: &str, value: &str) -> Result<(), MorphError>;
     /// Path to refs directory (e.g. for listing branches).
     fn refs_dir(&self) -> std::path::PathBuf;
+    /// Compute the content hash for an object without storing it.
+    fn hash_object(&self, object: &MorphObject) -> Result<Hash, MorphError>;
 }
 
 impl Store for Box<dyn Store + '_> {
@@ -101,6 +103,9 @@ impl Store for Box<dyn Store + '_> {
     }
     fn refs_dir(&self) -> std::path::PathBuf {
         self.as_ref().refs_dir()
+    }
+    fn hash_object(&self, object: &MorphObject) -> Result<Hash, MorphError> {
+        self.as_ref().hash_object(object)
     }
 }
 
@@ -139,48 +144,163 @@ fn type_index_dir(object: &MorphObject) -> Option<&'static str> {
     }
 }
 
+// ── Shared filesystem helpers (used by both FsStore and GixStore) ────
+
+fn fs_get(object_path: &std::path::Path, hash: &Hash) -> Result<MorphObject, MorphError> {
+    let bytes = std::fs::read(object_path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            MorphError::NotFound(hash.to_string())
+        } else {
+            MorphError::Io(e)
+        }
+    })?;
+    serde_json::from_slice(&bytes).map_err(|e| MorphError::Serialization(e.to_string()))
+}
+
+/// Map ObjectType to the type-index directory name, if one exists.
+fn type_index_for_object_type(t: ObjectType) -> Option<&'static str> {
+    match t {
+        ObjectType::Run => Some("runs"),
+        ObjectType::Trace => Some("traces"),
+        ObjectType::EvalSuite => Some("evals"),
+        _ => None,
+    }
+}
+
+fn fs_list_hashes_from_dir(dir: &std::path::Path) -> Result<Vec<Hash>, MorphError> {
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut hashes = Vec::new();
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        if name.len() != 64 {
+            continue;
+        }
+        hashes.push(Hash::from_hex(name).map_err(|_| MorphError::InvalidHash(name.into()))?);
+    }
+    Ok(hashes)
+}
+
+fn fs_list(root: &std::path::Path, objects_dir: &std::path::Path, type_filter: ObjectType, getter: &dyn Fn(&Hash) -> Result<MorphObject, MorphError>) -> Result<Vec<Hash>, MorphError> {
+    if let Some(index_dir) = type_index_for_object_type(type_filter) {
+        return fs_list_hashes_from_dir(&root.join(index_dir));
+    }
+
+    if !objects_dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut hashes = Vec::new();
+    for entry in std::fs::read_dir(objects_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        if name.len() != 64 {
+            continue;
+        }
+        let hash = Hash::from_hex(name).map_err(|_| MorphError::InvalidHash(name.into()))?;
+        if getter(&hash)?.object_type() == type_filter {
+            hashes.push(hash);
+        }
+    }
+    Ok(hashes)
+}
+
+fn fs_ref_read(refs_dir: &std::path::Path, name: &str) -> Result<Option<Hash>, MorphError> {
+    let path = refs_dir.join(name);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let s = std::fs::read_to_string(&path)?.trim().to_string();
+    if s.is_empty() {
+        return Ok(None);
+    }
+    Hash::from_hex(&s).map(Some)
+}
+
+fn fs_ref_write(refs_dir: &std::path::Path, name: &str, hash: &Hash) -> Result<(), MorphError> {
+    let path = refs_dir.join(name);
+    if let Some(parent) = path.parent() {
+        if path != *refs_dir {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    std::fs::write(&path, hash.to_string())?;
+    Ok(())
+}
+
+fn fs_ref_read_raw(refs_dir: &std::path::Path, name: &str) -> Result<Option<String>, MorphError> {
+    let path = refs_dir.join(name);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let s = std::fs::read_to_string(&path)?.trim().to_string();
+    Ok(if s.is_empty() { None } else { Some(s) })
+}
+
+fn fs_ref_write_raw(refs_dir: &std::path::Path, name: &str, value: &str) -> Result<(), MorphError> {
+    let path = refs_dir.join(name);
+    if let Some(parent) = path.parent() {
+        if path != *refs_dir {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    let content = if value.ends_with('\n') { value.to_string() } else { format!("{}\n", value) };
+    std::fs::write(&path, content)?;
+    Ok(())
+}
+
+fn fs_put(
+    root: &std::path::Path,
+    object: &MorphObject,
+    hash: Hash,
+    object_path: &std::path::Path,
+) -> Result<Hash, MorphError> {
+    let json = if object_path.exists() {
+        None
+    } else {
+        std::fs::create_dir_all(object_path.parent().unwrap())?;
+        let json = crate::canonical_json(object)?;
+        std::fs::write(object_path, &json)?;
+        Some(json)
+    };
+
+    if let Some(dir_name) = type_index_dir(object) {
+        let index_path = root.join(dir_name).join(format!("{}.json", hash));
+        if !index_path.exists() {
+            if let Some(parent) = index_path.parent() {
+                std::fs::create_dir_all(parent)?;
+                let content = match json {
+                    Some(ref j) => j.clone(),
+                    None => std::fs::read_to_string(object_path)?,
+                };
+                std::fs::write(&index_path, content)?;
+            }
+        }
+    }
+
+    Ok(hash)
+}
+
+// ── FsStore implementation ───────────────────────────────────────────
+
 impl Store for FsStore {
     fn put(&self, object: &MorphObject) -> Result<Hash, MorphError> {
         let hash = crate::content_hash(object)?;
         let path = self.object_path(&hash);
-        let json = if path.exists() {
-            None
-        } else {
-            std::fs::create_dir_all(path.parent().unwrap())?;
-            let json = crate::canonical_json(object)?;
-            std::fs::write(&path, &json)?;
-            Some(json)
-        };
-
-        if let Some(dir_name) = type_index_dir(object) {
-            let index_path = self.root.join(dir_name).join(format!("{}.json", hash));
-            if !index_path.exists() {
-                if let Some(parent) = index_path.parent() {
-                    std::fs::create_dir_all(parent)?;
-                    let content = match json {
-                        Some(ref j) => j.clone(),
-                        None => std::fs::read_to_string(&path)?,
-                    };
-                    std::fs::write(&index_path, content)?;
-                }
-            }
-        }
-
-        Ok(hash)
+        fs_put(&self.root, object, hash, &path)
     }
 
     fn get(&self, hash: &Hash) -> Result<MorphObject, MorphError> {
-        let path = self.object_path(hash);
-        let bytes = std::fs::read(&path).map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                MorphError::NotFound(hash.to_string())
-            } else {
-                MorphError::Io(e)
-            }
-        })?;
-        let obj: MorphObject = serde_json::from_slice(&bytes)
-            .map_err(|e| MorphError::Serialization(e.to_string()))?;
-        Ok(obj)
+        fs_get(&self.object_path(hash), hash)
     }
 
     fn has(&self, hash: &Hash) -> Result<bool, MorphError> {
@@ -188,77 +308,31 @@ impl Store for FsStore {
     }
 
     fn list(&self, type_filter: ObjectType) -> Result<Vec<Hash>, MorphError> {
-        let dir = self.objects_dir();
-        if !dir.exists() {
-            return Ok(Vec::new());
-        }
-        let mut hashes = Vec::new();
-        for entry in std::fs::read_dir(&dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("json") {
-                continue;
-            }
-            let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-            if name.len() != 64 {
-                continue;
-            }
-            let hash = Hash::from_hex(name).map_err(|_| MorphError::InvalidHash(name.into()))?;
-            let obj = self.get(&hash)?;
-            if obj.object_type() == type_filter {
-                hashes.push(hash);
-            }
-        }
-        Ok(hashes)
+        fs_list(&self.root, &self.objects_dir(), type_filter, &|h| self.get(h))
     }
 
     fn ref_read(&self, name: &str) -> Result<Option<Hash>, MorphError> {
-        let path = self.refs_dir().join(name);
-        if !path.exists() {
-            return Ok(None);
-        }
-        let s = std::fs::read_to_string(&path)?.trim().to_string();
-        if s.is_empty() {
-            return Ok(None);
-        }
-        let hash = Hash::from_hex(&s)?;
-        Ok(Some(hash))
+        fs_ref_read(&self.refs_dir(), name)
     }
 
     fn ref_write(&self, name: &str, hash: &Hash) -> Result<(), MorphError> {
-        let path = self.refs_dir().join(name);
-        if let Some(parent) = path.parent() {
-            if path != self.refs_dir() {
-                std::fs::create_dir_all(parent)?;
-            }
-        }
-        std::fs::write(&path, hash.to_string())?;
-        Ok(())
+        fs_ref_write(&self.refs_dir(), name, hash)
     }
 
     fn ref_read_raw(&self, name: &str) -> Result<Option<String>, MorphError> {
-        let path = self.refs_dir().join(name);
-        if !path.exists() {
-            return Ok(None);
-        }
-        let s = std::fs::read_to_string(&path)?.trim().to_string();
-        Ok(if s.is_empty() { None } else { Some(s) })
+        fs_ref_read_raw(&self.refs_dir(), name)
     }
 
     fn ref_write_raw(&self, name: &str, value: &str) -> Result<(), MorphError> {
-        let path = self.refs_dir().join(name);
-        if let Some(parent) = path.parent() {
-            if path != self.refs_dir() {
-                std::fs::create_dir_all(parent)?;
-            }
-        }
-        let content = if value.ends_with('\n') { value.to_string() } else { format!("{}\n", value) };
-        std::fs::write(&path, content)?;
-        Ok(())
+        fs_ref_write_raw(&self.refs_dir(), name, value)
     }
 
     fn refs_dir(&self) -> std::path::PathBuf {
         self.root.join("refs")
+    }
+
+    fn hash_object(&self, object: &MorphObject) -> Result<Hash, MorphError> {
+        crate::content_hash(object)
     }
 }
 
@@ -284,46 +358,15 @@ impl GixStore {
     }
 }
 
-fn type_index_dir_gix(object: &MorphObject) -> Option<&'static str> {
-    type_index_dir(object)
-}
-
 impl Store for GixStore {
     fn put(&self, object: &MorphObject) -> Result<Hash, MorphError> {
         let hash = crate::content_hash_git(object)?;
         let path = self.object_path(&hash);
-        if path.exists() {
-            return Ok(hash);
-        }
-        std::fs::create_dir_all(path.parent().unwrap())?;
-        let json = crate::canonical_json(object)?;
-        std::fs::write(&path, &json)?;
-
-        if let Some(dir_name) = type_index_dir_gix(object) {
-            let index_path = self.root.join(dir_name).join(format!("{}.json", hash));
-            if !index_path.exists() {
-                if let Some(parent) = index_path.parent() {
-                    std::fs::create_dir_all(parent)?;
-                    std::fs::write(&index_path, &json)?;
-                }
-            }
-        }
-
-        Ok(hash)
+        fs_put(&self.root, object, hash, &path)
     }
 
     fn get(&self, hash: &Hash) -> Result<MorphObject, MorphError> {
-        let path = self.object_path(hash);
-        let bytes = std::fs::read(&path).map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                MorphError::NotFound(hash.to_string())
-            } else {
-                MorphError::Io(e)
-            }
-        })?;
-        let obj: MorphObject =
-            serde_json::from_slice(&bytes).map_err(|e| MorphError::Serialization(e.to_string()))?;
-        Ok(obj)
+        fs_get(&self.object_path(hash), hash)
     }
 
     fn has(&self, hash: &Hash) -> Result<bool, MorphError> {
@@ -331,81 +374,31 @@ impl Store for GixStore {
     }
 
     fn list(&self, type_filter: ObjectType) -> Result<Vec<Hash>, MorphError> {
-        let dir = self.objects_dir();
-        if !dir.exists() {
-            return Ok(Vec::new());
-        }
-        let mut hashes = Vec::new();
-        for entry in std::fs::read_dir(&dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("json") {
-                continue;
-            }
-            let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-            if name.len() != 64 {
-                continue;
-            }
-            let hash = Hash::from_hex(name).map_err(|_| MorphError::InvalidHash(name.into()))?;
-            let obj = self.get(&hash)?;
-            if obj.object_type() == type_filter {
-                hashes.push(hash);
-            }
-        }
-        Ok(hashes)
+        fs_list(&self.root, &self.objects_dir(), type_filter, &|h| self.get(h))
     }
 
     fn ref_read(&self, name: &str) -> Result<Option<Hash>, MorphError> {
-        let path = self.root.join("refs").join(name);
-        if !path.exists() {
-            return Ok(None);
-        }
-        let s = std::fs::read_to_string(&path)?.trim().to_string();
-        if s.is_empty() {
-            return Ok(None);
-        }
-        let hash = Hash::from_hex(&s)?;
-        Ok(Some(hash))
+        fs_ref_read(&self.refs_dir(), name)
     }
 
     fn ref_write(&self, name: &str, hash: &Hash) -> Result<(), MorphError> {
-        let path = self.root.join("refs").join(name);
-        if let Some(parent) = path.parent() {
-            if path != self.root.join("refs") {
-                std::fs::create_dir_all(parent)?;
-            }
-        }
-        std::fs::write(&path, hash.to_string())?;
-        Ok(())
+        fs_ref_write(&self.refs_dir(), name, hash)
     }
 
     fn ref_read_raw(&self, name: &str) -> Result<Option<String>, MorphError> {
-        let path = self.root.join("refs").join(name);
-        if !path.exists() {
-            return Ok(None);
-        }
-        let s = std::fs::read_to_string(&path)?.trim().to_string();
-        Ok(if s.is_empty() { None } else { Some(s) })
+        fs_ref_read_raw(&self.refs_dir(), name)
     }
 
     fn ref_write_raw(&self, name: &str, value: &str) -> Result<(), MorphError> {
-        let path = self.root.join("refs").join(name);
-        if let Some(parent) = path.parent() {
-            if path != self.root.join("refs") {
-                std::fs::create_dir_all(parent)?;
-            }
-        }
-        let content = if value.ends_with('\n') {
-            value.to_string()
-        } else {
-            format!("{}\n", value)
-        };
-        std::fs::write(&path, content)?;
-        Ok(())
+        fs_ref_write_raw(&self.refs_dir(), name, value)
     }
 
     fn refs_dir(&self) -> std::path::PathBuf {
         self.root.join("refs")
+    }
+
+    fn hash_object(&self, object: &MorphObject) -> Result<Hash, MorphError> {
+        crate::content_hash_git(object)
     }
 }
 

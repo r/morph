@@ -157,18 +157,25 @@ Morph's core logic depends on an abstract storage interface, not on a specific b
 - **get(hash) → object** — retrieve an object by its content hash
 - **has(hash) → bool** — check existence
 - **list(type) → [hash]** — enumerate objects of a given type
+- **hash_object(object) → hash** — compute the content hash without storing (same algorithm as put, no side effects)
 - **ref_read(name) → hash** — resolve a named reference (branch, tag)
 - **ref_write(name, hash)** — update a named reference
+- **ref_read_raw(name) → string** — raw ref content (e.g. `"ref: heads/main"` for symbolic HEAD)
+- **ref_write_raw(name, value)** — write raw ref content (symbolic or hash)
 
-The v0 default backend is **flat files on the local filesystem** — the `.morph/` directory layout described in §3. All objects (including Runs and Traces) are JSON files in `objects/<hash>.json`; refs are files (HEAD symbolic, heads/<branch> with hash); type-index copies for Runs, Traces, etc. live under `runs/`, `traces/`, `prompts/`, `evals/`.
+The v0 implementation provides two backends, selected by `repo_version` in `.morph/config.json`:
 
-Other backends are explicitly anticipated:
+| Store version | Backend | Hash function | Notes |
+|---|---|---|---|
+| `"0.0"` | **FsStore** — flat `objects/<hash>.json` | SHA-256 of canonical JSON | Created by `morph init`. Legacy. |
+| `"0.2"` | **GixStore** — same directory layout | SHA-256 of `"blob " + len + "\0" + canonical_json` (Git object format) | Created by `morph upgrade` from 0.0. |
+| `"0.3"` | **GixStore** + tree commits | Same as 0.2 | Adds file tree storage in commits. Current. |
 
-- **SQLite** — better query performance, transactional writes, FTS for search
-- **S3 / object storage** — for remote/distributed backends
-- **Database-backed** — for tools that want to index annotations, runs, or traces with richer query semantics
+Both backends use the same directory layout: `objects/<hash>.json` for objects, `refs/` for references, and type-index directories (`runs/`, `traces/`, `prompts/`, `evals/`) for fast type-filtered listing. The `list(type)` operation uses type-index directories when available, falling back to full object scan for types without indexes.
 
-The filesystem layout is a projection of the storage backend, not the backend itself. CLI and IDE integrations talk to the backend interface. This means a tool like a session-capture daemon could use SQLite locally while the same Morph objects remain content-addressed and portable across backends.
+Migration between store versions is handled by `morph upgrade` (CLI only). Migration from 0.0 to 0.2 rewrites all objects with new hashes and updates all internal references.
+
+Other backends are explicitly anticipated (SQLite, S3, database-backed). The filesystem layout is a projection of the storage backend, not the backend itself. CLI and IDE integrations talk to the backend interface.
 
 ---
 
@@ -309,13 +316,16 @@ The behavioral preorder is agnostic to metric source. What matters is that the e
     {
       "name": "metric_name",
       "aggregation": "<string>",
-      "threshold": 0.0
+      "threshold": 0.0,
+      "direction": "maximize"
     }
   ]
 }
 ```
 
 The `aggregation` field is an open string. It tells the evaluator how to reduce per-case scores into a single metric value. Well-known values are listed below. Custom evaluators may define their own.
+
+The `direction` field specifies the ordering for this metric: `"maximize"` (default, higher is better) or `"minimize"` (lower is better). This corresponds to THEORY.md §10.4's ordering direction. Threshold checks and dominance checks respect direction: for "maximize" metrics, the score must be ≥ threshold; for "minimize" metrics, the score must be ≤ threshold.
 
 ### v0 evaluator (built-in)
 
@@ -332,7 +342,7 @@ The v0 default evaluator is minimal:
 - `p95` — 95th percentile
 - `lower_ci_bound` — lower bound of a 95% confidence interval (a minimal nod to distributional stability)
 
-**Pass criteria:** for each metric, aggregated score ≥ declared threshold.
+**Pass criteria:** for each metric, the aggregated score must satisfy the threshold in the metric's direction. For "maximize" metrics (default): score ≥ threshold. For "minimize" metrics: score ≤ threshold.
 
 Statistical sophistication is minimal in v0. Future versions or custom evaluators may implement two-sample equivalence tests, Bayesian comparison, or human-in-the-loop evaluation pipelines (see THEORY.md §10.4 for the general certification framework).
 
@@ -742,6 +752,13 @@ Correct foundations cannot.
 
 The reference v0 implementation is in Rust.
 
-- **Storage default:** Flat JSON files on the local filesystem (`.morph/objects/<sha256>.json`). Trait-based store interface allows future backends (e.g. SQLite).
-- **Metrics validation:** Built-in aggregation (mean, min, p95, lower_ci_bound) and threshold/dominance checks. Morph does not execute tests; it validates and compares reported metric vectors.
-- **Crates:** `morph-core` (library), `morph-cli` (read path + manual writes), `morph-mcp` (Cursor MCP server, primary write path from the IDE).
+- **Storage:** Trait-based `Store` interface with two filesystem backends (`FsStore` for store version 0.0, `GixStore` for 0.2+). Both use flat JSON files in `.morph/objects/<hash>.json` with type-index directories for fast listing. `morph upgrade` migrates between versions. Future backends (SQLite, S3) plug into the same trait.
+- **Metrics validation:** Built-in aggregation (`mean`, `min`, `p95`, `lower_ci_bound`), direction-aware threshold checks (`maximize`/`minimize`), and componentwise dominance checks. Morph does not execute tests; it validates and compares reported metric vectors.
+- **Crates:**
+
+| Crate | Role |
+|---|---|
+| `morph-core` | Library: object model, storage, hashing, commits, metrics, trees, migration |
+| `morph-cli` | CLI: read path + manual writes (`morph init`, `add`, `commit`, `log`, ...) |
+| `morph-mcp` | Cursor MCP server: primary write path from the IDE |
+| `morph-serve` | Browser visualization: `morph visualize` serves a web UI for browsing commits |

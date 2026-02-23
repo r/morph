@@ -1,6 +1,5 @@
 //! Ingest execution evidence: run record and eval record (v0-spec §6.6, §6.7).
 
-use crate::hash::content_hash;
 use crate::identity::identity_program;
 use crate::objects::{AgentInfo, Blob, MorphObject, Run, RunEnvironment, Trace, TraceEvent};
 use crate::store::{MorphError, Store};
@@ -92,12 +91,10 @@ pub fn record_session(
         ],
     });
 
-    let trace_hash = content_hash(&trace)?;
-    store.put(&trace)?;
+    let trace_hash = store.put(&trace)?;
 
     let identity = identity_program();
-    let program_hash = content_hash(&identity)?;
-    store.put(&identity)?;
+    let program_hash = store.put(&identity)?;
 
     let prompt_blob = MorphObject::Blob(Blob {
         kind: "prompt".to_string(),
