@@ -21,7 +21,9 @@ THEORY.md defines the algebra. v0-spec.md projects that algebra into a buildable
 
 | Document | Audience | What it covers |
 |---|---|---|
-| **[CURSOR-SETUP.md](CURSOR-SETUP.md)** | Users | Build, install, configure Morph in Cursor. Record sessions, commit files, debug issues. |
+| **[INSTALLATION.md](INSTALLATION.md)** | Users | **Start here.** Install Morph (binaries, init, IDE setup). Cursor and Claude Code; Cursor Marketplace packaging. |
+| **[CURSOR-SETUP.md](CURSOR-SETUP.md)** | Users | Full Cursor reference: MCP, hooks (always-on recording), rules, committing, Marketplace plugin option. |
+| **[CLAUDE-CODE-SETUP.md](CLAUDE-CODE-SETUP.md)** | Users | Full Claude Code reference: MCP, hooks (UserPromptSubmit + Stop), committing. |
 | **[MORPH-AND-GIT.md](MORPH-AND-GIT.md)** | Users | Running Morph and Git side-by-side in the same repository. |
 | **[TESTING.md](TESTING.md)** | Contributors | Test architecture, running tests, coverage, known gaps. |
 

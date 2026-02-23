@@ -8,8 +8,9 @@ Hook scripts for recording Morph sessions from Cursor lifecycle events.
 
 | File | Referenced by | Purpose |
 |------|--------------|---------|
-| `morph-record-prompt.sh` | `.cursor/hooks.json` (`beforeSubmitPrompt`) | Saves prompt text to `.morph/hooks/pending/` |
-| `morph-record-stop.sh` | `.cursor/hooks.json` (`stop`) | Builds Run + Trace from pending prompts, calls `morph run record` |
+| `morph-record-prompt.sh` | `.cursor/hooks.json` (`beforeSubmitPrompt`) | Saves prompt to `.morph/hooks/pending-<conversation_id>.jsonl` |
+| `morph-record-response.sh` | `.cursor/hooks.json` (`afterAgentResponse`) | Builds Run + Trace with full response text, calls `morph run record` |
+| `morph-record-stop.sh` | `.cursor/hooks.json` (`stop`) | Fallback: builds Run + Trace from pending if no `afterAgentResponse` yet |
 
 ## Related config
 
