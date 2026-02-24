@@ -155,7 +155,7 @@ When you want a snapshot:
 | `morph_branch` | Create a branch at HEAD |
 | `morph_checkout` | Switch HEAD and restore working tree |
 
-All tools accept optional `workspace_path`. To get a run's prompt from the CLI, run **`morph prompt latest [REF]`** in the repo. Ref is like Git: **`latest`** (default, most recent run), **`latest~N`** or **`latest-N`** (Nth run back, e.g. `latest~1` = previous), or a **64-char run hash** to show that run's prompt. If omitted, uses the resolved workspace (see section 2).
+All tools accept optional `workspace_path`. To get a run's prompt from the CLI, run **`morph prompt show [REF]`** in the repo (e.g. `morph prompt show latest~1`). Ref is like Git: **`latest`** (default), **`latest~N`** or **`latest-N`** (Nth run back), or a **64-char run hash**. If the trace is missing, pass **`--run-upgrade`** to run `morph upgrade` and retry once. If omitted, uses the resolved workspace (see section 2).
 
 ---
 
@@ -168,3 +168,32 @@ All tools accept optional `workspace_path`. To get a run's prompt from the CLI, 
 | `spawn ... ENOENT` | Path in `mcp.json` doesn't exist. Run `which morph-mcp` to find it. |
 | Sessions not recorded | Use hook-based recording (Section 3): add `.cursor/hooks.json` with `beforeSubmitPrompt`, `afterAgentResponse`, and `stop`. Or add `.cursor/rules/morph-record.mdc` with `alwaysApply: true` so the agent calls `morph_record_session`. |
 | Empty `.morph/prompts/` | A successful `morph_record_session` writes to `prompts/`, `runs/`, `traces/`, and `objects/`. If all empty, the tool isn't being called. |
+| **Object not found** (trace hash) when running `morph prompt show` | Run `morph upgrade` or `morph prompt show --run-upgrade`; or try an older run (e.g. `latest~2`). See [Debugging Object not found](#debugging-object-not-found) below. |
+
+### Debugging Object not found
+
+When `morph prompt show` fails with **Object not found: &lt;hash&gt;** (a trace hash), the run file in `.morph/runs/` points to a trace that isn't in the store. That can happen if the run was recorded under an older store version and the trace lived under a different hash, or the run file was written without the trace ever being stored.
+
+**Steps:**
+
+1. **See which run is latest and which trace it wants:**
+   ```bash
+   ls -t .morph/runs/*.json | head -1 | xargs cat | jq -r '.trace'
+   ```
+   That prints the missing trace hash.
+
+2. **Check if the trace exists under objects or type-index:**
+   ```bash
+   test -f .morph/objects/<TRACE_HASH>.json && echo "in objects" || echo "not in objects"
+   ls .morph/traces/ | grep -F "<TRACE_HASH>" || echo "not in traces"
+   ```
+   Replace `<TRACE_HASH>` with the 64-char hash from step 1.
+
+3. **Use an older run** if a previous run's trace is present:
+   ```bash
+   morph prompt show latest~1
+   morph prompt show latest~2
+   ```
+   One of these may succeed if an earlier run was fully stored.
+
+4. **Run upgrade:** If the store was upgraded from an older version, run **`morph upgrade`** and retry. Or pass **`--run-upgrade`** to have the CLI run the upgrade and retry once: `morph prompt show --run-upgrade` (optionally with a ref, e.g. `morph prompt show latest --run-upgrade`).
