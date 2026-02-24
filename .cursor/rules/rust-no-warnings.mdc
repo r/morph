@@ -1,0 +1,11 @@
+---
+description: Keep Rust code warning-free; do not introduce compiler or Clippy warnings
+globs: ["**/*.rs", "**/Cargo.toml"]
+alwaysApply: false
+---
+
+# Rust: no warnings in committed code
+
+- Do not introduce Rust compiler warnings or Clippy lints. Fix any existing warnings in files you touch when feasible.
+- Before finishing Rust changes, run `cargo check --workspace` (and optionally `cargo clippy --workspace`) and resolve any warnings.
+- The project uses a pre-commit hook (see docs/TESTING.md) that runs `cargo check --workspace` with `RUSTFLAGS="-D warnings"`; commits will be rejected if warnings remain.
