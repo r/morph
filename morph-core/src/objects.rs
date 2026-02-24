@@ -37,7 +37,18 @@ pub struct Program {
     #[serde(default)]
     pub eval_suite: Option<String>,
     #[serde(default)]
+    pub attribution: Option<BTreeMap<String, AttributionEntry>>,
+    #[serde(default)]
     pub provenance: Option<Provenance>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttributionEntry {
+    pub agent_id: String,
+    #[serde(default)]
+    pub agent_version: Option<String>,
+    #[serde(default)]
+    pub instance_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -130,9 +141,18 @@ pub struct Commit {
     pub message: String,
     pub timestamp: String,
     pub author: String,
+    #[serde(default)]
+    pub contributors: Option<Vec<CommitContributor>>,
     pub eval_contract: EvalContract,
     #[serde(default)]
     pub morph_version: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommitContributor {
+    pub id: String,
+    #[serde(default)]
+    pub role: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -155,7 +175,21 @@ pub struct Run {
     pub trace: String,
     pub agent: AgentInfo,
     #[serde(default)]
+    pub contributors: Option<Vec<ContributorInfo>>,
+    #[serde(default)]
     pub morph_version: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContributorInfo {
+    pub id: String,
+    pub version: String,
+    #[serde(default)]
+    pub instance_id: Option<String>,
+    #[serde(default)]
+    pub policy: Option<String>,
+    #[serde(default)]
+    pub role: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -172,6 +206,8 @@ pub struct RunEnvironment {
 pub struct AgentInfo {
     pub id: String,
     pub version: String,
+    #[serde(default)]
+    pub instance_id: Option<String>,
     #[serde(default)]
     pub policy: Option<String>,
 }

@@ -68,7 +68,7 @@ The core bet is simple: when software involves stochastic, effectful transformat
 The contributions of this paper are:
 
 \begin{enumerate}[nosep]
-  \item A formal model of transformation programs as effectful computations supporting sequential and parallel composition (\Cref{sec:programs}).
+  \item A formal model of transformation programs as effectful computations supporting sequential composition, parallel composition, and multi-agent attribution (\Cref{sec:programs}).
   \item An evaluation-contract formalism defining behavioral equivalence, certificate vectors, and a dominance preorder over programs (\Cref{sec:eval}).
   \item A merge semantics based on dominance of the join of parent certificates, with a proof that this preserves monotonic behavioral improvement (\Cref{sec:merge}).
   \item A concrete system design (\textsc{Morph} v0) implementing these ideas as a content-addressed object store with CLI tooling (\Cref{sec:system}).
@@ -176,6 +176,34 @@ enabling the parallel composition of programs:
 \end{equation}
 
 \noindent This mirrors real systems: branches generate candidates; a join step selects or merges them.
+
+\subsection{Multi-Agent Programs}
+
+When multiple agents contribute to a single program---one agent generating retrieval logic, another writing prompt templates, a third composing the overall pipeline---the program DAG naturally records \emph{what} each agent did. We formalize this with an attribution function.
+
+\begin{definition}[Attributed Program]
+An \emph{attributed program} extends a program with an attribution function $\alpha : V \to \mathcal{A} \cup \{\bot\}$, where $\mathcal{A}$ is a set of agent identifiers and $\bot$ denotes unattributed nodes. For a single-agent or human-authored program, $\alpha$ is constant.
+\end{definition}
+
+Attribution composes naturally with both sequential and parallel composition. For $Q \circ P$, the attribution of the composite is the union of both attribution functions over disjoint node sets. For $P \otimes Q$, similarly. The join step $J$ in a branch composition may be attributed to a coordinating agent or left unattributed.
+
+\paragraph{Certification is holistic.}
+A critical property of the current framework: certification operates on the \emph{composed program}, not on individual contributions. The certificate vector $\text{cert}_T(P, E, s_0) \in V_T$ is a property of the program as a whole. There is no natural decomposition
+\begin{equation}
+  \text{cert}_T(P, E, s_0) = \bigoplus_{a \in \mathcal{A}} \text{cert}_T(P|_a, E, s_0)
+\end{equation}
+because the behavioral contribution of agent $a$'s nodes generally depends on the context provided by other agents' nodes. The evaluation suite tests the \emph{joint} result.
+
+This is a deliberate design choice with a known consequence: \textsc{Morph} can certify that a multi-agent program meets its behavioral contract, and it can record which agent contributed which operators, but it cannot attribute \emph{credit} or \emph{blame} to individual agents from the certificate alone. Decomposing joint performance into per-agent contributions requires additional machinery---counterfactual evaluation (running the program with one agent's contributions ablated), Shapley-value-style credit assignment, or evaluation suites specifically designed to test modular contributions.
+
+\paragraph{Distributed vs.\ cooperative multi-agent work.}
+The framework distinguishes two multi-agent patterns:
+\begin{itemize}[nosep]
+  \item \textbf{Distributed:} Agents work on separate branches, each independently certified. Merge-as-dominance (\Cref{sec:merge}) ensures neither branch's behavioral gains are silently lost. This case is structurally identical to two humans on two branches and requires no new theory.
+  \item \textbf{Cooperative:} Multiple agents contribute to a single program. The parallel composition operator $P \otimes Q$ with a join step models orchestrated parallelism---two agents generating candidates, a join step combining results. Attribution records provenance; certification evaluates the composed result.
+\end{itemize}
+
+\noindent Real-time concurrent edits to shared state (CRDT-style coordination) live below the VCS layer. Agents coordinate however they coordinate, produce a result, and that result is committed and certified by \textsc{Morph}.
 
 % ============================================================
 \section{Evaluation Contracts and Behavioral Order}
@@ -417,6 +445,9 @@ Because all objects are content-addressed and immutable, the architecture extend
 
 \paragraph{Complementarity with Git.}
 \textsc{Morph} does not replace Git. Deterministic source code remains well-served by Git. \textsc{Morph} handles the transformation programs, evaluations, and behavioral contracts that Git cannot express. The two systems coexist in the same repository: Git for source snapshots, \textsc{Morph} for behavioral versioning. When program and evaluation suite fields are left empty, a \textsc{Morph} commit degenerates into a standard tree-hash commit, so you do not have to use the behavioral features until you need them.
+
+\paragraph{Multi-agent attribution.}
+The current formalization treats programs as units for certification: the certificate vector is a property of the composed program, not of individual operator contributions (\Cref{sec:programs}). When multiple agents contribute to a single program, the attribution function records which agent authored which operators, but the dominance preorder operates on the whole. Decomposing a certificate into per-agent credit is analogous to the credit assignment problem in cooperative multi-agent reinforcement learning~\citep{wang2024survey}---the joint reward is observable, but individual contributions require counterfactual reasoning. For distributed multi-agent work (separate branches), this is not a limitation: each branch carries its own certification. For tightly coupled cooperative work---where agent A's contribution only makes sense in the context of agent B's---the evaluation suite must test the composed result. Future work could introduce modular evaluation suites that test sub-programs in isolation, enabling finer-grained attribution, or integrate Shapley-value-style decomposition into the certification framework.
 
 \paragraph{Limitations.}
 The current formalization assumes evaluation suites are honest and that certified metrics actually measure something meaningful. The dominance preorder is only as good as the contracts underneath it---bad evals produce meaningless certificates. Additionally, the structural merge of program graphs (step 1 of merge) is under-specified relative to three-way text merge, which has decades of tooling behind it; developing robust program-graph merge algorithms is important future work.

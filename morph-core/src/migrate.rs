@@ -160,6 +160,7 @@ fn rewrite_object(obj: &MorphObject, map: &HashMap<String, Hash>) -> Result<Morp
             },
             prompts: p.prompts.iter().map(|s| subst(map, s)).collect(),
             eval_suite: p.eval_suite.as_ref().map(|s| subst(map, s)),
+            attribution: p.attribution.clone(),
             provenance: p.provenance.as_ref().map(|pr| Provenance {
                 derived_from_run: pr.derived_from_run.as_ref().map(|s| subst(map, s)),
                 derived_from_trace: pr.derived_from_trace.as_ref().map(|s| subst(map, s)),
@@ -174,6 +175,7 @@ fn rewrite_object(obj: &MorphObject, map: &HashMap<String, Hash>) -> Result<Morp
             message: c.message.clone(),
             timestamp: c.timestamp.clone(),
             author: c.author.clone(),
+            contributors: c.contributors.clone(),
             eval_contract: EvalContract {
                 suite: subst(map, &c.eval_contract.suite),
                 observed_metrics: c.eval_contract.observed_metrics.clone(),
@@ -193,6 +195,7 @@ fn rewrite_object(obj: &MorphObject, map: &HashMap<String, Hash>) -> Result<Morp
                 version: r.agent.version.clone(),
                 policy: r.agent.policy.as_ref().map(|s| subst(map, s)),
             },
+            contributors: r.contributors.clone(),
             morph_version: r.morph_version.clone(),
         }),
         MorphObject::TraceRollup(tr) => MorphObject::TraceRollup(TraceRollup {
@@ -249,6 +252,7 @@ mod tests {
             message: "first".into(),
             timestamp: "2020-01-01T00:00:00Z".into(),
             author: "test".into(),
+            contributors: None,
             eval_contract: EvalContract {
                 suite: suite_hash.to_string(),
                 observed_metrics: BTreeMap::new(),

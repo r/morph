@@ -1,0 +1,36 @@
+---
+description: "Include evaluation metrics when committing to Morph so commits become behavioral certificates"
+globs: ["**/*"]
+alwaysApply: true
+---
+
+# Behavioral Commits
+
+When committing to Morph, include metrics from recent test/eval runs. A Morph commit is not just a snapshot — it is a certified behavioral claim.
+
+## When committing via MCP
+
+Call `morph_commit` with the `metrics` parameter set to a JSON object of metric name/value pairs from the most recent test run. Example:
+
+```json
+{"tests_passed": 42, "tests_total": 42, "pass_rate": 1.0}
+```
+
+If an eval suite has been recorded (check `.morph/evals/`), pass its hash as `eval_suite`.
+
+## When committing via CLI
+
+```
+morph commit -m "message" --metrics '{"tests_passed": 42, "pass_rate": 1.0}'
+```
+
+## What to include
+
+- **tests_passed / tests_total / pass_rate** — basic correctness.
+- **build_time_secs** — if available, tracks build performance.
+- **coverage_pct** — if a coverage tool is configured.
+- **Any domain-specific metric** relevant to the change.
+
+## Why this matters
+
+A commit with metrics enables Morph's behavioral merge gating. When merging, the merged program must be at least as good as both parents on every metric. Commits without metrics bypass this protection — so always include them when evidence is available.

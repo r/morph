@@ -68,6 +68,8 @@ This section maps THEORY.md concepts to v0 constructs.
 | Identity program | §7.2 | Built-in no-op Program (identity hash, passes state through unchanged) |
 | Sequential composition Q ∘ P | §7.1 | Graph edges (data flow between operator nodes) |
 | Parallel composition P ⊗ Q | §8.3 | Independent subgraphs within a Program graph |
+| Attribution α : V → A | paper §3.5 | Program `attribution` field (node → agent mapping) |
+| Multi-agent contributions | paper §3.5 | Run `contributors` field, Commit `contributors` field |
 | Evaluation suite T | §10 | EvalSuite object |
 | Contract satisfaction | §11.1 | Eval pass: aggregated metrics meet declared thresholds |
 | Behavioral preorder P ⪯ Q | §11.3 | Metric dominance: Q meets or exceeds P's certified scores |
@@ -248,6 +250,9 @@ A Program encodes a prompt program — the core versioned unit in Morph. It corr
   },
   "prompts": ["<blob_hash>"],
   "eval_suite": "<eval_suite_hash>",
+  "attribution": {
+    "node_id": { "agent_id": "<string>", "agent_version": "<string or null>" }
+  },
   "provenance": {
     "derived_from_run": "<run_hash or null>",
     "derived_from_trace": "<trace_hash or null>",
@@ -269,6 +274,8 @@ A Program encodes a prompt program — the core versioned unit in Morph. It corr
 - `control` — execution ordering without data dependency
 
 Nodes with no edges between them execute in parallel (parallel composition P ⊗ Q from the theory).
+
+**Attribution** records which agent authored which operators in the program DAG. This is the v0 realization of the theory's attribution function α : V → A. The `attribution` field is optional — null or empty when all nodes share a single author. Each entry maps a node ID to an agent identity. Attribution composes naturally: when programs are sequentially or parallelly composed, the attribution maps are unioned over disjoint node sets. Certification remains holistic — the certificate vector applies to the composed program, not to individual agents' contributions (see paper §3.5).
 
 **Provenance** records how this Program was created. The `provenance` field is optional — null fields indicate unknown or not-applicable. When a Program is extracted from a successful Run (e.g., distilling an agent session into a reusable workflow), provenance records the source Run, Trace, and optionally the specific event within that Trace. The `method` field indicates whether the Program was written by hand (`manual`), extracted from a session (`extracted`), or built by composing existing Programs (`composed`).
 
@@ -359,6 +366,9 @@ Statistical sophistication is minimal in v0. Future versions or custom evaluator
   "message": "string",
   "timestamp": "...",
   "author": "...",
+  "contributors": [
+    { "id": "...", "role": "<string or null>" }
+  ],
   "eval_contract": {
     "suite": "<eval_suite_hash>",
     "observed_metrics": { "metric_name": "value" }
@@ -372,6 +382,8 @@ The `tree` field records the root hash of the file tree at commit time — the s
 A Commit now stores both the behavioral contract AND the file tree snapshot. `program` and `eval_contract` default to the identity program and empty eval suite when not specified, making `morph commit -m 'message'` work as a plain VCS commit.
 
 The `observed_metrics` field records the metrics achieved at commit time. This is critical for merge: the merge commit must dominate these observed values, not merely pass the suite's base thresholds.
+
+The `contributors` field is optional and lists all agents and humans that contributed to this commit. The `author` field remains the primary committer (analogous to Git's author). `contributors` captures the broader set — agents that authored program nodes, ran evaluations, or produced artifacts that inform this commit. This is the commit-level projection of the theory's attribution function: while the program's `attribution` field maps individual operators to agents, the commit's `contributors` is a summary of all participating identities.
 
 Commits are claims. Runs are receipts.
 
@@ -400,13 +412,23 @@ A Run is an execution receipt.
     "id": "...",
     "version": "...",
     "policy": "<policy_hash or null>"
-  }
+  },
+  "contributors": [
+    {
+      "id": "...",
+      "version": "...",
+      "policy": "<policy_hash or null>",
+      "role": "<string or null>"
+    }
+  ]
 }
 ```
 
 Runs do not modify commit history.
 
 The `commit` field is null for exploratory runs in working space. It references a commit hash when the run serves as evidence for a committed program.
+
+The `agent` field records the primary or orchestrating agent. The `contributors` field is optional and lists all agents that participated in producing the run's outputs. Each contributor has the same identity fields as `agent`, plus an optional `role` string (e.g., `"retrieval"`, `"generation"`, `"review"`). For single-agent runs, `contributors` is null or empty. This supports the theory's multi-agent attribution model (paper §3.5) — recording who contributed while acknowledging that credit assignment from the certificate vector to individual agents requires additional analysis.
 
 Environment recording is mandatory (THEORY.md §18, Axiom 9).
 
@@ -716,6 +738,7 @@ How v0 satisfies each Morph axiom:
 | 3 | Effect Monad for Sequencing | Program execution produces `F(S)` — probabilistic outputs with traces; sequential composition via graph edges and bind semantics |
 | 4 | Product State Spaces | State modeled as (Tree, execution context, metadata); composition via Trees |
 | 5 | Zip for Parallelism | Independent subgraphs within a Program DAG execute in parallel; results combined |
+| — | Multi-Agent Attribution (§8.4) | Program `attribution` maps nodes to agents; Run `contributors` and Commit `contributors` record participating agents; certification remains holistic |
 | **C. Behavioral Semantics** | | |
 | 6 | Evaluation Suites are Explicit Contracts | EvalSuite objects define T with metrics, ordering, and thresholds |
 | 7 | Certificates are Comparable | Observed metrics in commits form certificate vectors; dominance is componentwise |

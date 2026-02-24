@@ -156,6 +156,159 @@ mod tests {
         assert!(Hash::from_hex(&"0".repeat(64)).is_ok());
     }
 
+    // --- instance_id on agent identity types ---
+
+    #[test]
+    fn agent_info_with_instance_id_roundtrip() {
+        let run = MorphObject::Run(Run {
+            program: "0".repeat(64),
+            commit: None,
+            environment: RunEnvironment {
+                model: "test".into(),
+                version: "1.0".into(),
+                parameters: std::collections::BTreeMap::new(),
+                toolchain: std::collections::BTreeMap::new(),
+            },
+            input_state_hash: "0".repeat(64),
+            output_artifacts: vec![],
+            metrics: std::collections::BTreeMap::new(),
+            trace: "0".repeat(64),
+            agent: AgentInfo {
+                id: "cursor".into(),
+                version: "1.0".into(),
+                instance_id: Some("550e8400-e29b-41d4-a716-446655440000".into()),
+                policy: None,
+            },
+            contributors: None,
+            morph_version: None,
+        });
+        let json = canonical_json(&run).unwrap();
+        let parsed: MorphObject = serde_json::from_str(&json).unwrap();
+        assert_eq!(content_hash(&run).unwrap(), content_hash(&parsed).unwrap());
+        if let MorphObject::Run(r) = &parsed {
+            assert_eq!(r.agent.instance_id.as_deref(), Some("550e8400-e29b-41d4-a716-446655440000"));
+        } else {
+            panic!("expected Run");
+        }
+    }
+
+    #[test]
+    fn agent_info_without_instance_id_defaults_to_none() {
+        let json = r#"{"type":"run","program":"aa","environment":{"model":"m","version":"1"},"input_state_hash":"bb","output_artifacts":[],"trace":"cc","agent":{"id":"cursor","version":"1.0"}}"#;
+        let parsed: MorphObject = serde_json::from_str(json).unwrap();
+        if let MorphObject::Run(r) = &parsed {
+            assert_eq!(r.agent.instance_id, None);
+        } else {
+            panic!("expected Run");
+        }
+    }
+
+    #[test]
+    fn different_instance_id_different_hash() {
+        let make_run = |iid: Option<&str>| {
+            MorphObject::Run(Run {
+                program: "0".repeat(64),
+                commit: None,
+                environment: RunEnvironment {
+                    model: "test".into(),
+                    version: "1.0".into(),
+                    parameters: std::collections::BTreeMap::new(),
+                    toolchain: std::collections::BTreeMap::new(),
+                },
+                input_state_hash: "0".repeat(64),
+                output_artifacts: vec![],
+                metrics: std::collections::BTreeMap::new(),
+                trace: "0".repeat(64),
+                agent: AgentInfo {
+                    id: "cursor".into(),
+                    version: "1.0".into(),
+                    instance_id: iid.map(String::from),
+                    policy: None,
+                },
+                contributors: None,
+                morph_version: None,
+            })
+        };
+        let r1 = make_run(Some("aaa"));
+        let r2 = make_run(Some("bbb"));
+        let r3 = make_run(None);
+        assert_ne!(content_hash(&r1).unwrap(), content_hash(&r2).unwrap());
+        assert_ne!(content_hash(&r1).unwrap(), content_hash(&r3).unwrap());
+    }
+
+    #[test]
+    fn contributor_info_instance_id_roundtrip() {
+        let run = MorphObject::Run(Run {
+            program: "0".repeat(64),
+            commit: None,
+            environment: RunEnvironment {
+                model: "test".into(),
+                version: "1.0".into(),
+                parameters: std::collections::BTreeMap::new(),
+                toolchain: std::collections::BTreeMap::new(),
+            },
+            input_state_hash: "0".repeat(64),
+            output_artifacts: vec![],
+            metrics: std::collections::BTreeMap::new(),
+            trace: "0".repeat(64),
+            agent: AgentInfo {
+                id: "cursor".into(),
+                version: "1.0".into(),
+                instance_id: None,
+                policy: None,
+            },
+            contributors: Some(vec![ContributorInfo {
+                id: "agent-a".into(),
+                version: "2.0".into(),
+                instance_id: Some("inst-abc".into()),
+                policy: None,
+                role: Some("generation".into()),
+            }]),
+            morph_version: None,
+        });
+        let json = canonical_json(&run).unwrap();
+        let parsed: MorphObject = serde_json::from_str(&json).unwrap();
+        if let MorphObject::Run(r) = &parsed {
+            let c = &r.contributors.as_ref().unwrap()[0];
+            assert_eq!(c.instance_id.as_deref(), Some("inst-abc"));
+        } else {
+            panic!("expected Run");
+        }
+    }
+
+    #[test]
+    fn attribution_entry_instance_id_roundtrip() {
+        let mut attribution = std::collections::BTreeMap::new();
+        attribution.insert("node1".to_string(), AttributionEntry {
+            agent_id: "agent-x".into(),
+            agent_version: Some("3.0".into()),
+            instance_id: Some("inst-xyz".into()),
+        });
+        let prog = MorphObject::Program(Program {
+            graph: ProgramGraph {
+                nodes: vec![ProgramNode {
+                    id: "node1".into(),
+                    kind: "identity".into(),
+                    ref_: None,
+                    params: std::collections::BTreeMap::new(),
+                }],
+                edges: vec![],
+            },
+            prompts: vec![],
+            eval_suite: None,
+            attribution: Some(attribution),
+            provenance: None,
+        });
+        let json = canonical_json(&prog).unwrap();
+        let parsed: MorphObject = serde_json::from_str(&json).unwrap();
+        if let MorphObject::Program(p) = &parsed {
+            let attr = p.attribution.as_ref().unwrap().get("node1").unwrap();
+            assert_eq!(attr.instance_id.as_deref(), Some("inst-xyz"));
+        } else {
+            panic!("expected Program");
+        }
+    }
+
     // --- content_hash_git (Option B / 0.2) ---
 
     #[test]

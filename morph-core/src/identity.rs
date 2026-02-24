@@ -16,6 +16,7 @@ pub fn identity_program() -> MorphObject {
         },
         prompts: vec![],
         eval_suite: None,
+        attribution: None,
         provenance: None,
     })
 }

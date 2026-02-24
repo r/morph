@@ -322,6 +322,47 @@ J : (S \times S) \to F(S)
 
 This mirrors real systems: branches generate candidates; a join step selects/merges them.
 
+### 8.4 Multi-Agent Programs and Attribution
+
+When multiple agents contribute to a single program, the program DAG naturally records what each agent did. We formalize this with an attribution function.
+
+**Attributed Program.** An attributed program extends a program with an attribution function:
+
+\[
+\alpha : V \to \mathcal{A} \cup \{\bot\}
+\]
+
+where \( \mathcal{A} \) is a set of agent identifiers and \( \bot \) denotes unattributed nodes. For a single-agent or human-authored program, \( \alpha \) is constant.
+
+Attribution composes naturally:
+
+- **Sequential:** For \( Q \circ P \), the attribution of the composite is the union of both attribution functions over disjoint node sets.
+- **Parallel:** For \( P \otimes Q \), similarly. The join step \( J \) may be attributed to a coordinating agent or left unattributed.
+
+**Certification is holistic.** The certificate vector \( \mathrm{cert}_T(P, E, s_0) \in V_T \) is a property of the composed program as a whole. There is no natural decomposition:
+
+\[
+\mathrm{cert}_T(P, E, s_0) = \bigoplus_{a \in \mathcal{A}} \mathrm{cert}_T(P|_a, E, s_0)
+\]
+
+because the behavioral contribution of agent \( a \)'s nodes generally depends on the context provided by other agents' nodes. The evaluation suite tests the joint result.
+
+This means Morph can:
+
+- Certify that a multi-agent program meets its behavioral contract
+- Record which agent contributed which operators (via \( \alpha \))
+
+But it cannot attribute credit or blame to individual agents from the certificate alone. Decomposing joint performance into per-agent contributions requires additional machinery (counterfactual evaluation, Shapley values, modular evaluation suites).
+
+**Distributed vs. cooperative multi-agent work.** The framework distinguishes two patterns:
+
+| Pattern | Description | Theory treatment |
+|---|---|---|
+| **Distributed** | Agents on separate branches, each independently certified | Merge-as-dominance (§13) ensures no regression. Identical to two humans on two branches. |
+| **Cooperative** | Multiple agents contribute to a single program | \( P \otimes Q \) with join models orchestrated parallelism. Attribution records provenance; certification evaluates the composed result. |
+
+Real-time concurrent edits to shared state (CRDT-style coordination) live below the VCS layer. Agents coordinate however they coordinate, produce a result, and that result is committed and certified by Morph.
+
 ---
 
 ## 9. Runs, Traces, and Artifacts
@@ -793,6 +834,7 @@ Git tracked files. Morph tracks certified behavior, with receipts.
 | **Program** | `A -> F[B]` — a transformer returning results in an effects-and-receipts box |
 | **Sequential composition** | `bind` / `flatMap` — lawful pipelines because monad laws |
 | **Parallel composition** | `zip` / `Promise.all` — lawful fork-join because state products + zipped effects |
+| **Attribution** | \( \alpha : V \to \mathcal{A} \cup \{\bot\} \) — maps operators to agents; composes over sequential and parallel |
 | **Run** | A realized execution outcome with a trace (immutable receipt) |
 | **EvalSuite** | Metric definitions (name, aggregation, threshold, direction) + optional test cases |
 | **Commit** | Tree hash + program hash + eval contract (suite + observed metrics) + parents |

@@ -1,5 +1,8 @@
 //! Morph CLI: read path and manual write operations.
 
+#[cfg(feature = "cursor-setup")]
+mod setup;
+
 use clap::Parser;
 use morph_core::{find_repo, migrate_0_0_to_0_2, migrate_0_2_to_0_3, open_store, read_repo_version, require_store_version, Hash, Store, STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_INIT};
 use std::path::PathBuf;
@@ -119,6 +122,12 @@ enum Command {
     HashObject {
         path: PathBuf,
     },
+    /// Set up IDE integration (hooks, MCP config, rules)
+    #[cfg(feature = "cursor-setup")]
+    Setup {
+        #[command(subcommand)]
+        sub: SetupCmd,
+    },
     /// Upgrade the repo store to the latest version (required before using MCP on older repos).
     Upgrade,
     /// Browse repo in browser (commit strip, prompts, tree). Use --port and --interface to bind.
@@ -131,6 +140,17 @@ enum Command {
         port: u16,
         #[arg(long, default_value = "127.0.0.1")]
         interface: String,
+    },
+}
+
+#[cfg(feature = "cursor-setup")]
+#[derive(clap::Subcommand)]
+enum SetupCmd {
+    /// Install Cursor hooks, MCP config, and evaluation rules
+    Cursor {
+        /// Project root (defaults to current directory)
+        #[arg(long, default_value = ".")]
+        path: PathBuf,
     },
 }
 
@@ -235,6 +255,21 @@ fn main() -> anyhow::Result<()> {
             let _store = morph_core::init_repo(&path)?;
             println!("Initialized Morph repository in {}", path.display());
         }
+        #[cfg(feature = "cursor-setup")]
+        Command::Setup { sub } => match sub {
+            SetupCmd::Cursor { path } => {
+                let root = std::path::Path::new(&path)
+                    .canonicalize()
+                    .unwrap_or_else(|_| path.clone());
+                verbose_msg(verbose, &format!("setting up Cursor integration at {}", root.display()));
+                let report = setup::setup_cursor(&root)?;
+                println!("Cursor integration installed in {}", root.display());
+                println!("  Hook scripts: {}", report.hooks_written.join(", "));
+                println!("  Rules: {}", report.rules_written.join(", "));
+                println!("  .cursor/hooks.json: {}", if report.hooks_json_updated { "updated" } else { "unchanged" });
+                println!("  .cursor/mcp.json: {}", if report.mcp_json_updated { "updated" } else { "unchanged" });
+            }
+        },
         Command::Upgrade => {
             let cwd = std::env::current_dir()?;
             verbose_msg(verbose, &format!("looking for repo from {}", cwd.display()));

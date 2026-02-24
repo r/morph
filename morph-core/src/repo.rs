@@ -234,6 +234,7 @@ mod tests {
             message: "m".into(),
             timestamp: "2020-01-01T00:00:00Z".into(),
             author: "a".into(),
+            contributors: None,
             eval_contract: crate::objects::EvalContract {
                 suite: suite_hash.to_string(),
                 observed_metrics: std::collections::BTreeMap::new(),

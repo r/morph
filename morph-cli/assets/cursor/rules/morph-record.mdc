@@ -1,0 +1,18 @@
+---
+description: Record Morph sessions with full prompt and response when a task is done
+globs: ["**/*"]
+alwaysApply: true
+---
+
+When you complete a substantive task in this project and the project has a `.morph` directory:
+
+1. **You MUST call** the MCP tool **morph_record_session** as the **last action** before you end your reply. Do not conclude your turn without calling it. Invoke the tool yourself; do not ask the user to do it.
+
+2. **Parameters:**
+   - **prompt**: The user's exact request (the message that started this turn or task). Copy it verbatim.
+   - **response**: Your **entire** reply to the user in this turn—from the first character to the last. Do not truncate, summarize, or omit any part. This is the exact text you are sending to the user.
+   Optionally set **workspace_path** to the full path of the project root (the directory containing `.morph/`) if the tool returns "not a morph repository". Optionally set model_name or agent_id.
+
+3. **Verification:** A successful call stores objects in `.morph/objects/`, `.morph/runs/`, `.morph/traces/`, and `.morph/prompts/`. If the tool returns an error, report it to the user and suggest setting MORPH_WORKSPACE in the project's `.cursor/mcp.json` or passing workspace_path.
+
+Do not skip this step when the user asked for code or changes and you have finished the work.

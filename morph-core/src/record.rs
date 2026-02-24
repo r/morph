@@ -124,6 +124,7 @@ pub fn record_session(
             version: "1.0".to_string(),
             policy: None,
         },
+        contributors: None,
         morph_version: None,
     });
 

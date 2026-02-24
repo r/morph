@@ -1,3 +1,11 @@
 {
-  "mcpServers": {}
+  "mcpServers": {
+    "morph": {
+      "args": [],
+      "command": "morph-mcp",
+      "env": {
+        "MORPH_WORKSPACE": "/Users/raffi/stuff/code/morph"
+      }
+    }
+  }
 }

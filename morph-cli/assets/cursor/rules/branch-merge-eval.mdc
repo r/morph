@@ -1,0 +1,37 @@
+---
+description: "Run evaluations before merging Morph branches; merges require behavioral dominance"
+globs: ["**/*"]
+alwaysApply: false
+---
+
+# Branch and Merge Evaluation
+
+Morph merges are behavioral, not just syntactic. A merge succeeds only if the merged program **dominates both parents** on every metric.
+
+## Before merging
+
+1. **Run the full test/eval suite** on the merge candidate.
+2. **Record the results** via `morph eval record` or `morph_record_eval`.
+3. **Commit with metrics** so the merge commit carries a behavioral certificate.
+
+## Merge command
+
+```
+morph merge <branch> --message "msg" --program <hash> --eval_suite <hash> --metrics '{"tests_passed": N, "pass_rate": 1.0}'
+```
+
+The merge will fail if the metrics do not dominate the componentwise join of both parents' certified scores. This is a **behavioral conflict** — analogous to a text conflict in Git, but at the semantic level.
+
+## When a merge fails
+
+If the merge is rejected because metrics regressed:
+
+1. Identify which metrics dropped below the parent thresholds.
+2. Fix the regression — improve the code, add missing test coverage, optimize performance.
+3. Re-run evaluations and retry the merge.
+
+A merge that silently drops accuracy or blows up latency is the actual failure mode — Morph prevents it.
+
+## Creating branches
+
+When branching for experimental work, note which metrics the branch should maintain or improve. This sets expectations for what the merge will require.

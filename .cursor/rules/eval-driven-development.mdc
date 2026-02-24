@@ -1,0 +1,26 @@
+---
+description: "Nudge test-driven development: write tests before implementation, record eval metrics into Morph"
+globs: ["**/*"]
+alwaysApply: true
+---
+
+# Test-Driven Development with Morph Evaluation
+
+This project uses Morph for behavioral version control. Every commit can carry a **behavioral certificate** — metrics proving the code does what it claims. To feed this system, follow a test-driven workflow.
+
+## Workflow
+
+1. **Write tests first.** Before implementing a feature or fix, write or update tests that define the expected behavior. Tests are the evaluation contract — they specify what "correct" means.
+
+2. **Run tests, then record results.** After implementation, run the test suite. When tests pass, record evaluation metrics so Morph can attach them to commits:
+   - Write a JSON file: `{"metrics": {"tests_total": N, "tests_passed": N, "pass_rate": 1.0}}`
+   - Call the MCP tool `morph_record_eval` with that file, or run `morph eval record <file>` from the CLI.
+   - Include any other meaningful metrics: build time, binary size, coverage percentage, benchmark results.
+
+3. **Think about what "better" means.** When starting new work, articulate which metrics matter. Correctness (test pass rate) is the baseline. Performance, cost, latency, and coverage are also valuable. These metrics will gate merges — a merge cannot regress any metric.
+
+## Why this matters
+
+In Morph, a commit without metrics is just a file snapshot. A commit **with** metrics is a behavioral certificate backed by evidence. Merges require the merged program to dominate both parents on every metric. Without evaluation data, branches and merges have no behavioral meaning.
+
+Tests are not just CI gates — they are the evaluation suite that makes behavioral version control work.

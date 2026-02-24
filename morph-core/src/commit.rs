@@ -1,6 +1,6 @@
 //! Commit creation, HEAD resolution, and ref helpers.
 
-use crate::objects::{Commit, EvalContract, EvalSuite, MorphObject};
+use crate::objects::{Commit, CommitContributor, EvalContract, EvalSuite, MorphObject};
 use crate::store::{MorphError, Store};
 use crate::Hash;
 use chrono::Utc;
@@ -61,6 +61,7 @@ pub fn create_commit(
         message: message.clone(),
         timestamp: timestamp.clone(),
         author: author.clone(),
+        contributors: None,
         eval_contract: EvalContract {
             suite: eval_suite_hash.to_string(),
             observed_metrics,
@@ -123,6 +124,7 @@ pub fn create_tree_commit(
         message,
         timestamp,
         author,
+        contributors: None,
         eval_contract: EvalContract {
             suite: suite_hash,
             observed_metrics,
@@ -286,6 +288,8 @@ pub fn create_merge_commit_full(
         None
     };
 
+    let merged_contributors = merge_contributors(&head_commit, &other_commit);
+
     let parents = vec![head_hash.to_string(), other_hash.to_string()];
     let timestamp = chrono::Utc::now().to_rfc3339();
     let author = author.unwrap_or_else(|| "morph".to_string());
@@ -296,6 +300,7 @@ pub fn create_merge_commit_full(
         message,
         timestamp,
         author,
+        contributors: merged_contributors,
         eval_contract: EvalContract {
             suite: suite_hash_str,
             observed_metrics: merged_observed_metrics,
@@ -308,6 +313,29 @@ pub fn create_merge_commit_full(
     store.ref_write(&format!("heads/{}", branch), &hash)?;
 
     Ok(hash)
+}
+
+/// Collect unique contributors from both parent commits' authors and contributor lists.
+fn merge_contributors(head: &Commit, other: &Commit) -> Option<Vec<CommitContributor>> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+
+    for commit in [head, other] {
+        if !seen.contains(&commit.author) {
+            seen.insert(commit.author.clone());
+            out.push(CommitContributor { id: commit.author.clone(), role: None });
+        }
+        if let Some(contribs) = &commit.contributors {
+            for c in contribs {
+                if !seen.contains(&c.id) {
+                    seen.insert(c.id.clone());
+                    out.push(c.clone());
+                }
+            }
+        }
+    }
+
+    if out.is_empty() { None } else { Some(out) }
 }
 
 fn load_eval_suite(store: &dyn Store, suite_hash_str: &str) -> Result<EvalSuite, MorphError> {
@@ -346,6 +374,7 @@ pub fn rollup(
         message,
         timestamp,
         author: tip_commit.author.clone(),
+        contributors: tip_commit.contributors.clone(),
         eval_contract: tip_commit.eval_contract.clone(),
         morph_version: tip_commit.morph_version.clone(),
     });

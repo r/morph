@@ -8,8 +8,9 @@ name = "morph"
 path = "src/main.rs"
 
 [features]
-default = ["visualize"]
+default = ["visualize", "cursor-setup"]
 visualize = ["dep:morph-serve"]
+cursor-setup = []
 
 [dependencies]
 morph-core = { path = "../morph-core" }
