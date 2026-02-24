@@ -29,8 +29,8 @@
 
 \author{%
   Raffi Krikorian\\
-  Mozilla Corporation\\
-  \texttt{raffi@mozilla.com}
+  Mozilla\\
+  \texttt{raffi@mozilla.org}
 }
 
 \date{}
@@ -40,33 +40,35 @@
 \maketitle
 
 \begin{abstract}
-Modern AI-centric software development---involving large language model calls, retrieval-augmented generation, tool use, and agent-driven workflows---breaks the assumptions underlying traditional version control. Git tracks deterministic source code where identity is byte equality, reproducibility means identical output, and merge is syntactic reconciliation. When the versioned artifact is a \emph{transformation program} whose operators are stochastic, effectful, and environment-dependent, these assumptions no longer hold. We present \textsc{Morph}, a distributed version control system designed for transformation programs. \textsc{Morph} extends the content-addressed, Merkle DAG architecture of Git with three new primitives: (1)~\emph{programs}---directed acyclic graphs of typed operators including prompt calls, tool invocations, and deterministic transforms; (2)~\emph{evaluation suites}---versioned behavioral contracts specifying metrics, thresholds, and certification rules; and (3)~\emph{runs}---immutable execution receipts recording full environment, trace, and metric observations. A \textsc{Morph} commit bundles a program with an evaluation contract and a certified metric vector. Merge requires the candidate to dominate the componentwise join of both parents' certified scores---making behavioral regression a merge conflict. We formalize programs as effectful computations in a monadic framework, define behavioral equivalence via a preorder on certificate vectors, and prove that merge-as-dominance preserves monotonic behavioral improvement along any branch. We describe a concrete v0 system specification and discuss its implications for agent-driven software development, reproducibility, and collaborative human-AI workflows.
+Modern AI-centric software development---involving large language model calls, retrieval-augmented generation, tool use, and agent-driven workflows---breaks the assumptions underlying traditional version control. Git tracks deterministic source code where identity is byte equality, reproducibility means identical output, and merge is syntactic reconciliation. When the versioned artifact is a \emph{transformation program} whose operators are stochastic, effectful, and environment-dependent, those assumptions stop working. This paper introduces \textsc{Morph}, a distributed version control system designed for transformation programs. \textsc{Morph} extends Git's content-addressed Merkle DAG architecture with three primitives: (1)~\emph{programs}---directed acyclic graphs of typed operators including prompt calls, tool invocations, and deterministic transforms; (2)~\emph{evaluation suites}---versioned behavioral contracts specifying metrics, thresholds, and certification rules; and (3)~\emph{runs}---immutable execution receipts recording full environment, trace, and metric observations. A \textsc{Morph} commit bundles a program with an evaluation contract and a certified metric vector. Merge requires the candidate to dominate the componentwise join of both parents' certified scores---making behavioral regression a merge conflict. We formalize programs as effectful computations in a monadic framework, define behavioral equivalence via a preorder on certificate vectors, and prove that merge-as-dominance preserves monotonic behavioral improvement along any branch. We describe a concrete v0 system and discuss implications for agent-driven software development, reproducibility, and human-AI collaboration.
 \end{abstract}
 
 % ============================================================
 \section{Introduction}
 \label{sec:intro}
 
-The practice of software development is undergoing a structural transformation. Large language models (LLMs) are no longer auxiliary tools for code completion; they are becoming components within larger systems that retrieve context, call tools, generate and modify code, run tests, and iterate~\citep{yao2023react, jimenez2024swebench}. These \emph{transformation programs}---pipelines that combine prompt calls, retrieval, tool invocations, and deterministic transforms---differ from traditional source code in ways that challenge the foundations of version control.
+Software development is changing faster than the tools we use to manage it. Large language models are not autocomplete for code anymore; they are components inside larger systems that retrieve context, call tools, generate and modify code, run tests, and iterate~\citep{yao2023react, jimenez2024swebench}. These \emph{transformation programs}---pipelines combining prompt calls, retrieval, tool invocations, and deterministic transforms---differ from traditional source code in ways that break the foundations of how we track changes.
 
-Git~\citep{torvalds2005git}, the dominant version control system, is built on three assumptions: (i)~identity is byte equality, (ii)~reproducibility means identical output bytes, and (iii)~merge is syntactic text reconciliation. All three break when the versioned artifact is a stochastic, environment-dependent transformation pipeline:
+Git~\citep{torvalds2005git}, the dominant version control system, rests on three assumptions: (i)~identity is byte equality, (ii)~reproducibility means identical output bytes, and (iii)~merge is syntactic text reconciliation. All three break when the versioned artifact is a stochastic, environment-dependent transformation pipeline:
 
 \begin{itemize}[nosep]
-  \item \textbf{Same code, different outputs.} LLM-based operators are stochastic. Executing the same prompt twice may yield different results.
+  \item \textbf{Same code, different outputs.} LLM-based operators are stochastic. Running the same prompt twice may yield different results.
   \item \textbf{Behavior depends on the environment.} Model version, decoding parameters, retrieval corpus, and tool availability all affect output, yet none are captured in a file tree.
-  \item \textbf{``Did it get better?'' is a statistical question.} Comparing two program versions requires running evaluation suites and comparing metric distributions---not eyeballing a text diff.
-  \item \textbf{Agents produce patches.} Provenance matters: which agent, which model, which prompt generated a change, and whether the result actually passes tests.
+  \item \textbf{``Did it get better?'' is a statistical question.} Comparing two program versions requires running evaluation suites and comparing metric distributions---not reading a text diff.
+  \item \textbf{Agents produce patches, not just humans.} Provenance matters: which agent, which model, which prompt generated a change, and whether the result actually passes tests.
   \item \textbf{Merge can silently regress behavior.} Two branches may merge cleanly at the text level while producing outputs worse than either parent.
 \end{itemize}
 
-\noindent These observations motivate a new kind of version control---one that tracks not merely \emph{what the files are} but \emph{what the transformation does} and \emph{whether it got better}.
+\noindent None of this is hypothetical. It is the default behavior of an increasing share of software development, and it motivates a different kind of version control---one that tracks not just \emph{what the files are} but \emph{what the transformation does} and \emph{whether it got better}.
 
-We introduce \textsc{Morph}, a system that extends version control to \emph{certified behavior}. \textsc{Morph} preserves Git's core architectural principles---content-addressed immutable objects organized in a Merkle DAG---while adding first-class representations for transformation programs, evaluation contracts, execution evidence, and behavioral merge gating. A \textsc{Morph} commit is not merely a snapshot of files; it is a claim that a specific program, tested against a specific evaluation suite, achieved specific metric scores, backed by immutable execution receipts.
+We introduce \textsc{Morph}, a system that extends version control to \emph{certified behavior}. \textsc{Morph} preserves Git's core architectural principles---content-addressed immutable objects organized in a Merkle DAG---while adding first-class representations for transformation programs, evaluation contracts, execution evidence, and behavioral merge gating. A \textsc{Morph} commit goes beyond a file snapshot: it is a claim that a specific program, tested against a specific evaluation suite, achieved specific metric scores, backed by immutable execution receipts.
+
+The core bet is simple: when software involves stochastic, effectful transformations, merge cannot be a purely syntactic operation. It has to be a \emph{behavioral} one too. \textsc{Morph} makes this concrete by requiring that any merged program dominate the behavioral claims of both its parents---or the merge fails.
 
 The contributions of this paper are:
 
 \begin{enumerate}[nosep]
-  \item A formal model of transformation programs as effectful computations in a monadic framework, supporting sequential and parallel composition (\Cref{sec:programs}).
+  \item A formal model of transformation programs as effectful computations supporting sequential and parallel composition (\Cref{sec:programs}).
   \item An evaluation-contract formalism defining behavioral equivalence, certificate vectors, and a dominance preorder over programs (\Cref{sec:eval}).
   \item A merge semantics based on dominance of the join of parent certificates, with a proof that this preserves monotonic behavioral improvement (\Cref{sec:merge}).
   \item A concrete system design (\textsc{Morph} v0) implementing these ideas as a content-addressed object store with CLI tooling (\Cref{sec:system}).
@@ -77,19 +79,25 @@ The contributions of this paper are:
 \label{sec:related}
 
 \paragraph{Version control systems.}
-Git~\citep{torvalds2005git} and its predecessors track deterministic source code as content-addressed snapshots organized in a Merkle DAG~\citep{merkle1988digital}. Commits are snapshots of file trees; branches diverge and reconcile via three-way text merge. This architecture has proven remarkably durable, but it provides no mechanism for reasoning about program \emph{behavior}---only about source \emph{text}. Darcs~\citep{roundy2005darcs} models patches algebraically, which shares our interest in principled merge semantics, but operates at the syntactic rather than behavioral level.
+Git~\citep{torvalds2005git} and its predecessors track deterministic source code as content-addressed snapshots organized in a Merkle DAG~\citep{merkle1988digital}. Commits are snapshots of file trees; branches diverge and reconcile via three-way text merge. This architecture has worked well for decades, but it provides no mechanism for reasoning about program \emph{behavior}---only about source \emph{text}. Darcs~\citep{roundy2005darcs} models patches algebraically, and Angiuli et al.~\citep{angiuli2014homotopical} give patches a homotopy-theoretic treatment that enables formal reasoning about commutativity and conflict. Both share our interest in principled merge semantics but operate at the syntactic level. Swierstra and L\"{o}h~\citep{swierstra2014semantics} demonstrated that separation logic can provide formal semantics for version control, showing that VCS operations can be modeled using program logics for mutable state. Their work establishes the precedent that version control deserves formal foundations, but their semantics reason about file content, not program behavior.
+
+\paragraph{ML experiment and data versioning.}
+DVC~\citep{dvc2020} extends Git to track large datasets and ML pipelines, treating data as versioned artifacts alongside code. MLflow~\citep{zaharia2018mlflow} provides experiment tracking, model packaging, and metric logging across training runs. Both address reproducibility in machine learning but focus on model training workflows rather than the composition and behavioral certification of transformation programs.
 
 \paragraph{LLM evaluation frameworks.}
-The evaluation landscape has grown rapidly alongside foundation model capabilities. HELM~\citep{liang2023helm} introduced holistic multi-metric evaluation across scenarios and desiderata, establishing the principle that single-score benchmarks are insufficient. SWE-bench~\citep{jimenez2024swebench} demonstrated execution-based evaluation of LLM-generated code changes against real-world test suites from GitHub repositories. Chatbot Arena~\citep{chiang2024chatbotarena} introduced pairwise human preference comparison at scale. These frameworks share our conviction that behavioral evaluation is essential but treat evaluation as an external measurement process rather than integrating it into the version-control lifecycle.
+The evaluation landscape has grown rapidly alongside foundation model capabilities. HELM~\citep{liang2023helm} introduced holistic multi-metric evaluation, establishing the principle that single-score benchmarks are insufficient. SWE-bench~\citep{jimenez2024swebench} demonstrated execution-based evaluation of LLM-generated code changes against real-world test suites. Chatbot Arena~\citep{chiang2024chatbotarena} introduced pairwise human preference comparison at scale. These frameworks all take behavioral evaluation seriously, but they treat evaluation as an external measurement process rather than integrating it into the version-control lifecycle.
 
-\paragraph{LLM application tooling.}
-Frameworks such as LangChain~\citep{chase2022langchain} provide abstractions for composing LLM calls, retrieval, and tool use into pipelines, while observability platforms like LangSmith and Langfuse offer tracing and prompt versioning. These tools treat prompts as deployable artifacts with version histories and A/B testing capabilities but lack formal behavioral contracts, merge gating, or the immutable evidence graphs that \textsc{Morph} provides. They version prompts; \textsc{Morph} versions \emph{certified behavioral claims about transformation programs}.
+\paragraph{Prompt versioning and observability platforms.}
+A growing class of commercial tools---including PromptLayer, Braintrust, LangSmith, and Humanloop---provide prompt versioning, A/B testing, evaluation pipelines, and deployment gating. Braintrust~\citep{braintrust2024} is notable for using content-addressable prompt IDs and CI-integrated evaluation that can block code merges when quality scores drop. These platforms reflect a real practitioner need: gating changes on behavioral evidence. But they differ from \textsc{Morph} in structural ways: they are centralized SaaS platforms, they version individual prompts rather than transformation program graphs, they lack formal merge semantics (merge blocking is a CI side-effect, not a first-class VCS operation), and they do not produce a decentralized, content-addressed evidence graph. They version prompts; \textsc{Morph} versions \emph{certified behavioral claims about transformation programs}.
+
+\paragraph{LLM application frameworks.}
+Frameworks such as LangChain~\citep{chase2022langchain} provide abstractions for composing LLM calls, retrieval, and tool use into pipelines, while observability platforms like LangSmith and Langfuse offer tracing and prompt versioning. These tools treat prompts as deployable artifacts with version histories but lack formal behavioral contracts, merge gating as a VCS primitive, or the immutable evidence graphs that \textsc{Morph} provides.
 
 \paragraph{Agent frameworks.}
-The ReAct paradigm~\citep{yao2023react} demonstrated that interleaving reasoning and action in LLMs produces more effective agent behavior. Multi-agent systems~\citep{wang2024survey} further expand the space of transformation programs to include concurrent, communicating agents. These developments increase the urgency for version control that can track agent-authored changes with full provenance and behavioral certification.
+The ReAct paradigm~\citep{yao2023react} demonstrated that interleaving reasoning and action in LLMs produces more effective agent behavior. Multi-agent systems~\citep{wang2024survey} further expand the space of transformation programs to include concurrent, communicating agents. As agents become more capable and autonomous, the need for version control that tracks agent-authored changes with full provenance and behavioral certification becomes harder to ignore.
 
-\paragraph{Monadic composition.}
-Our formalization of programs as effectful computations $P_E : S \to F(S)$ draws on the long tradition of monadic effects in programming language theory~\citep{moggi1991notions, wadler1995monads}. The monadic framework provides the algebraic laws (associativity of bind, identity of pure) that make sequential pipeline composition well-defined, and the zip operation for principled parallel composition.
+\paragraph{Effectful computation.}
+Our formalization of programs as effectful computations $P_E : S \to F(S)$ draws on the tradition of monadic effects in programming language theory~\citep{moggi1991notions, wadler1995monads}. The short version: real-world computations do not just produce values---they also produce side effects (randomness, IO, logging, failures). A \emph{monad} gives you a structured way to compose such computations sequentially and in parallel without losing track of those effects. The monadic framework provides algebraic laws guaranteeing that pipeline composition is well-defined, and the zip operation handles parallel composition.
 
 \paragraph{Reproducibility and provenance.}
 Concerns about computational reproducibility~\citep{peng2011reproducible} motivate our treatment of environment recording and behavioral (rather than byte-level) reproducibility. In the LLM setting, strict output determinism is often impossible; \textsc{Morph} replaces it with the weaker but achievable guarantee that behavioral contracts can be re-certified.
@@ -104,11 +112,13 @@ Concerns about computational reproducibility~\citep{peng2011reproducible} motiva
 \begin{equation}
   S = D \times C \times M,
 \end{equation}
-where $D$ is a document tree (code, datasets, artifacts), $C$ is execution context (intermediate results, caches), and $M$ is metadata (provenance references, run identifiers). Programs depend on an environment
+where $D$ is a document tree (code, datasets, artifacts), $C$ is execution context (intermediate results, caches), and $M$ is metadata (provenance references, run identifiers)---essentially a typed workspace struct.
+
+Programs depend on an environment
 \begin{equation}
   E = (\text{runner}, \text{model\_id}, \text{decoding\_params}, \text{toolchain}, \ldots),
 \end{equation}
-which is recorded because reproducibility is defined relative to it.
+which is recorded because reproducibility is defined relative to it. The same program run under a different model version or with different decoding parameters may produce different results---and that difference matters for certification.
 
 \subsection{Program Type}
 
@@ -116,36 +126,42 @@ For a fixed environment $E$, a program has type
 \begin{equation}
   P_E : S \to F(S),
 \end{equation}
-where $F$ is an effect functor capturing randomness, IO, traces, failures, and retries. A program is represented concretely as a directed acyclic graph (DAG) of typed operators:
+where $F$ is an effect functor---a wrapper that carries side effects (randomness, IO, traces, failures, retries) alongside the result. A program takes a workspace state and returns a new workspace state \emph{plus} a record of everything that happened along the way.
+
+A program is represented concretely as a directed acyclic graph (DAG) of typed operators:
 
 \begin{definition}[Program]
 A \emph{program} $P = (V, E_{\text{edges}}, \kappa, \rho)$ consists of a set of nodes $V$, directed edges $E_{\text{edges}} \subseteq V \times V$ forming a DAG, a kind function $\kappa : V \to \{\texttt{prompt\_call}, \texttt{tool\_call}, \texttt{retrieval}, \texttt{transform}, \texttt{identity}\}$, and a reference function $\rho : V \to \mathcal{H} \cup \{\bot\}$ mapping nodes to content-addressed blob hashes (e.g., prompt templates, tool schemas).
 \end{definition}
 
-Each edge is typed as either \texttt{data} (output flows as input) or \texttt{control} (execution ordering without data dependency).
+Each edge is typed as either \texttt{data} (output flows as input) or \texttt{control} (execution ordering without data dependency). Human edits fit naturally: a human produces a patch blob, and the program includes a node \texttt{apply\_patch(patch\_blob)}. This makes manual coding a first-class, reproducible, reviewable operation within the same framework.
 
-\subsection{Monadic Composition}
+\subsection{Composing Programs}
 
-To compose effectful computations, we require $F$ to be a monad, providing:
+To compose effectful computations---to chain one transformation into another---we need $F$ to be a \emph{monad}, providing two operations:
 \begin{align}
   \text{pure} &: A \to F(A), \\
   \text{bind} &: F(A) \to (A \to F(B)) \to F(B).
 \end{align}
 
-\noindent Sequential composition of programs is then:
+\noindent \texttt{pure} wraps a plain value into the effect context; \texttt{bind} chains two computations by running the first, unwrapping the result, and feeding it to the second. If you have used \texttt{Promise.then()} or \texttt{flatMap}, you have used bind.
+
+Sequential composition of programs follows directly:
 \begin{equation}
   (Q \circ P)(a) = \text{bind}(P(a),\; Q).
 \end{equation}
 
-\noindent The standard monad laws ensure:
+\noindent The standard monad laws ensure two things engineers care about:
 \begin{itemize}[nosep]
-  \item \textbf{Associativity:} $(R \circ Q) \circ P = R \circ (Q \circ P)$ --- pipelines compose without parenthesization affecting meaning.
-  \item \textbf{Identity:} There exists an identity program $I$ such that $I \circ P = P \circ I = P$.
+  \item \textbf{Associativity:} $(R \circ Q) \circ P = R \circ (Q \circ P)$ --- you can restructure a pipeline without changing what it does.
+  \item \textbf{Identity:} There exists an identity program $I$ such that $I \circ P = P \circ I = P$ --- there is a meaningful no-op.
 \end{itemize}
+
+\noindent This matters in practice: it is the mathematical reason that DAG scheduling and pipeline refactoring preserve meaning.
 
 \subsection{Parallel Composition}
 
-For parallel branches (e.g., concurrent prompt variants, agent swarms), we require a zip operation:
+For parallel branches---concurrent prompt variants, agent swarms, independent experiments---we need a way to run two effectful computations independently and combine their results. This requires a zip operation:
 \begin{equation}
   \text{zip}_{A,B} : F(A) \times F(B) \to F(A \times B),
 \end{equation}
@@ -154,7 +170,7 @@ enabling the parallel composition of programs:
   (P \otimes Q)(a, c) = \text{zip}(P(a),\; Q(c)).
 \end{equation}
 
-\noindent For same-input branching, the common case, we compose with the diagonal $\Delta(s) = (s, s)$ and an explicit join step $J : S \times S \to F(S)$:
+\noindent This is \texttt{Promise.all()} or independent sampling, lifted to a type-level operation. For the common case where both branches consume the same input state, we compose with the diagonal $\Delta(s) = (s, s)$ and an explicit join step $J : S \times S \to F(S)$:
 \begin{equation}
   \text{branch}(P, Q) = J \circ (P \otimes Q) \circ \Delta.
 \end{equation}
@@ -171,16 +187,18 @@ An evaluation suite $T$ defines an evaluator that is itself an effectful computa
 \begin{equation}
   \text{Eval}_{T,E} : S \to F(\text{Obs}_T),
 \end{equation}
-where $\text{Obs}_T$ includes raw metric samples, test execution logs, timing data, and any information needed for certification. Each metric $m \in T$ specifies a scoring function, an ordering direction (maximize or minimize), and a certification method (e.g., lower confidence bound, quantile guarantee, deterministic pass/fail).
+where $\text{Obs}_T$ includes raw metric samples, test execution logs, timing data, and any information needed for certification. Note that evaluation is itself effectful---running tests, compiling code, judging outputs with another model, collecting human ratings all involve side effects and potential failures. Each metric $m \in T$ specifies a scoring function, an ordering direction (maximize or minimize), and a certification method (e.g., lower confidence bound, quantile guarantee, deterministic pass/fail).
 
 \textsc{Morph} supports two complementary forms of evaluation:
 
 \begin{itemize}[nosep]
-  \item \textbf{Artifact evaluation:} Evaluate the produced outputs (code correctness via unit tests, integration tests, static analysis, benchmarks).
-  \item \textbf{Process evaluation:} Evaluate properties of the transformation itself (cost, latency, tool-usage constraints, policy compliance).
+  \item \textbf{Artifact evaluation:} Evaluate the produced outputs---code correctness via unit tests, integration tests, static analysis, benchmarks.
+  \item \textbf{Process evaluation:} Evaluate properties of the transformation itself---cost, latency, tool-usage constraints, policy compliance.
 \end{itemize}
 
-\noindent To prevent programs from trivially satisfying their own tests, each evaluation suite declares a \emph{fixture source} for its test data: \texttt{candidate-sourced} (from the produced tree), \texttt{base-sourced} (from a specified baseline), \texttt{pinned} (immutably by hash), or \texttt{external}.
+\noindent Both are meaningful for merges. You might require artifact correctness (tests pass) \emph{and} process bounds (cost under \$X, no forbidden tool calls).
+
+To prevent programs from trivially satisfying their own tests, each evaluation suite declares a \emph{fixture source} for its test data: \texttt{candidate-sourced} (from the produced tree), \texttt{base-sourced} (from a specified baseline), \texttt{pinned} (immutably by hash), or \texttt{external}. Without this, a program could modify the tests that evaluate it and claim perfect scores.
 
 \subsection{Certificate Vectors}
 
@@ -192,6 +210,8 @@ with componentwise ordering:
 \begin{equation}
   x \leq_T y \iff \forall m \in T,\; x_m \leq_m y_m.
 \end{equation}
+
+\noindent A certificate vector is just a list of scores, one per metric. One vector dominates another if it is at least as good on \emph{every} metric (respecting direction---higher for accuracy, lower for latency).
 
 A certification procedure yields a certificate vector:
 \begin{equation}
@@ -212,23 +232,25 @@ Behavioral dominance $\preceq_{T,E,s_0}$ is a preorder (reflexive and transitive
 Reflexivity follows from reflexivity of $\leq_m$ for each metric. Transitivity follows from transitivity of $\leq_m$ applied componentwise.
 \end{proof}
 
+\noindent This turns ``did it get better?'' from a subjective judgment into a comparison with a well-defined answer.
+
 % ============================================================
 \section{Commits and Merge}
 \label{sec:merge}
 
 \subsection{Commits as Behavioral Certificates}
 
-A Git commit says: ``here is what the files looked like.'' A \textsc{Morph} commit says: ``here is a program, the evaluation suite it was tested against, and the scores it achieved.''
+A Git commit says: ``here is what the files looked like.'' A \textsc{Morph} commit says: ``here is a program, the evaluation suite it was tested against, and the scores it achieved---with receipts.''
 
 \begin{definition}[Commit]
 A \textsc{Morph} commit is a tuple
 \begin{equation}
-  c = (\text{program\_id},\; T,\; v,\; \text{env\_constraints},\; \text{evidence\_refs}),
+  c = (\text{tree\_hash},\; \text{program\_id},\; T,\; v,\; \text{parents},\; \text{env\_constraints},\; \text{evidence\_refs}),
 \end{equation}
-where $\text{program\_id}$ is the content hash of a program DAG, $T$ is an evaluation suite (by hash), $v \in V_T$ is the certified metric vector, $\text{env\_constraints}$ records the environment under which certification was obtained, and $\text{evidence\_refs}$ are hashes of supporting run and trace objects.
+where $\text{tree\_hash}$ is the root hash of the working directory tree (same role as Git's tree object), $\text{program\_id}$ is the content hash of a program DAG, $T$ is an evaluation suite (by hash), $v \in V_T$ is the certified metric vector, $\text{parents}$ are parent commit hashes forming the Merkle DAG, $\text{env\_constraints}$ records the environment under which certification was obtained, and $\text{evidence\_refs}$ are hashes of supporting run and trace objects.
 \end{definition}
 
-The certified metric vector $v$ is not decorative---it is the merge contract. History is immutable and verifiable, preserving Git's core property, but upgrading the meaning of what a commit represents.
+The certified metric vector $v$ is not decorative---it is the merge contract. When the program and evaluation suite are unspecified, they default to the identity program and empty suite, making \textsc{Morph} usable as a plain VCS. History is immutable and verifiable, preserving Git's core property, but upgrading the meaning of what a commit represents.
 
 \subsection{Merge as Join of Behavioral Requirements}
 
@@ -236,12 +258,12 @@ Git merge reconciles text diffs. \textsc{Morph} merge reconciles behavioral requ
 
 \begin{enumerate}[nosep]
   \item \textbf{Structural merge} of program graphs (analogous to three-way text merge).
-  \item \textbf{Union of evaluation contracts.} If parents have suites $T_1$ and $T_2$, the merge suite is $T = T_1 \uplus T_2$ (disjoint union by metric identifier).
+  \item \textbf{Union of evaluation contracts.} If parents have suites $T_1$ and $T_2$, the merge suite is $T = T_1 \uplus T_2$ (disjoint union by metric identifier). This prevents metric definitions from silently colliding.
   \item \textbf{Join of certificates.} Embed each parent certificate into $V_T$ and compute:
   \begin{equation}
     v_{\text{req}} = \text{embed}(v_1) \sqcup \text{embed}(v_2),
   \end{equation}
-  where $\sqcup$ is the componentwise least upper bound.
+  where $\sqcup$ is the componentwise least upper bound (the best of both parents on every metric).
   \item \textbf{Dominance check.} The merged program $R$ is valid if:
   \begin{equation}
     \text{cert}_T(R, E, s_0) \geq_T v_{\text{req}}.
@@ -261,7 +283,7 @@ If a merge commit $c_m$ satisfies \Cref{eq:merge-dom}, then the merged program $
 The merge certificate satisfies $\text{cert}_T(R, E, s_0) \geq_T v_{\text{req}}$. Since $v_{\text{req}} = \text{embed}(v_1) \sqcup \text{embed}(v_2)$, and the embedding preserves metric values while extending with bottom elements, projecting onto the metrics of $T_1$ yields $\text{cert}_{T_1}(R, E, s_0) \geq_{T_1} v_1$, and symmetrically for $T_2$.
 \end{proof}
 
-This means merge can fail with zero text conflicts. If parent A achieved accuracy 0.95 and parent B achieved latency \mbox{$p_{95}$ = 1.2s}, the merged program must meet \emph{both}. If it cannot, there is a \emph{behavioral conflict}---analogous to a text conflict in Git, but at the semantic level.
+This means merge can fail with zero text conflicts. If parent A achieved accuracy 0.95 and parent B achieved latency \mbox{$p_{95}$ = 1.2s}, the merged program must meet \emph{both}. If it cannot, you get a \emph{behavioral conflict}---analogous to a text conflict in Git, but at the semantic level. A merge that silently drops accuracy or blows up latency is the actual failure mode, and traditional VCS lets it through without complaint.
 
 % ============================================================
 \section{Object Model and System Design}
@@ -283,7 +305,7 @@ Blob & blob & Atomic content: prompt templates, tool schemas, configs. Open \tex
 Tree & tree & Structured grouping of objects (directory analog). \\
 Program$^\star$ & --- & DAG of typed operators with data/control edges. \\
 EvalSuite$^\star$ & --- & Versioned evaluation definition: cases, metrics, thresholds, fixture sources. \\
-Commit & commit & Program hash $+$ eval contract $+$ certified metric vector $+$ evidence refs. \\
+Commit & commit & Tree hash $+$ program hash $+$ eval contract $+$ certified metric vector $+$ evidence refs. \\
 Run$^\star$ & --- & Execution receipt: environment, inputs, outputs, metrics, trace ref, agent identity. \\
 Trace$^\star$ & --- & Sequence of typed, addressable events within a run. \\
 Annotation$^\star$ & --- & Metadata on any object without changing its hash. \\
@@ -293,7 +315,7 @@ Annotation$^\star$ & --- & Metadata on any object without changing its hash. \\
 
 \subsection{Runs and Traces as First-Class Evidence}
 
-A key design decision is that execution evidence is immutable and first-class. A \textbf{Run} records exactly what happened: the program hash, full environment (model identifier, version, decoding parameters, toolchain), input state, output artifacts, observed metrics, a trace reference, and the executing agent's identity. A \textbf{Trace} is the detailed execution record---a sequence of typed events, each with a unique identifier enabling fine-grained annotation.
+Execution evidence is immutable and first-class. A \textbf{Run} records exactly what happened: the program hash, full environment (model identifier, version, decoding parameters, toolchain), input state, output artifacts, observed metrics, a trace reference, and the executing agent's identity. A \textbf{Trace} is the detailed execution record---a sequence of typed events, each with a unique identifier enabling fine-grained annotation.
 
 Runs never modify commits. They are evidence. This separation means that multiple runs can accumulate evidence for or against a program without rewriting history.
 
@@ -303,7 +325,7 @@ Runs never modify commits. They are evidence. This separation means that multipl
 
 \subsection{Separation of Concerns: \textsc{Morph} Does Not Execute}
 
-A critical design constraint: \textsc{Morph} does not execute programs or run evaluations. All LLM calls, tool execution, and test runs happen in external tools---IDEs, agents, CI systems. \textsc{Morph}'s role is to:
+An important design constraint: \textsc{Morph} does not execute programs or run evaluations. All LLM calls, tool execution, and test runs happen in external tools---IDEs, agents, CI systems. \textsc{Morph}'s role is to:
 \begin{itemize}[nosep]
   \item \textbf{Store} immutable content-addressed objects.
   \item \textbf{Record} execution evidence that external tools report (runs, traces, metrics).
@@ -311,7 +333,7 @@ A critical design constraint: \textsc{Morph} does not execute programs or run ev
   \item \textbf{Gate} merges on metric dominance.
 \end{itemize}
 
-Commands like \texttt{morph run record} and \texttt{morph eval record} \emph{ingest} results; they do not run anything. This separation keeps the VCS layer thin and composable.
+Commands like \texttt{morph run record} and \texttt{morph eval record} \emph{ingest} results; they do not run anything. This keeps the VCS layer thin, composable, and out of the way.
 
 \subsection{CLI Design}
 
@@ -382,10 +404,10 @@ Reproducibility means the behavioral claim can be re-certified under declared en
 \label{sec:discussion}
 
 \paragraph{Relationship to continuous integration.}
-CI pipelines already run tests on proposed changes. \textsc{Morph} formalizes what CI enforces informally: a behavioral contract that merges must satisfy. The difference is that \textsc{Morph} makes the contract, the evidence, and the dominance check first-class versioned objects rather than ephemeral pipeline logs. Failed CI runs disappear; \textsc{Morph} runs persist as immutable evidence.
+CI pipelines already run tests on proposed changes. \textsc{Morph} formalizes what CI enforces informally: a behavioral contract that merges must satisfy. Tools like Braintrust already do this informally through CI integration; \textsc{Morph} makes the contract, the evidence, and the dominance check first-class versioned objects rather than ephemeral pipeline logs. Failed CI runs disappear; \textsc{Morph} runs persist as immutable evidence.
 
 \paragraph{Agent accountability.}
-When an AI agent generates a code patch, \textsc{Morph} records the agent's identity, the model version, the prompt that produced the change, and the full execution trace. If the patch is committed, the commit's evaluation contract certifies its behavioral properties. This creates an accountability chain from agent action to certified outcome---a property absent in current agent-driven development workflows.
+When an AI agent generates a code patch, \textsc{Morph} records the agent's identity, the model version, the prompt that produced the change, and the full execution trace. If the patch is committed, the commit's evaluation contract certifies its behavioral properties. This creates an accountability chain from agent action to certified outcome---something that does not exist in current agent-driven development workflows.
 
 \paragraph{Statistical sophistication.}
 The v0 system implements minimal statistical machinery: mean aggregation, worst-case scores, percentile thresholds, and lower confidence bounds. Richer certification methods---Bayesian comparison, two-sample equivalence testing, human-in-the-loop evaluation pipelines---are anticipated by the framework's abstract evaluation interface but deferred to future work.
@@ -394,20 +416,32 @@ The v0 system implements minimal statistical machinery: mean aggregation, worst-
 Because all objects are content-addressed and immutable, the architecture extends naturally to distributed settings (remote push/pull, federated verification). The v0 implementation is local-only; a remote protocol is planned future work.
 
 \paragraph{Complementarity with Git.}
-\textsc{Morph} does not replace Git. Deterministic source code remains well-served by Git. \textsc{Morph} handles the transformation programs, evaluations, and behavioral contracts that Git cannot express. The two systems can coexist in the same repository: Git for backup and source snapshots, \textsc{Morph} for behavioral versioning.
+\textsc{Morph} does not replace Git. Deterministic source code remains well-served by Git. \textsc{Morph} handles the transformation programs, evaluations, and behavioral contracts that Git cannot express. The two systems coexist in the same repository: Git for source snapshots, \textsc{Morph} for behavioral versioning. When program and evaluation suite fields are left empty, a \textsc{Morph} commit degenerates into a standard tree-hash commit, so you do not have to use the behavioral features until you need them.
 
 \paragraph{Limitations.}
-The current formalization assumes that evaluation suites are honest and that certified metrics are meaningful---garbage-in, garbage-out. The dominance preorder is only as useful as the underlying evaluation contracts. Additionally, the structural merge of program graphs (step 1 of merge) is under-specified relative to the well-studied three-way text merge; developing robust program-graph merge algorithms is important future work.
+The current formalization assumes evaluation suites are honest and that certified metrics actually measure something meaningful. The dominance preorder is only as good as the contracts underneath it---bad evals produce meaningless certificates. Additionally, the structural merge of program graphs (step 1 of merge) is under-specified relative to three-way text merge, which has decades of tooling behind it; developing robust program-graph merge algorithms is important future work.
 
 % ============================================================
 \section{Conclusion}
 \label{sec:conclusion}
 
-We have presented \textsc{Morph}, a version control system for transformation programs that extends the content-addressed Merkle DAG architecture of Git with first-class support for behavioral certification. By formalizing programs as effectful computations, evaluation suites as behavioral contracts, and merge as dominance over joined certificate requirements, \textsc{Morph} provides the version-control primitives needed for the emerging era of agent-driven, LLM-mediated software development. The key insight is that when software involves stochastic, effectful transformations, ``what changed'' is a behavioral question, not a syntactic one---and version control must evolve to reflect this.
+We have presented \textsc{Morph}, a version control system for transformation programs that extends Git's content-addressed Merkle DAG with first-class support for behavioral certification. Programs are formalized as effectful computations, evaluation suites as behavioral contracts, and merge as dominance over joined certificate requirements.
+
+The bet is that when software involves stochastic, effectful transformations, ``what changed'' becomes a behavioral question, not a syntactic one---and version control has to evolve to match. Git versioned deterministic source code. \textsc{Morph} versions certified behavior, with receipts.
 
 \bibliographystyle{plainnat}
 
 \begin{thebibliography}{20}
+
+\bibitem[Angiuli et~al.(2014)]{angiuli2014homotopical}
+Carlo Angiuli, Edward Morehouse, Daniel~R. Licata, and Robert Harper.
+\newblock Homotopical patch theory.
+\newblock In \emph{Proceedings of the 19th ACM SIGPLAN International Conference on Functional Programming (ICFP)}, pages 243--256, 2014.
+
+\bibitem[Braintrust(2024)]{braintrust2024}
+Braintrust.
+\newblock {Braintrust: The AI observability platform}.
+\newblock \url{https://www.braintrust.dev}, 2024.
 
 \bibitem[Chase(2022)]{chase2022langchain}
 Harrison Chase.
@@ -418,6 +452,11 @@ Harrison Chase.
 Wei-Lin Chiang, Lianmin Zheng, Ying Sheng, Anastasios~Nikolas Angelopoulos, Tianle Li, Dacheng Li, Hao Zhang, Banghua Zhu, Michael Jordan, Joseph~E. Gonzalez, and Ion Stoica.
 \newblock Chatbot {Arena}: An open platform for evaluating {LLMs} by human preference.
 \newblock In \emph{Proceedings of the 41st International Conference on Machine Learning (ICML)}, 2024.
+
+\bibitem[DVC(2020)]{dvc2020}
+{DVC Team}.
+\newblock {DVC}: Data version control.
+\newblock \url{https://dvc.org}, 2020.
 
 \bibitem[Jimenez et~al.(2024)]{jimenez2024swebench}
 Carlos~E. Jimenez, John Yang, Alexander Wettig, Shunyu Yao, Kexin Pei, Ofir Press, and Karthik Narasimhan.
@@ -449,6 +488,11 @@ David Roundy.
 \newblock Darcs: Distributed version management in {Haskell}.
 \newblock In \emph{Proceedings of the ACM SIGPLAN Workshop on Haskell}, pages 1--4, 2005.
 
+\bibitem[Swierstra and L\"{o}h(2014)]{swierstra2014semantics}
+Wouter Swierstra and Andres L\"{o}h.
+\newblock The semantics of version control.
+\newblock In \emph{Proceedings of the 2014 ACM International Symposium on New Ideas, New Paradigms, and Reflections on Programming \& Software (Onward!)}, pages 43--54, 2014.
+
 \bibitem[Torvalds(2005)]{torvalds2005git}
 Linus Torvalds.
 \newblock {Git}: Fast version control system.
@@ -468,6 +512,11 @@ Lei Wang, Chen Ma, Xueyang Feng, Zeyu Zhang, Hao Yang, Jingsen Zhang, Zhiyuan Ch
 Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and Yuan Cao.
 \newblock {ReAct}: Synergizing reasoning and acting in language models.
 \newblock In \emph{International Conference on Learning Representations (ICLR)}, 2023.
+
+\bibitem[Zaharia et~al.(2018)]{zaharia2018mlflow}
+Matei Zaharia, Andrew Chen, Aaron Davidson, Ali Ghodsi, Sue~Ann Hong, Andy Konwinski, Siddharth Murching, Tomas Nykodym, Paul Ogilvie, Mani Parkhe, et~al.
+\newblock Accelerating the machine learning lifecycle with {MLflow}.
+\newblock \emph{IEEE Data Engineering Bulletin}, 41(4):39--45, 2018.
 
 \end{thebibliography}
 
