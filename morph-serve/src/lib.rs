@@ -42,7 +42,7 @@ pub fn run_blocking(
         .route("/", get(|| async { Html(INDEX_HTML) }))
         .route("/index.html", get(|| async { Html(INDEX_HTML) }))
         .route("/api/log", get(api_log))
-        .route("/api/object/:hash", get(api_object))
+        .route("/api/object/{hash}", get(api_object))
         .with_state(state)
         .layer(CorsLayer::permissive());
 
