@@ -22,4 +22,4 @@ Hook scripts for recording Morph sessions from Cursor lifecycle events.
 
 ## Debug output
 
-Hook scripts write diagnostics to `.morph/hooks/logs/` and `.morph/hooks/debug/`. See [CURSOR-SETUP.md section 4](../docs/CURSOR-SETUP.md#debugging-hooks) for details.
+Hook scripts write diagnostics to `.morph/hooks/logs/` and `.morph/hooks/debug/`. See [CURSOR-SETUP.md § Debugging hooks](../docs/CURSOR-SETUP.md#debugging-hooks) for details.

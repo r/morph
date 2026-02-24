@@ -5,7 +5,7 @@ This document defines the first implementation target for Morph.
 
 It translates the ideas in:
 
-- [README.md](README.md) — engineering overview: what Morph is and the Git analogy
+- [README.md](README.md) — project overview: motivation, what Morph does, and how it relates to Git
 - [THEORY.md](THEORY.md) — formal algebraic foundations
 
 into a minimal, buildable system.
@@ -545,24 +545,29 @@ morph status
 morph log
 ```
 
-## 6.2 Prompt Object Creation
+## 6.2 Prompt Operations
 
 ```
-morph prompt create
-morph prompt materialize <hash>
+morph prompt create <file>
+morph prompt materialize <hash> [--output <path>]
+morph prompt latest [<ref>]
 ```
 
 Prompts are canonical objects. Materialization writes them to the working directory (or `.morph/prompts/`) for review.
+
+`morph prompt latest` prints the prompt text from a Run. Ref follows a Git-like syntax: `latest` (default, most recent run), `latest~N` or `latest-N` (Nth run back), or a 64-char run hash.
 
 ## 6.3 Program Management
 
 ```
 morph program create <file>
-morph program edit
-morph program show
+morph program show <hash>
+morph program identity-hash
 ```
 
 Program manifests are created via `morph program create <file>` and exist only in the object store. There is no `programs/` directory.
+
+`morph program identity-hash` prints the hash of the identity program (creating it in the store if needed). Useful for hook scripts and automation.
 
 ## 6.4 Commit Workflow
 
@@ -584,19 +589,22 @@ Morph does not run the eval suite; external tools do. Morph applies its **metric
 ## 6.5 Branching
 
 ```
-morph branch <name>
-morph checkout <name>
+morph branch [<name>]
+morph checkout <name|hash>
 ```
 
-Branches are pointers to commits. `morph checkout` restores the working tree from the commit's tree hash.
+`morph branch` without arguments lists all branches. With a name, it creates a new branch at HEAD. Branches are pointers to commits. `morph checkout` accepts a branch name or a 64-char commit hash (detached HEAD). If the commit has a tree, the working directory is restored from it.
 
 ## 6.6 Run ingestion
 
 ```
-morph run record <file>
+morph run record <file> [--trace <file>] [--artifact <file>...]
+morph run record-session --prompt <text> --response <text> [--model-name <name>] [--agent-id <id>]
 ```
 
-**Ingests** a Run object (JSON). Does not execute any program. External tools (IDE, agent, CI) produce the run and report it. Morph stores the Run, its Trace, and Artifacts. Used to record execution receipts.
+`morph run record` **ingests** a Run object (JSON). Does not execute any program. External tools (IDE, agent, CI) produce the run and report it. Morph stores the Run, its Trace, and Artifacts.
+
+`morph run record-session` is a convenience command that creates a Run + Trace from a single prompt/response pair. Used by hook scripts and automation to record IDE sessions without constructing the full Run JSON.
 
 ## 6.7 Eval ingestion
 
@@ -609,8 +617,10 @@ morph eval record <file>
 ## 6.8 Merge
 
 ```
-morph merge <branch>
+morph merge <branch> -m <message> --program <hash> --eval-suite <hash> --metrics '<json>'
 ```
+
+All flags are required. The caller must supply the merged program, the eval suite, and the observed metrics from external evaluation.
 
 Merge procedure:
 
@@ -627,11 +637,10 @@ This realizes THEORY.md §13.3: merge candidate R must satisfy R ⪰ P and R ⪰
 ## 6.9 Rollup (Squash)
 
 ```
-morph rollup <range>
+morph rollup <base_ref> <tip_ref> [-m <message>]
 ```
 
-Collapses multiple working-space commits into one commit-space identity.
-Attaches evaluation summary.
+Collapses multiple working-space commits into one commit-space identity. The new commit has `base_ref` as its parent and uses the program and eval contract from the tip commit.
 
 Does not delete traces. Traces may be summarized via TraceRollup objects.
 
@@ -647,6 +656,20 @@ morph annotations <object_hash> --sub <event_id>
 `morph annotate` creates an Annotation object targeting any content-addressed object (or a sub-element within it).
 
 `morph annotations` lists all annotations on a given object, optionally filtered by sub-target.
+
+## 6.11 Utilities
+
+```
+morph hash-object <file>
+morph upgrade
+morph visualize [<path>] [--port <port>] [--interface <addr>]
+```
+
+`morph hash-object` reads a Morph object from a JSON file, stores it, and prints its content hash. Used by hook scripts that need to construct and store objects outside the normal CLI workflow.
+
+`morph upgrade` migrates the repository store to the latest version (e.g. 0.0 → 0.2 → 0.3). Required before using MCP on older repos.
+
+`morph visualize` starts a local web server for browsing the repo in a browser: commit strip, detail panel (message, author, program, eval contract, prompts), and an object browser. The web UI is embedded in the binary.
 
 ---
 

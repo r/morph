@@ -13,7 +13,8 @@ You need two executables: **`morph`** (CLI) and **`morph-mcp`** (MCP server used
 **From source (Rust):**
 
 ```bash
-git clone https://github.com/your-org/morph   # or your Morph repo URL
+git clone <morph-repo-url>
+
 cd morph
 cargo install --path morph-cli
 cargo install --path morph-mcp
@@ -52,7 +53,7 @@ Morph works with **Cursor** and **Claude Code**. Each IDE uses the same `morph-m
 ### Cursor
 
 1. **Add the Morph MCP server** in Cursor (Settings → MCP) so the agent can use `morph_record_session`, `morph_stage`, `morph_commit`, etc.
-2. **Enable hooks** so Cursor records every prompt and response: add `.cursor/hooks.json` and the three hook scripts (see [CURSOR-SETUP.md](CURSOR-SETUP.md#4-recording-sessions)). Hooks use **beforeSubmitPrompt** (capture prompt), **afterAgentResponse** (capture full response), and **stop** (fallback).
+2. **Enable hooks** so Cursor records every prompt and response: add `.cursor/hooks.json` and the three hook scripts (see [CURSOR-SETUP.md](CURSOR-SETUP.md#3-recording-sessions)). Hooks use **beforeSubmitPrompt** (capture prompt), **afterAgentResponse** (capture full response), and **stop** (fallback).
 
 **Cursor Marketplace:** A Morph **plugin** can bundle rules, hooks config, and hook scripts so “add Morph to Cursor” is one step after the plugin is installed. The [Cursor Marketplace](https://cursor.com/marketplace) allows plugins to ship scripts and MCP config but **not binaries** — so you still install the Morph binaries (step 1) and run `morph init` (step 2) yourself. The plugin only configures Cursor. The marketplace is curated; plugins are submitted for review. When a Morph plugin is listed, you’ll be able to install it from the marketplace and then add the binaries + init if you haven’t already.
 
