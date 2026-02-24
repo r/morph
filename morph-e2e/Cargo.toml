@@ -1,0 +1,22 @@
+[package]
+name = "morph-e2e"
+version = "0.1.0"
+edition = "2021"
+description = "End-to-end test harness for morph: Cucumber (Gherkin) specs and step definitions"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+tempfile = "3.10"
+
+[dev-dependencies]
+cucumber = { version = "0.21", features = ["macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+assert_cmd = "2.0"
+predicates = "2.1"
+
+# Cucumber runs as an integration test; harness = false so Cucumber controls output.
+[[test]]
+name = "cucumber"
+harness = false
