@@ -6,10 +6,13 @@ You write `.feature` files (Given/When/Then); the harness runs the real `morph` 
 
 ## Run
 
+From the **repo root** (morph-e2e is in the workspace):
+
 ```bash
-cargo build -p morph-cli   # ensure morph binary exists
 cargo test -p morph-e2e --test cucumber
 ```
+
+The workspace builds the `morph` binary from morph-cli when needed. To run from inside `morph-e2e/`, ensure `morph` is on PATH (e.g. `cargo build -p morph-cli` from root first).
 
 ## Layout
 

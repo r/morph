@@ -194,6 +194,7 @@ fn rewrite_object(obj: &MorphObject, map: &HashMap<String, Hash>) -> Result<Morp
                 id: r.agent.id.clone(),
                 version: r.agent.version.clone(),
                 policy: r.agent.policy.as_ref().map(|s| subst(map, s)),
+                instance_id: r.agent.instance_id.clone(),
             },
             contributors: r.contributors.clone(),
             morph_version: r.morph_version.clone(),

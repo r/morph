@@ -6,6 +6,7 @@
 |-------|-------|----------|
 | **morph-core** | 86 unit tests across 12 modules | `#[cfg(test)]` blocks in each source file |
 | **morph-cli** | 13 integration tests | YAML specs in `morph-cli/tests/specs/*.yaml`, compiled by `build.rs` |
+| **morph-e2e** | Cucumber e2e tests | `morph-e2e/features/*.feature`, step defs in `morph-e2e/tests/cucumber.rs` |
 | **morph-mcp** | None yet | -- |
 | **morph-serve** | None yet | -- |
 
@@ -25,8 +26,11 @@
 cargo test                    # all workspace tests (unit + integration)
 cargo test -p morph-core      # core library only
 cargo test -p morph-cli       # CLI integration tests only
+cargo test -p morph-e2e --test cucumber   # e2e (Cucumber; runs real morph CLI)
 cargo test --lib              # unit tests only (no integration)
 ```
+
+E2E tests require the `morph` binary; from the repo root the workspace builds it when you run `cargo test -p morph-e2e --test cucumber`.
 
 ---
 

@@ -39,6 +39,16 @@ morph init
 
 This creates a `.morph/` directory (objects, refs, config, prompts, runs, traces). Nothing else is modified. You only need to do this once per project.
 
+### Quick path: one command for Cursor (recommended)
+
+After `morph init`, you can install Cursor MCP config, hooks, and rules in one step:
+
+```bash
+morph setup cursor
+```
+
+This writes (or merges into) `.cursor/mcp.json`, `.cursor/hooks.json`, and `.cursor/rules/*.mdc`, and copies the hook scripts into `cursor/` in your project. Then open the project in Cursor; ensure `morph` and `morph-mcp` are on your PATH. No manual MCP or hook setup needed.
+
 ---
 
 ## 3. Set up your IDE

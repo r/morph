@@ -123,6 +123,7 @@ pub fn record_session(
             id: agent_id.unwrap_or("cursor").to_string(),
             version: "1.0".to_string(),
             policy: None,
+            instance_id: None,
         },
         contributors: None,
         morph_version: None,
