@@ -3,6 +3,10 @@
 //!
 //! All E2E behavior is expressed in Gherkin; the harness runs morph CLI and asserts.
 
+// morph-e2e runs the workspace's morph binary; CARGO_BIN_EXE_morph is only set for the crate that builds it.
+// So we keep the deprecated API here and allow the warning.
+#![allow(deprecated)]
+
 use assert_cmd::Command;
 use cucumber::{given, then, when, World as _};
 use std::collections::HashMap;

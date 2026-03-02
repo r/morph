@@ -120,7 +120,7 @@ fn emit_test(spec: &TestSpec) -> String {
         writeln!(code, "    {{").unwrap();
         writeln!(
             code,
-            "        let mut cmd = Command::cargo_bin(\"morph\").unwrap();"
+            "        let mut cmd = cargo_bin_cmd!(\"morph\");"
         )
         .unwrap();
         writeln!(code, "        cmd.arg(\"init\").arg(path).assert().success();").unwrap();
@@ -212,7 +212,7 @@ fn emit_step(code: &mut String, step: &Step, idx: usize) {
     writeln!(code, "    let {} = {{", var).unwrap();
     writeln!(
         code,
-        "        let mut cmd = Command::cargo_bin(\"morph\").unwrap();"
+        "        let mut cmd = cargo_bin_cmd!(\"morph\");"
     )
     .unwrap();
     writeln!(code, "        cmd.current_dir(path);").unwrap();
@@ -424,7 +424,7 @@ fn main() {
 
     let mut all_code = String::from(
         "// Auto-generated from tests/specs/*.yaml -- do not edit.\n\
-         use assert_cmd::Command;\n\
+         use assert_cmd::cargo::cargo_bin_cmd;\n\
          #[allow(unused_imports)]\n\
          use predicates::prelude::*;\n\n",
     );
