@@ -68,12 +68,12 @@ pub fn setup_cursor(project_root: &Path) -> anyhow::Result<SetupReport> {
 }
 
 fn write_hook_scripts(project_root: &Path) -> anyhow::Result<Vec<String>> {
-    let hooks_dir = project_root.join("cursor");
-    std::fs::create_dir_all(&hooks_dir)?;
+    let cursor_dir = project_root.join(".cursor");
+    std::fs::create_dir_all(&cursor_dir)?;
 
     let mut written = Vec::new();
     for (name, content) in assets::HOOK_SCRIPTS {
-        let path = hooks_dir.join(name);
+        let path = cursor_dir.join(name);
         std::fs::write(&path, content)?;
         #[cfg(unix)]
         {
@@ -101,9 +101,16 @@ fn merge_hooks_json(cursor_dir: &Path) -> anyhow::Result<bool> {
         .unwrap_or_default();
 
     let morph_hooks: &[(&str, &str)] = &[
-        ("beforeSubmitPrompt", "cursor/morph-record-prompt.sh"),
-        ("afterAgentResponse", "cursor/morph-record-response.sh"),
-        ("stop", "cursor/morph-record-stop.sh"),
+        ("beforeSubmitPrompt", ".cursor/morph-record-prompt.sh"),
+        ("afterAgentResponse", ".cursor/morph-record-response.sh"),
+        ("stop", ".cursor/morph-record-stop.sh"),
+    ];
+
+    // Legacy paths we no longer use (scripts now live in .cursor/ for Git-style layout).
+    let old_commands: &[&str] = &[
+        "cursor/morph-record-prompt.sh",
+        "cursor/morph-record-response.sh",
+        "cursor/morph-record-stop.sh",
     ];
 
     let mut hooks_map = hooks;
@@ -114,6 +121,17 @@ fn merge_hooks_json(cursor_dir: &Path) -> anyhow::Result<bool> {
             .as_array_mut()
             .cloned()
             .unwrap_or_default();
+
+        // Drop any legacy cursor/ entries so we don't duplicate when upgrading.
+        let arr: Vec<_> = arr
+            .into_iter()
+            .filter(|entry| {
+                entry
+                    .get("command")
+                    .and_then(|c| c.as_str())
+                    .map_or(true, |c| !old_commands.contains(&c))
+            })
+            .collect();
 
         let already = arr.iter().any(|entry| {
             entry
@@ -128,6 +146,8 @@ fn merge_hooks_json(cursor_dir: &Path) -> anyhow::Result<bool> {
                 event.to_string(),
                 serde_json::Value::Array(new_arr),
             );
+        } else {
+            hooks_map.insert(event.to_string(), serde_json::Value::Array(arr));
         }
     }
 
@@ -316,7 +336,7 @@ mod tests {
         let report = setup_cursor(tmp.path()).unwrap();
 
         for (name, _) in assets::HOOK_SCRIPTS {
-            let path = tmp.path().join("cursor").join(name);
+            let path = tmp.path().join(".cursor").join(name);
             assert!(path.exists(), "hook script should exist: {name}");
             let content = fs::read_to_string(&path).unwrap();
             assert!(
@@ -334,7 +354,7 @@ mod tests {
         setup_cursor(tmp.path()).unwrap();
 
         for (name, _) in assets::HOOK_SCRIPTS {
-            let path = tmp.path().join("cursor").join(name);
+            let path = tmp.path().join(".cursor").join(name);
             let mode = fs::metadata(&path).unwrap().permissions().mode();
             assert!(
                 mode & 0o111 != 0,

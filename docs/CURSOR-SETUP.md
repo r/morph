@@ -72,9 +72,9 @@ Create or edit `.cursor/hooks.json` in your project (paths are relative to proje
 {
   "version": 1,
   "hooks": {
-    "beforeSubmitPrompt": [{"command": "cursor/morph-record-prompt.sh"}],
-    "afterAgentResponse": [{"command": "cursor/morph-record-response.sh"}],
-    "stop": [{"command": "cursor/morph-record-stop.sh"}]
+    "beforeSubmitPrompt": [{"command": ".cursor/morph-record-prompt.sh"}],
+    "afterAgentResponse": [{"command": ".cursor/morph-record-response.sh"}],
+    "stop": [{"command": ".cursor/morph-record-stop.sh"}]
   }
 }
 ```
@@ -83,7 +83,7 @@ Create or edit `.cursor/hooks.json` in your project (paths are relative to proje
 - **afterAgentResponse** — Receives the full agent response in the payload; builds a Run + Trace with prompt(s) and response, runs `morph run record`, then clears the pending file.
 - **stop** — Fallback: if a pending file still exists (e.g. `afterAgentResponse` didn’t fire), records a run with placeholder response text so no prompt is lost.
 
-Copy the hook scripts from the Morph repo into your project’s `cursor/` directory, or symlink them, so that `cursor/morph-record-prompt.sh` etc. resolve correctly. Make them executable: `chmod +x cursor/morph-record-*.sh`.
+Hook scripts live under `.cursor/` (same as `hooks.json` and `mcp.json`), so the project root stays clean like a Git-style layout. Run `morph setup cursor` to install them, or copy the scripts from the Morph repo’s `.cursor/` into your project’s `.cursor/` and make them executable: `chmod +x .cursor/morph-record-*.sh`.
 
 ### Agent-driven recording (optional)
 

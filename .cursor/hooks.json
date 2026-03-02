@@ -2,17 +2,17 @@
   "hooks": {
     "afterAgentResponse": [
       {
-        "command": "cursor/morph-record-response.sh"
+        "command": ".cursor/morph-record-response.sh"
       }
     ],
     "beforeSubmitPrompt": [
       {
-        "command": "cursor/morph-record-prompt.sh"
+        "command": ".cursor/morph-record-prompt.sh"
       }
     ],
     "stop": [
       {
-        "command": "cursor/morph-record-stop.sh"
+        "command": ".cursor/morph-record-stop.sh"
       }
     ]
   },

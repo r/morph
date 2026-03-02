@@ -47,7 +47,7 @@ After `morph init`, you can install Cursor MCP config, hooks, and rules in one s
 morph setup cursor
 ```
 
-This writes (or merges into) `.cursor/mcp.json`, `.cursor/hooks.json`, and `.cursor/rules/*.mdc`, and copies the hook scripts into `cursor/` in your project. Then open the project in Cursor; ensure `morph` and `morph-mcp` are on your PATH. No manual MCP or hook setup needed.
+This writes (or merges into) `.cursor/mcp.json`, `.cursor/hooks.json`, `.cursor/rules/*.mdc`, and the hook scripts into `.cursor/` in your project (so only dot-directories like `.cursor/` and `.morph/` are visible, Git-style). Then open the project in Cursor; ensure `morph` and `morph-mcp` are on your PATH. No manual MCP or hook setup needed.
 
 ---
 
@@ -96,7 +96,7 @@ Morph works with **Cursor** and **Claude Code**. Each IDE uses the same `morph-m
 |--------|------------|
 | **“not a morph repository”** | Run `morph init` in the project root. If the IDE uses a different cwd, set `MORPH_WORKSPACE` in the MCP config to the project path (see IDE setup guide). |
 | **MCP server not found / ENOENT** | Ensure `morph-mcp` is on PATH or use the full path in MCP config. Restart the IDE after changing config. |
-| **Sessions not recorded** | Confirm hooks are configured and hook script paths are correct. Cursor: `.cursor/hooks.json` with beforeSubmitPrompt, afterAgentResponse, stop; scripts in `cursor/`. Claude Code: `hooks` in `.claude/settings.json`; scripts in `.claude/hooks/`. See the IDE guide’s debugging section (e.g. `.morph/hooks/logs/`). |
+| **Sessions not recorded** | Confirm hooks are configured and hook script paths are correct. Cursor: `.cursor/hooks.json` with beforeSubmitPrompt, afterAgentResponse, stop; scripts in `.cursor/`. Claude Code: `hooks` in `.claude/settings.json`; scripts in `.claude/hooks/`. See the IDE guide’s debugging section (e.g. `.morph/hooks/logs/`). |
 | **Empty `.morph/prompts/` or no new runs** | If you rely on the agent calling `morph_record_session`, ensure the Cursor rule is present and applied. Prefer hook-based recording so every turn is captured without agent cooperation. |
 
 For IDE-specific issues (workspace path, hook payloads, script paths), see the full [Cursor](CURSOR-SETUP.md#troubleshooting) or [Claude Code](CLAUDE-CODE-SETUP.md#debugging) setup guide.
