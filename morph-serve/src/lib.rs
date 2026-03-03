@@ -169,6 +169,25 @@ async fn api_graph(State(state): State<AppState>) -> Result<Json<GraphResponse>,
                         MorphObject::Trace(_) => ("trace", "trace".to_string()),
                         MorphObject::Program(_) => ("program", "program".to_string()),
                         MorphObject::Tree(_) => ("tree", "tree".to_string()),
+                        MorphObject::Blob(b) if b.kind == "prompt" => {
+                            let text = b
+                                .content
+                                .get("text")
+                                .or_else(|| b.content.get("body"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .lines()
+                                .next()
+                                .unwrap_or("")
+                                .trim();
+                            let label = if text.is_empty() {
+                                id[..12.min(id.len())].to_string()
+                            } else {
+                                let truncated = if text.len() > 24 { &text[..24] } else { text };
+                                format!("{}…", truncated.trim_end())
+                            };
+                            ("prompt", label)
+                        }
                         _ => ("object", id[..12.min(id.len())].to_string()),
                     };
                     (t.to_string(), if l.is_empty() { id[..12.min(id.len())].to_string() } else { l })
@@ -232,6 +251,37 @@ async fn api_graph(State(state): State<AppState>) -> Result<Json<GraphResponse>,
         ensure_node(&mut nodes, store.as_ref(), &run.trace, "trace", "trace".to_string());
         edges.push(GraphEdge { from: id.clone(), to: run.program.clone() });
         ensure_node(&mut nodes, store.as_ref(), &run.program, "program", "program".to_string());
+    }
+
+    // Add prompt nodes and program -> prompt edges for each program's prompts
+    let program_ids: Vec<String> = nodes
+        .values()
+        .filter(|n| n.node_type == "program")
+        .map(|n| n.id.clone())
+        .collect();
+    for program_id in program_ids {
+        let program_hash = match Hash::from_hex(&program_id) {
+            Ok(h) => h,
+            Err(_) => continue,
+        };
+        let obj = match store.get(&program_hash) {
+            Ok(o) => o,
+            Err(_) => continue,
+        };
+        if let MorphObject::Program(program) = &obj {
+            for prompt_hash in &program.prompts {
+                if prompt_hash.is_empty() {
+                    continue;
+                }
+                ensure_node(&mut nodes, store.as_ref(), prompt_hash, "?", String::new());
+                if !edges.iter().any(|e| e.from == program_id && e.to == *prompt_hash) {
+                    edges.push(GraphEdge {
+                        from: program_id.clone(),
+                        to: prompt_hash.clone(),
+                    });
+                }
+            }
+        }
     }
 
     let nodes: Vec<GraphNode> = nodes.into_values().collect();

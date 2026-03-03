@@ -71,6 +71,7 @@
       border: 1px solid #27272a; max-height: 200px; overflow-y: auto;
     }
     .empty-detail { color: #71717a; font-size: 0.9rem; }
+    #graph .empty-detail code { background: #27272a; padding: 0.2em 0.4em; border-radius: 4px; font-size: 0.85em; }
     .error { color: #f87171; font-size: 0.85rem; }
     .loading { color: #a1a1aa; }
     .btn { display: inline-block; margin-top: 0.5rem; padding: 0.4rem 0.75rem; border-radius: 6px; border: none; background: #3b82f6; color: #fff; cursor: pointer; font-size: 0.85rem; }
@@ -82,6 +83,9 @@
     <a href="/">← Browser</a>
     Morph graph
     <span style="font-size:0.75rem;color:#71717a;font-weight:normal;">Click a node to see data</span>
+    <label id="showPromptsWrap" style="display:flex;align-items:center;gap:0.35rem;font-size:0.8rem;font-weight:normal;color:#a1a1aa;cursor:pointer;margin-left:0.5rem;">
+      <input type="checkbox" id="showPrompts"> Show prompts
+    </label>
     <div id="legend"></div>
   </header>
   <div id="main">
@@ -97,6 +101,7 @@
       trace:   { background: '#22c55e', border: '#16a34a' },
       program: { background: '#a855f7', border: '#9333ea' },
       tree:    { background: '#64748b', border: '#475569' },
+      prompt:  { background: '#ec4899', border: '#db2777' },
       object:  { background: '#71717a', border: '#52525b' },
     };
 
@@ -109,8 +114,10 @@
 
     const container = document.getElementById('graph');
     const detailEl = document.getElementById('detail');
+    const showPromptsEl = document.getElementById('showPrompts');
     let network = null;
     let nodeTypes = {}; // id -> type for click handler
+    let graphData = null; // raw { nodes, edges } from API
 
     async function api(path) {
       const r = await fetch(path);
@@ -161,6 +168,17 @@
         detailEl.querySelectorAll('[data-fetch]').forEach(el => { el.addEventListener('click', (e) => { e.preventDefault(); loadObject(el.dataset.fetch); }); });
         return;
       }
+      if (obj.Blob && obj.Blob.kind === 'prompt' && obj.Blob.content) {
+        const c = obj.Blob.content;
+        const text = (c.text != null ? c.text : c.body) || '';
+        const response = c.response != null ? c.response : '';
+        let html = '<div class="section"><h2>Prompt</h2><p class="hash">' + escapeHtml(hash) + '</p></div>';
+        if (text) html += '<div class="section"><h2>Prompt</h2><div class="prompt-body">' + escapeHtml(String(text)) + '</div></div>';
+        if (response) html += '<div class="section"><h2>Response</h2><div class="prompt-body">' + escapeHtml(String(response)) + '</div></div>';
+        if (!text && !response) html += '<pre class="detail-pre">' + escapeHtml(JSON.stringify(obj, null, 2)) + '</pre>';
+        detailEl.innerHTML = html;
+        return;
+      }
       if (obj.Blob || obj.Program || obj.EvalSuite) {
         detailEl.innerHTML = '<div class="section"><h2>Object</h2><p class="hash">' + escapeHtml(hash) + '</p><pre class="detail-pre">' + escapeHtml(JSON.stringify(obj, null, 2)) + '</pre></div>';
         return;
@@ -179,37 +197,57 @@
       }
     }
 
+    function buildFilteredGraph(showPrompts) {
+      if (!graphData || !graphData.nodes) return null;
+      const promptIds = new Set(
+        graphData.nodes.filter(n => n.type === 'prompt').map(n => n.id)
+      );
+      const filteredNodes = showPrompts
+        ? graphData.nodes
+        : graphData.nodes.filter(n => n.type !== 'prompt');
+      const filteredEdges = showPrompts
+        ? graphData.edges
+        : graphData.edges.filter(e => !promptIds.has(e.from) && !promptIds.has(e.to));
+      const nodes = new vis.DataSet(
+        filteredNodes.map(n => {
+          const short = (n.label || n.id).slice(0, 14);
+          const color = TYPE_COLORS[n.type] || TYPE_COLORS.object;
+          return {
+            id: n.id,
+            label: short + (n.id.length > 14 ? '…' : ''),
+            color: color,
+            title: n.id,
+            font: { color: '#fff', size: 13, face: 'ui-sans-serif, system-ui, sans-serif' },
+            margin: 12,
+            shape: 'box',
+            widthConstraint: { maximum: 180 },
+          };
+        })
+      );
+      const edges = new vis.DataSet(
+        filteredEdges.map(e => ({
+          from: e.from,
+          to: e.to,
+          arrows: { to: { enabled: true, scaleFactor: 0.6 } },
+          color: { color: '#52525b', opacity: 0.8 },
+          width: 1.5,
+          smooth: { type: 'cubicBezier', roundness: 0.4 },
+        }))
+      );
+      return { nodes, edges };
+    }
+
     async function load() {
       try {
         const data = await api('/api/graph');
+        if (!data.nodes || data.nodes.length === 0) {
+          container.innerHTML = '<div class="empty-detail" style="padding:2rem;text-align:center;max-width:360px;margin:auto;">No commits or runs in this repo yet.<br><br>Run <code>morph init</code>, add files, <code>morph commit</code>, or record a session to see the graph.</div>';
+          return;
+        }
+        graphData = data;
         data.nodes.forEach(n => { nodeTypes[n.id] = n.type; });
-        const nodes = new vis.DataSet(
-          data.nodes.map(n => {
-            const short = (n.label || n.id).slice(0, 14);
-            const color = TYPE_COLORS[n.type] || TYPE_COLORS.object;
-            return {
-              id: n.id,
-              label: short + (n.id.length > 14 ? '…' : ''),
-              color: color,
-              title: n.id,
-              font: { color: '#fff', size: 13, face: 'ui-sans-serif, system-ui, sans-serif' },
-              margin: 12,
-              shape: 'box',
-              widthConstraint: { maximum: 180 },
-            };
-          })
-        );
-        const edges = new vis.DataSet(
-          data.edges.map(e => ({
-            from: e.from,
-            to: e.to,
-            arrows: { to: { enabled: true, scaleFactor: 0.6 } },
-            color: { color: '#52525b', opacity: 0.8 },
-            width: 1.5,
-            smooth: { type: 'cubicBezier', roundness: 0.4 },
-          }))
-        );
-        const g = { nodes, edges };
+        const showPrompts = showPromptsEl.checked;
+        const g = buildFilteredGraph(showPrompts);
         const options = {
           nodes: { borderWidth: 2 },
           edges: {},
@@ -237,6 +275,10 @@
         });
         network.on('stabilizationIterationsDone', () => {
           network.setOptions({ physics: false });
+        });
+        showPromptsEl.addEventListener('change', () => {
+          const next = buildFilteredGraph(showPromptsEl.checked);
+          if (next) network.setData(next);
         });
       } catch (err) {
         container.innerHTML = '<p class="error">' + escapeHtml(err.message) + '</p>';
