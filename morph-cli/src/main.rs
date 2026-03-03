@@ -4,7 +4,7 @@
 mod setup;
 
 use clap::Parser;
-use morph_core::{find_repo, migrate_0_0_to_0_2, migrate_0_2_to_0_3, open_store, read_repo_version, require_store_version, Hash, Store, STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_INIT};
+use morph_core::{find_repo, migrate_0_0_to_0_2, migrate_0_2_to_0_3, open_store, read_repo_version, require_store_version, Hash, MorphObject, ObjectType, Store, STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_INIT};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -130,6 +130,11 @@ enum Command {
     },
     /// Upgrade the repo store to the latest version (required before using MCP on older repos).
     Upgrade,
+    /// Inspect traces (prompt/response events)
+    Trace {
+        #[command(subcommand)]
+        sub: TraceCmd,
+    },
     /// Browse repo in browser (commit strip, prompts, tree). Use --port and --interface to bind.
     #[cfg(feature = "visualize")]
     #[command(name = "visualize")]
@@ -140,6 +145,15 @@ enum Command {
         port: u16,
         #[arg(long, default_value = "127.0.0.1")]
         interface: String,
+    },
+}
+
+#[derive(clap::Subcommand)]
+enum TraceCmd {
+    /// Show a trace by hash (prompt and response text from events)
+    Show {
+        /// Trace hash (64 hex chars)
+        hash: String,
     },
 }
 
@@ -156,6 +170,19 @@ enum SetupCmd {
 
 #[derive(clap::Subcommand)]
 enum RunCmd {
+    /// List recorded runs (run hashes)
+    List,
+    /// Show one run by hash (summary or full JSON)
+    Show {
+        /// Run hash (64 hex chars)
+        hash: String,
+        /// Emit full run JSON
+        #[arg(long)]
+        json: bool,
+        /// Also print the trace (all prompt and response text)
+        #[arg(long)]
+        with_trace: bool,
+    },
     /// Record a Run object from JSON file
     Record {
         run_file: PathBuf,
@@ -243,6 +270,31 @@ fn parse_hash(s: &str) -> anyhow::Result<Hash> {
 fn verbose_msg(on: bool, msg: &str) {
     if on {
         eprintln!("morph: {}", msg);
+    }
+}
+
+/// Print prompt and response text from a trace's events to stdout.
+fn print_trace_events(trace: &morph_core::objects::Trace) {
+    for ev in &trace.events {
+        let text = ev
+            .payload
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        match ev.kind.as_str() {
+            "prompt" => {
+                println!("--- prompt ---");
+                println!("{}", text);
+            }
+            "response" => {
+                println!("--- response ---");
+                println!("{}", text);
+            }
+            _ => {
+                println!("--- {} ---", ev.kind);
+                println!("{}", text);
+            }
+        }
     }
 }
 
@@ -570,6 +622,48 @@ fn main() -> anyhow::Result<()> {
             }
         }
         Command::Run { sub } => match sub {
+            RunCmd::List => {
+                let (_repo_root, store) = get_store(verbose)?;
+                let hashes = store.list(ObjectType::Run)?;
+                for h in hashes {
+                    println!("{}", h);
+                }
+            }
+            RunCmd::Show { hash, json, with_trace } => {
+                let (_repo_root, store) = get_store(verbose)?;
+                let hash = parse_hash(&hash)?;
+                let obj = store.get(&hash).map_err(|e| anyhow::anyhow!("{}", e))?;
+                match &obj {
+                    MorphObject::Run(run) => {
+                        if json {
+                            let out = serde_json::to_string_pretty(run).map_err(|e| anyhow::anyhow!("{}", e))?;
+                            println!("{}", out);
+                        } else {
+                            println!("run    {}", hash);
+                            println!("trace  {}", run.trace);
+                            println!("program {}", run.program);
+                            println!("agent  {} {}", run.agent.id, run.agent.version);
+                            if let Some(ref c) = run.commit {
+                                println!("commit {}", c);
+                            }
+                            if !run.metrics.is_empty() {
+                                println!("metrics {:?}", run.metrics);
+                            }
+                        }
+                        if with_trace {
+                            let trace_hash = parse_hash(&run.trace)?;
+                            let trace_obj = store.get(&trace_hash).map_err(|e| anyhow::anyhow!("trace {}: {}", run.trace, e))?;
+                            if let MorphObject::Trace(t) = &trace_obj {
+                                println!();
+                                print_trace_events(t);
+                            } else {
+                                return Err(anyhow::anyhow!("object {} is not a trace", run.trace));
+                            }
+                        }
+                    }
+                    _ => return Err(anyhow::anyhow!("object {} is not a run", hash)),
+                }
+            }
             RunCmd::Record { run_file, trace, artifact } => {
                 let (_repo_root, store) = get_store(verbose)?;
                 verbose_msg(verbose, &format!("recording run from {}", run_file.display()));
@@ -596,6 +690,17 @@ fn main() -> anyhow::Result<()> {
                     agent_id.as_deref(),
                 )?;
                 println!("{}", hash);
+            }
+        },
+        Command::Trace { sub } => match sub {
+            TraceCmd::Show { hash } => {
+                let (_repo_root, store) = get_store(verbose)?;
+                let hash = parse_hash(&hash)?;
+                let obj = store.get(&hash).map_err(|e| anyhow::anyhow!("{}", e))?;
+                match &obj {
+                    MorphObject::Trace(t) => print_trace_events(t),
+                    _ => return Err(anyhow::anyhow!("object {} is not a trace", hash)),
+                }
             }
         },
         Command::Eval { sub } => match sub {

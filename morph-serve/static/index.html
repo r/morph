@@ -80,7 +80,7 @@
   </style>
 </head>
 <body>
-  <header>Morph repo browser</header>
+  <header><a href="/" style="color:inherit;text-decoration:none;">Morph repo browser</a> <a href="/graph" style="font-size:0.85rem;font-weight:normal;margin-left:1rem;color:#3b82f6;">Graph</a></header>
   <main>
     <section id="strip" aria-label="Commit history"></section>
     <section id="detail" aria-label="Detail">
@@ -187,6 +187,15 @@
         } else if (obj.type === 'blob') {
           const body = obj.content && obj.content.body != null ? obj.content.body : JSON.stringify(obj.content, null, 2);
           target.innerHTML = (resultEl ? '' : '<div class="section"><h2>Object</h2></div>') + '<pre class="prompt-body">' + escapeHtml(body) + '</pre>';
+        } else if (obj.Trace && Array.isArray(obj.Trace.events)) {
+          const events = obj.Trace.events;
+          let html = (resultEl ? '' : '<div class="section"><h2>Trace</h2></div>');
+          events.forEach(ev => {
+            const text = (ev.payload && ev.payload.text) ? escapeHtml(ev.payload.text) : '';
+            const kind = escapeHtml(ev.kind || '');
+            html += `<div class="section"><h2>${kind}</h2><pre class="prompt-body">${text || '(no text)'}</pre></div>`;
+          });
+          target.innerHTML = html;
         } else {
           target.innerHTML = (resultEl ? '' : '<div class="section"><h2>Object</h2></div>') + '<pre class="prompt-body">' + escapeHtml(JSON.stringify(obj, null, 2)) + '</pre>';
         }
@@ -196,11 +205,19 @@
     }
 
     (async () => {
-      strip.innerHTML = '<span class="loading">Loading log…</span>';
+      strip.innerHTML = '<span class="loading">Loading…</span>';
       try {
-        const log = await api('/api/log');
+        const [log, runs] = await Promise.all([api('/api/log'), api('/api/runs')]);
         strip.innerHTML = '';
-        if (!log.length) { strip.innerHTML = '<p class="empty-detail">No commits.</p>'; return; }
+        if (log.length) {
+          const commitSection = document.createElement('div');
+          commitSection.innerHTML = '<h3 style="font-size:0.75rem;color:#71717a;margin:0.0 0 0.5rem 0;text-transform:uppercase;">Commits</h3>';
+          strip.appendChild(commitSection);
+        }
+        if (!log.length && !runs.length) {
+          strip.innerHTML = '<p class="empty-detail">No commits and no runs. Record a session (Cursor/MCP) or run <code>morph commit</code>.</p>';
+          return;
+        }
         log.forEach(c => {
           const card = document.createElement('div');
           card.className = 'commit-card';
@@ -221,6 +238,38 @@
           });
           strip.appendChild(card);
         });
+        if (runs.length) {
+          const runSection = document.createElement('div');
+          runSection.style.marginTop = '1rem';
+          runSection.innerHTML = '<h3 style="font-size:0.75rem;color:#71717a;margin:0 0 0.5rem 0;text-transform:uppercase;">Runs</h3>';
+          strip.appendChild(runSection);
+          runs.forEach(r => {
+            const card = document.createElement('div');
+            card.className = 'commit-card';
+            card.innerHTML = `<div class="commit-hash">${r.hash.slice(0,12)}…</div><div class="commit-meta">${escapeHtml(r.agent)}</div>`;
+            card.addEventListener('click', () => {
+              strip.querySelectorAll('.commit-card').forEach(x => x.classList.remove('selected'));
+              card.classList.add('selected');
+              detail.innerHTML = '<span class="loading">Loading…</span>';
+              fetchAndShowObject(r.hash).then(() => {
+                const resultEl = detail.querySelector('#objectResult');
+                const pre = resultEl && resultEl.querySelector('pre');
+                if (pre && r.trace) {
+                  const wrap = document.createElement('div');
+                  wrap.className = 'section';
+                  wrap.style.marginTop = '0.5rem';
+                  wrap.innerHTML = `<h2>Trace</h2><p class="hash"><a href="#" data-fetch="${r.trace}">${r.trace.slice(0,12)}… (view prompt/response)</a></p>`;
+                  wrap.querySelector('[data-fetch]').addEventListener('click', (e) => { e.preventDefault(); fetchAndShowObject(r.trace); });
+                  (resultEl || detail).appendChild(wrap);
+                }
+              });
+            });
+            runSection.appendChild(card);
+          });
+        }
+        if (!log.length && runs.length) {
+          strip.insertAdjacentHTML('afterbegin', '<p class="empty-detail">No commits.</p>');
+        }
       } catch (err) {
         strip.innerHTML = '<p class="error">' + escapeHtml(err.message) + '</p>';
       }

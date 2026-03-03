@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Morph graph</title>
+  <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      background: #0f0f12;
+      color: #e4e4e7;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      padding: 0.6rem 1rem;
+      border-bottom: 1px solid #27272a;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      flex-shrink: 0;
+    }
+    header a {
+      color: #3b82f6;
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: normal;
+    }
+    header a:hover { text-decoration: underline; }
+    #legend {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      font-size: 0.7rem;
+      color: #a1a1aa;
+      margin-left: auto;
+    }
+    #legend span { display: flex; align-items: center; gap: 0.35rem; }
+    #legend .dot { width: 8px; height: 8px; border-radius: 50%; }
+    #main {
+      flex: 1;
+      display: flex;
+      min-height: 0;
+    }
+    #graph {
+      flex: 1;
+      min-width: 0;
+      min-height: 320px;
+    }
+    #detail {
+      width: 380px;
+      min-width: 320px;
+      border-left: 1px solid #27272a;
+      overflow-y: auto;
+      padding: 1rem;
+      background: #18181b;
+    }
+    #detail .section { margin-bottom: 1rem; }
+    #detail h2 { font-size: 0.7rem; color: #71717a; margin: 0 0 0.4rem 0; text-transform: uppercase; letter-spacing: 0.05em; }
+    #detail .hash { font-family: ui-monospace, monospace; font-size: 0.75rem; word-break: break-all; }
+    #detail a { color: #3b82f6; cursor: pointer; text-decoration: none; }
+    #detail a:hover { text-decoration: underline; }
+    .prompt-body, .detail-pre {
+      margin-top: 0.35rem; padding: 0.6rem; background: #0f0f12; border-radius: 6px;
+      font-family: ui-monospace, monospace; font-size: 0.8rem; white-space: pre-wrap; word-break: break-word;
+      border: 1px solid #27272a; max-height: 200px; overflow-y: auto;
+    }
+    .empty-detail { color: #71717a; font-size: 0.9rem; }
+    .error { color: #f87171; font-size: 0.85rem; }
+    .loading { color: #a1a1aa; }
+    .btn { display: inline-block; margin-top: 0.5rem; padding: 0.4rem 0.75rem; border-radius: 6px; border: none; background: #3b82f6; color: #fff; cursor: pointer; font-size: 0.85rem; }
+    .btn:hover { background: #2563eb; }
+  </style>
+</head>
+<body>
+  <header>
+    <a href="/">← Browser</a>
+    Morph graph
+    <span style="font-size:0.75rem;color:#71717a;font-weight:normal;">Click a node to see data</span>
+    <div id="legend"></div>
+  </header>
+  <div id="main">
+    <div id="graph"></div>
+    <aside id="detail">
+      <p class="empty-detail">Click a node to view its data (prompt, response, commit message, etc.).</p>
+    </aside>
+  </div>
+  <script>
+    const TYPE_COLORS = {
+      commit:  { background: '#3b82f6', border: '#2563eb' },
+      run:     { background: '#f59e0b', border: '#d97706' },
+      trace:   { background: '#22c55e', border: '#16a34a' },
+      program: { background: '#a855f7', border: '#9333ea' },
+      tree:    { background: '#64748b', border: '#475569' },
+      object:  { background: '#71717a', border: '#52525b' },
+    };
+
+    const legendEl = document.getElementById('legend');
+    Object.entries(TYPE_COLORS).forEach(([type, col]) => {
+      const s = document.createElement('span');
+      s.innerHTML = `<span class="dot" style="background:${col.background}"></span> ${type}`;
+      legendEl.appendChild(s);
+    });
+
+    const container = document.getElementById('graph');
+    const detailEl = document.getElementById('detail');
+    let network = null;
+    let nodeTypes = {}; // id -> type for click handler
+
+    async function api(path) {
+      const r = await fetch(path);
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    }
+
+    function escapeHtml(s) {
+      if (s == null) return '';
+      const div = document.createElement('div');
+      div.textContent = String(s);
+      return div.innerHTML;
+    }
+
+    function renderDetail(obj, hash) {
+      if (obj.Run) {
+        const r = obj.Run;
+        let html = `<div class="section"><h2>Run</h2><p class="hash">${escapeHtml(hash)}</p><p>Agent: ${escapeHtml(r.agent?.id)} ${escapeHtml(r.agent?.version)}</p><p>Program: <a data-fetch="${escapeHtml(r.program)}">${escapeHtml((r.program||'').slice(0,12))}…</a></p><p>Trace: <a data-fetch="${escapeHtml(r.trace)}">${escapeHtml((r.trace||'').slice(0,12))}…</a></p><button class="btn" data-fetch="${escapeHtml(r.trace)}">View prompt / response</button></div>`;
+        detailEl.innerHTML = html;
+        detailEl.querySelectorAll('[data-fetch]').forEach(el => { el.addEventListener('click', (e) => { e.preventDefault(); loadObject(el.dataset.fetch); }); });
+        return;
+      }
+      if (obj.Trace && Array.isArray(obj.Trace.events)) {
+        const events = obj.Trace.events;
+        let html = '<div class="section"><h2>Trace</h2><p class="hash">' + escapeHtml(hash) + '</p></div>';
+        events.forEach(ev => {
+          const text = (ev.payload && ev.payload.text) ? escapeHtml(ev.payload.text) : '(no text)';
+          html += `<div class="section"><h2>${escapeHtml(ev.kind || '')}</h2><div class="prompt-body">${text}</div></div>`;
+        });
+        detailEl.innerHTML = html;
+        return;
+      }
+      if (obj.Commit) {
+        const c = obj.Commit;
+        let html = `<div class="section"><h2>Commit</h2><p class="hash">${escapeHtml(hash)}</p><p>${escapeHtml(c.message)}</p><p style="font-size:0.8rem;color:#a1a1aa">${escapeHtml(c.author)} · ${escapeHtml(c.timestamp)}</p></div>`;
+        if (c.tree) html += `<div class="section"><h2>Tree</h2><p><a data-fetch="${escapeHtml(c.tree)}">${escapeHtml(c.tree.slice(0,12))}…</a></p></div>`;
+        html += `<div class="section"><h2>Program</h2><p><a data-fetch="${escapeHtml(c.program)}">${escapeHtml((c.program||'').slice(0,12))}…</a></p></div>`;
+        detailEl.innerHTML = html;
+        detailEl.querySelectorAll('[data-fetch]').forEach(el => { el.addEventListener('click', (e) => { e.preventDefault(); loadObject(el.dataset.fetch); }); });
+        return;
+      }
+      if (obj.Tree && obj.Tree.entries) {
+        const entries = obj.Tree.entries;
+        let html = '<div class="section"><h2>Tree</h2><p class="hash">' + escapeHtml(hash) + '</p><ul style="list-style:none;padding:0;margin:0.25rem 0">';
+        entries.forEach(e => { html += `<li><a data-fetch="${escapeHtml(e.hash)}">${escapeHtml(e.name)}</a> <span class="hash">${escapeHtml((e.hash||'').slice(0,12))}…</span></li>`; });
+        html += '</ul></div>';
+        detailEl.innerHTML = html;
+        detailEl.querySelectorAll('[data-fetch]').forEach(el => { el.addEventListener('click', (e) => { e.preventDefault(); loadObject(el.dataset.fetch); }); });
+        return;
+      }
+      if (obj.Blob || obj.Program || obj.EvalSuite) {
+        detailEl.innerHTML = '<div class="section"><h2>Object</h2><p class="hash">' + escapeHtml(hash) + '</p><pre class="detail-pre">' + escapeHtml(JSON.stringify(obj, null, 2)) + '</pre></div>';
+        return;
+      }
+      detailEl.innerHTML = '<div class="section"><h2>Object</h2><pre class="detail-pre">' + escapeHtml(JSON.stringify(obj, null, 2)) + '</pre></div>';
+    }
+
+    async function loadObject(hash) {
+      if (!hash) return;
+      detailEl.innerHTML = '<p class="loading">Loading…</p>';
+      try {
+        const obj = await api('/api/object/' + hash);
+        renderDetail(obj, hash);
+      } catch (err) {
+        detailEl.innerHTML = '<p class="error">' + escapeHtml(err.message) + '</p>';
+      }
+    }
+
+    async function load() {
+      try {
+        const data = await api('/api/graph');
+        data.nodes.forEach(n => { nodeTypes[n.id] = n.type; });
+        const nodes = new vis.DataSet(
+          data.nodes.map(n => {
+            const short = (n.label || n.id).slice(0, 14);
+            const color = TYPE_COLORS[n.type] || TYPE_COLORS.object;
+            return {
+              id: n.id,
+              label: short + (n.id.length > 14 ? '…' : ''),
+              color: color,
+              title: n.id,
+              font: { color: '#fff', size: 13, face: 'ui-sans-serif, system-ui, sans-serif' },
+              margin: 12,
+              shape: 'box',
+              widthConstraint: { maximum: 180 },
+            };
+          })
+        );
+        const edges = new vis.DataSet(
+          data.edges.map(e => ({
+            from: e.from,
+            to: e.to,
+            arrows: { to: { enabled: true, scaleFactor: 0.6 } },
+            color: { color: '#52525b', opacity: 0.8 },
+            width: 1.5,
+            smooth: { type: 'cubicBezier', roundness: 0.4 },
+          }))
+        );
+        const g = { nodes, edges };
+        const options = {
+          nodes: { borderWidth: 2 },
+          edges: {},
+          physics: {
+            enabled: true,
+            stabilization: { iterations: 200, updateInterval: 25 },
+            barnesHut: {
+              gravitationalConstant: -4000,
+              centralGravity: 0.15,
+              springLength: 120,
+              springConstant: 0.04,
+              damping: 0.09,
+              avoidOverlap: 0.2,
+            },
+            solver: 'barnesHut',
+          },
+          interaction: { hover: true, tooltipDelay: 100, zoomView: true, dragView: true },
+        };
+        network = new vis.Network(container, g, options);
+        network.on('click', (params) => {
+          if (params.nodes.length) {
+            const id = params.nodes[0];
+            loadObject(id);
+          }
+        });
+        network.on('stabilizationIterationsDone', () => {
+          network.setOptions({ physics: false });
+        });
+      } catch (err) {
+        container.innerHTML = '<p class="error">' + escapeHtml(err.message) + '</p>';
+      }
+    }
+
+    load();
+  </script>
+</body>
+</html>
