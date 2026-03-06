@@ -238,15 +238,18 @@ Formally:
 where $F$ is a wrapper that carries side effects (randomness, I/O, traces,
 failures, retries) alongside the result, not just the final output.
 
-Concretely, a pipeline is a DAG where each node is a typed operator and each
-edge is either a data dependency (output of one node feeds into the next) or a
-control dependency (ordering without data flow).
+Concretely, a pipeline is a DAG where each \emph{node} is a single
+computational step---one prompt call, one tool invocation, one retrieval
+lookup, one deterministic transform, or one review decision. Each edge is
+either a data dependency (output of one step feeds into the next) or a control
+dependency (ordering without data flow). The graph structure captures what runs,
+in what order, and what depends on what.
 
 \begin{definition}[Pipeline]
 A \emph{pipeline} $P = (V, \mathcal{E}, \kappa, \rho, \alpha, \varepsilon)$
 consists of:
 \begin{itemize}[nosep]
-  \item $V$ --- a set of nodes
+  \item $V$ --- a set of nodes (each a single computational step, as above)
   \item $\mathcal{E} \subseteq V \times V$ --- directed edges forming a DAG
   \item $\kappa : V \to \{\texttt{prompt\_call}, \texttt{tool\_call},
     \texttt{retrieval}, \texttt{transform}, \texttt{identity},
