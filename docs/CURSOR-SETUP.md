@@ -137,7 +137,7 @@ When you want a snapshot:
 1. **Stage:** `morph add .` (CLI) or `morph_stage` (MCP tool)
 2. **Commit:** `morph commit -m "message"` (CLI) or `morph_commit` (MCP tool)
 
-`--program` and `--eval-suite` are optional; they default to the identity program and empty eval suite, making Morph work as a plain VCS.
+`--pipeline` and `--eval-suite` are optional; they default to the identity pipeline and empty eval suite, making Morph work as a plain VCS.
 
 ---
 
@@ -150,7 +150,7 @@ When you want a snapshot:
 | `morph_record_run` | Ingest a Run from a JSON file (with optional trace/artifact files) |
 | `morph_record_eval` | Ingest metrics from a JSON file |
 | `morph_stage` | Stage files into the object store (like `git add`) |
-| `morph_commit` | Create a commit (file tree + optional program/eval contract) |
+| `morph_commit` | Create a commit (file tree + optional pipeline/eval contract) |
 | `morph_annotate` | Attach metadata to any object |
 | `morph_branch` | Create a branch at HEAD |
 | `morph_checkout` | Switch HEAD and restore working tree |

@@ -1,6 +1,6 @@
 //! Ingest execution evidence: run record and eval record (v0-spec §6.6, §6.7).
 
-use crate::identity::identity_program;
+use crate::identity::identity_pipeline;
 use crate::objects::{AgentInfo, Blob, MorphObject, Run, RunEnvironment, Trace, TraceEvent};
 use crate::store::{MorphError, Store};
 use crate::Hash;
@@ -93,8 +93,8 @@ pub fn record_session(
 
     let trace_hash = store.put(&trace)?;
 
-    let identity = identity_program();
-    let program_hash = store.put(&identity)?;
+    let identity = identity_pipeline();
+    let pipeline_hash = store.put(&identity)?;
 
     let prompt_blob = MorphObject::Blob(Blob {
         kind: "prompt".to_string(),
@@ -107,7 +107,7 @@ pub fn record_session(
     store.put(&prompt_blob)?;
 
     let run = MorphObject::Run(Run {
-        program: program_hash.to_string(),
+        pipeline: pipeline_hash.to_string(),
         commit: None,
         environment: RunEnvironment {
             model: model_name.unwrap_or("cursor").to_string(),

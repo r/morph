@@ -29,7 +29,7 @@ pub enum MorphError {
 pub enum ObjectType {
     Blob,
     Tree,
-    Program,
+    Pipeline,
     EvalSuite,
     Commit,
     Run,
@@ -44,7 +44,7 @@ impl MorphObject {
         match self {
             MorphObject::Blob(_) => ObjectType::Blob,
             MorphObject::Tree(_) => ObjectType::Tree,
-            MorphObject::Program(_) => ObjectType::Program,
+            MorphObject::Pipeline(_) => ObjectType::Pipeline,
             MorphObject::EvalSuite(_) => ObjectType::EvalSuite,
             MorphObject::Commit(_) => ObjectType::Commit,
             MorphObject::Run(_) => ObjectType::Run,

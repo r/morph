@@ -1,7 +1,7 @@
 //! Working-space operations: create blobs from files, materialize, status, add.
 
 use crate::morphignore::{is_ignored, load_morphignore};
-use crate::objects::{Blob, EvalSuite, MorphObject, Program};
+use crate::objects::{Blob, EvalSuite, MorphObject, Pipeline};
 use crate::Hash;
 use crate::store::{MorphError, Store};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -68,11 +68,11 @@ pub fn materialize_blob(store: &dyn Store, hash: &Hash, dest: &Path) -> Result<(
     Ok(())
 }
 
-/// Parse a Program from a JSON file.
-pub fn program_from_file(path: &Path) -> Result<MorphObject, MorphError> {
+/// Parse a Pipeline from a JSON file.
+pub fn pipeline_from_file(path: &Path) -> Result<MorphObject, MorphError> {
     let s = std::fs::read_to_string(path)?;
-    let program: Program = serde_json::from_str(&s).map_err(|e| MorphError::Serialization(e.to_string()))?;
-    Ok(MorphObject::Program(program))
+    let pipeline: Pipeline = serde_json::from_str(&s).map_err(|e| MorphError::Serialization(e.to_string()))?;
+    Ok(MorphObject::Pipeline(pipeline))
 }
 
 /// Parse an EvalSuite from a JSON file.

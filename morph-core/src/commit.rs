@@ -56,7 +56,7 @@ pub fn create_commit(
     let author = author.unwrap_or_else(|| "morph".to_string());
     let commit = MorphObject::Commit(Commit {
         tree: None,
-        program: program_hash.to_string(),
+        pipeline: program_hash.to_string(),
         parents: parent_list,
         message: message.clone(),
         timestamp: timestamp.clone(),
@@ -66,6 +66,8 @@ pub fn create_commit(
             suite: eval_suite_hash.to_string(),
             observed_metrics,
         },
+        env_constraints: None,
+        evidence_refs: None,
         morph_version: None,
     });
     let hash = store.put(&commit)?;
@@ -96,7 +98,7 @@ pub fn create_tree_commit(
     let prog_hash = match program_hash {
         Some(h) => h.to_string(),
         None => {
-            let identity = crate::identity::identity_program();
+            let identity = crate::identity::identity_pipeline();
             store.put(&identity)?.to_string()
         }
     };
@@ -119,7 +121,7 @@ pub fn create_tree_commit(
 
     let commit = MorphObject::Commit(Commit {
         tree: Some(tree_hash.to_string()),
-        program: prog_hash,
+        pipeline: prog_hash,
         parents: parent_list,
         message,
         timestamp,
@@ -129,6 +131,8 @@ pub fn create_tree_commit(
             suite: suite_hash,
             observed_metrics,
         },
+        env_constraints: None,
+        evidence_refs: None,
         morph_version: morph_version.map(String::from),
     });
     let hash = store.put(&commit)?;
@@ -205,26 +209,43 @@ pub fn checkout_tree(
 pub fn create_merge_commit(
     store: &dyn Store,
     other_branch: &str,
-    merged_program_hash: &Hash,
+    merged_pipeline_hash: &Hash,
     merged_observed_metrics: BTreeMap<String, f64>,
     eval_suite_hash: &Hash,
     message: String,
     author: Option<String>,
 ) -> Result<Hash, MorphError> {
-    create_merge_commit_full(store, other_branch, merged_program_hash, merged_observed_metrics, Some(eval_suite_hash), message, author, None, None)
+    create_merge_commit_full(store, other_branch, merged_pipeline_hash, merged_observed_metrics, Some(eval_suite_hash), message, author, None, None)
 }
 
-/// Full merge commit with optional tree and auto-computed union suite.
+/// Full merge commit with optional tree, auto-computed union suite, and metric retirement.
+/// `retired_metrics`: optional list of metric names to remove from the union suite (paper §5.3).
 pub fn create_merge_commit_full(
     store: &dyn Store,
     other_branch: &str,
-    merged_program_hash: &Hash,
+    merged_pipeline_hash: &Hash,
     merged_observed_metrics: BTreeMap<String, f64>,
     eval_suite_hash: Option<&Hash>,
     message: String,
     author: Option<String>,
     repo_root: Option<&Path>,
     morph_version: Option<&str>,
+) -> Result<Hash, MorphError> {
+    create_merge_commit_with_retirement(store, other_branch, merged_pipeline_hash, merged_observed_metrics, eval_suite_hash, message, author, repo_root, morph_version, None)
+}
+
+/// Merge commit with full metric retirement support (paper §5.3).
+pub fn create_merge_commit_with_retirement(
+    store: &dyn Store,
+    other_branch: &str,
+    merged_pipeline_hash: &Hash,
+    merged_observed_metrics: BTreeMap<String, f64>,
+    eval_suite_hash: Option<&Hash>,
+    message: String,
+    author: Option<String>,
+    repo_root: Option<&Path>,
+    morph_version: Option<&str>,
+    retired_metrics: Option<&[String]>,
 ) -> Result<Hash, MorphError> {
     let head_hash = resolve_head(store)?.ok_or_else(|| MorphError::Serialization("no HEAD commit".into()))?;
     let other_ref = if other_branch.starts_with("heads/") {
@@ -256,7 +277,14 @@ pub fn create_merge_commit_full(
         None => {
             let head_suite = load_eval_suite(store, &head_commit.eval_contract.suite)?;
             let other_suite = load_eval_suite(store, &other_commit.eval_contract.suite)?;
-            let union = crate::metrics::union_suites(&head_suite, &other_suite)?;
+            let raw_union = crate::metrics::union_suites(&head_suite, &other_suite)?;
+
+            let union = match retired_metrics {
+                Some(retired) if !retired.is_empty() => {
+                    crate::metrics::retire_metrics(&raw_union, retired)?
+                }
+                _ => raw_union,
+            };
 
             if !crate::metrics::check_dominance_with_suite(
                 &merged_observed_metrics,
@@ -295,7 +323,7 @@ pub fn create_merge_commit_full(
     let author = author.unwrap_or_else(|| "morph".to_string());
     let commit = MorphObject::Commit(Commit {
         tree: tree_hash,
-        program: merged_program_hash.to_string(),
+        pipeline: merged_pipeline_hash.to_string(),
         parents,
         message,
         timestamp,
@@ -305,6 +333,8 @@ pub fn create_merge_commit_full(
             suite: suite_hash_str,
             observed_metrics: merged_observed_metrics,
         },
+        env_constraints: None,
+        evidence_refs: None,
         morph_version: morph_version.map(String::from),
     });
     let hash = store.put(&commit)?;
@@ -369,13 +399,15 @@ pub fn rollup(
     let timestamp = chrono::Utc::now().to_rfc3339();
     let commit = MorphObject::Commit(Commit {
         tree: tip_commit.tree.clone(),
-        program: tip_commit.program.clone(),
+        pipeline: tip_commit.pipeline.clone(),
         parents: vec![base_hash.to_string()],
         message,
         timestamp,
         author: tip_commit.author.clone(),
         contributors: tip_commit.contributors.clone(),
         eval_contract: tip_commit.eval_contract.clone(),
+        env_constraints: tip_commit.env_constraints.clone(),
+        evidence_refs: tip_commit.evidence_refs.clone(),
         morph_version: tip_commit.morph_version.clone(),
     });
     let hash = store.put(&commit)?;
@@ -571,9 +603,9 @@ mod tests {
             MorphObject::Commit(c) => c,
             _ => panic!("expected commit"),
         };
-        let prog_hash = Hash::from_hex(&commit.program).unwrap();
+        let prog_hash = Hash::from_hex(&commit.pipeline).unwrap();
         let prog = store.get(&prog_hash).unwrap();
-        assert!(matches!(prog, MorphObject::Program(_)));
+        assert!(matches!(prog, MorphObject::Pipeline(_)));
 
         let suite_hash = Hash::from_hex(&commit.eval_contract.suite).unwrap();
         let suite = store.get(&suite_hash).unwrap();

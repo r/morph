@@ -1,26 +1,71 @@
 ---
-description: "Nudge test-driven development: write tests before implementation, record eval metrics into Morph"
-globs: ["**/*"]
+description: "MANDATORY: write or update tests for every code change, run them, record metrics"
+globs: ["**/*.rs", "**/Cargo.toml", "morph-cli/tests/specs/*.yaml"]
 alwaysApply: true
 ---
 
-# Test-Driven Development with Morph Evaluation
+# You MUST Write Tests for Every Code Change
 
-This project uses Morph for behavioral version control. Every commit can carry a **behavioral certificate** — metrics proving the code does what it claims. To feed this system, follow a test-driven workflow.
+This is not optional. Every code change you make MUST include corresponding tests. A change without tests is incomplete — do not consider your task finished until tests exist, pass, and results are recorded.
 
-## Workflow
+## Required steps — follow this exact sequence
 
-1. **Write tests first.** Before implementing a feature or fix, write or update tests that define the expected behavior. Tests are the evaluation contract — they specify what "correct" means.
+### 1. Write or update tests BEFORE or ALONGSIDE implementation
 
-2. **Run tests, then record results.** After implementation, run the test suite. When tests pass, record evaluation metrics so Morph can attach them to commits:
-   - Write a JSON file: `{"metrics": {"tests_total": N, "tests_passed": N, "pass_rate": 1.0}}`
-   - Call the MCP tool `morph_record_eval` with that file, or run `morph eval record <file>` from the CLI.
-   - Include any other meaningful metrics: build time, binary size, coverage percentage, benchmark results.
+- **Unit tests** go in a `#[cfg(test)] mod tests` block at the bottom of the same `.rs` file you are modifying. If the block doesn't exist yet, create it.
+- **CLI behavior changes** require a YAML spec in `morph-cli/tests/specs/`. See existing specs for the format (file/dir setup, sequenced `morph` commands, assertions on exit code, stdout, stderr, filesystem state).
+- If you are adding a new module, it MUST have a test block from the start. No exceptions.
 
-3. **Think about what "better" means.** When starting new work, articulate which metrics matter. Correctness (test pass rate) is the baseline. Performance, cost, latency, and coverage are also valuable. These metrics will gate merges — a merge cannot regress any metric.
+### 2. Follow the project's test patterns
 
-## Why this matters
+Read `docs/TESTING.md` for conventions. Key patterns:
 
-In Morph, a commit without metrics is just a file snapshot. A commit **with** metrics is a behavioral certificate backed by evidence. Merges require the merged program to dominate both parents on every metric. Without evaluation data, branches and merges have no behavioral meaning.
+- `setup_repo()` — creates a temp dir with `init_repo`, returns `(TempDir, FsStore)`.
+- `make_store()` — creates a bare store for lower-level tests.
+- `store_blob()` — helper to create and store a blob, returning its hash.
+- All tests use `tempfile::tempdir()` for filesystem isolation.
+- CLI integration specs use `assert_cmd` + `predicates` under the hood.
 
-Tests are not just CI gates — they are the evaluation suite that makes behavioral version control work.
+### 3. Run the test suite and report results
+
+After implementation, you MUST run tests for every crate you touched:
+
+```bash
+cargo test -p morph-core      # if you changed morph-core
+cargo test -p morph-cli        # if you changed morph-cli or specs
+cargo test -p morph-e2e --test cucumber  # if you changed CLI behavior
+cargo test --workspace         # when in doubt, run everything
+```
+
+Do NOT skip this step. Do NOT assume tests pass without running them. Report the count of tests passed and failed in your response.
+
+### 4. Record evaluation metrics
+
+After tests pass, record the results so Morph can attach them to commits:
+
+```bash
+morph eval record metrics.json   # where metrics.json contains the results
+```
+
+Or call the MCP tool `morph_record_eval`. The metrics object MUST include at minimum:
+
+```json
+{"tests_total": N, "tests_passed": N, "pass_rate": 1.0}
+```
+
+Also include when available: `build_time_secs`, `coverage_pct`, any domain-specific metrics.
+
+### 5. Include metrics when committing
+
+When committing via `morph_commit` or `morph commit`, pass the metrics from step 4. See the `behavioral-commits` rule for details. A commit without metrics is a missed opportunity — Morph cannot enforce behavioral merge gating without evidence.
+
+## Why this is non-negotiable
+
+Morph merges are behavioral: a merge succeeds only if the merged program dominates both parents on every metric. If one branch has tests and metrics and the other doesn't, the merge has no evidence to compare against. Tests are not a nice-to-have — they are the evaluation suite that makes behavioral version control work. Every change without tests is a branch that cannot be safely merged.
+
+## Checklist before you say "done"
+
+- [ ] Tests written or updated for every changed behavior
+- [ ] `cargo test` run on affected crates — all pass
+- [ ] Test results (pass count, fail count) reported in your response
+- [ ] Eval metrics recorded if committing

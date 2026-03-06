@@ -229,7 +229,7 @@ mod tests {
         let suite_hash = fs.put(&suite).unwrap();
         let commit = crate::objects::MorphObject::Commit(crate::objects::Commit {
             tree: None,
-            program: blob_hash.to_string(),
+            pipeline: blob_hash.to_string(),
             parents: vec![],
             message: "m".into(),
             timestamp: "2020-01-01T00:00:00Z".into(),
@@ -239,6 +239,8 @@ mod tests {
                 suite: suite_hash.to_string(),
                 observed_metrics: std::collections::BTreeMap::new(),
             },
+            env_constraints: None,
+            evidence_refs: None,
             morph_version: None,
         });
         let commit_hash = fs.put(&commit).unwrap();

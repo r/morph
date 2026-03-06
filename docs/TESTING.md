@@ -4,19 +4,19 @@
 
 | Crate | Tests | Location |
 |-------|-------|----------|
-| **morph-core** | 86 unit tests across 12 modules | `#[cfg(test)]` blocks in each source file |
-| **morph-cli** | 13 integration tests | YAML specs in `morph-cli/tests/specs/*.yaml`, compiled by `build.rs` |
+| **morph-core** | 108+ unit tests across 12 modules | `#[cfg(test)]` blocks in each source file |
+| **morph-cli** | 18 integration tests | YAML specs in `morph-cli/tests/specs/*.yaml`, compiled by `build.rs` |
 | **morph-e2e** | Cucumber e2e tests | `morph-e2e/features/*.feature`, step defs in `morph-e2e/tests/cucumber.rs` |
 | **morph-mcp** | None yet | -- |
 | **morph-serve** | None yet | -- |
 
 ### morph-core unit test modules
 
-`hash`, `store` (FsStore + GixStore), `repo`, `working`, `commit`, `metrics` (including direction-aware thresholds), `annotate`, `identity`, `record`, `index`, `tree`, `migrate`.
+`hash` (including paper-aligned fields: review nodes, per-node env, set-valued attribution), `store` (FsStore + GixStore), `repo`, `working`, `commit` (including merge with union suite), `metrics` (direction-aware thresholds, metric retirement), `annotate`, `identity`, `record`, `index`, `tree`, `migrate`.
 
 ### morph-cli integration tests
 
-`init`, `status`, `add`, `prompt create/materialize`, `program create/show`, `commit + log`, `run record + eval record`, `annotate + annotations`.
+`init`, `status`, `add`, `prompt create/materialize`, `pipeline create/show`, `commit + log`, `run record + eval record`, `annotate + annotations`.
 
 ---
 

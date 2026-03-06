@@ -140,6 +140,36 @@ pub fn union_suites(a: &EvalSuite, b: &EvalSuite) -> Result<EvalSuite, MorphErro
     Ok(EvalSuite { cases, metrics })
 }
 
+/// Retire metrics from a suite (paper §5.3). Returns a new suite with the retired
+/// metrics removed. Each retired metric name must exist in the suite.
+pub fn retire_metrics(
+    suite: &EvalSuite,
+    retired: &[String],
+) -> Result<EvalSuite, MorphError> {
+    let retired_set: std::collections::BTreeSet<&str> = retired.iter().map(|s| s.as_str()).collect();
+    for name in &retired_set {
+        if !suite.metrics.iter().any(|m| m.name == *name) {
+            return Err(MorphError::Serialization(format!(
+                "cannot retire metric '{}': not found in suite",
+                name
+            )));
+        }
+    }
+    let metrics = suite
+        .metrics
+        .iter()
+        .filter(|m| !retired_set.contains(m.name.as_str()))
+        .cloned()
+        .collect();
+    let cases = suite
+        .cases
+        .iter()
+        .filter(|c| !retired_set.contains(c.metric.as_str()))
+        .cloned()
+        .collect();
+    Ok(EvalSuite { cases, metrics })
+}
+
 /// Compute aggregated metrics from per-case scores using suite's aggregation methods.
 pub fn aggregate_suite(
     per_case: &BTreeMap<String, Vec<f64>>,
@@ -411,5 +441,69 @@ mod tests {
         let b = EvalSuite { cases: vec![case], metrics: vec![] };
         let u = union_suites(&a, &b).unwrap();
         assert_eq!(u.cases.len(), 1);
+    }
+
+    // ── retire_metrics (paper §5.3) ──────────────────────────────────
+
+    #[test]
+    fn retire_removes_metric() {
+        let suite = EvalSuite {
+            cases: vec![],
+            metrics: vec![
+                EvalMetric::new("acc", "mean", 0.8),
+                EvalMetric::new("f1", "mean", 0.7),
+            ],
+        };
+        let retired = retire_metrics(&suite, &["f1".to_string()]).unwrap();
+        assert_eq!(retired.metrics.len(), 1);
+        assert_eq!(retired.metrics[0].name, "acc");
+    }
+
+    #[test]
+    fn retire_removes_associated_cases() {
+        let suite = EvalSuite {
+            cases: vec![
+                crate::objects::EvalCase {
+                    id: "c1".into(),
+                    input: serde_json::json!({}),
+                    expected: serde_json::json!({}),
+                    metric: "acc".into(),
+                    fixture_source: "candidate".into(),
+                },
+                crate::objects::EvalCase {
+                    id: "c2".into(),
+                    input: serde_json::json!({}),
+                    expected: serde_json::json!({}),
+                    metric: "f1".into(),
+                    fixture_source: "candidate".into(),
+                },
+            ],
+            metrics: vec![
+                EvalMetric::new("acc", "mean", 0.8),
+                EvalMetric::new("f1", "mean", 0.7),
+            ],
+        };
+        let retired = retire_metrics(&suite, &["f1".to_string()]).unwrap();
+        assert_eq!(retired.cases.len(), 1);
+        assert_eq!(retired.cases[0].metric, "acc");
+    }
+
+    #[test]
+    fn retire_nonexistent_metric_errors() {
+        let suite = EvalSuite {
+            cases: vec![],
+            metrics: vec![EvalMetric::new("acc", "mean", 0.8)],
+        };
+        assert!(retire_metrics(&suite, &["bogus".to_string()]).is_err());
+    }
+
+    #[test]
+    fn retire_all_metrics_ok() {
+        let suite = EvalSuite {
+            cases: vec![],
+            metrics: vec![EvalMetric::new("acc", "mean", 0.8)],
+        };
+        let retired = retire_metrics(&suite, &["acc".to_string()]).unwrap();
+        assert!(retired.metrics.is_empty());
     }
 }

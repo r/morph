@@ -1,6 +1,6 @@
 # Morph Theory
 
-**The Algebraic Foundations of a Distributed Version Control System for Transformation Programs**
+**The Algebraic Foundations of a Distributed Version Control System for Transformation Pipelines**
 
 ---
 
@@ -13,7 +13,7 @@ It explains:
 - What Morph versions
 - How Morph generalizes Git
 - How effectful, probabilistic transformations can be version-controlled
-- The algebra underlying programs, commits, runs, evaluation, and merges
+- The algebra underlying pipelines, commits, runs, evaluation, and merges
 - The axioms required for the system to be coherent
 
 This is not an implementation document.
@@ -56,12 +56,12 @@ In Git:
 
 In Morph:
 
-- Programs are versioned.
-- A commit freezes a program plus a behavioral contract it is certified to satisfy.
+- Pipelines are versioned.
+- A commit freezes a pipeline plus a behavioral contract it is certified to satisfy.
 
 A Morph commit represents:
 
-> A stabilized transformation program together with a declared evaluation contract and a certificate of achieved behavior, backed by immutable execution evidence.
+> A stabilized transformation pipeline together with a declared evaluation contract and a certificate of achieved behavior, backed by immutable execution evidence.
 
 This is the key shift:
 
@@ -82,11 +82,11 @@ Morph's core objects are content-addressed and immutable:
 |---|---|
 | **Blob** | Raw content (prompts, patches, config, binaries, datasets, etc.) |
 | **Tree** | Structured document tree (like a filesystem tree) |
-| **Program** | A transformation graph (DAG) of operators |
-| **Run** | One execution instance of a Program |
+| **Pipeline** | A transformation graph (DAG) of operators |
+| **Run** | One execution instance of a Pipeline |
 | **Trace** | Detailed execution record (often a DAG of events) |
 | **EvalSuite** | An evaluation contract (metrics + certification rule + fixtures) |
-| **Commit** | A certified behavioral identity (Program + contract + certificate + evidence refs) |
+| **Commit** | A certified behavioral identity (Pipeline + contract + certificate + evidence refs) |
 | **Annotation** | Immutable metadata attached to any object by hash reference |
 
 Everything can be distributed and verified by hash. No central authority is required.
@@ -95,7 +95,7 @@ Everything can be distributed and verified by hash. No central authority is requ
 
 ## 5. State and Environment
 
-Morph is about programs transforming state under an environment.
+Morph is about pipelines transforming state under an environment.
 
 ### 5.1 State
 
@@ -119,7 +119,7 @@ S = { docs: Tree, ctx: Context, meta: Metadata }
 
 ### 5.2 Environment
 
-Programs depend on an environment:
+Pipelines depend on an environment:
 
 \[
 E = (\text{runner/toolchain, model id/version, decoding params, policies, \ldots})
@@ -137,56 +137,71 @@ Environment is recorded because reproducibility is defined relative to it.
 
 ---
 
-## 6. Programs as Effectful Transformations
+## 5.3 Actors
 
-A Morph program is a workflow that transforms state.
+Every worker --- human, agent, or a human and agent working together --- is an *Actor*:
+
+\[
+\text{Actor} = (\text{id},\; \text{type} \in \{\texttt{human}, \texttt{agent}\},\; \text{env\_config} \cup \{\bot\})
+\]
+
+where `env_config` records the model, sampling settings, toolchain, and runner for agent actors, and is ⊥ for humans. The model does not otherwise distinguish between human and agent workers. A human on a laptop, an agent in a CI environment, and a human+agent pair in a Cursor session are all just Actors with different types and environment configurations.
+
+Two agents working simultaneously in different environments is exactly the same situation as two humans working on two laptops. Both check out the tree, both work independently, both commit and push. That is the standard distributed version control problem, and Morph inherits the standard DVCS solution for it.
+
+---
+
+## 6. Pipelines as Effectful Transformations
+
+A Morph pipeline is a workflow that transforms state.
 
 Crucially:
 
-> A Morph program is not "prompt-only."
-> It is a transformation DAG whose nodes may include prompts, tool calls, deterministic transforms, and human edits (modeled as patches).
+> A Morph pipeline is not "prompt-only."
+> It is a transformation DAG whose nodes may include prompts, tool calls, retrieval, deterministic transforms, and review decisions (human or agent acceptance/modification).
 
-### 6.1 Program Type
+### 6.1 Pipeline Type
 
-For a fixed environment `E`, a program has type:
-
-\[
-P_E : A \to F(B)
-\]
-
-Most commonly `A = B = S`, i.e. state-to-state:
+A pipeline takes a workspace state and produces a new one, plus a full record of everything that happened along the way:
 
 \[
-P_E : S \to F(S)
+P : S \to F(S)
 \]
 
-Where `F` represents effects such as:
+Where `F` is a wrapper that carries side effects (randomness, I/O, traces, failures, retries) alongside the result, not just the final output.
 
-- Randomness / sampling
-- IO / tool calls
-- Logging and traces
-- Failures and retries
-- Human-in-the-loop steps (as recorded inputs)
+Concretely, a pipeline is a DAG where each node is a typed operator and each edge is either a data dependency (output of one node feeds into the next) or a control dependency (ordering without data flow).
 
-Engineer mental model: `F[T]` is a "box" that carries side effects and receipts along with a value of type `T`.
+**Definition (Pipeline).** A pipeline \( P = (V, \mathcal{E}, \kappa, \rho, \alpha, \varepsilon) \) consists of:
 
-### 6.2 Operator Families (Prompt + Non-Prompt + Human)
+- \( V \) --- a set of nodes
+- \( \mathcal{E} \subseteq V \times V \) --- directed edges forming a DAG
+- \( \kappa : V \to \{\texttt{prompt\_call}, \texttt{tool\_call}, \texttt{retrieval}, \texttt{transform}, \texttt{identity}, \texttt{review}\} \) --- node type
+- \( \rho : V \to \mathcal{H} \cup \{\bot\} \) --- payload reference (hash of stored content, or ⊥)
+- \( \alpha : V \to 2^{\mathcal{A}} \) --- attribution set, the set of Actor IDs that contributed to this node
+- \( \varepsilon : V \to \text{EnvConfig} \cup \{\bot\} \) --- per-node environment config, or ⊥ for human-only nodes
 
-A program DAG is built from operators. Examples:
+Throughout, ⊥ denotes an absent or unattributed value.
+
+### 6.2 Operator Families
 
 | Operator | Description |
 |---|---|
-| **Prompt operator** | Calls an LLM (probabilistic) |
-| **Retrieval operator** | Queries an index / web / DB (effectful) |
-| **Tool operator** | Runs external commands, compilers, test runners (effectful) |
-| **Pure transform** | Deterministic rewrite, formatting, AST transform (pure) |
-| **Patch apply** | Deterministic application of a recorded diff/patch (pure) |
-| **Selection operator** | Choose among candidates (may be stochastic or policy-driven) |
+| **prompt_call** | Calls an LLM (probabilistic) |
+| **retrieval** | Queries an index / web / DB (effectful) |
+| **tool_call** | Runs external commands, compilers, test runners (effectful) |
+| **transform** | Deterministic rewrite, formatting, AST transform (pure) |
+| **identity** | No-op pass-through |
+| **review** | Explicit acceptance or modification decision |
+
+**Review nodes** represent an explicit acceptance or modification decision --- a human approving a diff in Cursor, or an agent evaluating a candidate and choosing to accept, reject, or modify it. The actor on a review node can be human, agent, or both. The node type records the *kind* of operation; the attribution set records *who* did it.
+
+Attribution as a set handles the real-world mess. A human who accepts 80% of an agent's suggested diff and rewrites the other 20% inline gets attribution `{agent-1, human-1}`. One actor working alone gets a set with one entry. A legacy node with no recorded attribution gets an empty set.
 
 Human edits fit naturally:
 
 1. The human produces a patch blob.
-2. The program includes a node `apply_patch(patch_blob)`.
+2. The pipeline includes a node `apply_patch(patch_blob)`.
 
 That makes "manual coding" first-class, reproducible, and reviewable.
 
@@ -194,7 +209,7 @@ That makes "manual coding" first-class, reproducible, and reviewable.
 
 ## 7. Sequential Composition Requires a Monad
 
-If programs return results "in a box" \( F(\cdot) \), ordinary function composition doesn't type-check.
+If pipelines return results "in a box" \( F(\cdot) \), ordinary function composition doesn't type-check.
 
 To compose effectful computations, we require `F` to be a monad.
 
@@ -207,7 +222,7 @@ pure : A -> F[A]
 bind : F[A] -> (A -> F[B]) -> F[B]    // aka flatMap
 ```
 
-Sequential composition of programs is defined by `bind`:
+Sequential composition of pipelines is defined by `bind`:
 
 Given:
 
@@ -225,9 +240,9 @@ Define:
 The standard monad laws imply:
 
 - **Associativity**: pipelines compose without parentheses changing meaning
-- **Identity**: there is a no-op program (do nothing)
+- **Identity**: there is a no-op pipeline (do nothing)
 
-This is what makes "program chaining" algebraically stable, and it is the mathematical reason DAG scheduling and refactoring preserve meaning.
+This is what makes "pipeline chaining" algebraically stable, and it is the mathematical reason DAG scheduling and refactoring preserve meaning.
 
 ---
 
@@ -281,7 +296,7 @@ This structure is satisfied by many practical effect models, including:
 
 It is the mathematical hook that turns parallel DAG execution into a lawful algebra rather than an implementation accident.
 
-### 8.3 Parallel Composition of Programs
+### 8.3 Parallel Composition of Pipelines
 
 Given:
 
@@ -322,44 +337,30 @@ J : (S \times S) \to F(S)
 
 This mirrors real systems: branches generate candidates; a join step selects/merges them.
 
-### 8.4 Multi-Agent Programs and Attribution
+### 8.4 Multiple Actors, Concurrent Work
 
-When multiple agents contribute to a single program, the program DAG naturally records what each agent did. We formalize this with an attribution function.
+The concurrent case --- two humans on two laptops, two agents in two cloud environments, a human and an agent each on their own branch --- is just DVCS. Each actor checks out the tree, works independently, commits, and pushes. Morph records the scores from each branch and what the merge achieved.
 
-**Attributed Program.** An attributed program extends a program with an attribution function:
+The interesting cases are within a single session, where multiple actors contribute to one pipeline:
 
-\[
-\alpha : V \to \mathcal{A} \cup \{\bot\}
-\]
+- **Sequential handoff:** Actor A does retrieval, actor B writes the code, actor C runs verification. This is just sequential composition (\( C \circ B \circ A \)) with different actors on different nodes. Attribution records who did each step; `env_config` records what environment each ran in.
+- **Parallel candidates:** Two actors generate independent candidate patches from the same starting state. A review node picks or merges them. This is the branch composition above.
+- **Human + agent on one node:** A human accepts and edits an agent's diff. This is a review node with attribution `{agent, human}`. No special case needed.
 
-where \( \mathcal{A} \) is a set of agent identifiers and \( \bot \) denotes unattributed nodes. For a single-agent or human-authored program, \( \alpha \) is constant.
-
-Attribution composes naturally:
-
-- **Sequential:** For \( Q \circ P \), the attribution of the composite is the union of both attribution functions over disjoint node sets.
-- **Parallel:** For \( P \otimes Q \), similarly. The join step \( J \) may be attributed to a coordinating agent or left unattributed.
-
-**Certification is holistic.** The certificate vector \( \mathrm{cert}_T(P, E, s_0) \in V_T \) is a property of the composed program as a whole. There is no natural decomposition:
+**Certification is holistic.** The certificate vector \( \mathrm{cert}_T(P, E, s_0) \in V_T \) is a property of the composed pipeline as a whole. There is no natural decomposition:
 
 \[
 \mathrm{cert}_T(P, E, s_0) = \bigoplus_{a \in \mathcal{A}} \mathrm{cert}_T(P|_a, E, s_0)
 \]
 
-because the behavioral contribution of agent \( a \)'s nodes generally depends on the context provided by other agents' nodes. The evaluation suite tests the joint result.
-
-This means Morph can:
-
-- Certify that a multi-agent program meets its behavioral contract
-- Record which agent contributed which operators (via \( \alpha \))
-
-But it cannot attribute credit or blame to individual agents from the certificate alone. Decomposing joint performance into per-agent contributions requires additional machinery (counterfactual evaluation, Shapley values, modular evaluation suites).
+because the behavioral contribution of agent \( a \)'s nodes generally depends on the context provided by other agents' nodes. Morph records who touched which nodes (via \( \alpha \)), but cannot automatically decompose blame to individual actors. Credit decomposition remains an open problem.
 
 **Distributed vs. cooperative multi-agent work.** The framework distinguishes two patterns:
 
 | Pattern | Description | Theory treatment |
 |---|---|---|
 | **Distributed** | Agents on separate branches, each independently certified | Merge-as-dominance (§13) ensures no regression. Identical to two humans on two branches. |
-| **Cooperative** | Multiple agents contribute to a single program | \( P \otimes Q \) with join models orchestrated parallelism. Attribution records provenance; certification evaluates the composed result. |
+| **Cooperative** | Multiple agents contribute to a single pipeline | \( P \otimes Q \) with join models orchestrated parallelism. Attribution records provenance; certification evaluates the composed result. |
 
 Real-time concurrent edits to shared state (CRDT-style coordination) live below the VCS layer. Agents coordinate however they coordinate, produce a result, and that result is committed and certified by Morph.
 
@@ -367,11 +368,11 @@ Real-time concurrent edits to shared state (CRDT-style coordination) live below 
 
 ## 9. Runs, Traces, and Artifacts
 
-A Run is one execution instance of a program under a specific environment and initial state.
+A Run is one execution instance of a pipeline under a specific environment and initial state.
 
 ### 9.1 Run Definition
 
-Given a program `P`, environment `E`, and initial state \( s_0 \):
+Given a pipeline `P`, environment `E`, and initial state \( s_0 \):
 
 \[
 \mathrm{Run}(P, E, s_0)
@@ -402,22 +403,22 @@ A run's resulting state includes a document tree `D`. That tree is the produced 
 - Datasets
 - Evaluation logs
 
-Artifacts are content-addressed trees/blobs, so you can diff, store, and distribute them — just like Git trees — but they come from executing a program.
+Artifacts are content-addressed trees/blobs, so you can diff, store, and distribute them — just like Git trees — but they come from executing a pipeline.
 
 This cleanly separates:
 
-- **Program identity** (the transformer)
+- **Pipeline identity** (the transformer)
 - **Artifact identity** (the produced outputs)
 
 ---
 
-## 10. Evaluation: Programs Are Certified by Contracts
+## 10. Evaluation: Pipelines Are Certified by Contracts
 
 ### 10.1 Evaluation is an Effectful Computation Too
 
 Running tests, compiling code, judging outputs with another model, or collecting human ratings are all effectful processes.
 
-So we model evaluation as its own effectful program.
+So we model evaluation as its own effectful pipeline.
 
 An evaluation suite `T` defines an evaluator:
 
@@ -450,9 +451,9 @@ Evaluate the produced code/artifacts by building/running/tests:
 - Fuzzing
 - Performance benchmarks
 
-This is simply evaluation programs that operate on the produced document tree `D` and runner environment `E`.
+This is simply evaluation pipelines that operate on the produced document tree `D` and runner environment `E`.
 
-**B) Program/Process Evaluation** (optional but powerful)
+**B) Pipeline/Process Evaluation** (optional but powerful)
 
 Evaluate the behavior of the transformation process itself:
 
@@ -472,7 +473,7 @@ Both are meaningful for merges. For example, you might require:
 
 A key subtlety:
 
-> If the program is allowed to modify the tests that are used to evaluate it, it can make evaluation meaningless.
+> If the pipeline is allowed to modify the tests that are used to evaluate it, it can make evaluation meaningless.
 
 Morph makes test/fixture provenance explicit in the suite definition.
 
@@ -573,19 +574,21 @@ This is a preorder (reflexive, transitive). It matches engineering reality: you 
 A Morph commit freezes:
 
 - A **File tree hash** — the root hash of the working directory tree at commit time (same role as Git's tree object in a commit)
-- A **Program ID** (hash of the program DAG + referenced blobs/trees)
+- A **Pipeline ID** (hash of the pipeline DAG + referenced blobs/trees)
 - An **EvalSuite** (contract ID)
 - A **certificate vector** \( v \in V_T \) (the `observed_metrics`)
 - **Parent commit hashes** (forming the Merkle DAG)
+- **Environment constraints** — the environment in which the scores were captured
+- **Evidence refs** — hashes of supporting Run and Trace objects
 - **Author and timestamp**
 
 Conceptually:
 
 \[
-\mathrm{Commit} = (\mathrm{tree\_hash},\; \mathrm{program\_id},\; T,\; v,\; \mathrm{parents},\; \mathrm{metadata})
+\mathrm{Commit} = (\mathrm{tree\_hash},\; \mathrm{pipeline\_id},\; T,\; v,\; \mathrm{parents},\; \mathrm{env\_constraints},\; \mathrm{evidence\_refs})
 \]
 
-A Morph commit is both a file snapshot (like Git) AND a behavioral certificate. The program and eval contract default to the identity program and empty suite when unspecified, making Morph usable as a plain VCS.
+A Morph commit is both a file snapshot (like Git) AND a behavioral certificate. The pipeline and eval contract default to the identity pipeline and empty suite when unspecified, making Morph usable as a plain VCS. When the pipeline and evaluation suite are unspecified, Morph degrades gracefully to a plain VCS.
 
 Commits are claims. Runs are receipts. History is immutable and verifiable.
 
@@ -621,13 +624,26 @@ This is where the word *join* is mathematically correct: it lives in certificate
 
 ### 13.3 Merge Validity
 
-A merge candidate program `R` is valid if it can be certified to dominate the joined requirement:
+A merge candidate pipeline `R` is valid if it can be certified to dominate the joined requirement:
 
 \[
 \mathrm{cert}_T(R, E, s_0) \geq_T v_{\mathrm{req}}
 \]
 
 If no such `R` exists (or can't be found/certified), merge fails.
+
+### 13.4 Metric Retirement
+
+The merge record compares against the parent suites. That works when the parent metrics still make sense. But sometimes a branch changes what the pipeline fundamentally does --- switching retrieval strategy, replacing a model, restructuring the task entirely. The old metrics may no longer be the right thing to measure.
+
+Morph handles this with *metric retirement*. A commit can declare that one or more metrics from a parent's evaluation suite no longer apply, with a stated reason. A retired set \( D \subseteq T_1 \uplus T_2 \) is removed from the merge suite before recording the reference scores:
+
+\[
+T = (T_1 \uplus T_2) \setminus D, \quad
+v_{\mathrm{ref}} = \mathrm{embed}(v_1) \sqcup \mathrm{embed}(v_2) \text{ projected onto } T.
+\]
+
+The retirement is explicit and attributed: any merge that retires metrics must include a review node. The review actor --- human, agent, or both --- is recorded as the one who made the call. The merge record still shows improvement on every metric that survived. Morph does not prevent someone from retiring every metric --- that is a policy decision, not a recording one. What it does is make every retirement visible, attributed, and permanent in the object graph.
 
 ---
 
@@ -641,7 +657,7 @@ Working space contains evolving material:
 
 - Prompts as files/blobs
 - Patches
-- Partial program DAGs ("work graphs")
+- Partial pipeline DAGs ("work graphs")
 - Intermediate traces and runs
 - Experimental branches
 
@@ -655,7 +671,7 @@ A working space can be:
 
 Commit space contains stabilized objects:
 
-- Content-addressed programs
+- Content-addressed pipelines
 - Evaluation suites
 - Certified commits
 - Immutable evidence graphs
@@ -670,7 +686,7 @@ This section is intentionally multi-language and binary-friendly.
 
 ### 15.1 Runner Abstraction
 
-Define a **Runner** as part of environment `E`. A runner provides the operational ability to execute program operators, such as:
+Define a **Runner** as part of environment `E`. A runner provides the operational ability to execute pipeline operators, such as:
 
 - Run a prompt call via a model adapter
 - Run a compiler
@@ -683,7 +699,7 @@ The runner is recorded by immutable identifiers as much as possible (container d
 
 ### 15.2 `morph run`
 
-`morph run` executes a Program `P` under:
+`morph run` executes a Pipeline `P` under:
 
 - Environment `E` (including runner + toolchain + model config)
 - Initial state \( s_0 \)
@@ -701,7 +717,7 @@ In math terms, it realizes an element of \( P_E(s_0) \in F(S) \).
 
 `morph eval` executes one or more EvalSuites `T` against:
 
-- A chosen program `P` (and/or an artifact tree `D`)
+- A chosen pipeline `P` (and/or an artifact tree `D`)
 - Environment `E` (runner/toolchain)
 - Specified fixture sources (candidate/base/pinned/external)
 
@@ -753,44 +769,30 @@ They enable:
 - Linking artifacts to decisions and reviews
 - Provenance and audit overlays
 
-### 17.2 Program Provenance
+### 17.2 Pipeline Provenance
 
-Programs may be derived from:
+Pipelines may be derived from:
 
 - Human authoring
 - Distilled traces
-- Composition of sub-programs
+- Composition of sub-pipelines
 
-Provenance records references to the source run/trace/event that produced the program.
+Provenance records references to the source run/trace/event that produced the pipeline.
 
 ---
 
-## 18. Minimal Axioms of Morph
+## 18. Axioms of Morph
 
-Morph requires the following axioms.
+Morph rests on a small set of axioms. These are not philosophical claims. They are the design constraints the rest of the system depends on. Violate any of them in an implementation and something breaks.
 
-### A. Identity and Immutability
-
-1. **Immutable Content-Addressed Objects** — All primary objects (blobs, trees, programs, runs, traces, eval suites, commits, annotations) are immutable and content-addressed.
-2. **Evidence Does Not Rewrite History** — Runs and evaluation evidence never mutate prior commits; new claims are new commits.
-
-### B. Program Algebra
-
-3. **Effect Monad for Sequencing** — There exists an endofunctor `F` that is a monad, enabling associative sequential composition and identity programs.
-4. **Product State Spaces** — State spaces support products \( A \times B \) and a unit object \( 1 \).
-5. **Zip for Parallelism** — `F` provides a lawful zip: \( \mathrm{zip}_{A,B} : F(A) \times F(B) \to F(A \times B) \), enabling principled parallel composition.
-
-### C. Behavioral Semantics
-
-6. **Evaluation Suites are Explicit Contracts** — An `EvalSuite` defines metrics (with ordering direction), fixture sources, and a certification rule.
-7. **Certificates are Comparable** — Certified metric vectors live in a product preorder with componentwise dominance.
-8. **Merge is Dominance of Joined Requirements** — A merge commit must certify dominance over the join of parent certificates under the union of their contracts.
-
-### D. Environment and Decentralization
-
-9. **Explicit Environment Recording** — Every run records the environment `E` (runner/toolchain/model config) needed to interpret evidence.
-10. **Decentralization** — No global authority is required; verification is by hashes + receipts.
-11. **Behavioral Reproducibility** — Reproducibility means the behavioral claim can be re-certified under declared environment constraints, not byte-identical outputs.
+1. **Content-Addressed, Immutable Objects** — Every object is identified by a cryptographic hash of its contents. If the hash matches, the content is what you think it is. History cannot be tampered with.
+2. **Evidence Does Not Rewrite History** — Runs and evaluation results never mutate prior commits. New evidence produces new objects; old commits stay exactly as they were.
+3. **Pipeline Steps Compose Cleanly** — There is a well-defined way to chain pipeline steps sequentially and run them in parallel, such that the results stay consistent when you refactor or restructure. You can reorganize a pipeline without changing what it does, and there is a meaningful no-op step.
+4. **Evaluation Suites are Explicit Contracts** — "Better" is not implicit. Every evaluation suite declares its metrics, their directions, their fixture sources, and how samples get aggregated into scores. All of it is versioned and hashed like everything else.
+5. **Scores are Partially Ordered** — A scorecard is one number per metric. One scorecard dominates another only if it wins on every metric simultaneously. If pipeline A is more accurate but slower than pipeline B, they are incomparable.
+6. **Merge Records Scores From Both Parents** — A merge commit records what both parents achieved and what the merged pipeline achieved. This is the record that lets anyone verify, for any merge in history, whether the shared assumption held.
+7. **Environment is Part of the Record** — Every run records the environment that produced its scores --- model version, sampling settings, toolchain. Without this, scores from different environments are not comparable.
+8. **Reproducibility Means Re-Running the Checks** — You cannot get byte-identical outputs from an LLM pipeline. Reproducibility means something weaker: re-running the same evaluation suite in the same declared environment produces aggregate scores consistent with the recorded value.
 
 ---
 
@@ -798,7 +800,7 @@ Morph requires the following axioms.
 
 Morph is:
 
-- A semantic DVCS for transformation programs
+- A semantic DVCS for transformation pipelines
 - A system of certified behavioral identities backed by immutable receipts
 - Merge gating defined by behavioral contracts
 - Compatible with human edits, agent edits, and mixed workflows
@@ -831,12 +833,16 @@ Git tracked files. Morph tracks certified behavior, with receipts.
 
 | Concept | Summary |
 |---|---|
-| **Program** | `A -> F[B]` — a transformer returning results in an effects-and-receipts box |
+| **Actor** | `(id, type ∈ {human, agent}, env_config ∪ {⊥})` — any worker: human, agent, or pair |
+| **Pipeline** | `S -> F[S]` — a transformer returning results in an effects-and-receipts box |
 | **Sequential composition** | `bind` / `flatMap` — lawful pipelines because monad laws |
 | **Parallel composition** | `zip` / `Promise.all` — lawful fork-join because state products + zipped effects |
-| **Attribution** | \( \alpha : V \to \mathcal{A} \cup \{\bot\} \) — maps operators to agents; composes over sequential and parallel |
+| **Attribution** | \( \alpha : V \to 2^{\mathcal{A}} \) — maps operators to *sets* of actors; composes over sequential and parallel |
+| **Review node** | Explicit acceptance/modification decision — human approving a diff, agent evaluating a candidate |
+| **Per-node env** | \( \varepsilon : V \to \text{EnvConfig} \cup \{\bot\} \) — which model/toolchain ran each node |
 | **Run** | A realized execution outcome with a trace (immutable receipt) |
 | **EvalSuite** | Metric definitions (name, aggregation, threshold, direction) + optional test cases |
-| **Commit** | Tree hash + program hash + eval contract (suite + observed metrics) + parents |
+| **Commit** | Tree hash + pipeline hash + eval contract + env constraints + evidence refs + parents |
 | **Merge** | Candidate must dominate the join of parent certificates under unified contract |
+| **Metric retirement** | Explicitly remove obsolete metrics from the merge suite (attributed via review node) |
 | **Direction** | Each metric is `maximize` (higher is better) or `minimize` (lower is better) |

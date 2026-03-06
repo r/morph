@@ -18,7 +18,7 @@ The workspace builds the `morph` binary from morph-cli when needed. To run from 
 
 - **features/** — Gherkin specs (what we're testing, readable by anyone)
   - `init_and_status.feature` — init repo, status, empty repo
-  - `add_and_commit.feature` — stage, commit with program and eval suite
+  - `add_and_commit.feature` — stage, commit with pipeline and eval suite
   - `prompt_create_materialize.feature` — prompt blob create and materialize
   - `run_record_session.feature` — single agent records a session
   - `concurrent_agents.feature` — two agents record sessions at the same time

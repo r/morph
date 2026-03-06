@@ -94,7 +94,7 @@ async fn api_log(State(state): State<AppState>) -> Result<Json<Vec<CommitEntry>>
             message: commit.message.clone(),
             author: commit.author.clone(),
             timestamp: commit.timestamp.clone(),
-            program: commit.program.clone(),
+            pipeline: commit.pipeline.clone(),
             parents: commit.parents.clone(),
             eval_contract: commit.eval_contract.clone(),
             tree: commit.tree.clone(),
@@ -114,7 +114,7 @@ async fn api_runs(State(state): State<AppState>) -> Result<Json<Vec<RunEntry>>, 
             out.push(RunEntry {
                 hash: h.to_string(),
                 trace: run.trace.clone(),
-                program: run.program.clone(),
+                pipeline: run.pipeline.clone(),
                 agent: format!("{} {}", run.agent.id, run.agent.version),
             });
         }
@@ -126,7 +126,7 @@ async fn api_runs(State(state): State<AppState>) -> Result<Json<Vec<RunEntry>>, 
 struct RunEntry {
     hash: String,
     trace: String,
-    program: String,
+    pipeline: String,
     agent: String,
 }
 
@@ -136,7 +136,7 @@ struct CommitEntry {
     message: String,
     author: String,
     timestamp: String,
-    program: String,
+    pipeline: String,
     parents: Vec<String>,
     eval_contract: morph_core::objects::EvalContract,
     tree: Option<String>,
@@ -167,7 +167,7 @@ async fn api_graph(State(state): State<AppState>) -> Result<Json<GraphResponse>,
                         MorphObject::Commit(c) => ("commit", c.message.lines().next().unwrap_or("").to_string()),
                         MorphObject::Run(r) => ("run", format!("{} {}", r.agent.id, r.agent.version)),
                         MorphObject::Trace(_) => ("trace", "trace".to_string()),
-                        MorphObject::Program(_) => ("program", "program".to_string()),
+                        MorphObject::Pipeline(_) => ("pipeline", "pipeline".to_string()),
                         MorphObject::Tree(_) => ("tree", "tree".to_string()),
                         MorphObject::Blob(b) if b.kind == "prompt" => {
                             let text = b
@@ -225,8 +225,8 @@ async fn api_graph(State(state): State<AppState>) -> Result<Json<GraphResponse>,
                 edges.push(GraphEdge { from: id.clone(), to: tree.clone() });
                 ensure_node(&mut nodes, store.as_ref(), tree, "tree", "tree".to_string());
             }
-            edges.push(GraphEdge { from: id.clone(), to: commit.program.clone() });
-            ensure_node(&mut nodes, store.as_ref(), &commit.program, "program", "program".to_string());
+            edges.push(GraphEdge { from: id.clone(), to: commit.pipeline.clone() });
+            ensure_node(&mut nodes, store.as_ref(), &commit.pipeline, "pipeline", "pipeline".to_string());
             for p in &commit.parents {
                 edges.push(GraphEdge { from: p.clone(), to: id.clone() });
                 ensure_node(&mut nodes, store.as_ref(), p, "?", "".to_string());
@@ -249,34 +249,34 @@ async fn api_graph(State(state): State<AppState>) -> Result<Json<GraphResponse>,
         ensure_node(&mut nodes, store.as_ref(), &id, "run", label);
         edges.push(GraphEdge { from: id.clone(), to: run.trace.clone() });
         ensure_node(&mut nodes, store.as_ref(), &run.trace, "trace", "trace".to_string());
-        edges.push(GraphEdge { from: id.clone(), to: run.program.clone() });
-        ensure_node(&mut nodes, store.as_ref(), &run.program, "program", "program".to_string());
+        edges.push(GraphEdge { from: id.clone(), to: run.pipeline.clone() });
+        ensure_node(&mut nodes, store.as_ref(), &run.pipeline, "pipeline", "pipeline".to_string());
     }
 
-    // Add prompt nodes and program -> prompt edges for each program's prompts
-    let program_ids: Vec<String> = nodes
+    // Add prompt nodes and pipeline -> prompt edges for each pipeline's prompts
+    let pipeline_ids: Vec<String> = nodes
         .values()
-        .filter(|n| n.node_type == "program")
+        .filter(|n| n.node_type == "pipeline")
         .map(|n| n.id.clone())
         .collect();
-    for program_id in program_ids {
-        let program_hash = match Hash::from_hex(&program_id) {
+    for pipeline_id in pipeline_ids {
+        let pipeline_hash = match Hash::from_hex(&pipeline_id) {
             Ok(h) => h,
             Err(_) => continue,
         };
-        let obj = match store.get(&program_hash) {
+        let obj = match store.get(&pipeline_hash) {
             Ok(o) => o,
             Err(_) => continue,
         };
-        if let MorphObject::Program(program) = &obj {
-            for prompt_hash in &program.prompts {
+        if let MorphObject::Pipeline(pipeline) = &obj {
+            for prompt_hash in &pipeline.prompts {
                 if prompt_hash.is_empty() {
                     continue;
                 }
                 ensure_node(&mut nodes, store.as_ref(), prompt_hash, "?", String::new());
-                if !edges.iter().any(|e| e.from == program_id && e.to == *prompt_hash) {
+                if !edges.iter().any(|e| e.from == pipeline_id && e.to == *prompt_hash) {
                     edges.push(GraphEdge {
-                        from: program_id.clone(),
+                        from: pipeline_id.clone(),
                         to: prompt_hash.clone(),
                     });
                 }

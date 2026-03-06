@@ -21,10 +21,10 @@ pub use repo::{
     init_repo, open_store, read_repo_version, require_store_version,
     STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_INIT,
 };
-pub use identity::identity_program;
-pub use working::{find_repo, blob_from_prompt_file, blob_from_file, materialize_blob, program_from_file, eval_suite_from_file, status, add_paths, StatusEntry};
-pub use commit::{create_commit, create_tree_commit, create_merge_commit, create_merge_commit_full, rollup, resolve_head, current_branch, set_head_branch, set_head_detached, checkout_tree, log_from};
-pub use metrics::{aggregate, check_thresholds, check_dominance, check_dominance_with_suite, aggregate_suite, union_suites};
+pub use identity::identity_pipeline;
+pub use working::{find_repo, blob_from_prompt_file, blob_from_file, materialize_blob, pipeline_from_file, eval_suite_from_file, status, add_paths, StatusEntry};
+pub use commit::{create_commit, create_tree_commit, create_merge_commit, create_merge_commit_full, create_merge_commit_with_retirement, rollup, resolve_head, current_branch, set_head_branch, set_head_detached, checkout_tree, log_from};
+pub use metrics::{aggregate, check_thresholds, check_dominance, check_dominance_with_suite, aggregate_suite, union_suites, retire_metrics};
 pub use record::{record_run, record_eval_metrics, record_session};
 pub use annotate::{create_annotation, list_annotations};
 pub use index::{read_index, write_index, clear_index, update_index, StagingIndex};

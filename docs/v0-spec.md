@@ -22,7 +22,7 @@ Morph v0 will provide:
 - A local content-addressed object store
 - A commit graph (Merkle DAG)
 - First-class prompt objects
-- Program definitions (pipeline graphs)
+- Pipeline definitions (pipeline graphs)
 - Evaluation suites as versioned objects
 - Run manifests (execution receipts)
 - Annotation objects (extensible metadata on any object)
@@ -44,11 +44,11 @@ Those can come later.
 
 ### Morph is pure VCS (v0)
 
-Morph does **not** execute programs or run evaluations. All LLM calls, tool execution, and test runs happen in external tools (IDEs, agents, CI). Morph's role is to:
+Morph does **not** execute pipelines or run evaluations. All LLM calls, tool execution, and test runs happen in external tools (IDEs, agents, CI). Morph's role is to:
 
 - **Store** immutable content-addressed objects
 - **Record** execution evidence that external tools report (runs, traces, metrics)
-- **Version** programs with behavioral contracts (commits)
+- **Version** pipelines with behavioral contracts (commits)
 - **Gate** merges on metric dominance
 
 Commands like `morph run record` and `morph eval record` **ingest** results; they do not run anything. The primary write path from the IDE is the **Cursor MCP server**, which reports session data into Morph. Reading and inspection happen via the CLI.
@@ -59,29 +59,35 @@ Commands like `morph run record` and `morph eval record` **ingest** results; the
 
 This section maps THEORY.md concepts to v0 constructs.
 
-| Theory Concept | THEORY.md | v0 Construct |
+| Theory Concept | Paper / THEORY.md | v0 Construct |
 |---|---|---|
-| State S = (D, C, M) | §5.1 | Tree (D), execution context in Run (C), Commit/Run metadata (M) |
-| Environment E | §5.2 | Run `environment` field (model, version, parameters, toolchain) |
-| Program P : S → F(S) | §6.1 | Program object (operator graph over Prompt blobs) |
-| Effect functor F | §6.1 | Run execution: running a Program produces probabilistic outputs |
-| Identity program | §7.2 | Built-in no-op Program (identity hash, passes state through unchanged) |
+| State S = (D, C, M) | paper §3.1 | Tree (D), execution context in Run (C), Commit/Run metadata (M) |
+| Actor = (id, type, env_config) | paper §3.2 | `ActorRef` struct (`id`, `actor_type`, `env_config`) |
+| Environment E | §5.2 | Run `environment` field; Commit `env_constraints` field |
+| Pipeline P : S → F(S) | paper §3.3 | Pipeline object (operator graph over Prompt blobs) |
+| Pipeline node types κ | paper §3.3 | Node `kind`: prompt_call, tool_call, retrieval, transform, identity, **review** |
+| Per-node env ε : V → EnvConfig | paper §3.3 | PipelineNode `env` field |
+| Attribution α : V → 2^A | paper §3.3 | Pipeline `attribution` field with `actors` array (set of ActorRefs) |
+| Effect functor F | §6.1 | Run execution: running a Pipeline produces probabilistic outputs |
+| Identity pipeline | §7.2 | Built-in no-op Pipeline (identity hash, passes state through unchanged) |
 | Sequential composition Q ∘ P | §7.1 | Graph edges (data flow between operator nodes) |
-| Parallel composition P ⊗ Q | §8.3 | Independent subgraphs within a Program graph |
-| Attribution α : V → A | paper §3.5 | Program `attribution` field (node → agent mapping) |
-| Multi-agent contributions | paper §3.5 | Run `contributors` field, Commit `contributors` field |
-| Evaluation suite T | §10 | EvalSuite object |
+| Parallel composition P ⊗ Q | §8.3 | Independent subgraphs within a Pipeline graph |
+| Multi-agent contributions | paper §3.4 | Run `contributors` field, Commit `contributors` field |
+| Evaluation suite T | §10 | EvalSuite object (cases, metrics with direction) |
+| Fixture source | paper §4.1 | EvalCase `fixture_source` field |
 | Contract satisfaction | §11.1 | Eval pass: aggregated metrics meet declared thresholds |
 | Behavioral preorder P ⪯ Q | §11.3 | Metric dominance: Q meets or exceeds P's certified scores |
 | Certificate vector v ∈ V_T | §11.2 | `observed_metrics` in Commit's eval contract |
-| Commit = behavioral certificate | §12 | Commit object (program hash + eval contract + observed metrics) |
+| Commit = behavioral certificate | paper §5.1 | Commit object (tree + pipeline + eval + env_constraints + evidence_refs) |
+| Evidence refs | paper §5.1 | Commit `evidence_refs` field (hashes of Runs and Traces) |
 | Certificate lattice join | §13.2 | Componentwise max of parent metrics during merge |
-| Merge as behavioral join | §13.3 | Merge commit must dominate both parents' observed metrics |
+| Merge as behavioral join | paper §5.2 | Merge commit must dominate both parents' observed metrics |
+| Metric retirement | paper §5.3 | `retire_metrics()` + `--retire` CLI flag on merge |
 | Working space vs commit space | §14 | Working directories vs `.morph/objects/` |
 | Run = execution receipt | §9.1 | Run object (environment, metrics, trace, artifacts) |
 | Trace as DAG of events | §9.2 | Trace events with IDs, types, and sequential ordering (v0 simplifies to linear) |
 | Annotations | §17.1 | Annotation object (feedback, bookmarks, tags on any object) |
-| Program provenance | §17.2 | Program `provenance` field (derived_from_run, method, etc.) |
+| Pipeline provenance | §17.2 | Pipeline `provenance` field (derived_from_run, method, etc.) |
 
 ---
 
@@ -103,14 +109,14 @@ A Morph repository contains:
   index.json      # staging index: maps working-dir paths to blob hashes (cleared after commit)
 ```
 
-`morph init` creates only `.morph/` (like `git init`): `objects/`, `refs/heads/`, `runs/`, `traces/`, `prompts/`, `evals/`, `config.json`, and `refs/HEAD` (pointing at `heads/main`). The working directory — the user's project directory — is the working space. There are no top-level `prompts/`, `programs/`, or `evals/` directories.
+`morph init` creates only `.morph/` (like `git init`): `objects/`, `refs/heads/`, `runs/`, `traces/`, `prompts/`, `evals/`, `config.json`, and `refs/HEAD` (pointing at `heads/main`). The working directory — the user's project directory — is the working space. There are no top-level `prompts/`, `pipelines/`, or `evals/` directories.
 
 ### `.morph/objects/`
 The single source of truth. Every object is stored here as `<sha256>.json` (content-addressed). Object types:
 
 - Blobs
 - Trees
-- Programs
+- Pipelines
 - EvalSuites
 - Commits
 - Runs
@@ -133,7 +139,7 @@ User-facing: optional prompt files (e.g. `.prompt`) and eval JSON files. When a 
 
 The **working directory** (the user's project directory) is the working space — analogous to Git's working tree. `morph add` works like `git add`: it stages any file from the working directory into the object store.
 
-`.morph/prompts/` and `.morph/evals/` are optional metadata directories for prompt and eval suite definitions. The `programs/` directory is eliminated: program manifests are created via `morph program create <file>` and exist only in the object store. Morph can be used as a plain VCS without prompts or evals.
+`.morph/prompts/` and `.morph/evals/` are optional metadata directories for prompt and eval suite definitions. The `pipelines/` directory is eliminated: pipeline manifests are created via `morph pipeline create <file>` and exist only in the object store. Morph can be used as a plain VCS without prompts or evals.
 
 Changes in working space are not versioned until committed.
 
@@ -145,7 +151,7 @@ A **`.morphignore`** file at the repository root (same directory as `.morph/`) s
 - `*.log` — ignore any file ending in `.log`
 - `node_modules/` — ignore dependency trees you do not want to version as content
 
-If `.morphignore` is missing, nothing is excluded beyond the built-in rules (e.g. `.morph/` internals). This keeps working-space scans and commits focused on the files that define your programs, prompts, and evals.
+If `.morphignore` is missing, nothing is excluded beyond the built-in rules (e.g. `.morph/` internals). This keeps working-space scans and commits focused on the files that define your pipelines, prompts, and evals.
 
 ### Commit Space
 
@@ -228,20 +234,21 @@ Represents a structured grouping of objects (maps to the Document tree D in the 
 
 ---
 
-## 4.3 Program
+## 4.3 Pipeline
 
-A Program encodes a prompt program — the core versioned unit in Morph. It corresponds to THEORY.md §6.1's transformation P : S → F(S), represented as a directed acyclic graph of operators.
+A Pipeline encodes a prompt pipeline — the core versioned unit in Morph. It corresponds to THEORY.md §6.1's transformation P : S → F(S), represented as a directed acyclic graph of operators.
 
 ```json
 {
-  "type": "program",
+  "type": "pipeline",
   "graph": {
     "nodes": [
       {
         "id": "node_id",
-        "kind": "prompt_call | tool_call | retrieval | transform | identity",
+        "kind": "prompt_call | tool_call | retrieval | transform | identity | review",
         "ref": "<blob_hash or null>",
-        "params": { }
+        "params": { },
+        "env": { "model": "gpt-4o", "temperature": 0.7 }
       }
     ],
     "edges": [
@@ -251,7 +258,13 @@ A Program encodes a prompt program — the core versioned unit in Morph. It corr
   "prompts": ["<blob_hash>"],
   "eval_suite": "<eval_suite_hash>",
   "attribution": {
-    "node_id": { "agent_id": "<string>", "agent_version": "<string or null>" }
+    "node_id": {
+      "agent_id": "<string>",
+      "agent_version": "<string or null>",
+      "actors": [
+        { "id": "<string>", "actor_type": "human | agent", "env_config": { } }
+      ]
+    }
   },
   "provenance": {
     "derived_from_run": "<run_hash or null>",
@@ -262,12 +275,15 @@ A Program encodes a prompt program — the core versioned unit in Morph. It corr
 }
 ```
 
-**Node kinds:**
+**Node kinds** (paper §3.3, κ):
 - `prompt_call` — invokes an LLM with a referenced Prompt blob
 - `tool_call` — invokes an external tool
 - `retrieval` — fetches context from a document store
 - `transform` — deterministic data transformation
-- `identity` — no-op pass-through (corresponds to the theory's identity program I)
+- `identity` — no-op pass-through (corresponds to the theory's identity pipeline I)
+- `review` — explicit acceptance or modification decision (human approving a diff, agent evaluating a candidate)
+
+**Per-node environment** (paper ε : V → EnvConfig ∪ {⊥}): The `env` field on each node records which model and toolchain ran that node. It is null for human-only nodes or when environment is unspecified. This lets the record distinguish "agent A used gpt-4o for generation" from "agent B used claude-4 for review" within the same pipeline.
 
 **Edge kinds:**
 - `data` — output of source flows as input to target (sequential composition)
@@ -275,9 +291,9 @@ A Program encodes a prompt program — the core versioned unit in Morph. It corr
 
 Nodes with no edges between them execute in parallel (parallel composition P ⊗ Q from the theory).
 
-**Attribution** records which agent authored which operators in the program DAG. This is the v0 realization of the theory's attribution function α : V → A. The `attribution` field is optional — null or empty when all nodes share a single author. Each entry maps a node ID to an agent identity. Attribution composes naturally: when programs are sequentially or parallelly composed, the attribution maps are unioned over disjoint node sets. Certification remains holistic — the certificate vector applies to the composed program, not to individual agents' contributions (see paper §3.5).
+**Attribution** records which actors contributed to each node in the pipeline DAG. This is the v0 realization of the paper's attribution function α : V → 2^A (set of Actor IDs per node). The `attribution` field is optional — null or empty when all nodes share a single author. Each entry maps a node ID to an attribution record. The `actors` array is the set-valued attribution from the paper: a review node where a human accepts and edits an agent's diff gets `actors: [{id: "agent-1", actor_type: "agent"}, {id: "human-1", actor_type: "human"}]`. The legacy `agent_id` field is kept for backward compatibility; when `actors` is present it takes precedence. Certification remains holistic — the certificate vector applies to the composed pipeline, not to individual actors' contributions.
 
-**Provenance** records how this Program was created. The `provenance` field is optional — null fields indicate unknown or not-applicable. When a Program is extracted from a successful Run (e.g., distilling an agent session into a reusable workflow), provenance records the source Run, Trace, and optionally the specific event within that Trace. The `method` field indicates whether the Program was written by hand (`manual`), extracted from a session (`extracted`), or built by composing existing Programs (`composed`).
+**Provenance** records how this Pipeline was created. The `provenance` field is optional — null fields indicate unknown or not-applicable. When a Pipeline is extracted from a successful Run (e.g., distilling an agent session into a reusable workflow), provenance records the source Run, Trace, and optionally the specific event within that Trace. The `method` field indicates whether the Pipeline was written by hand (`manual`), extracted from a session (`extracted`), or built by composing existing Pipelines (`composed`).
 
 ---
 
@@ -289,9 +305,9 @@ Evaluation suite — a first-class versioned object. This is the concrete realiz
 
 Morph's core logic depends on an abstract evaluation interface, not on a specific evaluation implementation. The interface has one operation:
 
-- **evaluate(program, eval_suite, environment) → metrics**
+- **evaluate(pipeline, eval_suite, environment) → metrics**
 
-Given a Program, an EvalSuite, and an Environment, produce a dictionary of metric name → score. Morph uses the returned scores for:
+Given a Pipeline, an EvalSuite, and an Environment, produce a dictionary of metric name → score. Morph uses the returned scores for:
 
 - Recording `observed_metrics` in Commits
 - Checking dominance during merge
@@ -299,7 +315,7 @@ Given a Program, an EvalSuite, and an Environment, produce a dictionary of metri
 
 How scores are produced is the evaluator's concern, not Morph's. An evaluator might:
 
-- Run the program against test cases and compute automated scores
+- Run the pipeline against test cases and compute automated scores
 - Aggregate human feedback ratings collected via Annotations
 - Call an external evaluation service
 - Combine automated and human signals
@@ -338,7 +354,7 @@ The `direction` field specifies the ordering for this metric: `"maximize"` (defa
 
 The v0 default evaluator is minimal:
 
-- Runs the Program against each case in the EvalSuite
+- Runs the Pipeline against each case in the EvalSuite
 - Computes per-case scores by comparing outputs to expected values
 - Aggregates using the declared aggregation function
 - Returns the metric dictionary
@@ -361,7 +377,7 @@ Statistical sophistication is minimal in v0. Future versions or custom evaluator
 {
   "type": "commit",
   "tree": "<tree_hash>",
-  "program": "<program_hash>",
+  "pipeline": "<pipeline_hash>",
   "parents": ["<commit_hash>"],
   "message": "string",
   "timestamp": "...",
@@ -373,17 +389,29 @@ Statistical sophistication is minimal in v0. Future versions or custom evaluator
     "suite": "<eval_suite_hash>",
     "observed_metrics": { "metric_name": "value" }
   },
+  "env_constraints": { "model": "gpt-4o", "runner": "ci-v2" },
+  "evidence_refs": ["<run_hash>", "<trace_hash>"],
   "morph_version": "0.3"
 }
 ```
 
 The `tree` field records the root hash of the file tree at commit time — the same role as Git's tree in a commit. `morph_version` records the store version that created this commit. Commits from before version 0.3 have `tree: null` and `morph_version: null`.
 
-A Commit now stores both the behavioral contract AND the file tree snapshot. `program` and `eval_contract` default to the identity program and empty eval suite when not specified, making `morph commit -m 'message'` work as a plain VCS commit.
+A Commit stores the behavioral contract AND the file tree snapshot (paper Definition 5.1). The full tuple is:
+
+```
+c = (tree_hash, pipeline_id, T, v, parents, env_constraints, evidence_refs)
+```
+
+`pipeline` and `eval_contract` default to the identity pipeline and empty eval suite when not specified, making `morph commit -m 'message'` work as a plain VCS commit. (The JSON field accepts both `pipeline` and `program` for backward compatibility.)
 
 The `observed_metrics` field records the metrics achieved at commit time. This is critical for merge: the merge commit must dominate these observed values, not merely pass the suite's base thresholds.
 
-The `contributors` field is optional and lists all agents and humans that contributed to this commit. The `author` field remains the primary committer (analogous to Git's author). `contributors` captures the broader set — agents that authored program nodes, ran evaluations, or produced artifacts that inform this commit. This is the commit-level projection of the theory's attribution function: while the program's `attribution` field maps individual operators to agents, the commit's `contributors` is a summary of all participating identities.
+The `env_constraints` field records the environment in which the scores were captured (paper Definition 5.1). Without this, scores from different environments are not comparable.
+
+The `evidence_refs` field lists hashes of supporting Run and Trace objects that back up the commit's behavioral claims (paper Definition 5.1). Runs are receipts; evidence_refs link a commit to the receipts that justify it.
+
+The `contributors` field is optional and lists all agents and humans that contributed to this commit. The `author` field remains the primary committer (analogous to Git's author). `contributors` captures the broader set — agents that authored pipeline nodes, ran evaluations, or produced artifacts that inform this commit.
 
 Commits are claims. Runs are receipts.
 
@@ -396,7 +424,7 @@ A Run is an execution receipt.
 ```json
 {
   "type": "run",
-  "program": "<program_hash>",
+  "pipeline": "<pipeline_hash>",
   "commit": "<commit_hash or null>",
   "environment": {
     "model": "...",
@@ -426,7 +454,7 @@ A Run is an execution receipt.
 
 Runs do not modify commit history.
 
-The `commit` field is null for exploratory runs in working space. It references a commit hash when the run serves as evidence for a committed program.
+The `commit` field is null for exploratory runs in working space. It references a commit hash when the run serves as evidence for a committed pipeline. (The JSON field accepts both `pipeline` and `program` for backward compatibility.)
 
 The `agent` field records the primary or orchestrating agent. The `contributors` field is optional and lists all agents that participated in producing the run's outputs. Each contributor has the same identity fields as `agent`, plus an optional `role` string (e.g., `"retrieval"`, `"generation"`, `"review"`). For single-agent runs, `contributors` is null or empty. This supports the theory's multi-agent attribution model (paper §3.5) — recording who contributed while acknowledging that credit assignment from the certificate vector to individual agents requires additional analysis.
 
@@ -511,7 +539,7 @@ An Annotation attaches metadata to any content-addressed object — or to a spec
 ```
 
 **Fields:**
-- `target` — hash of the object being annotated (Run, Trace, Commit, Program, Blob, etc.).
+- `target` — hash of the object being annotated (Run, Trace, Commit, Pipeline, Blob, etc.).
 - `target_sub` — optional sub-addressing within the target. For Traces, this is an event ID. For Trees, this could be an entry name. Null when annotating the object as a whole.
 - `kind` — open string. Well-known values include:
   - `feedback` — human rating (good / partial / bad)
@@ -532,17 +560,17 @@ An Annotation attaches metadata to any content-addressed object — or to a spec
 
 ---
 
-# 5. The Identity Program
+# 5. The Identity Pipeline
 
-THEORY.md §7.2 requires an identity program I such that I ∘ P = P ∘ I = P.
+THEORY.md §7.2 requires an identity pipeline I such that I ∘ P = P ∘ I = P.
 
-In v0, this is a well-known Program object:
+In v0, this is a well-known Pipeline object:
 
 ```json
 {
-  "type": "program",
+  "type": "pipeline",
   "graph": {
-    "nodes": [{ "id": "passthrough", "kind": "identity", "ref": null, "params": {} }],
+    "nodes": [{ "id": "passthrough", "kind": "identity", "ref": null, "params": {}, "env": null }],
     "edges": []
   },
   "prompts": [],
@@ -551,7 +579,7 @@ In v0, this is a well-known Program object:
 }
 ```
 
-Its hash is deterministic and serves as the identity element for program composition.
+Its hash is deterministic and serves as the identity element for pipeline composition. (The `"type"` field accepts both `"pipeline"` and `"program"` for backward compatibility.)
 
 ---
 
@@ -579,17 +607,17 @@ Prompts are canonical objects. Materialization writes them to the working direct
 
 `morph prompt latest` prints the prompt text from a Run. Ref follows a Git-like syntax: `latest` (default, most recent run), `latest~N` or `latest-N` (Nth run back), or a 64-char run hash.
 
-## 6.3 Program Management
+## 6.3 Pipeline Management
 
 ```
-morph program create <file>
-morph program show <hash>
-morph program identity-hash
+morph pipeline create <file>
+morph pipeline show <hash>
+morph pipeline identity-hash
 ```
 
-Program manifests are created via `morph program create <file>` and exist only in the object store. There is no `programs/` directory.
+Pipeline manifests are created via `morph pipeline create <file>` and exist only in the object store. There is no `pipelines/` directory.
 
-`morph program identity-hash` prints the hash of the identity program (creating it in the store if needed). Useful for hook scripts and automation.
+`morph pipeline identity-hash` prints the hash of the identity pipeline (creating it in the store if needed). Useful for hook scripts and automation.
 
 ## 6.4 Commit Workflow
 
@@ -600,9 +628,9 @@ morph commit -m "message"
 
 `morph add .` stages files and updates the staging index. `morph commit -m "message"` builds the tree from the index, creates the commit, and clears the index.
 
-`--program` and `--eval-suite` are optional flags. When omitted, the commit behaves as a plain VCS commit (identity program, empty eval suite). When specified, `morph commit` validates:
+`--pipeline` and `--eval-suite` are optional flags. When omitted, the commit behaves as a plain VCS commit (identity pipeline, empty eval suite). When specified, `morph commit` validates:
 
-- Program graph integrity (DAG, valid node/edge kinds)
+- Pipeline graph integrity (DAG, valid node/edge kinds)
 - Eval suite presence and hash integrity
 - Uses **recorded** observed metrics (from external evaluation or prior `morph eval record`) to form the eval contract
 
@@ -624,7 +652,7 @@ morph run record <file> [--trace <file>] [--artifact <file>...]
 morph run record-session --prompt <text> --response <text> [--model-name <name>] [--agent-id <id>]
 ```
 
-`morph run record` **ingests** a Run object (JSON). Does not execute any program. External tools (IDE, agent, CI) produce the run and report it. Morph stores the Run, its Trace, and Artifacts.
+`morph run record` **ingests** a Run object (JSON). Does not execute any pipeline. External tools (IDE, agent, CI) produce the run and report it. Morph stores the Run, its Trace, and Artifacts.
 
 `morph run record-session` is a convenience command that creates a Run + Trace from a single prompt/response pair. Used by hook scripts and automation to record IDE sessions without constructing the full Run JSON.
 
@@ -639,22 +667,24 @@ morph eval record <file>
 ## 6.8 Merge
 
 ```
-morph merge <branch> -m <message> --program <hash> --eval-suite <hash> --metrics '<json>'
+morph merge <branch> -m <message> --pipeline <hash> --eval-suite <hash> --metrics '<json>'
+morph merge <branch> -m <message> --pipeline <hash> --eval-suite <hash> --metrics '<json>' --retire 'old_metric1,old_metric2'
 ```
 
-All flags are required. The caller must supply the merged program, the eval suite, and the observed metrics from external evaluation.
+All flags except `--retire` are required. The caller must supply the merged pipeline, the eval suite, and the observed metrics from external evaluation.
 
 Merge procedure:
 
-1. Structural merge of program graphs
-2. Determine the merge eval contract: **union** of both parents' eval suites (all metrics from both must be satisfied)
-3. Merged program's **recorded** observed metrics (from external evaluation) must be supplied or already present
-4. Validate **dominance**: merged program's observed metrics must meet or exceed both parents' `observed_metrics` (not merely the base thresholds)
-5. Create merge commit if satisfied
+1. Structural merge of pipeline graphs (analogous to three-way text merge)
+2. Combine evaluation suites: if parents have suites T1 and T2, the merge suite is T = T1 ⊎ T2 (union by metric ID)
+3. Apply metric retirement (if `--retire` is specified): remove retired metrics from the union suite. Retirement is explicit and attributed (paper §5.3)
+4. Record the bar: embed each parent's scores into V_T and record the best from either parent on every surviving metric
+5. Validate **dominance**: merged pipeline's observed metrics must meet or exceed both parents' `observed_metrics` on every surviving metric (direction-aware)
+6. Create merge commit if satisfied
 
 If dominance is not achieved, merge aborts. Morph does not run evaluations; external tools do and report results.
 
-This realizes THEORY.md §13.3: merge candidate R must satisfy R ⪰ P and R ⪰ Q under the behavioral preorder.
+This realizes the paper's merge semantics (§5) and metric retirement (§5.3): merge candidate R must dominate both parents on every non-retired metric.
 
 ## 6.9 Rollup (Squash)
 
@@ -662,7 +692,7 @@ This realizes THEORY.md §13.3: merge candidate R must satisfy R ⪰ P and R ⪰
 morph rollup <base_ref> <tip_ref> [-m <message>]
 ```
 
-Collapses multiple working-space commits into one commit-space identity. The new commit has `base_ref` as its parent and uses the program and eval contract from the tip commit.
+Collapses multiple working-space commits into one commit-space identity. The new commit has `base_ref` as its parent and uses the pipeline and eval contract from the tip commit.
 
 Does not delete traces. Traces may be summarized via TraceRollup objects.
 
@@ -691,7 +721,7 @@ morph visualize [<path>] [--port <port>] [--interface <addr>]
 
 `morph upgrade` migrates the repository store to the latest version (e.g. 0.0 → 0.2 → 0.3). Required before using MCP on older repos.
 
-`morph visualize` starts a local web server for browsing the repo in a browser: commit strip, detail panel (message, author, program, eval contract, prompts), and an object browser. The web UI is embedded in the binary.
+`morph visualize` starts a local web server for browsing the repo in a browser: commit strip, detail panel (message, author, pipeline, eval contract, prompts), and an object browser. The web UI is embedded in the binary.
 
 ---
 
@@ -699,7 +729,7 @@ morph visualize [<path>] [--port <port>] [--interface <addr>]
 
 Morph v0 defines reproducibility as:
 
-- **Evaluation contract preservation**: re-running a committed program should satisfy its declared eval contract.
+- **Evaluation contract preservation**: re-running a committed pipeline should satisfy its declared eval contract.
 - **Explicit environment recording**: all runs record environment E (model, version, parameters, toolchain).
 - **Deterministic replay is optional**: some environments support it; Morph does not require it.
 
@@ -712,7 +742,7 @@ This aligns with THEORY.md §18, Axiom 11: reproducibility is behavioral, not by
 IDE must emit:
 
 - Prompt object definitions
-- Program graph updates
+- Pipeline graph updates
 - Run execution metadata (runs, traces, metrics)
 - Filesystem diffs (working-space changes)
 - Environment descriptor
@@ -729,24 +759,19 @@ Morph is the source of truth. The filesystem is a projection.
 
 How v0 satisfies each Morph axiom:
 
-| # | Axiom (THEORY.md §18) | v0 Mechanism |
+| # | Axiom (Paper §6 / THEORY.md §18) | v0 Mechanism |
 |---|---|---|
-| **A. Identity and Immutability** | | |
-| 1 | Immutable Content-Addressed Objects | All objects (including Annotations) content-addressed by SHA-256, stored in `.morph/objects/` |
+| 1 | Content-Addressed, Immutable Objects | All objects content-addressed by SHA-256, stored in `.morph/objects/` |
 | 2 | Evidence Does Not Rewrite History | Run and Trace objects are separate from commits; evidence never mutates prior objects |
-| **B. Program Algebra** | | |
-| 3 | Effect Monad for Sequencing | Program execution produces `F(S)` — probabilistic outputs with traces; sequential composition via graph edges and bind semantics |
-| 4 | Product State Spaces | State modeled as (Tree, execution context, metadata); composition via Trees |
-| 5 | Zip for Parallelism | Independent subgraphs within a Program DAG execute in parallel; results combined |
-| — | Multi-Agent Attribution (§8.4) | Program `attribution` maps nodes to agents; Run `contributors` and Commit `contributors` record participating agents; certification remains holistic |
-| **C. Behavioral Semantics** | | |
-| 6 | Evaluation Suites are Explicit Contracts | EvalSuite objects define T with metrics, ordering, and thresholds |
-| 7 | Certificates are Comparable | Observed metrics in commits form certificate vectors; dominance is componentwise |
-| 8 | Merge is Dominance of Joined Requirements | Merge requires metric dominance (componentwise max) over both parents (v0 §6.8) |
-| **D. Environment and Decentralization** | | |
-| 9 | Explicit Environment Recording | Run object records full environment (model, version, params, toolchain) |
-| 10 | Decentralization | Content-addressed store requires no central authority; v0 is local-only but the design extends to distributed remotes |
-| 11 | Behavioral Reproducibility | Reproducibility = eval contract preservation, not byte equality |
+| 3 | Pipeline Steps Compose Cleanly | Pipeline DAG with data/control edges; sequential via bind, parallel via independent subgraphs; identity pipeline as no-op |
+| 4 | Evaluation Suites are Explicit Contracts | EvalSuite objects define T with metrics (name, aggregation, threshold, direction) and fixture sources |
+| 5 | Scores are Partially Ordered | Observed metrics in commits form certificate vectors; dominance is componentwise with per-metric direction |
+| 6 | Merge Records Scores From Both Parents | Merge commit records both parents' metrics, computes union suite (with optional retirement), and requires dominance |
+| 7 | Environment is Part of the Record | Run `environment` + Commit `env_constraints` record full environment (model, version, params, toolchain) |
+| 8 | Reproducibility Means Re-Running the Checks | Reproducibility = eval contract preservation under declared environment, not byte equality |
+| — | Actor Model (paper §3.2) | `ActorRef` struct with id/type/env_config; attribution as sets of actors per pipeline node |
+| — | Review Nodes (paper §3.3) | `review` node kind for explicit acceptance/modification decisions with attribution |
+| — | Metric Retirement (paper §5.3) | `retire_metrics()` removes obsolete metrics from union suite during merge; `--retire` CLI flag |
 
 ---
 
@@ -765,7 +790,7 @@ How v0 satisfies each Morph axiom:
 
 Morph v0 is successful if:
 
-- Prompt programs can be versioned as first-class objects
+- Pipelines can be versioned as first-class objects
 - Runs are recorded as execution receipts with full environment
 - Traces capture typed, addressable events
 - Annotations can attach feedback, bookmarks, tags, and notes to any object

@@ -161,7 +161,7 @@ mod tests {
     #[test]
     fn agent_info_with_instance_id_roundtrip() {
         let run = MorphObject::Run(Run {
-            program: "0".repeat(64),
+            pipeline: "0".repeat(64),
             commit: None,
             environment: RunEnvironment {
                 model: "test".into(),
@@ -207,7 +207,7 @@ mod tests {
     fn different_instance_id_different_hash() {
         let make_run = |iid: Option<&str>| {
             MorphObject::Run(Run {
-                program: "0".repeat(64),
+                pipeline: "0".repeat(64),
                 commit: None,
                 environment: RunEnvironment {
                     model: "test".into(),
@@ -239,7 +239,7 @@ mod tests {
     #[test]
     fn contributor_info_instance_id_roundtrip() {
         let run = MorphObject::Run(Run {
-            program: "0".repeat(64),
+            pipeline: "0".repeat(64),
             commit: None,
             environment: RunEnvironment {
                 model: "test".into(),
@@ -283,14 +283,16 @@ mod tests {
             agent_id: "agent-x".into(),
             agent_version: Some("3.0".into()),
             instance_id: Some("inst-xyz".into()),
+            actors: None,
         });
-        let prog = MorphObject::Program(Program {
-            graph: ProgramGraph {
-                nodes: vec![ProgramNode {
+        let prog = MorphObject::Pipeline(Pipeline {
+            graph: PipelineGraph {
+                nodes: vec![PipelineNode {
                     id: "node1".into(),
                     kind: "identity".into(),
                     ref_: None,
                     params: std::collections::BTreeMap::new(),
+                    env: None,
                 }],
                 edges: vec![],
             },
@@ -301,11 +303,120 @@ mod tests {
         });
         let json = canonical_json(&prog).unwrap();
         let parsed: MorphObject = serde_json::from_str(&json).unwrap();
-        if let MorphObject::Program(p) = &parsed {
+        if let MorphObject::Pipeline(p) = &parsed {
             let attr = p.attribution.as_ref().unwrap().get("node1").unwrap();
             assert_eq!(attr.instance_id.as_deref(), Some("inst-xyz"));
         } else {
-            panic!("expected Program");
+            panic!("expected Pipeline");
+        }
+    }
+
+    // --- paper-aligned new fields ---
+
+    #[test]
+    fn review_node_kind_roundtrip() {
+        let prog = MorphObject::Pipeline(Pipeline {
+            graph: PipelineGraph {
+                nodes: vec![PipelineNode {
+                    id: "review-step".into(),
+                    kind: "review".into(),
+                    ref_: None,
+                    params: std::collections::BTreeMap::new(),
+                    env: None,
+                }],
+                edges: vec![],
+            },
+            prompts: vec![],
+            eval_suite: None,
+            attribution: None,
+            provenance: None,
+        });
+        let json = canonical_json(&prog).unwrap();
+        let parsed: MorphObject = serde_json::from_str(&json).unwrap();
+        if let MorphObject::Pipeline(p) = &parsed {
+            assert_eq!(p.graph.nodes[0].kind, "review");
+        } else {
+            panic!("expected Pipeline");
+        }
+    }
+
+    #[test]
+    fn program_node_env_roundtrip() {
+        let mut env = std::collections::BTreeMap::new();
+        env.insert("model".to_string(), serde_json::json!("gpt-4o"));
+        env.insert("temperature".to_string(), serde_json::json!(0.7));
+        let prog = MorphObject::Pipeline(Pipeline {
+            graph: PipelineGraph {
+                nodes: vec![PipelineNode {
+                    id: "n1".into(),
+                    kind: "prompt_call".into(),
+                    ref_: None,
+                    params: std::collections::BTreeMap::new(),
+                    env: Some(env),
+                }],
+                edges: vec![],
+            },
+            prompts: vec![],
+            eval_suite: None,
+            attribution: None,
+            provenance: None,
+        });
+        let json = canonical_json(&prog).unwrap();
+        let parsed: MorphObject = serde_json::from_str(&json).unwrap();
+        if let MorphObject::Pipeline(p) = &parsed {
+            let node_env = p.graph.nodes[0].env.as_ref().unwrap();
+            assert_eq!(node_env.get("model").unwrap(), &serde_json::json!("gpt-4o"));
+        } else {
+            panic!("expected Pipeline");
+        }
+    }
+
+    #[test]
+    fn attribution_actors_set_roundtrip() {
+        let mut attribution = std::collections::BTreeMap::new();
+        attribution.insert("review-node".to_string(), AttributionEntry {
+            agent_id: "agent-1".into(),
+            agent_version: None,
+            instance_id: None,
+            actors: Some(vec![
+                ActorRef {
+                    id: "agent-1".into(),
+                    actor_type: "agent".into(),
+                    env_config: None,
+                },
+                ActorRef {
+                    id: "human-1".into(),
+                    actor_type: "human".into(),
+                    env_config: None,
+                },
+            ]),
+        });
+        let prog = MorphObject::Pipeline(Pipeline {
+            graph: PipelineGraph {
+                nodes: vec![PipelineNode {
+                    id: "review-node".into(),
+                    kind: "review".into(),
+                    ref_: None,
+                    params: std::collections::BTreeMap::new(),
+                    env: None,
+                }],
+                edges: vec![],
+            },
+            prompts: vec![],
+            eval_suite: None,
+            attribution: Some(attribution),
+            provenance: None,
+        });
+        let json = canonical_json(&prog).unwrap();
+        let parsed: MorphObject = serde_json::from_str(&json).unwrap();
+        if let MorphObject::Pipeline(p) = &parsed {
+            let actors = p.attribution.as_ref().unwrap().get("review-node").unwrap()
+                .actors.as_ref().unwrap();
+            assert_eq!(actors.len(), 2);
+            assert_eq!(actors[0].id, "agent-1");
+            assert_eq!(actors[1].actor_type, "human");
+        } else {
+            panic!("expected Pipeline");
         }
     }
 

@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "morph")]
-#[command(about = "Version control for transformation programs")]
+#[command(about = "Version control for transformation pipelines")]
 struct Cli {
     /// Print what the CLI is doing (to stderr)
     #[arg(short, long, global = true)]
@@ -31,10 +31,10 @@ enum Command {
         #[command(subcommand)]
         sub: PromptCmd,
     },
-    /// Program operations
-    Program {
+    /// Pipeline operations
+    Pipeline {
         #[command(subcommand)]
-        sub: ProgramCmd,
+        sub: PipelineCmd,
     },
     /// Show working space status
     Status,
@@ -43,12 +43,12 @@ enum Command {
         #[arg(default_value = ".")]
         paths: Vec<PathBuf>,
     },
-    /// Create a commit (snapshots the staged file tree; program and eval suite are optional)
+    /// Create a commit (snapshots the staged file tree; pipeline and eval suite are optional)
     Commit {
         #[arg(short, long)]
         message: String,
         #[arg(long)]
-        program: Option<String>,
+        pipeline: Option<String>,
         #[arg(long)]
         eval_suite: Option<String>,
         #[arg(long)]
@@ -85,13 +85,16 @@ enum Command {
         #[arg(short, long)]
         message: String,
         #[arg(long)]
-        program: String,
+        pipeline: String,
         #[arg(long)]
         eval_suite: String,
         #[arg(long)]
         metrics: String,
         #[arg(long)]
         author: Option<String>,
+        /// Retire metrics from the union suite (paper §5.3). Comma-separated names.
+        #[arg(long)]
+        retire: Option<String>,
     },
     /// Rollup (squash) commits: one new commit from base to tip
     Rollup {
@@ -236,16 +239,16 @@ enum PromptCmd {
 }
 
 #[derive(clap::Subcommand)]
-enum ProgramCmd {
-    /// Create a program object from a JSON file
+enum PipelineCmd {
+    /// Create a pipeline object from a JSON file
     Create {
         path: PathBuf,
     },
-    /// Show a program object
+    /// Show a pipeline object
     Show {
         hash: String,
     },
-    /// Print the identity program hash (and ensure it exists in the store). Use from repo root for hook scripts.
+    /// Print the identity pipeline hash (and ensure it exists in the store). Use from repo root for hook scripts.
     IdentityHash,
 }
 
@@ -487,23 +490,23 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         },
-        Command::Program { sub } => match sub {
-            ProgramCmd::Create { path } => {
+        Command::Pipeline { sub } => match sub {
+            PipelineCmd::Create { path } => {
                 let (repo_root, store) = get_store(verbose)?;
                 let full = if path.is_absolute() { path } else { repo_root.join(&path) };
-                verbose_msg(verbose, &format!("creating program from {}", full.display()));
-                let obj = morph_core::program_from_file(&full)?;
+                verbose_msg(verbose, &format!("creating pipeline from {}", full.display()));
+                let obj = morph_core::pipeline_from_file(&full)?;
                 let hash = store.put(&obj)?;
                 println!("{}", hash);
             }
-            ProgramCmd::IdentityHash => {
+            PipelineCmd::IdentityHash => {
                 let (_repo_root, store) = get_store(verbose)?;
-                verbose_msg(verbose, "ensuring identity program in store");
-                let identity = morph_core::identity_program();
+                verbose_msg(verbose, "ensuring identity pipeline in store");
+                let identity = morph_core::identity_pipeline();
                 let hash = store.put(&identity)?;
                 println!("{}", hash);
             }
-            ProgramCmd::Show { hash } => {
+            PipelineCmd::Show { hash } => {
                 let (_repo_root, store) = get_store(verbose)?;
                 verbose_msg(verbose, &format!("reading object {}", hash));
                 let h = parse_hash(&hash)?;
@@ -536,11 +539,11 @@ fn main() -> anyhow::Result<()> {
                 println!("{}", h);
             }
         }
-        Command::Commit { message, program, eval_suite, metrics, author } => {
+        Command::Commit { message, pipeline, eval_suite, metrics, author } => {
             let (repo_root, store) = get_store(verbose)?;
             let morph_dir = repo_root.join(".morph");
             let version = read_repo_version(&morph_dir)?;
-            let prog_hash = program
+            let prog_hash = pipeline
                 .as_deref()
                 .map(parse_hash)
                 .transpose()?;
@@ -548,8 +551,8 @@ fn main() -> anyhow::Result<()> {
                 .as_deref()
                 .map(parse_hash)
                 .transpose()?;
-            verbose_msg(verbose, &format!("commit (program={}, eval_suite={})",
-                program.as_deref().unwrap_or("identity"),
+            verbose_msg(verbose, &format!("commit (pipeline={}, eval_suite={})",
+                pipeline.as_deref().unwrap_or("identity"),
                 eval_suite.as_deref().unwrap_or("empty")));
             let observed_metrics = metrics
                 .as_deref()
@@ -641,7 +644,7 @@ fn main() -> anyhow::Result<()> {
                         } else {
                             println!("run    {}", hash);
                             println!("trace  {}", run.trace);
-                            println!("program {}", run.program);
+                            println!("pipeline {}", run.pipeline);
                             println!("agent  {} {}", run.agent.id, run.agent.version);
                             if let Some(ref c) = run.commit {
                                 println!("commit {}", c);
@@ -713,21 +716,25 @@ fn main() -> anyhow::Result<()> {
                 println!("{}", json);
             }
         },
-        Command::Merge { branch, message, program, eval_suite, metrics, author } => {
+        Command::Merge { branch, message, pipeline, eval_suite, metrics, author, retire } => {
             let (_repo_root, store) = get_store(verbose)?;
-            verbose_msg(verbose, &format!("merge branch {} (program={} suite={})", branch, program, eval_suite));
-            let prog_hash = parse_hash(&program)?;
+            verbose_msg(verbose, &format!("merge branch {} (pipeline={} suite={})", branch, pipeline, eval_suite));
+            let prog_hash = parse_hash(&pipeline)?;
             let suite_hash = parse_hash(&eval_suite)?;
             let observed: std::collections::BTreeMap<String, f64> =
                 serde_json::from_str(&metrics).map_err(|e| anyhow::anyhow!("invalid --metrics JSON: {}", e))?;
-            let hash = morph_core::create_merge_commit(
+            let retired: Option<Vec<String>> = retire.map(|s| s.split(',').map(|m| m.trim().to_string()).collect());
+            let hash = morph_core::create_merge_commit_with_retirement(
                 &store,
                 &branch,
                 &prog_hash,
                 observed,
-                &suite_hash,
+                Some(&suite_hash),
                 message,
                 author,
+                None,
+                None,
+                retired.as_deref(),
             )?;
             println!("{}", hash);
         }

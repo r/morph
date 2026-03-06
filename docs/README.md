@@ -23,13 +23,14 @@ This is not a gap in Git. Git was designed to version deterministic source code 
 
 Morph versions the *transformation process*, not just the output.
 
-Every prompt, every response, every tool call is recorded as an immutable, content-addressed trace. Commits include both a file tree snapshot (like Git) and a behavioral contract: which evaluation suite was run, and what scores were achieved. Merges require *behavioral dominance* — the merged code must be at least as good as both parents on every declared metric.
+Every prompt, every response, every tool call is recorded as an immutable, content-addressed trace. Commits include both a file tree snapshot (like Git) and a behavioral contract: which evaluation suite was run, and what scores were achieved. Merges require *behavioral dominance* — the merged code must be at least as good as both parents on every declared metric. The formal foundations are in [the paper](morph-paper.tex).
 
 Concretely:
 
+- **Pipelines and Actors** — Morph models the development process as a pipeline: a DAG of typed operators (prompt calls, tool calls, retrieval, transforms, review decisions). Every worker — human, agent, or human+agent pair — is an Actor. Each pipeline node records who contributed (as a set of actors) and what environment ran it.
 - **Runs and Traces** — Each agent interaction is recorded as a Run (execution receipt) with a Trace (the full sequence of events: prompts, responses, tool calls, file edits). These are immutable objects you can inspect, compare, and annotate.
-- **Behavioral Commits** — A Morph commit stores a file tree hash *and* an evaluation contract (which tests, what thresholds, what scores were observed). A plain `morph commit -m "message"` works exactly like Git when you don't need evaluation gating.
-- **Merge by Dominance** — Instead of three-way text merge, Morph merge requires the candidate to dominate both parents' certified metrics. If the merged code regresses on any metric, the merge fails.
+- **Behavioral Commits** — A Morph commit stores a file tree hash *and* an evaluation contract (which tests, what thresholds, what scores were observed), plus environment constraints and evidence references to the runs that back up the claim. A plain `morph commit -m "message"` works exactly like Git when you don't need evaluation gating.
+- **Merge by Dominance** — Instead of three-way text merge, Morph merge requires the candidate to dominate both parents' certified metrics. If the merged code regresses on any metric, the merge fails. Metric retirement lets you explicitly drop obsolete metrics from the merge contract when the pipeline has fundamentally changed.
 - **Annotations** — Attach feedback, bookmarks, tags, or notes to any object — a commit, a run, a specific event within a trace — without altering its hash.
 
 ## Why Developers Need This
@@ -52,7 +53,7 @@ Morph sits alongside Git, not instead of it. Both use their own dot-directory (`
 
 | Document | What it covers |
 |---|---|
-| **[THEORY.md](THEORY.md)** | The mathematical model: programs as effectful transformations, behavioral equivalence via certificate vectors, merge as dominance of joined requirements. Read this to understand *why Morph works the way it does*. |
+| **[THEORY.md](THEORY.md)** | The mathematical model: pipelines as effectful transformations, behavioral equivalence via certificate vectors, merge as dominance of joined requirements. Read this to understand *why Morph works the way it does*. |
 | **[v0-spec.md](v0-spec.md)** | The concrete v0 system design: object schemas, storage backend, CLI commands, and a line-by-line mapping from theory to implementation. Read this to understand *what Morph builds*. |
 
 THEORY.md defines the algebra. v0-spec.md projects that algebra into a buildable system. The code implements v0-spec.md. When the spec and theory disagree, the spec wins for v0 (and documents the simplification).
@@ -71,7 +72,7 @@ THEORY.md defines the algebra. v0-spec.md projects that algebra into a buildable
 
 | Document | What it covers |
 |---|---|
-| **[morph-paper.tex](morph-paper.tex)** | LaTeX paper formalizing Morph: programs as monadic computations, evaluation contracts, merge monotonicity theorem. |
+| **[morph-paper.tex](morph-paper.tex)** | LaTeX paper formalizing Morph: pipelines as monadic computations, evaluation contracts, merge monotonicity theorem. |
 
 ### Internal Plans
 

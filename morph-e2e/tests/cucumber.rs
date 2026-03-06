@@ -84,8 +84,8 @@ fn given_file(w: &mut MorphWorld, path: String, content: String) {
     std::fs::write(&full, content).expect("write file");
 }
 
-#[given(expr = "the identity program and a minimal eval suite exist")]
-fn given_program_and_eval_suite(w: &mut MorphWorld) {
+#[given(expr = "the identity pipeline and a minimal eval suite exist")]
+fn given_pipeline_and_eval_suite(w: &mut MorphWorld) {
     let root = w.temp_dir.as_ref().expect("given a morph repo first");
     let prog = r#"{"graph":{"nodes":[{"id":"n1","kind":"identity","ref":null,"params":{}}],"edges":[]},"prompts":[],"eval_suite":null,"provenance":null}"#;
     let eval = r#"{"cases":[],"metrics":[{"name":"acc","aggregation":"mean","threshold":0.0}]}"#;
@@ -122,7 +122,7 @@ fn when_capture_last_output(w: &mut MorphWorld, name: String) {
     w.captures.insert(name, line);
 }
 
-#[when(regex = r#"I run commit with message "([^"]*)" using captured program and eval suite"#)]
+#[when(regex = r#"I run commit with message "([^"]*)" using captured pipeline and eval suite"#)]
 fn when_run_commit_captured(w: &mut MorphWorld, message: String) {
     let prog = w.captures.get("prog_hash").expect("capture prog_hash first");
     let suite = w.captures.get("suite_hash").expect("capture suite_hash first");
@@ -133,7 +133,7 @@ fn when_run_commit_captured(w: &mut MorphWorld, message: String) {
             "commit",
             "-m",
             &message,
-            "--program",
+            "--pipeline",
             prog,
             "--eval-suite",
             suite,

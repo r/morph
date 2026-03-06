@@ -46,7 +46,7 @@ Commit refs, config, and small metadata. Object store stays local.
 
 ## Workflow
 
-Use **Morph** for behavioral versioning: record runs, create commits (program + eval contract), merge with dominance checks, annotate trace events.
+Use **Morph** for behavioral versioning: record runs, create commits (pipeline + eval contract), merge with dominance checks, annotate trace events.
 
 Use **Git** for backup and collaboration: stage, commit, push on your own schedule.
 

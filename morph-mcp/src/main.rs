@@ -170,7 +170,7 @@ impl MorphServer {
         Ok(CallToolResult::success(vec![Content::text(out)]))
     }
 
-    #[tool(description = "Create a commit. Required: message, program (hash), eval_suite (hash). Optional: metrics (JSON object), author.")]
+    #[tool(description = "Create a commit. Required: message. Optional: pipeline (hash), eval_suite (hash), metrics (JSON object), author.")]
     async fn morph_commit(
         &self,
         params: Parameters<CommitParams>,
@@ -179,7 +179,7 @@ impl MorphServer {
             .map_err(|e| McpError::invalid_params(e, None))?;
         let morph_dir = repo_root.join(".morph");
         let version = read_repo_version(&morph_dir).map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-        let prog_hash = params.0.program
+        let prog_hash = params.0.pipeline
             .as_deref()
             .map(Hash::from_hex)
             .transpose()
@@ -315,8 +315,8 @@ struct StageParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 struct CommitParams {
     message: String,
-    #[serde(default)]
-    program: Option<String>,
+    #[serde(default, alias = "program")]
+    pipeline: Option<String>,
     #[serde(default)]
     eval_suite: Option<String>,
     #[serde(default)]

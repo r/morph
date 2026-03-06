@@ -45,7 +45,7 @@ pub fn migrate_0_0_to_0_2(morph_dir: &Path) -> Result<(), MorphError> {
     std::fs::create_dir_all(gix.objects_dir())?;
     std::fs::create_dir_all(gix.refs_dir())?;
 
-    // Dependency order: no-refs first, then Tree, Program, Commit, Run, TraceRollup, Annotation
+    // Dependency order: no-refs first, then Tree, Pipeline, Commit, Run, TraceRollup, Annotation
     let order = dependency_order();
     for type_ord in order {
         for (old_hash, obj) in &old_objects {
@@ -110,7 +110,7 @@ fn object_type_ord(obj: &MorphObject) -> u8 {
         MorphObject::Trace(_) => 0,
         MorphObject::Artifact(_) => 0,
         MorphObject::Tree(_) => 1,
-        MorphObject::Program(_) => 2,
+        MorphObject::Pipeline(_) => 2,
         MorphObject::Commit(_) => 3,
         MorphObject::Run(_) => 4,
         MorphObject::TraceRollup(_) => 5,
@@ -143,17 +143,18 @@ fn rewrite_object(obj: &MorphObject, map: &HashMap<String, Hash>) -> Result<Morp
                 })
                 .collect(),
         }),
-        MorphObject::Program(p) => MorphObject::Program(Program {
-            graph: ProgramGraph {
+        MorphObject::Pipeline(p) => MorphObject::Pipeline(Pipeline {
+            graph: PipelineGraph {
                 nodes: p
                     .graph
                     .nodes
                     .iter()
-                    .map(|n| ProgramNode {
+                    .map(|n| PipelineNode {
                         id: n.id.clone(),
                         kind: n.kind.clone(),
                         ref_: n.ref_.as_ref().map(|r| subst(map, r)),
                         params: n.params.clone(),
+                        env: n.env.clone(),
                     })
                     .collect(),
                 edges: p.graph.edges.clone(),
@@ -170,7 +171,7 @@ fn rewrite_object(obj: &MorphObject, map: &HashMap<String, Hash>) -> Result<Morp
         }),
         MorphObject::Commit(c) => MorphObject::Commit(Commit {
             tree: c.tree.as_ref().map(|s| subst(map, s)),
-            program: subst(map, &c.program),
+            pipeline: subst(map, &c.pipeline),
             parents: c.parents.iter().map(|s| subst(map, s)).collect(),
             message: c.message.clone(),
             timestamp: c.timestamp.clone(),
@@ -180,10 +181,12 @@ fn rewrite_object(obj: &MorphObject, map: &HashMap<String, Hash>) -> Result<Morp
                 suite: subst(map, &c.eval_contract.suite),
                 observed_metrics: c.eval_contract.observed_metrics.clone(),
             },
+            env_constraints: c.env_constraints.clone(),
+            evidence_refs: c.evidence_refs.as_ref().map(|refs| refs.iter().map(|s| subst(map, s)).collect()),
             morph_version: c.morph_version.clone(),
         }),
         MorphObject::Run(r) => MorphObject::Run(Run {
-            program: subst(map, &r.program),
+            pipeline: subst(map, &r.pipeline),
             commit: r.commit.as_ref().map(|s| subst(map, s)),
             environment: r.environment.clone(),
             input_state_hash: r.input_state_hash.clone(),
@@ -248,7 +251,7 @@ mod tests {
         let suite_hash = store.put(&suite).unwrap();
         let commit = MorphObject::Commit(Commit {
             tree: None,
-            program: blob_hash.to_string(),
+            pipeline: blob_hash.to_string(),
             parents: vec![],
             message: "first".into(),
             timestamp: "2020-01-01T00:00:00Z".into(),
@@ -258,6 +261,8 @@ mod tests {
                 suite: suite_hash.to_string(),
                 observed_metrics: BTreeMap::new(),
             },
+            env_constraints: None,
+            evidence_refs: None,
             morph_version: None,
         });
         let commit_hash = store.put(&commit).unwrap();

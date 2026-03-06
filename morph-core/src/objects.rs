@@ -29,10 +29,10 @@ fn default_entry_type() -> String {
     "blob".to_string()
 }
 
-// ---------- 4.3 Program ----------
+// ---------- 4.3 Pipeline ----------
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Program {
-    pub graph: ProgramGraph,
+pub struct Pipeline {
+    pub graph: PipelineGraph,
     pub prompts: Vec<String>,
     #[serde(default)]
     pub eval_suite: Option<String>,
@@ -42,6 +42,10 @@ pub struct Program {
     pub provenance: Option<Provenance>,
 }
 
+/// Attribution entry for a pipeline node. Maps to the paper's α : V → 2^A.
+/// `actors` is a set of Actor IDs that contributed to this node.
+/// The legacy `agent_id` field is kept for backward compatibility; when both
+/// are present, `actors` takes precedence.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AttributionEntry {
     pub agent_id: String,
@@ -49,24 +53,44 @@ pub struct AttributionEntry {
     pub agent_version: Option<String>,
     #[serde(default)]
     pub instance_id: Option<String>,
+    #[serde(default)]
+    pub actors: Option<Vec<ActorRef>>,
+}
+
+/// Reference to an Actor (paper §3.2). Actors are humans, agents, or pairs.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActorRef {
+    pub id: String,
+    #[serde(default = "default_actor_type")]
+    pub actor_type: String,
+    #[serde(default)]
+    pub env_config: Option<BTreeMap<String, serde_json::Value>>,
+}
+
+fn default_actor_type() -> String {
+    "agent".to_string()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProgramGraph {
-    pub nodes: Vec<ProgramNode>,
-    pub edges: Vec<ProgramEdge>,
+pub struct PipelineGraph {
+    pub nodes: Vec<PipelineNode>,
+    pub edges: Vec<PipelineEdge>,
 }
 
+/// A node in the pipeline DAG. `kind` is one of: prompt_call, tool_call,
+/// retrieval, transform, identity, review (paper §3.3).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ProgramNode {
+pub struct PipelineNode {
     pub id: String,
     pub kind: String,
     pub ref_: Option<String>,
     pub params: BTreeMap<String, serde_json::Value>,
+    /// Per-node environment config (paper ε : V → EnvConfig ∪ {⊥}).
+    pub env: Option<BTreeMap<String, serde_json::Value>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProgramEdge {
+pub struct PipelineEdge {
     pub from: String,
     pub to: String,
     pub kind: String,
@@ -136,7 +160,8 @@ impl EvalMetric {
 pub struct Commit {
     #[serde(default)]
     pub tree: Option<String>,
-    pub program: String,
+    #[serde(alias = "program")]
+    pub pipeline: String,
     pub parents: Vec<String>,
     pub message: String,
     pub timestamp: String,
@@ -144,6 +169,12 @@ pub struct Commit {
     #[serde(default)]
     pub contributors: Option<Vec<CommitContributor>>,
     pub eval_contract: EvalContract,
+    /// Environment in which the scores were captured (paper Definition 5.1).
+    #[serde(default)]
+    pub env_constraints: Option<BTreeMap<String, serde_json::Value>>,
+    /// Hashes of supporting Run and Trace objects (paper Definition 5.1).
+    #[serde(default)]
+    pub evidence_refs: Option<Vec<String>>,
     #[serde(default)]
     pub morph_version: Option<String>,
 }
@@ -164,7 +195,8 @@ pub struct EvalContract {
 // ---------- 4.6 Run ----------
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Run {
-    pub program: String,
+    #[serde(alias = "program")]
+    pub pipeline: String,
     #[serde(default)]
     pub commit: Option<String>,
     pub environment: RunEnvironment,
@@ -264,7 +296,8 @@ pub struct Annotation {
 pub enum MorphObject {
     Blob(Blob),
     Tree(Tree),
-    Program(Program),
+    #[serde(alias = "program")]
+    Pipeline(Pipeline),
     EvalSuite(EvalSuite),
     Commit(Commit),
     Run(Run),
@@ -274,50 +307,56 @@ pub enum MorphObject {
     Annotation(Annotation),
 }
 
-// Serde: ProgramNode uses "ref" in JSON but "ref" is a Rust keyword. Use ref_ with rename.
-impl Serialize for ProgramNode {
+// Serde: PipelineNode uses "ref" in JSON but "ref" is a Rust keyword. Use ref_ with rename.
+impl Serialize for PipelineNode {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
         #[derive(Serialize)]
-        struct ProgramNodeOut<'a> {
+        struct PipelineNodeOut<'a> {
             id: &'a str,
             kind: &'a str,
             #[serde(skip_serializing_if = "Option::is_none")]
             r#ref: Option<&'a String>,
             params: &'a BTreeMap<String, serde_json::Value>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            env: Option<&'a BTreeMap<String, serde_json::Value>>,
         }
-        ProgramNodeOut {
+        PipelineNodeOut {
             id: &self.id,
             kind: &self.kind,
             r#ref: self.ref_.as_ref(),
             params: &self.params,
+            env: self.env.as_ref(),
         }
         .serialize(serializer)
     }
 }
 
-impl<'de> Deserialize<'de> for ProgramNode {
+impl<'de> Deserialize<'de> for PipelineNode {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
         #[derive(Deserialize)]
-        struct ProgramNodeIn {
+        struct PipelineNodeIn {
             id: String,
             kind: String,
             #[serde(default)]
             r#ref: Option<String>,
             #[serde(default)]
             params: BTreeMap<String, serde_json::Value>,
+            #[serde(default)]
+            env: Option<BTreeMap<String, serde_json::Value>>,
         }
-        let in_ = ProgramNodeIn::deserialize(deserializer)?;
-        Ok(ProgramNode {
+        let in_ = PipelineNodeIn::deserialize(deserializer)?;
+        Ok(PipelineNode {
             id: in_.id,
             kind: in_.kind,
             ref_: in_.r#ref,
             params: in_.params,
+            env: in_.env,
         })
     }
 }

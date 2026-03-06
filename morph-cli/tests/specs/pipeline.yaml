@@ -1,4 +1,4 @@
-- name: program_create_and_show
+- name: pipeline_create_and_show
   files:
     prog.json: |
       {
@@ -11,7 +11,7 @@
         "provenance": null
       }
   steps:
-    - morph: [program, create, prog.json]
+    - morph: [pipeline, create, prog.json]
       capture: hash
-    - morph: [program, show, "${hash}"]
-      stdout_contains: program
+    - morph: [pipeline, show, "${hash}"]
+      stdout_contains: pipeline

@@ -1,8 +1,9 @@
 # Morph
 
-**Behavioral version control for AI-assisted development.** Morph extends Git-style content-addressed versioning with execution evidence, behavioral contracts, and merge gating — so you know *how* code was produced and whether it still works.
+**Version control when pipelines are probabilistic.** Morph extends Git's content-addressed Merkle DAG with pipelines (the sequences of prompt calls, tool invocations, retrieval steps, and transforms that make up an LLM application), evaluation suites (versioned definitions of what "good" means), and runs (permanent execution receipts recording exactly what ran, in what environment, and what it produced). A Morph commit bundles a pipeline with an evaluation suite and scores. At merge time, Morph records the scores from both parents and the scores the merged pipeline achieved.
 
 - **Full docs:** [docs/README.md](docs/README.md) — problem, solution, theory, and spec  
+- **Paper:** [docs/morph-paper.tex](docs/morph-paper.tex) — formal foundations  
 - **Install & run:** [docs/INSTALLATION.md](docs/INSTALLATION.md) — binaries, init, IDE (Cursor / Claude Code)  
 - **Cursor from scratch:** [docs/CURSOR-SETUP.md](docs/CURSOR-SETUP.md) — MCP, hooks, rules, committing  
 
