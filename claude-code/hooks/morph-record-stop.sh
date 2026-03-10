@@ -4,12 +4,13 @@
 # Logs: .morph/hooks/logs/claude-invoke.log, .morph/hooks/logs/morph-record.log, .morph/hooks/debug/last-Stop.json
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec 3<&0  # preserve original stdin before heredoc replaces it
 python3 - "$SCRIPT_DIR" << 'PY'
-import json, subprocess, sys
+import json, os, subprocess, sys
 from pathlib import Path
 from datetime import datetime
 
-raw = sys.stdin.read().strip()
+raw = os.fdopen(3).read().strip()
 if not raw:
     sys.exit(0)
 try:
