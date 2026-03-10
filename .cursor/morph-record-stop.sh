@@ -103,11 +103,11 @@ for root in roots:
     if result.returncode != 0:
         sys.stderr.write(f"morph pipeline identity-hash failed: {result.stderr}\n")
         continue
-    program_hash = result.stdout.strip()
+    pipeline_hash = result.stdout.strip()
 
     run_obj = {
         "type": "run",
-        "program": program_hash,
+        "pipeline": pipeline_hash,
         "commit": None,
         "environment": {"model": "cursor", "version": "1.0", "parameters": {}, "toolchain": {}},
         "input_state_hash": "0" * 64,

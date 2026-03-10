@@ -43,7 +43,7 @@ pub fn current_branch(store: &dyn Store) -> Result<Option<String>, MorphError> {
 /// Create a commit and update the current branch (or create refs/heads/main if first commit).
 pub fn create_commit(
     store: &dyn Store,
-    program_hash: &Hash,
+    pipeline_hash: &Hash,
     eval_suite_hash: &Hash,
     observed_metrics: BTreeMap<String, f64>,
     message: String,
@@ -56,7 +56,7 @@ pub fn create_commit(
     let author = author.unwrap_or_else(|| "morph".to_string());
     let commit = MorphObject::Commit(Commit {
         tree: None,
-        pipeline: program_hash.to_string(),
+        pipeline: pipeline_hash.to_string(),
         parents: parent_list,
         message: message.clone(),
         timestamp: timestamp.clone(),
@@ -79,12 +79,12 @@ pub fn create_commit(
 }
 
 /// Create a commit with tree built from the staging index.
-/// `program_hash` and `eval_suite_hash` are optional: defaults to identity program / empty eval suite.
+/// `pipeline_hash` and `eval_suite_hash` are optional: defaults to identity pipeline / empty eval suite.
 /// Clears the staging index after commit.
 pub fn create_tree_commit(
     store: &dyn Store,
     repo_root: &Path,
-    program_hash: Option<&Hash>,
+    pipeline_hash: Option<&Hash>,
     eval_suite_hash: Option<&Hash>,
     observed_metrics: BTreeMap<String, f64>,
     message: String,
@@ -95,7 +95,7 @@ pub fn create_tree_commit(
     let index = crate::index::read_index(&morph_dir)?;
     let tree_hash = crate::tree::build_tree(store, &index.entries)?;
 
-    let prog_hash = match program_hash {
+    let prog_hash = match pipeline_hash {
         Some(h) => h.to_string(),
         None => {
             let identity = crate::identity::identity_pipeline();
@@ -376,7 +376,7 @@ fn load_eval_suite(store: &dyn Store, suite_hash_str: &str) -> Result<EvalSuite,
     }
 }
 
-/// Rollup (squash) a range: one new commit with parent = base, program and eval_contract from tip.
+/// Rollup (squash) a range: one new commit with parent = base, pipeline and eval_contract from tip.
 /// Preserves the tip commit's tree hash if it has one.
 pub fn rollup(
     store: &dyn Store,
@@ -462,8 +462,8 @@ mod tests {
         std::fs::create_dir_all(store.refs_dir()).unwrap();
         store.ref_write_raw("HEAD", "ref: heads/main").unwrap();
 
-        let prog = MorphObject::Blob(Blob { kind: "x".into(), content: serde_json::json!({}) });
-        let prog_hash = store.put(&prog).unwrap();
+        let pipeline = MorphObject::Blob(Blob { kind: "x".into(), content: serde_json::json!({}) });
+        let pipeline_hash = store.put(&pipeline).unwrap();
         let suite = MorphObject::Blob(Blob { kind: "eval".into(), content: serde_json::json!({}) });
         let suite_hash = store.put(&suite).unwrap();
 
@@ -471,7 +471,7 @@ mod tests {
         metrics.insert("acc".to_string(), 0.9);
         let hash = create_commit(
             &store,
-            &prog_hash,
+            &pipeline_hash,
             &suite_hash,
             metrics,
             "first".into(),
@@ -492,19 +492,19 @@ mod tests {
         std::fs::create_dir_all(store.refs_dir()).unwrap();
         store.ref_write_raw("HEAD", "ref: heads/main").unwrap();
 
-        let prog = MorphObject::Blob(Blob { kind: "p".into(), content: serde_json::json!({}) });
-        let prog_hash = store.put(&prog).unwrap();
+        let pipeline = MorphObject::Blob(Blob { kind: "p".into(), content: serde_json::json!({}) });
+        let pipeline_hash = store.put(&pipeline).unwrap();
         let suite = MorphObject::Blob(Blob { kind: "e".into(), content: serde_json::json!({}) });
         let suite_hash = store.put(&suite).unwrap();
 
         let mut m1 = BTreeMap::new();
         m1.insert("acc".to_string(), 0.9);
-        let c1 = create_commit(&store, &prog_hash, &suite_hash, m1.clone(), "main".into(), None).unwrap();
+        let c1 = create_commit(&store, &pipeline_hash, &suite_hash, m1.clone(), "main".into(), None).unwrap();
 
         store.ref_write("heads/feature", &c1).unwrap();
         let mut m2 = BTreeMap::new();
         m2.insert("acc".to_string(), 0.85);
-        let c2 = create_commit(&store, &prog_hash, &suite_hash, m2, "feature".into(), None).unwrap();
+        let c2 = create_commit(&store, &pipeline_hash, &suite_hash, m2, "feature".into(), None).unwrap();
         store.ref_write("heads/feature", &c2).unwrap();
         store.ref_write("heads/main", &c1).unwrap();
         store.ref_write_raw("HEAD", "ref: heads/main").unwrap();
@@ -514,7 +514,7 @@ mod tests {
         let r = create_merge_commit(
             &store,
             "feature",
-            &prog_hash,
+            &pipeline_hash,
             merged_bad,
             &suite_hash,
             "merge".into(),
@@ -527,7 +527,7 @@ mod tests {
         let merge_hash = create_merge_commit(
             &store,
             "feature",
-            &prog_hash,
+            &pipeline_hash,
             merged_good,
             &suite_hash,
             "merge".into(),
@@ -577,7 +577,7 @@ mod tests {
     }
 
     #[test]
-    fn create_tree_commit_defaults_program_and_eval() {
+    fn create_tree_commit_defaults_pipeline_and_eval() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         let _store = crate::repo::init_repo(root).unwrap();
@@ -652,8 +652,8 @@ mod tests {
         let morph_dir = root.join(".morph");
         let store = crate::open_store(&morph_dir).unwrap();
 
-        let prog = MorphObject::Blob(Blob { kind: "p".into(), content: serde_json::json!({}) });
-        let prog_hash = store.put(&prog).unwrap();
+        let pipeline = MorphObject::Blob(Blob { kind: "p".into(), content: serde_json::json!({}) });
+        let pipeline_hash = store.put(&pipeline).unwrap();
 
         let suite_a = MorphObject::EvalSuite(crate::objects::EvalSuite {
             cases: vec![],
@@ -671,7 +671,7 @@ mod tests {
         crate::add_paths(&store, root, &[std::path::PathBuf::from(".")]).unwrap();
         let mut m1 = BTreeMap::new();
         m1.insert("acc".to_string(), 0.9);
-        create_tree_commit(store.as_ref(), root, Some(&prog_hash), Some(&suite_a_hash), m1, "c1".into(), None, Some("0.3")).unwrap();
+        create_tree_commit(store.as_ref(), root, Some(&pipeline_hash), Some(&suite_a_hash), m1, "c1".into(), None, Some("0.3")).unwrap();
 
         let c1 = resolve_head(store.as_ref()).unwrap().unwrap();
         store.ref_write("heads/feature", &c1).unwrap();
@@ -680,7 +680,7 @@ mod tests {
         crate::add_paths(&store, root, &[std::path::PathBuf::from(".")]).unwrap();
         let mut m2 = BTreeMap::new();
         m2.insert("f1".to_string(), 0.85);
-        create_tree_commit(store.as_ref(), root, Some(&prog_hash), Some(&suite_b_hash), m2, "c2".into(), None, Some("0.3")).unwrap();
+        create_tree_commit(store.as_ref(), root, Some(&pipeline_hash), Some(&suite_b_hash), m2, "c2".into(), None, Some("0.3")).unwrap();
 
         store.ref_write("heads/feature", &resolve_head(store.as_ref()).unwrap().unwrap()).unwrap();
         store.ref_write("heads/main", &c1).unwrap();
@@ -696,7 +696,7 @@ mod tests {
         let merge_hash = create_merge_commit_full(
             store.as_ref(),
             "feature",
-            &prog_hash,
+            &pipeline_hash,
             merged_metrics,
             None,
             "merge".into(),
@@ -728,8 +728,8 @@ mod tests {
         let morph_dir = root.join(".morph");
         let store = crate::open_store(&morph_dir).unwrap();
 
-        let prog = MorphObject::Blob(Blob { kind: "p".into(), content: serde_json::json!({}) });
-        let prog_hash = store.put(&prog).unwrap();
+        let pipeline = MorphObject::Blob(Blob { kind: "p".into(), content: serde_json::json!({}) });
+        let pipeline_hash = store.put(&pipeline).unwrap();
 
         let suite = MorphObject::EvalSuite(crate::objects::EvalSuite {
             cases: vec![],
@@ -741,7 +741,7 @@ mod tests {
         crate::add_paths(&store, root, &[std::path::PathBuf::from(".")]).unwrap();
         let mut m1 = BTreeMap::new();
         m1.insert("acc".to_string(), 0.9);
-        create_tree_commit(store.as_ref(), root, Some(&prog_hash), Some(&suite_hash), m1, "c1".into(), None, None).unwrap();
+        create_tree_commit(store.as_ref(), root, Some(&pipeline_hash), Some(&suite_hash), m1, "c1".into(), None, None).unwrap();
 
         let c1 = resolve_head(store.as_ref()).unwrap().unwrap();
         store.ref_write("heads/feature", &c1).unwrap();
@@ -750,7 +750,7 @@ mod tests {
         crate::add_paths(&store, root, &[std::path::PathBuf::from(".")]).unwrap();
         let mut m2 = BTreeMap::new();
         m2.insert("acc".to_string(), 0.85);
-        create_tree_commit(store.as_ref(), root, Some(&prog_hash), Some(&suite_hash), m2, "c2".into(), None, None).unwrap();
+        create_tree_commit(store.as_ref(), root, Some(&pipeline_hash), Some(&suite_hash), m2, "c2".into(), None, None).unwrap();
 
         store.ref_write("heads/feature", &resolve_head(store.as_ref()).unwrap().unwrap()).unwrap();
         store.ref_write("heads/main", &c1).unwrap();
@@ -762,7 +762,7 @@ mod tests {
         let result = create_merge_commit_full(
             store.as_ref(),
             "feature",
-            &prog_hash,
+            &pipeline_hash,
             bad_metrics,
             None,
             "merge".into(),

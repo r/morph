@@ -58,7 +58,7 @@ pub fn record_eval_metrics(path: &Path) -> Result<std::collections::BTreeMap<Str
 }
 
 /// Record a single prompt/response session as a Run with a Trace (no files).
-/// Uses the identity program. Call this from the IDE so the agent can pass its own response text.
+/// Uses the identity pipeline. Call this from the IDE so the agent can pass its own response text.
 pub fn record_session(
     store: &dyn Store,
     prompt: &str,
