@@ -8,8 +8,13 @@ import json, sys
 from pathlib import Path
 from datetime import datetime
 
-raw = sys.stdin.read()
-payload = json.loads(raw)
+raw = sys.stdin.read().strip()
+if not raw:
+    sys.exit(0)
+try:
+    payload = json.loads(raw)
+except json.JSONDecodeError:
+    sys.exit(0)
 cwd = payload.get("cwd") or "."
 session_id = payload.get("session_id") or "unknown"
 prompt = payload.get("prompt") or ""
