@@ -3,13 +3,19 @@
 # Logs: .morph/hooks/logs/claude-invoke.log, .morph/hooks/debug/last-UserPromptSubmit.json
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec 3<&0  # preserve original stdin before heredoc replaces it
 python3 - "$SCRIPT_DIR" << 'PY'
-import json, sys
+import json, os, sys
 from pathlib import Path
 from datetime import datetime
 
-raw = sys.stdin.read()
-payload = json.loads(raw)
+raw = os.fdopen(3).read().strip()
+if not raw:
+    sys.exit(0)
+try:
+    payload = json.loads(raw)
+except json.JSONDecodeError:
+    sys.exit(0)
 cwd = payload.get("cwd") or "."
 session_id = payload.get("session_id") or "unknown"
 prompt = payload.get("prompt") or ""

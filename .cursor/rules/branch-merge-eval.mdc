@@ -17,7 +17,7 @@ Morph merges are behavioral, not just syntactic. A merge succeeds only if the me
 ## Merge command
 
 ```
-morph merge <branch> --message "msg" --program <hash> --eval_suite <hash> --metrics '{"tests_passed": N, "pass_rate": 1.0}'
+morph merge <branch> --message "msg" --pipeline <hash> --eval-suite <hash> --metrics '{"tests_passed": N, "pass_rate": 1.0}'
 ```
 
 The merge will fail if the metrics do not dominate the componentwise join of both parents' certified scores. This is a **behavioral conflict** — analogous to a text conflict in Git, but at the semantic level.
