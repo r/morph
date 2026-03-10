@@ -17,14 +17,14 @@ Open the printed URL in a browser.
 ## What you see
 
 - **Commit strip** -- list of commits from HEAD; click to expand.
-- **Detail panel** -- message, author, program hash, eval contract (suite + observed metrics), prompts.
+- **Detail panel** -- message, author, pipeline hash, eval contract (suite + observed metrics), prompts.
 - **Object browser** -- paste any hash to inspect blobs, trees, commits, runs, etc.
 
 ## API
 
 | Endpoint | Returns |
 |----------|---------|
-| `GET /api/log` | JSON array of commits (hash, message, author, timestamp, program, parents, eval_contract) |
+| `GET /api/log` | JSON array of commits (hash, message, author, timestamp, pipeline, parents, eval_contract) |
 | `GET /api/object/<hash>` | JSON for any stored object |
 
 The single-page app is embedded in the binary via `include_str!`; no separate static directory at runtime.

@@ -3,13 +3,19 @@
 # Logs: .morph/hooks/logs/cursor-invoke.log (Cursor called us), .morph/hooks/debug/last-beforeSubmitPrompt.json (payload for inspection).
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec 3<&0  # preserve original stdin before heredoc replaces it
 python3 - "$SCRIPT_DIR" << 'PY'
-import json, sys
+import json, os, sys
 from pathlib import Path
 from datetime import datetime
 
-raw = sys.stdin.read()
-payload = json.loads(raw)
+raw = os.fdopen(3).read().strip()
+if not raw:
+    sys.exit(0)
+try:
+    payload = json.loads(raw)
+except json.JSONDecodeError:
+    sys.exit(0)
 roots = payload.get("workspace_roots") or []
 conversation_id = payload.get("conversation_id") or "unknown"
 generation_id = payload.get("generation_id") or ""

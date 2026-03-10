@@ -36,9 +36,9 @@ We adopt Git's object format and use **gitoxide (gix)** for the object store. Ha
 
    - **No refs:** Blob, EvalSuite, Trace, Artifact  
    - **Tree** (entries reference blob/tree hashes; process in an order where child trees before parents, or iterate until stable)  
-   - **Program** (prompts, eval_suite, graph node refs, provenance run/trace)  
-   - **Commit** (program, parents, eval_contract.suite)  
-   - **Run** (program, commit, trace, output_artifacts, agent.policy)  
+   - **Pipeline** (prompts, eval_suite, graph node refs, provenance run/trace)  
+   - **Commit** (pipeline, parents, eval_contract.suite)  
+   - **Run** (pipeline, commit, trace, output_artifacts, agent.policy)  
    - **TraceRollup** (trace)  
    - **Annotation** (target; data may contain link target)
 
@@ -60,9 +60,9 @@ We adopt Git's object format and use **gitoxide (gix)** for the object store. Ha
 | Type       | Fields to substitute (hash → new hash) |
 |-----------|----------------------------------------|
 | Tree      | `entries[].hash` |
-| Program   | `prompts[]`, `eval_suite`, `graph.nodes[].ref`, `provenance.derived_from_run`, `derived_from_trace` |
-| Commit    | `program`, `parents[]`, `eval_contract.suite` |
-| Run       | `program`, `commit`, `trace`, `output_artifacts[]`, `agent.policy` |
+| Pipeline   | `prompts[]`, `eval_suite`, `graph.nodes[].ref`, `provenance.derived_from_run`, `derived_from_trace` |
+| Commit    | `pipeline`, `parents[]`, `eval_contract.suite` |
+| Run       | `pipeline`, `commit`, `trace`, `output_artifacts[]`, `agent.policy` |
 | TraceRollup | `trace` |
 | Annotation | `target`, and `data.target` when kind is link |
 | Blob, EvalSuite, Trace, Artifact | none |

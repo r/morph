@@ -103,13 +103,13 @@ result = subprocess.run(
     text=True,
 )
 if result.returncode != 0:
-    sys.stderr.write(f"morph program identity-hash failed: {result.stderr}\n")
+    sys.stderr.write(f"morph pipeline identity-hash failed: {result.stderr}\n")
     sys.exit(1)
-program_hash = result.stdout.strip()
+pipeline_hash = result.stdout.strip()
 
 run_obj = {
     "type": "run",
-    "program": program_hash,
+    "pipeline": pipeline_hash,
     "commit": None,
     "environment": {"model": "claude-code", "version": "1.0", "parameters": {}, "toolchain": {}},
     "input_state_hash": "0" * 64,

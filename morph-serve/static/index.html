@@ -101,15 +101,15 @@
       detail.innerHTML = content;
     }
 
-    function renderCommitDetail(commit, program) {
+    function renderCommitDetail(commit, pipeline) {
       let metricsHtml = '';
       if (commit.eval_contract && commit.eval_contract.observed_metrics) {
         const m = commit.eval_contract.observed_metrics;
         metricsHtml = '<div class="metrics">' + Object.entries(m).map(([k, v]) => `<span class="metric">${k}: ${v}</span>`).join('') + '</div>';
       }
       let promptsHtml = '';
-      if (program && program.prompts && program.prompts.length) {
-        promptsHtml = '<div class="section"><h2>Prompts</h2>' + program.prompts.map(h => `
+      if (pipeline && pipeline.prompts && pipeline.prompts.length) {
+        promptsHtml = '<div class="section"><h2>Prompts</h2>' + pipeline.prompts.map(h => `
           <div class="prompt-row" data-prompt-hash="${h}">
             <span class="hash-link" data-fetch="${h}">${h.slice(0,12)}… (expand)</span>
             <div class="prompt-body" data-prompt-body="${h}" style="display:none"></div>
@@ -128,7 +128,7 @@
       renderDetail(`
         <div class="section"><h2>Commit ${versionHtml}</h2><p class="hash">${commit.hash}</p><p>${escapeHtml(commit.message)}</p><p class="commit-meta">${escapeHtml(commit.author)} · ${commit.timestamp}</p></div>
         ${treeHtml}
-        <div class="section"><h2>Program</h2><p class="hash"><a href="#" data-fetch="${commit.program}">${commit.program}</a></p></div>
+        <div class="section"><h2>Pipeline</h2><p class="hash"><a href="#" data-fetch="${commit.pipeline}">${commit.pipeline}</a></p></div>
         <div class="section"><h2>Eval contract</h2><p class="hash">Suite: <a href="#" data-fetch="${commit.eval_contract.suite}">${commit.eval_contract.suite}</a></p>${metricsHtml}</div>
         ${promptsHtml}
         ${objectBrowser}
@@ -230,11 +230,11 @@
             strip.querySelectorAll('.commit-card').forEach(x => x.classList.remove('selected'));
             card.classList.add('selected');
             detail.innerHTML = '<span class="loading">Loading…</span>';
-            let program = null;
+            let pipeline = null;
             try {
-              program = await api('/api/object/' + c.program);
+              pipeline = await api('/api/object/' + c.pipeline);
             } catch (_) {}
-            renderCommitDetail(c, program);
+            renderCommitDetail(c, pipeline);
           });
           strip.appendChild(card);
         });

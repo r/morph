@@ -1,6 +1,6 @@
 //! Morph core: content-addressed object model, storage, and repository operations.
 //!
-//! Morph is a pure VCS for transformation programs. It does not execute programs;
+//! Morph is a pure VCS for transformation pipelines. It does not execute pipelines;
 //! it stores, versions, and gates on behavioral contracts.
 
 pub mod hash;

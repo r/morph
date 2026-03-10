@@ -341,7 +341,7 @@ mod tests {
     }
 
     #[test]
-    fn program_node_env_roundtrip() {
+    fn pipeline_node_env_roundtrip() {
         let mut env = std::collections::BTreeMap::new();
         env.insert("model".to_string(), serde_json::json!("gpt-4o"));
         env.insert("temperature".to_string(), serde_json::json!(0.7));

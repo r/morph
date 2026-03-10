@@ -99,7 +99,7 @@
       commit:  { background: '#3b82f6', border: '#2563eb' },
       run:     { background: '#f59e0b', border: '#d97706' },
       trace:   { background: '#22c55e', border: '#16a34a' },
-      program: { background: '#a855f7', border: '#9333ea' },
+      pipeline: { background: '#a855f7', border: '#9333ea' },
       tree:    { background: '#64748b', border: '#475569' },
       prompt:  { background: '#ec4899', border: '#db2777' },
       object:  { background: '#71717a', border: '#52525b' },
@@ -135,7 +135,7 @@
     function renderDetail(obj, hash) {
       if (obj.Run) {
         const r = obj.Run;
-        let html = `<div class="section"><h2>Run</h2><p class="hash">${escapeHtml(hash)}</p><p>Agent: ${escapeHtml(r.agent?.id)} ${escapeHtml(r.agent?.version)}</p><p>Program: <a data-fetch="${escapeHtml(r.program)}">${escapeHtml((r.program||'').slice(0,12))}…</a></p><p>Trace: <a data-fetch="${escapeHtml(r.trace)}">${escapeHtml((r.trace||'').slice(0,12))}…</a></p><button class="btn" data-fetch="${escapeHtml(r.trace)}">View prompt / response</button></div>`;
+        let html = `<div class="section"><h2>Run</h2><p class="hash">${escapeHtml(hash)}</p><p>Agent: ${escapeHtml(r.agent?.id)} ${escapeHtml(r.agent?.version)}</p><p>Pipeline: <a data-fetch="${escapeHtml(r.pipeline)}">${escapeHtml((r.pipeline||'').slice(0,12))}…</a></p><p>Trace: <a data-fetch="${escapeHtml(r.trace)}">${escapeHtml((r.trace||'').slice(0,12))}…</a></p><button class="btn" data-fetch="${escapeHtml(r.trace)}">View prompt / response</button></div>`;
         detailEl.innerHTML = html;
         detailEl.querySelectorAll('[data-fetch]').forEach(el => { el.addEventListener('click', (e) => { e.preventDefault(); loadObject(el.dataset.fetch); }); });
         return;
@@ -154,7 +154,7 @@
         const c = obj.Commit;
         let html = `<div class="section"><h2>Commit</h2><p class="hash">${escapeHtml(hash)}</p><p>${escapeHtml(c.message)}</p><p style="font-size:0.8rem;color:#a1a1aa">${escapeHtml(c.author)} · ${escapeHtml(c.timestamp)}</p></div>`;
         if (c.tree) html += `<div class="section"><h2>Tree</h2><p><a data-fetch="${escapeHtml(c.tree)}">${escapeHtml(c.tree.slice(0,12))}…</a></p></div>`;
-        html += `<div class="section"><h2>Program</h2><p><a data-fetch="${escapeHtml(c.program)}">${escapeHtml((c.program||'').slice(0,12))}…</a></p></div>`;
+        html += `<div class="section"><h2>Pipeline</h2><p><a data-fetch="${escapeHtml(c.pipeline)}">${escapeHtml((c.pipeline||'').slice(0,12))}…</a></p></div>`;
         detailEl.innerHTML = html;
         detailEl.querySelectorAll('[data-fetch]').forEach(el => { el.addEventListener('click', (e) => { e.preventDefault(); loadObject(el.dataset.fetch); }); });
         return;
@@ -179,7 +179,7 @@
         detailEl.innerHTML = html;
         return;
       }
-      if (obj.Blob || obj.Program || obj.EvalSuite) {
+      if (obj.Blob || obj.Pipeline || obj.EvalSuite) {
         detailEl.innerHTML = '<div class="section"><h2>Object</h2><p class="hash">' + escapeHtml(hash) + '</p><pre class="detail-pre">' + escapeHtml(JSON.stringify(obj, null, 2)) + '</pre></div>';
         return;
       }

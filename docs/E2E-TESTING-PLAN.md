@@ -45,7 +45,7 @@ The harness is Cucumber; we only implement the steps that run morph and check re
    Init repo, create a file, `morph status` → file listed as new.
 
 2. **Stage and commit**  
-   Init, create file, `add`, `commit` with message and optional program/eval_suite → `log` shows commit; `.morph/refs/heads/main` and objects exist.
+   Init, create file, `add`, `commit` with message and optional pipeline/eval_suite → `log` shows commit; `.morph/refs/heads/main` and objects exist.
 
 3. **Prompt create and materialize**  
    Init, create `.morph/prompts/foo.txt`, `prompt create` → hash on stdout; `prompt materialize` → file content matches.
