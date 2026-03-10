@@ -10,6 +10,7 @@
 use assert_cmd::Command;
 use cucumber::{given, then, when, World as _};
 use std::collections::HashMap;
+use std::process::Stdio;
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -17,6 +18,8 @@ use tempfile::TempDir;
 pub struct MorphWorld {
     /// Temp directory for the current scenario (morph repo root).
     pub temp_dir: Option<TempDir>,
+    /// Canonicalized path (resolves symlinks like /var/folders → /private/var/folders on macOS).
+    pub canon_path: Option<std::path::PathBuf>,
     /// Last command stdout.
     pub last_stdout: String,
     /// Last command stderr: String,
@@ -27,6 +30,16 @@ pub struct MorphWorld {
     pub captures: HashMap<String, String>,
     /// After a concurrent step: exit codes from each agent.
     pub concurrent_exit_codes: Vec<i32>,
+}
+
+impl MorphWorld {
+    /// Return the canonicalized repo root path (or fall back to temp_dir path).
+    fn repo_root(&self) -> &std::path::Path {
+        self.canon_path
+            .as_deref()
+            .or_else(|| self.temp_dir.as_ref().map(|t| t.path()))
+            .expect("given a morph repo first")
+    }
 }
 
 /// Split CLI string into args, respecting double-quoted strings.
@@ -64,20 +77,26 @@ fn substitute_placeholders(cmd: &str, captures: &HashMap<String, String>) -> Str
 #[given(expr = "a morph repo")]
 fn given_morph_repo(w: &mut MorphWorld) {
     let temp = tempfile::tempdir().expect("temp dir");
-    let path = temp.path();
+    // Canonicalize so paths match Python Path.resolve() (e.g. /var/folders → /private/var/folders on macOS)
+    let canon = temp
+        .path()
+        .canonicalize()
+        .unwrap_or_else(|_| temp.path().to_path_buf());
     Command::cargo_bin("morph")
         .expect("morph binary")
         .arg("init")
-        .arg(path)
+        .arg(&canon)
         .assert()
         .success();
     w.temp_dir = Some(temp);
+    // Store canonicalized path for assertions
+    w.canon_path = Some(canon);
 }
 
 #[given(regex = r#"a file "([^"]+)" with content "([^"]*)""#)]
 fn given_file(w: &mut MorphWorld, path: String, content: String) {
-    let root = w.temp_dir.as_ref().expect("given a morph repo first");
-    let full = root.path().join(&path);
+    let root = w.repo_root();
+    let full = root.join(&path);
     if let Some(parent) = full.parent() {
         std::fs::create_dir_all(parent).expect("create parent");
     }
@@ -86,18 +105,18 @@ fn given_file(w: &mut MorphWorld, path: String, content: String) {
 
 #[given(expr = "the identity pipeline and a minimal eval suite exist")]
 fn given_pipeline_and_eval_suite(w: &mut MorphWorld) {
-    let root = w.temp_dir.as_ref().expect("given a morph repo first");
+    let root = w.repo_root();
     let prog = r#"{"graph":{"nodes":[{"id":"n1","kind":"identity","ref":null,"params":{}}],"edges":[]},"prompts":[],"eval_suite":null,"provenance":null}"#;
     let eval = r#"{"cases":[],"metrics":[{"name":"acc","aggregation":"mean","threshold":0.0}]}"#;
-    std::fs::write(root.path().join("prog.json"), prog).expect("write prog.json");
-    let evals_dir = root.path().join(".morph/evals");
+    std::fs::write(root.join("prog.json"), prog).expect("write prog.json");
+    let evals_dir = root.join(".morph/evals");
     std::fs::create_dir_all(&evals_dir).expect("create evals dir");
     std::fs::write(evals_dir.join("e.json"), eval).expect("write e.json");
 }
 
 #[when(regex = r#"I run "([^"]+)""#)]
 fn when_run(w: &mut MorphWorld, cmd: String) {
-    let root = w.temp_dir.as_ref().expect("given a morph repo first");
+    let root = w.repo_root().to_path_buf();
     let cmd = substitute_placeholders(&cmd, &w.captures);
     let parts = split_cli_args(&cmd);
     let (bin, args) = parts.split_first().expect("non-empty command");
@@ -105,7 +124,7 @@ fn when_run(w: &mut MorphWorld, cmd: String) {
         Command::cargo_bin("morph")
             .expect("morph binary")
             .args(args)
-            .current_dir(root.path())
+            .current_dir(&root)
             .output()
             .expect("run morph")
     } else {
@@ -126,7 +145,7 @@ fn when_capture_last_output(w: &mut MorphWorld, name: String) {
 fn when_run_commit_captured(w: &mut MorphWorld, message: String) {
     let prog = w.captures.get("prog_hash").expect("capture prog_hash first");
     let suite = w.captures.get("suite_hash").expect("capture suite_hash first");
-    let root = w.temp_dir.as_ref().expect("given a morph repo first");
+    let root = w.repo_root().to_path_buf();
     let output = Command::cargo_bin("morph")
         .expect("morph binary")
         .args([
@@ -140,7 +159,7 @@ fn when_run_commit_captured(w: &mut MorphWorld, message: String) {
             "--metrics",
             "{}",
         ])
-        .current_dir(root.path())
+        .current_dir(&root)
         .output()
         .expect("run morph");
     w.last_stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -150,7 +169,7 @@ fn when_run_commit_captured(w: &mut MorphWorld, message: String) {
 
 #[when(regex = r#"I run record-session with prompt "([^"]*)" and response "([^"]*)""#)]
 fn when_run_record_session(w: &mut MorphWorld, prompt: String, response: String) {
-    let root = w.temp_dir.as_ref().expect("given a morph repo first");
+    let root = w.repo_root().to_path_buf();
     let output = Command::cargo_bin("morph")
         .expect("morph binary")
         .args([
@@ -161,7 +180,7 @@ fn when_run_record_session(w: &mut MorphWorld, prompt: String, response: String)
             "--response",
             &response,
         ])
-        .current_dir(root.path())
+        .current_dir(&root)
         .output()
         .expect("run morph");
     w.last_stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -181,30 +200,30 @@ fn then_stdout_contains(w: &mut MorphWorld, needle: String) {
 
 #[then(regex = r#"the path "([^"]+)" exists as a directory"#)]
 fn then_path_is_dir(w: &mut MorphWorld, path: String) {
-    let root = w.temp_dir.as_ref().expect("given a morph repo first");
-    let full = root.path().join(&path);
+    let root = w.repo_root();
+    let full = root.join(&path);
     assert!(full.exists(), "path should exist: {}", full.display());
     assert!(full.is_dir(), "path should be a directory: {}", full.display());
 }
 
 #[then(regex = r#"the path "([^"]+)" is present"#)]
 fn then_path_exists(w: &mut MorphWorld, path: String) {
-    let root = w.temp_dir.as_ref().expect("given a morph repo first");
-    let full = root.path().join(&path);
+    let root = w.repo_root();
+    let full = root.join(&path);
     assert!(full.exists(), "path should exist: {}", full.display());
 }
 
 #[then(regex = r#"the path "([^"]+)" does not exist"#)]
 fn then_path_does_not_exist(w: &mut MorphWorld, path: String) {
-    let root = w.temp_dir.as_ref().expect("given a morph repo first");
-    let full = root.path().join(&path);
+    let root = w.repo_root();
+    let full = root.join(&path);
     assert!(!full.exists(), "path should not exist: {}", full.display());
 }
 
 #[then(regex = r#"the file "([^"]+)" has content "([^"]*)""#)]
 fn then_file_has_content(w: &mut MorphWorld, path: String, content: String) {
-    let root = w.temp_dir.as_ref().expect("given a morph repo first");
-    let full = root.path().join(&path);
+    let root = w.repo_root();
+    let full = root.join(&path);
     let actual = std::fs::read_to_string(&full).expect("read file");
     let actual = actual.trim_end_matches('\n');
     assert_eq!(actual, content, "file content mismatch: {}", full.display());
@@ -226,8 +245,7 @@ fn last_command_succeeded(w: &mut MorphWorld) {
 
 #[when(regex = r#"(\d+) agents run record-session concurrently"#)]
 fn when_agents_run_record_session_concurrently(w: &mut MorphWorld, n: u32) {
-    let root = w.temp_dir.as_ref().expect("given a morph repo first");
-    let root = Arc::new(root.path().to_path_buf());
+    let root = Arc::new(w.repo_root().to_path_buf());
     let mut handles = Vec::with_capacity(n as usize);
     for i in 0..n {
         let root_clone = Arc::clone(&root);
@@ -264,8 +282,8 @@ fn then_all_agents_succeeded(w: &mut MorphWorld) {
 
 #[then(regex = r#"the repo has exactly (\d+) run records"#)]
 fn then_repo_has_n_run_records(w: &mut MorphWorld, n: u32) {
-    let root = w.temp_dir.as_ref().expect("given a morph repo first");
-    let runs_dir = root.path().join(".morph/runs");
+    let root = w.repo_root();
+    let runs_dir = root.join(".morph/runs");
     let count = std::fs::read_dir(&runs_dir)
         .map(|rd| rd.count())
         .unwrap_or(0);
@@ -275,6 +293,99 @@ fn then_repo_has_n_run_records(w: &mut MorphWorld, n: u32) {
         "expected {} run records in .morph/runs, found {}",
         n,
         count
+    );
+}
+
+// --- Hook script steps ---
+
+/// Resolve the morph binary path so hook scripts can find it on PATH.
+fn morph_bin_path() -> std::path::PathBuf {
+    Command::cargo_bin("morph")
+        .expect("morph binary")
+        .get_program()
+        .to_owned()
+        .into()
+}
+
+#[when(regex = r#"I pipe into hook "([^"]+)" the JSON:"#)]
+fn when_pipe_into_hook(w: &mut MorphWorld, hook_rel: String, step: &cucumber::gherkin::Step) {
+    let repo_path = w.repo_root().to_string_lossy().to_string();
+    let body = step.docstring.as_deref().unwrap_or("");
+    // Replace <REPO> placeholder with actual temp dir path
+    let body = body.replace("<REPO>", &repo_path);
+
+    // Hook scripts live relative to the workspace root
+    let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    let hook_path = workspace_root.join(&hook_rel);
+    assert!(
+        hook_path.exists(),
+        "hook script not found: {}",
+        hook_path.display()
+    );
+
+    // Put the morph binary on PATH so the hook scripts can call `morph`
+    let morph_bin = morph_bin_path();
+    let morph_bin_dir = morph_bin.parent().expect("morph bin dir");
+    let path_env = format!(
+        "{}:{}",
+        morph_bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let mut child = std::process::Command::new("bash")
+        .arg(&hook_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env("PATH", &path_env)
+        .current_dir(&repo_path)
+        .spawn()
+        .expect("spawn hook");
+
+    if !body.trim().is_empty() {
+        use std::io::Write;
+        child
+            .stdin
+            .take()
+            .expect("stdin")
+            .write_all(body.as_bytes())
+            .expect("write stdin");
+    }
+    // Drop stdin to close it
+    drop(child.stdin.take());
+
+    let output = child.wait_with_output().expect("wait hook");
+    w.last_stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    w.last_stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    w.last_exit = output.status.code();
+}
+
+#[then(expr = "the hook exited successfully")]
+fn then_hook_exited_successfully(w: &mut MorphWorld) {
+    assert_eq!(
+        w.last_exit,
+        Some(0),
+        "expected hook exit 0, got {:?}\nstderr: {}",
+        w.last_exit,
+        w.last_stderr
+    );
+}
+
+#[then(regex = r#"the file "([^"]+)" contains "([^"]+)""#)]
+fn then_file_contains(w: &mut MorphWorld, path: String, needle: String) {
+    let root = w.repo_root();
+    let full = root.join(&path);
+    let content = std::fs::read_to_string(&full).unwrap_or_else(|e| {
+        panic!("failed to read {}: {}", full.display(), e);
+    });
+    assert!(
+        content.contains(&needle),
+        "file {} should contain {:?}\ncontent: {}",
+        full.display(),
+        needle,
+        content
     );
 }
 

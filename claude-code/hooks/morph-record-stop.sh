@@ -4,13 +4,19 @@
 # Logs: .morph/hooks/logs/claude-invoke.log, .morph/hooks/logs/morph-record.log, .morph/hooks/debug/last-Stop.json
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec 3<&0  # preserve original stdin before heredoc replaces it
 python3 - "$SCRIPT_DIR" << 'PY'
-import json, subprocess, sys
+import json, os, subprocess, sys
 from pathlib import Path
 from datetime import datetime
 
-raw = sys.stdin.read()
-payload = json.loads(raw)
+raw = os.fdopen(3).read().strip()
+if not raw:
+    sys.exit(0)
+try:
+    payload = json.loads(raw)
+except json.JSONDecodeError:
+    sys.exit(0)
 cwd = payload.get("cwd") or "."
 session_id = payload.get("session_id") or "unknown"
 response_text = payload.get("last_assistant_message") or ""
@@ -91,7 +97,7 @@ if result.returncode != 0:
 trace_hash = result.stdout.strip()
 
 result = subprocess.run(
-    ["morph", "program", "identity-hash"],
+    ["morph", "pipeline", "identity-hash"],
     cwd=repo,
     capture_output=True,
     text=True,
@@ -117,7 +123,7 @@ with open(run_path, "w") as f:
     json.dump(run_obj, f, indent=2)
 
 result = subprocess.run(
-    ["morph", "run", "record", "--run-file", str(run_path), "--trace", str(trace_path)],
+    ["morph", "run", "record", str(run_path), "--trace", str(trace_path)],
     cwd=repo,
     capture_output=True,
     text=True,
