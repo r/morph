@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Morph — Version control when pipelines are probabilistic</title>
+  <meta name="description" content="Morph extends Git with pipelines, evaluation suites, and execution receipts for a world where code makes LLM calls and 'did it get better?' is a statistical question.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #fafbfb;
+      --bg-alt: #f0f5f4;
+      --fg: #0f1a1a;
+      --fg-muted: #3d5250;
+      --fg-subtle: #8a9e9b;
+      --accent: #0f766e;
+      --accent-light: #14b8a6;
+      --accent-bg: #ecfdf8;
+      --border: #d5e0de;
+      --code-bg: #0c1a2a;
+      --code-fg: #e2e8f0;
+      --code-comment: #5f7a8a;
+      --code-keyword: #5eead4;
+      --code-string: #86efac;
+      --code-flag: #fde68a;
+      --max-width: 1080px;
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-mono: 'IBM Plex Mono', 'SF Mono', 'Menlo', monospace;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html {
+      font-size: 17px;
+      scroll-behavior: smooth;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      color: var(--fg);
+      background: var(--bg);
+      line-height: 1.7;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* — Nav — */
+    nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      max-width: var(--max-width);
+      margin: 0 auto;
+      padding: 1.5rem 2rem;
+    }
+
+    nav .logo {
+      font-weight: 700;
+      font-size: 1.25rem;
+      letter-spacing: -0.02em;
+      color: var(--fg);
+      text-decoration: none;
+    }
+
+    nav .links {
+      display: flex;
+      gap: 2rem;
+      list-style: none;
+    }
+
+    nav .links a {
+      color: var(--fg-muted);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 500;
+      transition: color 0.15s;
+    }
+
+    nav .links a:hover {
+      color: var(--accent);
+    }
+
+    /* — Hero — */
+    .hero {
+      max-width: var(--max-width);
+      margin: 0 auto;
+      padding: 6rem 2rem 4rem;
+      text-align: center;
+    }
+
+    .hero .badge {
+      display: inline-block;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #78600a;
+      background: #fef9e7;
+      border: 1px solid #fde68a;
+      padding: 0.35rem 1rem;
+      border-radius: 100px;
+      margin-bottom: 2rem;
+      letter-spacing: 0.02em;
+    }
+
+    .hero h1 {
+      font-size: 3.5rem;
+      font-weight: 700;
+      line-height: 1.15;
+      letter-spacing: -0.03em;
+      margin-bottom: 1.5rem;
+      max-width: 800px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .hero h1 em {
+      font-style: normal;
+      color: var(--accent);
+    }
+
+    .hero .subtitle {
+      font-size: 1.2rem;
+      color: var(--fg-muted);
+      max-width: 640px;
+      margin: 0 auto 2.5rem;
+      line-height: 1.7;
+    }
+
+    .hero .cta-group {
+      display: flex;
+      gap: 1rem;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.75rem 1.75rem;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      text-decoration: none;
+      transition: all 0.15s;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .btn-primary:hover {
+      background: var(--accent-light);
+    }
+
+    .btn-secondary {
+      background: var(--bg-alt);
+      color: var(--fg);
+      border: 1px solid var(--border);
+    }
+
+    .btn-secondary:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    /* — Section — */
+    section {
+      max-width: var(--max-width);
+      margin: 0 auto;
+      padding: 5rem 2rem;
+    }
+
+    .section-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 1rem;
+    }
+
+    section h2 {
+      font-size: 2.25rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1.2;
+      margin-bottom: 1rem;
+    }
+
+    section .lead {
+      font-size: 1.1rem;
+      color: var(--fg-muted);
+      max-width: 640px;
+      margin-bottom: 3rem;
+      line-height: 1.7;
+    }
+
+    /* — Problem cards — */
+    .problem-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1.5rem;
+    }
+
+    .problem-card {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 2rem;
+      transition: border-color 0.15s;
+    }
+
+    .problem-card:hover {
+      border-color: var(--accent-light);
+    }
+
+    .problem-card .icon {
+      font-size: 1.5rem;
+      margin-bottom: 1rem;
+    }
+
+    .problem-card h3 {
+      font-size: 1.05rem;
+      font-weight: 600;
+      margin-bottom: 0.75rem;
+      letter-spacing: -0.01em;
+    }
+
+    .problem-card p {
+      color: var(--fg-muted);
+      font-size: 0.95rem;
+      line-height: 1.65;
+    }
+
+    /* — Solution section — */
+    .solution-bg {
+      background: var(--bg-alt);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .solution-items {
+      display: flex;
+      flex-direction: column;
+      gap: 3rem;
+    }
+
+    .solution-item {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 3rem;
+      align-items: start;
+    }
+
+    .solution-item .text h3 {
+      font-size: 1.25rem;
+      font-weight: 600;
+      margin-bottom: 0.75rem;
+      letter-spacing: -0.01em;
+    }
+
+    .solution-item .text p {
+      color: var(--fg-muted);
+      font-size: 0.95rem;
+      line-height: 1.7;
+    }
+
+    /* — Commit comparison — */
+    .commit-box {
+      background: var(--code-bg);
+      border-radius: 10px;
+      padding: 1.5rem;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      line-height: 1.8;
+      color: var(--code-fg);
+      overflow-x: auto;
+    }
+
+    .commit-box .label {
+      color: var(--code-comment);
+      display: block;
+      margin-bottom: 0.75rem;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .commit-box .field {
+      color: var(--code-keyword);
+    }
+
+    .commit-box .value {
+      color: var(--code-fg);
+    }
+
+    .commit-box .hash {
+      color: #fbbf24;
+    }
+
+    .commit-box .new-field {
+      color: #5eead4;
+    }
+
+    .commit-box .dimmed {
+      color: var(--code-comment);
+    }
+
+    /* — CLI section — */
+    .cli-block {
+      background: var(--code-bg);
+      border-radius: 12px;
+      padding: 2rem;
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      line-height: 2;
+      color: var(--code-fg);
+      overflow-x: auto;
+      max-width: 640px;
+    }
+
+    .cli-block .prompt {
+      color: var(--code-keyword);
+      user-select: none;
+    }
+
+    .cli-block .cmd {
+      color: var(--code-fg);
+    }
+
+    .cli-block .flag {
+      color: var(--code-flag);
+    }
+
+    .cli-block .comment {
+      color: var(--code-comment);
+    }
+
+    /* — Axioms — */
+    .axiom-list {
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+      max-width: 720px;
+    }
+
+    .axiom {
+      display: flex;
+      gap: 1.25rem;
+      align-items: baseline;
+    }
+
+    .axiom .num {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: var(--accent);
+      flex-shrink: 0;
+      width: 2rem;
+      text-align: right;
+    }
+
+    .axiom p {
+      color: var(--fg-muted);
+      font-size: 0.95rem;
+      line-height: 1.65;
+    }
+
+    .axiom p strong {
+      color: var(--fg);
+    }
+
+    /* — Paper CTA — */
+    .paper-cta {
+      text-align: center;
+      padding: 5rem 2rem;
+      max-width: var(--max-width);
+      margin: 0 auto;
+    }
+
+    .paper-cta h2 {
+      font-size: 2rem;
+      font-weight: 700;
+      margin-bottom: 1rem;
+      letter-spacing: -0.02em;
+    }
+
+    .paper-cta p {
+      color: var(--fg-muted);
+      font-size: 1.05rem;
+      margin-bottom: 2rem;
+      max-width: 560px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    /* — Footer — */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 2.5rem 2rem;
+      text-align: center;
+      color: var(--fg-subtle);
+      font-size: 0.85rem;
+    }
+
+    footer a {
+      color: var(--fg-muted);
+      text-decoration: none;
+    }
+
+    footer a:hover {
+      color: var(--accent);
+    }
+
+    /* — Responsive — */
+    @media (max-width: 768px) {
+      .hero h1 { font-size: 2.25rem; }
+      .hero { padding: 4rem 1.5rem 3rem; }
+      section { padding: 3.5rem 1.5rem; }
+      .solution-item { grid-template-columns: 1fr; }
+      nav .links { gap: 1.25rem; }
+    }
+
+    @media (max-width: 480px) {
+      html { font-size: 16px; }
+      .hero h1 { font-size: 1.85rem; }
+      nav { padding: 1rem 1.25rem; }
+      nav .links { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+  <nav>
+    <a href="./" class="logo">morph</a>
+    <ul class="links">
+      <li><a href="#problem">Problem</a></li>
+      <li><a href="#solution">Solution</a></li>
+      <li><a href="#how-it-works">How It Works</a></li>
+      <li><a href="https://github.com/anthropics/morph">GitHub</a></li>
+      <li><a href="#paper">Paper</a></li>
+    </ul>
+  </nav>
+
+  <!-- Hero -->
+  <div class="hero">
+    <span class="badge">Research Project</span>
+    <h1>Version control when pipelines are <em>probabilistic</em></h1>
+    <p class="subtitle">
+      Git tracks files where identity is byte equality and merge is text reconciliation.
+      None of that holds when you're building with LLMs.
+      Morph records what your pipelines <em>did</em> and whether they got <em>better</em>.
+    </p>
+    <div class="cta-group">
+      <a href="https://github.com/anthropics/morph" class="btn btn-primary">
+        <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        View on GitHub
+      </a>
+      <a href="#paper" class="btn btn-secondary">Read the Paper</a>
+    </div>
+  </div>
+
+  <!-- Problem -->
+  <section id="problem">
+    <p class="section-label">The Problem</p>
+    <h2>Git wasn't built for this</h2>
+    <p class="lead">
+      LLM applications aren't source code. They're stochastic, environment-dependent
+      transformation pipelines. Git's assumptions break in five specific ways.
+    </p>
+
+    <div class="problem-grid">
+      <div class="problem-card">
+        <div class="icon">~</div>
+        <h3>Same code, different outputs</h3>
+        <p>Run the same prompt twice and you get different answers. That's not a bug — it's how LLMs work. Git's assumption that identity means byte equality doesn't hold.</p>
+      </div>
+      <div class="problem-card">
+        <div class="icon">&middot;&middot;&middot;</div>
+        <h3>Behavior depends on the environment</h3>
+        <p>Model version, sampling settings, retrieval corpus, tool availability — all shape the output. None of it is in the file tree.</p>
+      </div>
+      <div class="problem-card">
+        <div class="icon">&uarr;&darr;</div>
+        <h3>"Did it get better?" is a statistical question</h3>
+        <p>You can't read a diff and know whether the pipeline improved. You have to run it, score it, and compare.</p>
+      </div>
+      <div class="problem-card">
+        <div class="icon">&gt;_</div>
+        <h3>Agents produce patches, not just humans</h3>
+        <p>Which agent, which model, which prompt generated a change — and whether it passed any checks — matters. Git has no place for any of that.</p>
+      </div>
+      <div class="problem-card">
+        <div class="icon">&times;</div>
+        <h3>Merge can silently regress behavior</h3>
+        <p>Two branches can merge cleanly at the text level while the resulting pipeline performs worse than either parent.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Solution -->
+  <div class="solution-bg">
+    <section id="solution">
+      <p class="section-label">The Solution</p>
+      <h2>Morph extends Git with behavioral evidence</h2>
+      <p class="lead">
+        Same content-addressed Merkle DAG. Same hash-of-contents identity.
+        Three additions that make version control work for LLM pipelines.
+      </p>
+
+      <div class="solution-items">
+        <div class="solution-item">
+          <div class="text">
+            <h3>Pipelines as first-class objects</h3>
+            <p>
+              A pipeline is a DAG of typed steps — prompt calls, tool invocations, retrieval lookups,
+              deterministic transforms, review decisions. Each node records what ran, who ran it,
+              and in what environment. Morph versions the whole graph, not just the files.
+            </p>
+          </div>
+          <div class="commit-box">
+            <span class="label">A Morph commit vs. a Git commit</span>
+            <span class="dimmed">// Git commit</span><br>
+            <span class="field">tree</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="hash">a3f2c...</span><br>
+            <span class="field">parent</span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="hash">b71e0...</span><br>
+            <span class="field">message</span>&nbsp;&nbsp;&nbsp;<span class="value">"fix retrieval"</span><br>
+            <br>
+            <span class="dimmed">// Morph commit</span><br>
+            <span class="field">tree</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="hash">a3f2c...</span><br>
+            <span class="field">parent</span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="hash">b71e0...</span><br>
+            <span class="field">message</span>&nbsp;&nbsp;&nbsp;<span class="value">"fix retrieval"</span><br>
+            <span class="new-field">pipeline</span>&nbsp;&nbsp;<span class="hash">d4e8a...</span><br>
+            <span class="new-field">eval</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="hash">f92b1...</span><br>
+            <span class="new-field">scores</span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="value">{accuracy: 0.94, latency_p95: 320ms}</span><br>
+            <span class="new-field">evidence</span>&nbsp;&nbsp;<span class="hash">[run:c81f, trace:e02a]</span>
+          </div>
+        </div>
+
+        <div class="solution-item">
+          <div class="text">
+            <h3>Evaluation suites as versioned contracts</h3>
+            <p>
+              "Better" is not implicit. Each evaluation suite declares its metrics,
+              directions, fixture sources, and aggregation methods — all versioned and hashed.
+              Scores are partially ordered: one pipeline dominates another only if it wins on every metric.
+            </p>
+          </div>
+          <div class="commit-box">
+            <span class="label">Improvement ordering</span>
+            <span class="dimmed">// Pipeline Q improves on P when:</span><br>
+            <br>
+            <span class="field">cert</span><span class="value">(Q) &ge; cert(P)&nbsp;&nbsp;on every metric</span><br>
+            <br>
+            <span class="dimmed">// Example:</span><br>
+            <span class="value">P: {accuracy: 0.91, latency: 340ms, cost: $0.03}</span><br>
+            <span class="new-field">Q: {accuracy: 0.94, latency: 320ms, cost: $0.02}</span><br>
+            <span class="dimmed">   ↑ Q dominates P</span><br>
+            <br>
+            <span class="value">R: {accuracy: 0.96, latency: 400ms, cost: $0.02}</span><br>
+            <span class="dimmed">   ↑ R vs P: incomparable (better accuracy, worse latency)</span>
+          </div>
+        </div>
+
+        <div class="solution-item">
+          <div class="text">
+            <h3>Runs and traces as permanent receipts</h3>
+            <p>
+              Every pipeline execution produces a Run — a permanent record of the pipeline hash,
+              full environment, input state, output artifacts, scores, and actor identity.
+              Inside each Run is a Trace: the sequence of every prompt call, tool invocation, and retry.
+              Runs never modify commits. They're evidence that accumulates over time.
+            </p>
+          </div>
+          <div class="commit-box">
+            <span class="label">Merge with evidence</span>
+            <span class="dimmed">// At merge time, Morph records:</span><br>
+            <br>
+            <span class="field">parent_1_scores</span>&nbsp;&nbsp;<span class="value">{accuracy: 0.94, cost: $0.03}</span><br>
+            <span class="field">parent_2_scores</span>&nbsp;&nbsp;<span class="value">{accuracy: 0.91, cost: $0.02}</span><br>
+            <span class="field">reference_bar</span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="value">{accuracy: 0.94, cost: $0.02}</span><br>
+            <span class="new-field">merged_scores</span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="value">{accuracy: 0.95, cost: $0.02}</span><br>
+            <br>
+            <span class="dimmed">// The merge improved. The record proves it.</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- How It Works -->
+  <section id="how-it-works">
+    <p class="section-label">How It Works</p>
+    <h2>Git-style CLI, richer objects</h2>
+    <p class="lead">
+      Morph mirrors Git where possible. If you know Git, you know Morph.
+      The CLI adds commands for recording runs and evaluation results.
+    </p>
+
+    <div class="cli-block">
+      <span class="comment"># Initialize a Morph repository</span><br>
+      <span class="prompt">$ </span><span class="cmd">morph init</span><br>
+      <br>
+      <span class="comment"># Stage and commit with eval scores</span><br>
+      <span class="prompt">$ </span><span class="cmd">morph add .</span><br>
+      <span class="prompt">$ </span><span class="cmd">morph commit <span class="flag">-m</span> <span style="color: var(--code-string)">"improve retrieval prompt"</span></span><br>
+      <br>
+      <span class="comment"># Record an execution receipt</span><br>
+      <span class="prompt">$ </span><span class="cmd">morph run record <span class="flag">run-output.json</span></span><br>
+      <br>
+      <span class="comment"># Record evaluation results</span><br>
+      <span class="prompt">$ </span><span class="cmd">morph eval record <span class="flag">metrics.json</span></span><br>
+      <br>
+      <span class="comment"># Merge with score recording</span><br>
+      <span class="prompt">$ </span><span class="cmd">morph merge <span class="flag">feature-branch</span></span><br>
+      <br>
+      <span class="comment"># Inspect history</span><br>
+      <span class="prompt">$ </span><span class="cmd">morph log</span>
+    </div>
+  </section>
+
+  <!-- Design Principles -->
+  <div class="solution-bg">
+    <section id="principles">
+      <p class="section-label">Design Principles</p>
+      <h2>What Morph assumes</h2>
+      <p class="lead">
+        Morph is built on a small set of axioms. These are the design constraints
+        the system depends on — violate any of them and something breaks.
+      </p>
+
+      <div class="axiom-list">
+        <div class="axiom">
+          <span class="num">01</span>
+          <p><strong>Content-addressed, immutable objects.</strong> Every object is identified by a hash of its contents. History cannot be tampered with.</p>
+        </div>
+        <div class="axiom">
+          <span class="num">02</span>
+          <p><strong>Evidence does not rewrite history.</strong> Runs and evaluation results never mutate prior commits. New evidence produces new objects.</p>
+        </div>
+        <div class="axiom">
+          <span class="num">03</span>
+          <p><strong>Pipeline steps compose cleanly.</strong> Sequential chaining and parallel execution are well-defined — like <code>Promise.then()</code> and <code>Promise.all()</code>.</p>
+        </div>
+        <div class="axiom">
+          <span class="num">04</span>
+          <p><strong>Evaluation suites are explicit contracts.</strong> "Better" is never implicit. Metrics, directions, fixture sources, and aggregation methods are all versioned and hashed.</p>
+        </div>
+        <div class="axiom">
+          <span class="num">05</span>
+          <p><strong>Scores are partially ordered.</strong> One scorecard dominates another only if it wins on every metric. If A is more accurate but slower, they're incomparable.</p>
+        </div>
+        <div class="axiom">
+          <span class="num">06</span>
+          <p><strong>Merge records scores from both parents.</strong> Every merge commit records what both parents achieved and what the merged pipeline achieved.</p>
+        </div>
+        <div class="axiom">
+          <span class="num">07</span>
+          <p><strong>Environment is part of the record.</strong> Model version, sampling settings, toolchain — without this, scores from different environments aren't comparable.</p>
+        </div>
+        <div class="axiom">
+          <span class="num">08</span>
+          <p><strong>Reproducibility means re-running the checks.</strong> You can't get identical outputs from an LLM. Reproducibility means re-running the evaluation and getting consistent aggregate scores.</p>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Paper CTA -->
+  <div class="paper-cta" id="paper">
+    <h2>Read the paper</h2>
+    <p>
+      The full formal model — pipeline composition, evaluation semantics,
+      merge properties, and system design.
+    </p>
+    <p style="color: var(--fg); margin-bottom: 0.25rem; font-weight: 600;">
+      Morph: Version Control When Pipelines Are Probabilistic
+    </p>
+    <p style="font-size: 0.9rem; margin-bottom: 2rem;">
+      Raffi Krikorian &middot; Mozilla
+    </p>
+    <div class="cta-group">
+      <a href="https://github.com/anthropics/morph/blob/main/docs/morph-paper.tex" class="btn btn-primary">Paper (LaTeX source)</a>
+      <a href="https://github.com/anthropics/morph" class="btn btn-secondary">
+        <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        View on GitHub
+      </a>
+    </div>
+  </div>
+
+  <footer>
+    <p>
+      Morph is an open research project by <a href="https://github.com/anthropics/morph">Raffi Krikorian</a> at Mozilla.
+      <br>
+      Built for a world where code makes LLM calls and "did it get better?" is a statistical question.
+    </p>
+  </footer>
+
+</body>
+</html>
