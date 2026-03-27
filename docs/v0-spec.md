@@ -613,11 +613,14 @@ Prompts are canonical objects. Materialization writes them to the working direct
 morph pipeline create <file>
 morph pipeline show <hash>
 morph pipeline identity-hash
+morph pipeline extract --from-run <run_hash>
 ```
 
 Pipeline manifests are created via `morph pipeline create <file>` and exist only in the object store. There is no `pipelines/` directory.
 
 `morph pipeline identity-hash` prints the hash of the identity pipeline (creating it in the store if needed). Useful for hook scripts and automation.
+
+`morph pipeline extract --from-run <run_hash>` extracts a Pipeline from a recorded Run. For session-backed Runs (created by `morph run record-session`), this produces a deterministic minimal graph: a `generate` (prompt_call) node flowing into a `review` node. The extracted Pipeline includes provenance (`derived_from_run`, `derived_from_trace`, `derived_from_event`, `method: "extracted"`), attribution derived from the Run's agent and contributors, and a prompt blob reference. The extracted Pipeline is a first-class object reusable anywhere a Pipeline hash is accepted (e.g., `morph commit --pipeline <hash>`).
 
 ## 6.4 Commit Workflow
 
