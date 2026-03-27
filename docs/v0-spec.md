@@ -678,23 +678,43 @@ morph eval record <file>
 
 ## 6.8 Merge
 
+### Merge planning (read-only inspection)
+
 ```
-morph merge <branch> -m <message> --pipeline <hash> --eval-suite <hash> --metrics '<json>'
-morph merge <branch> -m <message> --pipeline <hash> --eval-suite <hash> --metrics '<json>' --retire 'old_metric1,old_metric2'
+morph merge-plan <branch>
+morph merge-plan <branch> --retire 'old_metric1,old_metric2'
 ```
 
-All flags except `--retire` are required. The caller must supply the merged pipeline, the eval suite, and the observed metrics from external evaluation.
+Inspects the current HEAD and the target branch, resolves both parent commits, computes the merge eval context, and prints a human-readable summary including:
+
+- Current and other branch parent hashes
+- Parent metrics from each branch
+- Resolved union eval suite (auto-computed from both parents' suites)
+- Merged reference bar the candidate must dominate
+- Retired metrics (if `--retire` is specified)
+
+This command does not create a commit. It is the inspection/planning step.
+
+### Merge execution
+
+```
+morph merge <branch> -m <message> --pipeline <hash> --metrics '<json>'
+morph merge <branch> -m <message> --pipeline <hash> --eval-suite <hash> --metrics '<json>'
+morph merge <branch> -m <message> --pipeline <hash> --metrics '<json>' --retire 'old_metric1,old_metric2'
+```
+
+`--pipeline` and `--metrics` are required. `--eval-suite` is optional: when omitted, the union of both parents' evaluation suites is computed automatically. When provided, the explicit suite is used.
 
 Merge procedure:
 
-1. Structural merge of pipeline graphs (analogous to three-way text merge)
-2. Combine evaluation suites: if parents have suites T1 and T2, the merge suite is T = T1 ⊎ T2 (union by metric ID)
+1. Resolve both parent commits (current HEAD and target branch)
+2. Combine evaluation suites: if `--eval-suite` is provided, use it; otherwise compute T = T1 ⊎ T2 (union by metric ID)
 3. Apply metric retirement (if `--retire` is specified): remove retired metrics from the union suite. Retirement is explicit and attributed (paper §5.3)
 4. Record the bar: embed each parent's scores into V_T and record the best from either parent on every surviving metric
-5. Validate **dominance**: merged pipeline's observed metrics must meet or exceed both parents' `observed_metrics` on every surviving metric (direction-aware)
+5. Validate **dominance**: merged pipeline's observed metrics must meet or exceed both parents' `observed_metrics` on every surviving metric (direction-aware). Only metrics in the (post-retirement) union suite are checked.
 6. Create merge commit if satisfied
 
-If dominance is not achieved, merge aborts. Morph does not run evaluations; external tools do and report results.
+If dominance is not achieved, merge aborts with a detailed explanation identifying which metric failed, the merged and parent values, and which parent was violated. Morph does not run evaluations; external tools do and report results.
 
 This realizes the paper's merge semantics (§5) and metric retirement (§5.3): merge candidate R must dominate both parents on every non-retired metric.
 

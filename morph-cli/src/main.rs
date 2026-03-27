@@ -87,6 +87,14 @@ enum Command {
         #[command(subcommand)]
         sub: EvalCmd,
     },
+    /// Preview merge requirements: inspect parents, union suite, and reference bar
+    MergePlan {
+        /// Branch to merge into the current branch
+        branch: String,
+        /// Retire metrics from the union suite (paper §5.3). Comma-separated names.
+        #[arg(long)]
+        retire: Option<String>,
+    },
     /// Merge a branch (behavioral dominance required)
     Merge {
         branch: String,
@@ -94,8 +102,9 @@ enum Command {
         message: String,
         #[arg(long)]
         pipeline: String,
+        /// Eval suite hash. If omitted, auto-computes from the union of both parents' suites.
         #[arg(long)]
-        eval_suite: String,
+        eval_suite: Option<String>,
         #[arg(long)]
         metrics: String,
         #[arg(long)]
@@ -755,25 +764,31 @@ fn main() -> anyhow::Result<()> {
                 println!("{}", json);
             }
         },
-        Command::Merge { branch, message, pipeline, eval_suite, metrics, author, retire } => {
+        Command::MergePlan { branch, retire } => {
             let (_repo_root, store) = get_store(verbose)?;
-            verbose_msg(verbose, &format!("merge branch {} (pipeline={} suite={})", branch, pipeline, eval_suite));
+            verbose_msg(verbose, &format!("merge-plan for branch {}", branch));
+            let retired: Option<Vec<String>> = retire.map(|s| s.split(',').map(|m| m.trim().to_string()).collect());
+            let plan = morph_core::prepare_merge(
+                &store, &branch, None, retired.as_deref(),
+            )?;
+            print!("{}", plan.format_plan());
+        }
+        Command::Merge { branch, message, pipeline, eval_suite, metrics, author, retire } => {
+            let (repo_root, store) = get_store(verbose)?;
+            let morph_dir = repo_root.join(".morph");
+            let version = read_repo_version(&morph_dir)?;
+            verbose_msg(verbose, &format!("merge branch {} (pipeline={})", branch, pipeline));
             let prog_hash = parse_hash(&pipeline)?;
-            let suite_hash = parse_hash(&eval_suite)?;
+            let suite_hash_opt = eval_suite.as_deref().map(parse_hash).transpose()?;
             let observed: std::collections::BTreeMap<String, f64> =
                 serde_json::from_str(&metrics).map_err(|e| anyhow::anyhow!("invalid --metrics JSON: {}", e))?;
             let retired: Option<Vec<String>> = retire.map(|s| s.split(',').map(|m| m.trim().to_string()).collect());
-            let hash = morph_core::create_merge_commit_with_retirement(
-                &store,
-                &branch,
-                &prog_hash,
-                observed,
-                Some(&suite_hash),
-                message,
-                author,
-                None,
-                None,
-                retired.as_deref(),
+            let plan = morph_core::prepare_merge(
+                &store, &branch, suite_hash_opt.as_ref(), retired.as_deref(),
+            )?;
+            let hash = morph_core::execute_merge(
+                &store, &plan, &prog_hash, observed, message, author,
+                Some(&repo_root), Some(&version),
             )?;
             println!("{}", hash);
         }

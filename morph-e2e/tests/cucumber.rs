@@ -114,6 +114,17 @@ fn given_pipeline_and_eval_suite(w: &mut MorphWorld) {
     std::fs::write(evals_dir.join("e.json"), eval).expect("write e.json");
 }
 
+#[given(expr = "an eval suite with acc and old_metric")]
+fn given_suite_with_old_metric(w: &mut MorphWorld) {
+    let root = w.temp_dir.as_ref().expect("given a morph repo first");
+    let prog = r#"{"graph":{"nodes":[{"id":"n1","kind":"identity","ref":null,"params":{}}],"edges":[]},"prompts":[],"eval_suite":null,"provenance":null}"#;
+    let eval = r#"{"cases":[],"metrics":[{"name":"acc","aggregation":"mean","threshold":0.0},{"name":"old_metric","aggregation":"mean","threshold":0.0}]}"#;
+    std::fs::write(root.path().join("prog.json"), prog).expect("write prog.json");
+    let evals_dir = root.path().join(".morph/evals");
+    std::fs::create_dir_all(&evals_dir).expect("create evals dir");
+    std::fs::write(evals_dir.join("e.json"), eval).expect("write e.json");
+}
+
 #[when(regex = r#"I run "([^"]+)""#)]
 fn when_run(w: &mut MorphWorld, cmd: String) {
     let root = w.repo_root().to_path_buf();
@@ -294,6 +305,38 @@ fn when_merge_with_metrics(w: &mut MorphWorld, branch: String, msg: String, pipe
     let output = Command::cargo_bin("morph")
         .expect("morph binary")
         .args(["merge", &branch, "-m", &msg, "--pipeline", &pipeline, "--eval-suite", &suite, "--metrics", &metrics_json])
+        .current_dir(root.path())
+        .output()
+        .expect("run morph");
+    w.last_stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    w.last_stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    w.last_exit = output.status.code();
+}
+
+#[when(regex = r#"I merge "([^"]*)" with message "([^"]*)" pipeline "([^"]*)" and metrics \{([^\}]*)\}"#)]
+fn when_merge_auto_suite(w: &mut MorphWorld, branch: String, msg: String, pipeline: String, metrics_inner: String) {
+    let root = w.temp_dir.as_ref().expect("given a morph repo first");
+    let pipeline = substitute_placeholders(&pipeline, &w.captures);
+    let metrics_json = format!("{{{}}}", metrics_inner);
+    let output = Command::cargo_bin("morph")
+        .expect("morph binary")
+        .args(["merge", &branch, "-m", &msg, "--pipeline", &pipeline, "--metrics", &metrics_json])
+        .current_dir(root.path())
+        .output()
+        .expect("run morph");
+    w.last_stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    w.last_stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    w.last_exit = output.status.code();
+}
+
+#[when(regex = r#"I merge "([^"]*)" with message "([^"]*)" pipeline "([^"]*)" metrics \{([^\}]*)\} and retire "([^"]*)""#)]
+fn when_merge_with_retire(w: &mut MorphWorld, branch: String, msg: String, pipeline: String, metrics_inner: String, retire: String) {
+    let root = w.temp_dir.as_ref().expect("given a morph repo first");
+    let pipeline = substitute_placeholders(&pipeline, &w.captures);
+    let metrics_json = format!("{{{}}}", metrics_inner);
+    let output = Command::cargo_bin("morph")
+        .expect("morph binary")
+        .args(["merge", &branch, "-m", &msg, "--pipeline", &pipeline, "--metrics", &metrics_json, "--retire", &retire])
         .current_dir(root.path())
         .output()
         .expect("run morph");
