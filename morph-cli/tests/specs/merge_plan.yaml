@@ -1,0 +1,92 @@
+# Phase 4: merge-plan CLI tests
+
+- name: merge_plan_shows_parent_bar
+  files:
+    prog.json: '{"graph":{"nodes":[{"id":"n1","kind":"identity","ref":null,"params":{}}],"edges":[]},"prompts":[],"eval_suite":null,"provenance":null}'
+    .morph/evals/ea.json: '{"cases":[],"metrics":[{"name":"acc","aggregation":"mean","threshold":0.0}]}'
+    .morph/evals/eb.json: '{"cases":[],"metrics":[{"name":"f1","aggregation":"mean","threshold":0.0}]}'
+    a.txt: "aaa"
+  steps:
+    - morph: [pipeline, create, prog.json]
+      capture: prog_hash
+    - morph: [add, .morph/evals/ea.json]
+      capture_first_line: suite_a_hash
+    - morph: [add, .morph/evals/eb.json]
+      capture_first_line: suite_b_hash
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "main commit", --pipeline, "${prog_hash}", --eval-suite, "${suite_a_hash}", --metrics, '{"acc": 0.9}']
+      capture: main_commit
+    - morph: [branch, feature]
+    - morph: [checkout, feature]
+    - write_file:
+        path: b.txt
+        content: "bbb"
+    - morph: [add, b.txt]
+    - morph: [commit, -m, "feature commit", --pipeline, "${prog_hash}", --eval-suite, "${suite_b_hash}", --metrics, '{"f1": 0.85}']
+    - morph: [checkout, main]
+    - morph: [merge-plan, feature]
+      stdout_contains:
+        - "Merge plan"
+        - "${main_commit}"
+        - "acc"
+        - "f1"
+        - "Reference bar"
+        - ">= 0.9"
+        - ">= 0.85"
+        - "Retired metrics: none"
+
+- name: merge_plan_with_retirement_preview
+  files:
+    prog.json: '{"graph":{"nodes":[{"id":"n1","kind":"identity","ref":null,"params":{}}],"edges":[]},"prompts":[],"eval_suite":null,"provenance":null}'
+    .morph/evals/e.json: '{"cases":[],"metrics":[{"name":"acc","aggregation":"mean","threshold":0.0},{"name":"old_metric","aggregation":"mean","threshold":0.0}]}'
+    a.txt: "aaa"
+  steps:
+    - morph: [pipeline, create, prog.json]
+      capture: prog_hash
+    - morph: [add, .morph/evals/e.json]
+      capture_first_line: suite_hash
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "main commit", --pipeline, "${prog_hash}", --eval-suite, "${suite_hash}", --metrics, '{"acc": 0.9, "old_metric": 0.8}']
+    - morph: [branch, feature]
+    - morph: [checkout, feature]
+    - write_file:
+        path: b.txt
+        content: "bbb"
+    - morph: [add, b.txt]
+    - morph: [commit, -m, "feature commit", --pipeline, "${prog_hash}", --eval-suite, "${suite_hash}", --metrics, '{"acc": 0.85, "old_metric": 0.7}']
+    - morph: [checkout, main]
+    - morph: [merge-plan, feature, --retire, old_metric]
+      stdout_contains:
+        - "Merge plan"
+        - "Union eval suite (1 metrics)"
+        - "acc"
+        - "Retired metrics: old_metric"
+      stdout_not_contains:
+        - "old_metric maximize"
+
+- name: merge_plan_incompatible_suites_fails
+  files:
+    prog.json: '{"graph":{"nodes":[{"id":"n1","kind":"identity","ref":null,"params":{}}],"edges":[]},"prompts":[],"eval_suite":null,"provenance":null}'
+    .morph/evals/ea.json: '{"cases":[],"metrics":[{"name":"acc","aggregation":"mean","threshold":0.8}]}'
+    .morph/evals/eb.json: '{"cases":[],"metrics":[{"name":"acc","aggregation":"mean","threshold":0.9}]}'
+    a.txt: "aaa"
+  steps:
+    - morph: [pipeline, create, prog.json]
+      capture: prog_hash
+    - morph: [add, .morph/evals/ea.json]
+      capture_first_line: suite_a_hash
+    - morph: [add, .morph/evals/eb.json]
+      capture_first_line: suite_b_hash
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "main commit", --pipeline, "${prog_hash}", --eval-suite, "${suite_a_hash}", --metrics, '{"acc": 0.9}']
+    - morph: [branch, feature]
+    - morph: [checkout, feature]
+    - write_file:
+        path: b.txt
+        content: "bbb"
+    - morph: [add, b.txt]
+    - morph: [commit, -m, "feature commit", --pipeline, "${prog_hash}", --eval-suite, "${suite_b_hash}", --metrics, '{"acc": 0.95}']
+    - morph: [checkout, main]
+    - morph: [merge-plan, feature]
+      expect_exit: 1
+      stderr_contains: "defined differently"
