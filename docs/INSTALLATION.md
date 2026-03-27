@@ -82,11 +82,26 @@ Morph works with **Cursor** and **Claude Code**. Each IDE uses the same `morph-m
 
 ---
 
-## 5. Next steps
+## 5. Run the hosted service (optional)
+
+For team-wide inspection and collaboration, run the Morph hosted service:
+
+```bash
+morph serve                    # serve current repo at http://127.0.0.1:8765
+morph serve --port 9000        # custom port
+morph serve --repo team=/path  # named multi-repo
+```
+
+The service exposes a stable JSON API for browsing commits (with behavioral status), runs, traces, pipelines, certifications, and policy. See [v0-spec.md § 15](v0-spec.md#15-hosted-service-phase-7) for the full API reference.
+
+---
+
+## 6. Next steps
 
 - **Commit the filesystem:** [CURSOR-SETUP.md § Committing](CURSOR-SETUP.md#5-committing-the-filesystem) / [CLAUDE-CODE-SETUP.md § Committing](CLAUDE-CODE-SETUP.md#4-committing-the-filesystem).
 - **Use Morph with Git:** [MORPH-AND-GIT.md](MORPH-AND-GIT.md).
 - **MCP tool reference:** [CURSOR-SETUP.md § MCP Tool Reference](CURSOR-SETUP.md#6-mcp-tool-reference) (same tools in Claude Code).
+- **Hosted service API:** [v0-spec.md § 15](v0-spec.md#15-hosted-service-phase-7).
 
 ---
 

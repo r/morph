@@ -24,6 +24,18 @@ morph setup cursor   # writes .cursor/ (MCP, hooks, rules)
 
 Then open the project in Cursor. Ensure `morph` and `morph-mcp` are on your PATH. The MCP server and hooks will record prompts/responses and let the agent commit via Morph.
 
+## Hosted service (team inspection)
+
+Run the Morph hosted service for shared, browser-based inspection of behavioral history:
+
+```bash
+morph serve                              # serve current repo at http://127.0.0.1:8765
+morph serve --repo team=/path/to/repo    # named multi-repo mode
+morph serve --org-policy org-policy.json # apply org-level policy
+```
+
+The service exposes a stable JSON API and browser UI for inspecting commits (with certification/gate status), runs, traces, pipelines, merge dominance, and policy. See [v0-spec.md § 15](docs/v0-spec.md#15-hosted-service-phase-7).
+
 ## Develop Morph (this repo)
 
 ```bash

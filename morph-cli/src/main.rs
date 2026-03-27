@@ -227,6 +227,20 @@ enum Command {
         #[arg(long, default_value = "127.0.0.1")]
         interface: String,
     },
+    /// Run the Morph hosted service (multi-repo inspection, shared API, org policy).
+    #[cfg(feature = "visualize")]
+    Serve {
+        /// Repository paths as name=path pairs. Defaults to current repo as "default".
+        #[arg(long = "repo", value_name = "NAME=PATH")]
+        repos: Vec<String>,
+        #[arg(long, default_value = "8765")]
+        port: u16,
+        #[arg(long, default_value = "127.0.0.1")]
+        interface: String,
+        /// Path to an org-level policy JSON file
+        #[arg(long)]
+        org_policy: Option<PathBuf>,
+    },
 }
 
 #[derive(clap::Subcommand)]
@@ -475,6 +489,43 @@ fn main() -> anyhow::Result<()> {
                 .parse()
                 .map_err(|_| anyhow::anyhow!("invalid interface or port: {}:{}", interface, port))?;
             morph_serve::run_blocking(morph_dir, addr).map_err(|e| anyhow::anyhow!("{}", e))?;
+        }
+        #[cfg(feature = "visualize")]
+        Command::Serve { repos, port, interface, org_policy } => {
+            let repo_entries = if repos.is_empty() {
+                let cwd = std::env::current_dir()?;
+                let repo_root = find_repo(&cwd)
+                    .ok_or_else(|| anyhow::anyhow!("not a morph repository (or any parent); specify --repo name=path"))?;
+                vec![morph_serve::RepoEntry {
+                    name: "default".to_string(),
+                    morph_dir: repo_root.join(".morph"),
+                }]
+            } else {
+                let mut entries = Vec::new();
+                for spec in &repos {
+                    let (name, path_str) = spec.split_once('=')
+                        .ok_or_else(|| anyhow::anyhow!("repo spec must be name=path, got: {}", spec))?;
+                    let path = PathBuf::from(path_str);
+                    let morph_dir = if path.join(".morph").exists() {
+                        path.join(".morph")
+                    } else {
+                        find_repo(&path)
+                            .ok_or_else(|| anyhow::anyhow!("not a morph repository: {}", path_str))?
+                            .join(".morph")
+                    };
+                    entries.push(morph_serve::RepoEntry { name: name.to_string(), morph_dir });
+                }
+                entries
+            };
+            let addr: std::net::SocketAddr = format!("{}:{}", interface, port)
+                .parse()
+                .map_err(|_| anyhow::anyhow!("invalid interface or port: {}:{}", interface, port))?;
+            let config = morph_serve::ServiceConfig {
+                repos: repo_entries,
+                addr,
+                org_policy_path: org_policy,
+            };
+            morph_serve::run_service(config).map_err(|e| anyhow::anyhow!("{}", e))?;
         }
         Command::Prompt { sub } => match sub {
             PromptCmd::Create { path } => {

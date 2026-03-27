@@ -8,7 +8,7 @@
 | **morph-cli** | 76 integration tests | YAML specs in `morph-cli/tests/specs/*.yaml`, compiled by `build.rs` |
 | **morph-e2e** | 25 Cucumber e2e scenarios | `morph-e2e/features/*.feature`, step defs in `morph-e2e/tests/cucumber.rs` |
 | **morph-mcp** | None yet | -- |
-| **morph-serve** | None yet | -- |
+| **morph-serve** | 34+ unit/API tests (views, service, handlers, org policy, multi-repo) | `morph-serve/src/tests.rs` + `org_policy::tests` |
 
 ### morph-core unit test modules
 
@@ -71,7 +71,7 @@ Each YAML spec supports: file/directory setup (`files`, `dirs`), sequenced CLI c
 ## Known gaps
 
 - **morph-mcp**: No tests. An integration harness that speaks MCP over stdio would cover the primary write path.
-- **morph-serve**: No tests. Could test API endpoints with axum's test utilities.
+- **morph-serve**: 34+ tests covering repo list/summary, branch listing, commit list/detail, run/trace/pipeline detail, annotations, policy, gate status, behavioral status (certification/merge), org policy CRUD, multi-repo, backward-compatible endpoints, and error paths.
 - **GixStore-specific paths**: `status()` and `record_session()` are now backend-aware (use `store.hash_object()`), but explicit GixStore integration tests would catch backend-specific regressions.
 - **proptest**: In dev-dependencies but not yet used. Good candidate for property-based tests on hash determinism and serialization round-trips.
 - **Error paths**: Many functions have untested error branches (malformed JSON, permission errors, missing refs).
