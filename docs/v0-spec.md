@@ -458,7 +458,7 @@ The `commit` field is null for exploratory runs in working space. It references 
 
 The `agent` field records the primary or orchestrating agent. The `contributors` field is optional and lists all agents that participated in producing the run's outputs. Each contributor has the same identity fields as `agent`, plus an optional `role` string (e.g., `"retrieval"`, `"generation"`, `"review"`). For single-agent runs, `contributors` is null or empty. This supports the theory's multi-agent attribution model (paper §3.5) — recording who contributed while acknowledging that credit assignment from the certificate vector to individual agents requires additional analysis.
 
-Environment recording is mandatory (THEORY.md §18, Axiom 9).
+Environment recording is mandatory (THEORY.md §18, Axiom 7).
 
 ---
 
@@ -709,7 +709,7 @@ Merge procedure:
 
 1. Resolve both parent commits (current HEAD and target branch)
 2. Combine evaluation suites: if `--eval-suite` is provided, use it; otherwise compute T = T1 ⊎ T2 (union by metric ID)
-3. Apply metric retirement (if `--retire` is specified): remove retired metrics from the union suite. Retirement is explicit and attributed (paper §5.3)
+3. Apply metric retirement (if `--retire` is specified): remove retired metrics from the union suite. Retirement is explicit in the merge plan; per paper §5.3 the merged pipeline should include a `review` node for attribution (not enforced by the CLI in v0—see §6.8 notes below)
 4. Record the bar: embed each parent's scores into V_T and record the best from either parent on every surviving metric
 5. Validate **dominance**: merged pipeline's observed metrics must meet or exceed both parents' `observed_metrics` on every surviving metric (direction-aware). Only metrics in the (post-retirement) union suite are checked.
 6. Create merge commit if satisfied
@@ -773,7 +773,7 @@ Morph v0 defines reproducibility as:
 - **Explicit environment recording**: all runs record environment E (model, version, parameters, toolchain).
 - **Deterministic replay is optional**: some environments support it; Morph does not require it.
 
-This aligns with THEORY.md §18, Axiom 11: reproducibility is behavioral, not byte-level.
+This aligns with THEORY.md §18, Axiom 8: reproducibility is behavioral, not byte-level.
 
 ---
 
@@ -799,14 +799,14 @@ Morph is the source of truth. The filesystem is a projection.
 
 How v0 satisfies each Morph axiom:
 
-| # | Axiom (Paper §6 / THEORY.md §18) | v0 Mechanism |
+| # | Axiom (Paper §7 / THEORY.md §18) | v0 Mechanism |
 |---|---|---|
 | 1 | Content-Addressed, Immutable Objects | All objects content-addressed by SHA-256, stored in `.morph/objects/` |
 | 2 | Evidence Does Not Rewrite History | Run and Trace objects are separate from commits; evidence never mutates prior objects |
 | 3 | Pipeline Steps Compose Cleanly | Pipeline DAG with data/control edges; sequential via bind, parallel via independent subgraphs; identity pipeline as no-op |
 | 4 | Evaluation Suites are Explicit Contracts | EvalSuite objects define T with metrics (name, aggregation, threshold, direction) and fixture sources |
 | 5 | Scores are Partially Ordered | Observed metrics in commits form certificate vectors; dominance is componentwise with per-metric direction |
-| 6 | Merge Records Scores From Both Parents | Merge commit records both parents' metrics, computes union suite (with optional retirement), and requires dominance |
+| 6 | Merge Records Scores From Both Parents | Parent commits retain their `observed_metrics`; merge stores the merged candidate's metrics; merge flow computes union suite (with optional retirement), reference bar from parents, and requires dominance (see §6.8 notes) |
 | 7 | Environment is Part of the Record | Run `environment` + Commit `env_constraints` record full environment (model, version, params, toolchain) |
 | 8 | Reproducibility Means Re-Running the Checks | Reproducibility = eval contract preservation under declared environment, not byte equality |
 | — | Actor Model (paper §3.2) | `ActorRef` struct with id/type/env_config; attribution as sets of actors per pipeline node |

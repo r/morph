@@ -323,19 +323,13 @@ If \( P, Q : S \to F(S) \) both consume the same input state, use the diagonal:
 \Delta(s) = (s, s)
 \]
 
-Then:
+Then fork both branches from the same state:
 
 \[
-\mathrm{branch}(P, Q) = (P \otimes Q) \circ \Delta : S \to F(S \times S)
+(P \otimes Q) \circ \Delta : S \to F(S \times S)
 \]
 
-A later explicit join step can reconcile the two results:
-
-\[
-J : (S \times S) \to F(S)
-\]
-
-This mirrors real systems: branches generate candidates; a join step selects/merges them.
+An explicit **join** \(J : (S \times S) \to F(S)\) then reconciles the two results. The paper writes the full branch combinator as \(J \circ (P \otimes Q) \circ \Delta\) (same structure as `Promise.all` followed by a merge step). This mirrors real systems: branches generate candidates; a join selects or merges them.
 
 ### 8.4 Multiple Actors, Concurrent Work
 
@@ -485,6 +479,8 @@ An `EvalSuite` must declare a **fixture source** for each component:
 | **base-sourced** | Use tests/data from a specified base tree |
 | **pinned** | Use tests/data referenced immutably by hash |
 | **external** | Use tests/data from an external source referenced by immutable descriptor |
+
+In v0 JSON (`EvalCase.fixture_source`), the same sources appear as short strings: `candidate`, `base`, `pinned`, `external` (see `v0-spec.md` §4.4).
 
 This supports real workflows:
 
