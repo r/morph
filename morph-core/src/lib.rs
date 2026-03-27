@@ -29,7 +29,7 @@ pub use store::GixStore;
 pub use store::{FsStore, MorphError, ObjectType, Store};
 pub use repo::{
     init_repo, open_store, read_repo_version, require_store_version,
-    STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_INIT,
+    STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_0_4, STORE_VERSION_INIT,
 };
 pub use identity::identity_pipeline;
 pub use working::{find_repo, blob_from_prompt_file, blob_from_file, materialize_blob, pipeline_from_file, eval_suite_from_file, status, add_paths, StatusEntry};
@@ -41,7 +41,7 @@ pub use extract::extract_pipeline_from_run;
 pub use annotate::{create_annotation, list_annotations};
 pub use index::{read_index, write_index, clear_index, update_index, StagingIndex};
 pub use tree::{build_tree, flatten_tree, restore_tree, empty_tree_hash};
-pub use migrate::{migrate_0_0_to_0_2, migrate_0_2_to_0_3};
+pub use migrate::{migrate_0_0_to_0_2, migrate_0_2_to_0_3, migrate_0_3_to_0_4};
 pub use sync::{
     RemoteSpec, read_remotes, write_remotes, add_remote,
     collect_reachable_objects, is_ancestor,
@@ -56,7 +56,10 @@ pub use diff::{diff_trees, diff_commits, diff_file_maps, DiffEntry, DiffStatus};
 pub use tag::{create_tag, list_tags, delete_tag};
 pub use stash::{stash_save, stash_list, stash_pop, StashEntry};
 pub use revert::revert_commit;
+pub use gc::{gc, GcResult};
+pub use store::ObjectLayout;
 
+pub mod gc;
 mod morphignore;
 mod migrate;
 mod repo;

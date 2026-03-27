@@ -7,9 +7,9 @@ mod setup;
 use clap::Parser;
 use cli::*;
 use morph_core::{
-    find_repo, migrate_0_0_to_0_2, migrate_0_2_to_0_3, open_store, read_repo_version,
-    require_store_version, Hash, MorphObject, ObjectType, Store,
-    STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_INIT,
+    find_repo, migrate_0_0_to_0_2, migrate_0_2_to_0_3, migrate_0_3_to_0_4, open_store,
+    read_repo_version, require_store_version, Hash, MorphObject, ObjectType, Store,
+    STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_0_4, STORE_VERSION_INIT,
 };
 use std::path::PathBuf;
 
@@ -20,7 +20,7 @@ fn get_store(verbose: bool) -> anyhow::Result<(PathBuf, Box<dyn Store>)> {
     let morph_dir = repo_root.join(".morph");
     let version = read_repo_version(&morph_dir)?;
     verbose_msg(verbose, &format!("repo {} (store version {})", repo_root.display(), version));
-    require_store_version(&morph_dir, &[STORE_VERSION_INIT, STORE_VERSION_0_2, STORE_VERSION_0_3])?;
+    require_store_version(&morph_dir, &[STORE_VERSION_INIT, STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_0_4])?;
     let store = open_store(&morph_dir)?;
     Ok((repo_root, store))
 }
@@ -91,18 +91,40 @@ fn main() -> anyhow::Result<()> {
             let morph_dir = repo_root.join(".morph");
             let version = read_repo_version(&morph_dir)?;
             verbose_msg(verbose, &format!("store version {}", version));
-            if version == STORE_VERSION_0_3 {
+            if version == STORE_VERSION_0_4 {
                 println!("Store version is {} (latest). No upgrade needed.", version);
+            } else if version == STORE_VERSION_0_3 {
+                migrate_0_3_to_0_4(&morph_dir)?;
+                println!("Migrated store from {} to {} (fan-out object layout).", STORE_VERSION_0_3, STORE_VERSION_0_4);
             } else if version == STORE_VERSION_0_2 {
                 migrate_0_2_to_0_3(&morph_dir)?;
-                println!("Migrated store from {} to {}.", STORE_VERSION_0_2, STORE_VERSION_0_3);
+                migrate_0_3_to_0_4(&morph_dir)?;
+                println!("Migrated store from {} to {}.", STORE_VERSION_0_2, STORE_VERSION_0_4);
             } else if version == STORE_VERSION_INIT {
                 migrate_0_0_to_0_2(&morph_dir)?;
                 migrate_0_2_to_0_3(&morph_dir)?;
-                println!("Migrated store from {} to {}.", STORE_VERSION_INIT, STORE_VERSION_0_3);
+                migrate_0_3_to_0_4(&morph_dir)?;
+                println!("Migrated store from {} to {}.", STORE_VERSION_INIT, STORE_VERSION_0_4);
             } else {
                 println!("Store version is {}. No upgrade path.", version);
             }
+        }
+
+        Command::Gc => {
+            let (repo_root, store) = get_store(verbose)?;
+            let morph_dir = repo_root.join(".morph");
+            let fs_store = morph_core::FsStore::from_store_version(&morph_dir)?;
+            let result = morph_core::gc(&fs_store, &morph_dir)?;
+            if result.objects_removed == 0 {
+                println!("Nothing to clean up. {} objects total.", result.objects_before);
+            } else {
+                let freed_mb = result.bytes_freed as f64 / 1_048_576.0;
+                println!(
+                    "Removed {} unreachable objects ({:.1} MB freed). {} objects remaining.",
+                    result.objects_removed, freed_mb, result.objects_after
+                );
+            }
+            drop(store);
         }
 
         #[cfg(feature = "visualize")]
@@ -660,8 +682,8 @@ fn cmd_prompt_show(verbose: bool, run_ref: &str, run_upgrade: bool) -> anyhow::R
                 }
                 if run_upgrade && !upgraded {
                     let version = read_repo_version(&morph_dir)?;
-                    if version == STORE_VERSION_0_3 {
-                        eprintln!("Store already at {}.", STORE_VERSION_0_3);
+                    if version == STORE_VERSION_0_4 || version == STORE_VERSION_0_3 {
+                        eprintln!("Store already at {}.", version);
                     } else if version == STORE_VERSION_0_2 {
                         migrate_0_2_to_0_3(&morph_dir)?;
                         eprintln!("Ran migrate 0.2 → 0.3. Retrying...");

@@ -16,6 +16,9 @@ pub const STORE_VERSION_0_2: &str = "0.2";
 /// Store version with file tree storage in commits. "0.3" = Git-format hashing + tree commits.
 pub const STORE_VERSION_0_3: &str = "0.3";
 
+/// Store version with fan-out object layout. "0.4" = Git-format hashing + fan-out objects dir.
+pub const STORE_VERSION_0_4: &str = "0.4";
+
 /// Directory names under .morph/
 const OBJECTS_DIR: &str = "objects";
 const REFS_HEADS_DIR: &str = "refs/heads";
@@ -57,6 +60,8 @@ pub fn init_repo(root: impl AsRef<Path>) -> Result<FsStore, MorphError> {
 
     std::fs::write(morph_dir.join("refs").join("HEAD"), "ref: heads/main\n")?;
 
+    std::fs::write(morph_dir.join(".gitignore"), "/objects/\n")?;
+
     Ok(FsStore::new(morph_dir))
 }
 
@@ -95,6 +100,7 @@ pub fn require_store_version(morph_dir: &Path, allowed: &[&str]) -> Result<(), M
 pub fn open_store(morph_dir: &Path) -> Result<Box<dyn Store>, MorphError> {
     let version = read_repo_version(morph_dir)?;
     Ok(match version.as_str() {
+        STORE_VERSION_0_4 => Box::new(FsStore::new_git_fanout(morph_dir)),
         STORE_VERSION_0_2 | STORE_VERSION_0_3 => Box::new(FsStore::new_git(morph_dir)),
         _ => Box::new(FsStore::new(morph_dir)),
     })
@@ -120,6 +126,16 @@ mod tests {
         let _ = init_repo(dir.path()).unwrap();
         assert!(dir.path().join(".morph/prompts").is_dir());
         assert!(dir.path().join(".morph/evals").is_dir());
+    }
+
+    #[test]
+    fn init_creates_gitignore_for_objects() {
+        let dir = tempfile::tempdir().unwrap();
+        let _ = init_repo(dir.path()).unwrap();
+        let gitignore = dir.path().join(".morph/.gitignore");
+        assert!(gitignore.exists(), ".morph/.gitignore should exist");
+        let content = std::fs::read_to_string(&gitignore).unwrap();
+        assert!(content.contains("/objects/"), ".gitignore should ignore objects/");
     }
 
     #[test]

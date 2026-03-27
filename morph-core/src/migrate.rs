@@ -85,6 +85,47 @@ pub fn migrate_0_2_to_0_3(morph_dir: &Path) -> Result<(), MorphError> {
     set_repo_version(morph_dir, "0.3")
 }
 
+/// Migrate a 0.3 repo to 0.4: move objects from flat layout to fan-out (2-char prefix dirs)
+/// and create `.morph/.gitignore` if missing.
+pub fn migrate_0_3_to_0_4(morph_dir: &Path) -> Result<(), MorphError> {
+    let objects_dir = morph_dir.join("objects");
+    if objects_dir.is_dir() {
+        let mut moved = 0u64;
+        let entries: Vec<_> = std::fs::read_dir(&objects_dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.path().extension().and_then(|x| x.to_str()) == Some("json")
+                    && e.path().is_file()
+            })
+            .collect();
+
+        for entry in entries {
+            let path = entry.path();
+            let stem = match path.file_stem().and_then(|s| s.to_str()) {
+                Some(s) if s.len() == 64 => s.to_string(),
+                _ => continue,
+            };
+            let (prefix, rest) = stem.split_at(2);
+            let dest_dir = objects_dir.join(prefix);
+            std::fs::create_dir_all(&dest_dir)?;
+            let dest = dest_dir.join(format!("{}.json", rest));
+            std::fs::rename(&path, &dest)?;
+            moved += 1;
+        }
+
+        if moved > 0 {
+            eprintln!("Moved {} objects to fan-out layout.", moved);
+        }
+    }
+
+    let gitignore = morph_dir.join(".gitignore");
+    if !gitignore.exists() {
+        std::fs::write(&gitignore, "/objects/\n")?;
+    }
+
+    set_repo_version(morph_dir, "0.4")
+}
+
 fn set_repo_version(morph_dir: &Path, version: &str) -> Result<(), MorphError> {
     let config_path = morph_dir.join("config.json");
     let config = if config_path.exists() {
@@ -333,5 +374,65 @@ mod tests {
         ).unwrap();
 
         migrate_0_0_to_0_2(&morph_dir).unwrap();
+    }
+
+    #[test]
+    fn migrate_0_3_to_0_4_moves_objects_to_fanout() {
+        let dir = tempfile::tempdir().unwrap();
+        let _ = init_repo(dir.path()).unwrap();
+        let morph_dir = dir.path().join(".morph");
+        set_repo_version(&morph_dir, "0.3").unwrap();
+
+        let store = FsStore::new_git(&morph_dir);
+        let blob = MorphObject::Blob(Blob {
+            kind: "test".into(),
+            content: serde_json::json!({"data": 42}),
+        });
+        let hash = store.put(&blob).unwrap();
+        let hex = hash.to_string();
+        let flat_path = morph_dir.join("objects").join(format!("{}.json", hex));
+        assert!(flat_path.exists(), "flat object should exist before migration");
+
+        migrate_0_3_to_0_4(&morph_dir).unwrap();
+
+        assert_eq!(crate::repo::read_repo_version(&morph_dir).unwrap(), "0.4");
+        assert!(!flat_path.exists(), "flat object should be gone after migration");
+
+        let (prefix, rest) = hex.split_at(2);
+        let fanout_path = morph_dir.join("objects").join(prefix).join(format!("{}.json", rest));
+        assert!(fanout_path.exists(), "fan-out object should exist after migration");
+
+        let fanout_store = FsStore::new_git_fanout(&morph_dir);
+        let got = fanout_store.get(&hash).unwrap();
+        assert!(matches!(got, MorphObject::Blob(_)));
+    }
+
+    #[test]
+    fn migrate_0_3_to_0_4_creates_gitignore() {
+        let dir = tempfile::tempdir().unwrap();
+        let _ = init_repo(dir.path()).unwrap();
+        let morph_dir = dir.path().join(".morph");
+        set_repo_version(&morph_dir, "0.3").unwrap();
+
+        let gitignore = morph_dir.join(".gitignore");
+        if gitignore.exists() {
+            std::fs::remove_file(&gitignore).unwrap();
+        }
+
+        migrate_0_3_to_0_4(&morph_dir).unwrap();
+        assert!(gitignore.exists(), ".gitignore should be created");
+        let content = std::fs::read_to_string(&gitignore).unwrap();
+        assert!(content.contains("objects"), ".gitignore should ignore objects/");
+    }
+
+    #[test]
+    fn migrate_0_3_to_0_4_empty_objects_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let _ = init_repo(dir.path()).unwrap();
+        let morph_dir = dir.path().join(".morph");
+        set_repo_version(&morph_dir, "0.3").unwrap();
+
+        migrate_0_3_to_0_4(&morph_dir).unwrap();
+        assert_eq!(crate::repo::read_repo_version(&morph_dir).unwrap(), "0.4");
     }
 }

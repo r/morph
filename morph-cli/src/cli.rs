@@ -210,6 +210,8 @@ pub enum Command {
     },
     /// Upgrade the repo store to the latest version
     Upgrade,
+    /// Remove unreachable objects from the store
+    Gc,
     /// Inspect traces
     Trace {
         #[command(subcommand)]

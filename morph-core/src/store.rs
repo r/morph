@@ -98,32 +98,85 @@ impl Store for Box<dyn Store + '_> {
 
 type HashFn = fn(&MorphObject) -> Result<Hash, MorphError>;
 
-/// Filesystem-backed store. Objects at `root/objects/<hash>.json`, refs at `root/refs/`.
+/// Layout of the objects directory on disk.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ObjectLayout {
+    /// All objects in `objects/<hash>.json` (store versions ≤ 0.3).
+    Flat,
+    /// Git-style fan-out: `objects/<hash[0..2]>/<hash[2..]>.json` (store version 0.4+).
+    Fanout,
+}
+
+/// Filesystem-backed store. Objects at `root/objects/...`, refs at `root/refs/`.
 ///
 /// The hash function is configurable: legacy stores use `content_hash` (plain SHA-256),
 /// while v0.2+ stores use `content_hash_git` (Git blob-format SHA-256).
 pub struct FsStore {
     root: PathBuf,
     hash_fn: HashFn,
+    layout: ObjectLayout,
 }
 
 impl FsStore {
-    /// Create a legacy store (v0.0/v0.1). Hash = SHA-256(canonical_json).
+    /// Create a legacy store (v0.0/v0.1). Hash = SHA-256(canonical_json). Flat layout.
     pub fn new(root: impl AsRef<Path>) -> Self {
-        FsStore { root: root.as_ref().to_path_buf(), hash_fn: crate::content_hash }
+        FsStore { root: root.as_ref().to_path_buf(), hash_fn: crate::content_hash, layout: ObjectLayout::Flat }
     }
 
-    /// Create a Git-format store (v0.2+). Hash = SHA-256("blob "+len+"\0"+canonical_json).
+    /// Create a Git-format store (v0.2/v0.3). Hash = Git-format SHA-256. Flat layout.
     pub fn new_git(root: impl AsRef<Path>) -> Self {
-        FsStore { root: root.as_ref().to_path_buf(), hash_fn: crate::content_hash_git }
+        FsStore { root: root.as_ref().to_path_buf(), hash_fn: crate::content_hash_git, layout: ObjectLayout::Flat }
+    }
+
+    /// Create a Git-format store with fan-out layout (v0.4+).
+    pub fn new_git_fanout(root: impl AsRef<Path>) -> Self {
+        FsStore { root: root.as_ref().to_path_buf(), hash_fn: crate::content_hash_git, layout: ObjectLayout::Fanout }
+    }
+
+    /// Open a concrete FsStore by reading the store version from config.json.
+    pub fn from_store_version(morph_dir: &Path) -> Result<Self, MorphError> {
+        let version = crate::repo::read_repo_version(morph_dir)?;
+        Ok(match version.as_str() {
+            "0.4" => Self::new_git_fanout(morph_dir),
+            "0.2" | "0.3" => Self::new_git(morph_dir),
+            _ => Self::new(morph_dir),
+        })
     }
 
     pub fn objects_dir(&self) -> PathBuf { self.root.join("objects") }
 
     pub fn refs_dir(&self) -> PathBuf { self.root.join("refs") }
 
+    pub fn layout(&self) -> ObjectLayout { self.layout }
+
     fn object_path(&self, hash: &Hash) -> PathBuf {
-        self.objects_dir().join(format!("{}.json", hash))
+        let hex = hash.to_string();
+        match self.layout {
+            ObjectLayout::Flat => self.objects_dir().join(format!("{}.json", hex)),
+            ObjectLayout::Fanout => {
+                let (prefix, rest) = hex.split_at(2);
+                self.objects_dir().join(prefix).join(format!("{}.json", rest))
+            }
+        }
+    }
+
+    /// List every object hash in the store (all types). Used by GC.
+    pub fn all_object_hashes(&self) -> Result<Vec<Hash>, MorphError> {
+        match self.layout {
+            ObjectLayout::Flat => fs_list_hashes_from_dir(&self.objects_dir()),
+            ObjectLayout::Fanout => fs_list_hashes_fanout(&self.objects_dir()),
+        }
+    }
+
+    /// Delete an object by hash. Returns true if the file existed.
+    pub fn delete_object(&self, hash: &Hash) -> Result<bool, MorphError> {
+        let path = self.object_path(hash);
+        if path.exists() {
+            std::fs::remove_file(&path)?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 }
 
@@ -143,7 +196,7 @@ impl Store for FsStore {
     }
 
     fn list(&self, type_filter: ObjectType) -> Result<Vec<Hash>, MorphError> {
-        fs_list(&self.root, &self.objects_dir(), type_filter, &|h| self.get(h))
+        fs_list(&self.root, &self.objects_dir(), type_filter, &|h| self.get(h), self.layout)
     }
 
     fn ref_read(&self, name: &str) -> Result<Option<Hash>, MorphError> {
@@ -229,30 +282,53 @@ fn fs_list_hashes_from_dir(dir: &Path) -> Result<Vec<Hash>, MorphError> {
     Ok(hashes)
 }
 
+fn fs_list_hashes_fanout(objects_dir: &Path) -> Result<Vec<Hash>, MorphError> {
+    if !objects_dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut hashes = Vec::new();
+    for prefix_entry in std::fs::read_dir(objects_dir)? {
+        let prefix_entry = prefix_entry?;
+        if !prefix_entry.file_type()?.is_dir() {
+            continue;
+        }
+        let prefix = prefix_entry.file_name().to_string_lossy().into_owned();
+        if prefix.len() != 2 || !prefix.chars().all(|c| c.is_ascii_hexdigit()) {
+            continue;
+        }
+        for entry in std::fs::read_dir(prefix_entry.path())? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let rest = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            if rest.len() != 62 {
+                continue;
+            }
+            let full_hex = format!("{}{}", prefix, rest);
+            hashes.push(Hash::from_hex(&full_hex).map_err(|_| MorphError::InvalidHash(full_hex))?);
+        }
+    }
+    Ok(hashes)
+}
+
 fn fs_list(
     root: &Path,
     objects_dir: &Path,
     type_filter: ObjectType,
     getter: &dyn Fn(&Hash) -> Result<MorphObject, MorphError>,
+    layout: ObjectLayout,
 ) -> Result<Vec<Hash>, MorphError> {
     if let Some(index_dir) = type_index_for_object_type(type_filter) {
         return fs_list_hashes_from_dir(&root.join(index_dir));
     }
-    if !objects_dir.exists() {
-        return Ok(Vec::new());
-    }
+    let all = match layout {
+        ObjectLayout::Flat => fs_list_hashes_from_dir(objects_dir)?,
+        ObjectLayout::Fanout => fs_list_hashes_fanout(objects_dir)?,
+    };
     let mut hashes = Vec::new();
-    for entry in std::fs::read_dir(objects_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("json") {
-            continue;
-        }
-        let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-        if name.len() != 64 {
-            continue;
-        }
-        let hash = Hash::from_hex(name).map_err(|_| MorphError::InvalidHash(name.into()))?;
+    for hash in all {
         if getter(&hash)?.object_type() == type_filter {
             hashes.push(hash);
         }
@@ -530,5 +606,90 @@ mod tests {
         let trees = store.list(ObjectType::Tree).unwrap();
         assert!(trees.contains(&tree_hash));
         assert!(!trees.contains(&blob_hash));
+    }
+
+    // --- Fan-out layout ---
+
+    #[test]
+    fn fanout_put_get_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FsStore::new_git_fanout(dir.path());
+        let blob = MorphObject::Blob(Blob {
+            kind: "prompt".into(),
+            content: serde_json::json!({"fanout": true}),
+        });
+        let hash = store.put(&blob).unwrap();
+        let got = store.get(&hash).unwrap();
+        assert!(matches!(got, MorphObject::Blob(_)));
+        assert!(store.has(&hash).unwrap());
+
+        let hex = hash.to_string();
+        let (prefix, rest) = hex.split_at(2);
+        let expected = dir.path().join("objects").join(prefix).join(format!("{}.json", rest));
+        assert!(expected.exists(), "object should be at fan-out path");
+    }
+
+    #[test]
+    fn fanout_list_filters_by_type() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FsStore::new_git_fanout(dir.path());
+        let blob = MorphObject::Blob(Blob {
+            kind: "data".into(),
+            content: serde_json::json!({"a": 1}),
+        });
+        let tree = MorphObject::Tree(Tree {
+            entries: vec![TreeEntry {
+                name: "f".into(),
+                hash: "0".repeat(64),
+                entry_type: "blob".into(),
+            }],
+        });
+        let blob_hash = store.put(&blob).unwrap();
+        let tree_hash = store.put(&tree).unwrap();
+        let blobs = store.list(ObjectType::Blob).unwrap();
+        assert!(blobs.contains(&blob_hash));
+        assert!(!blobs.contains(&tree_hash));
+    }
+
+    #[test]
+    fn fanout_all_object_hashes() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FsStore::new_git_fanout(dir.path());
+        let b1 = MorphObject::Blob(Blob { kind: "a".into(), content: serde_json::json!(1) });
+        let b2 = MorphObject::Blob(Blob { kind: "b".into(), content: serde_json::json!(2) });
+        let h1 = store.put(&b1).unwrap();
+        let h2 = store.put(&b2).unwrap();
+        let all = store.all_object_hashes().unwrap();
+        assert!(all.contains(&h1));
+        assert!(all.contains(&h2));
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn fanout_delete_object() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FsStore::new_git_fanout(dir.path());
+        let blob = MorphObject::Blob(Blob { kind: "x".into(), content: serde_json::json!({}) });
+        let hash = store.put(&blob).unwrap();
+        assert!(store.has(&hash).unwrap());
+        assert!(store.delete_object(&hash).unwrap());
+        assert!(!store.has(&hash).unwrap());
+        assert!(!store.delete_object(&hash).unwrap());
+    }
+
+    #[test]
+    fn from_store_version_selects_correct_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let morph_dir = dir.path().join(".morph");
+        std::fs::create_dir_all(morph_dir.join("objects")).unwrap();
+        std::fs::create_dir_all(morph_dir.join("refs")).unwrap();
+
+        std::fs::write(morph_dir.join("config.json"), r#"{"repo_version":"0.3"}"#).unwrap();
+        let store = FsStore::from_store_version(&morph_dir).unwrap();
+        assert_eq!(store.layout(), ObjectLayout::Flat);
+
+        std::fs::write(morph_dir.join("config.json"), r#"{"repo_version":"0.4"}"#).unwrap();
+        let store = FsStore::from_store_version(&morph_dir).unwrap();
+        assert_eq!(store.layout(), ObjectLayout::Fanout);
     }
 }
