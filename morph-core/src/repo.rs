@@ -4,7 +4,7 @@
 //! MCP and other tools must not perform upgrades; they call [require_store_version] and error if the
 //! repo is older than supported.
 
-use crate::store::{FsStore, GixStore, MorphError, Store};
+use crate::store::{FsStore, MorphError, Store};
 use std::path::Path;
 
 /// Store version written by init and read for upgrade checks. "0.0" = FsStore layout.
@@ -95,7 +95,7 @@ pub fn require_store_version(morph_dir: &Path, allowed: &[&str]) -> Result<(), M
 pub fn open_store(morph_dir: &Path) -> Result<Box<dyn Store>, MorphError> {
     let version = read_repo_version(morph_dir)?;
     Ok(match version.as_str() {
-        STORE_VERSION_0_2 | STORE_VERSION_0_3 => Box::new(GixStore::new(morph_dir)),
+        STORE_VERSION_0_2 | STORE_VERSION_0_3 => Box::new(FsStore::new_git(morph_dir)),
         _ => Box::new(FsStore::new(morph_dir)),
     })
 }

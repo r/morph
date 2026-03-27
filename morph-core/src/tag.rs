@@ -37,12 +37,8 @@ pub fn list_tags(store: &dyn Store) -> Result<Vec<(String, Hash)>, MorphError> {
 
 /// Delete a tag by name.
 pub fn delete_tag(store: &dyn Store, name: &str) -> Result<(), MorphError> {
-    let ref_path = store.refs_dir().join("tags").join(name);
-    if !ref_path.exists() {
-        return Err(MorphError::NotFound(format!("tag '{}' not found", name)));
-    }
-    std::fs::remove_file(&ref_path)?;
-    Ok(())
+    let ref_path = format!("{}{}", TAGS_PREFIX, name);
+    store.ref_delete(&ref_path)
 }
 
 #[cfg(test)]

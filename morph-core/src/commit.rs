@@ -81,7 +81,7 @@ pub fn resolve_provenance_from_run(
 }
 
 const HEAD_REF: &str = "HEAD";
-const DEFAULT_BRANCH: &str = "main";
+pub const DEFAULT_BRANCH: &str = "main";
 
 /// Resolve HEAD to a commit hash. HEAD may be "ref: heads/main" or a raw hash (detached).
 pub fn resolve_head(store: &dyn Store) -> Result<Option<Hash>, MorphError> {
@@ -321,7 +321,7 @@ pub fn checkout_tree(
         false
     };
 
-    let _ = is_branch;
+    let _is_branch = is_branch;
     Ok((hash, tree_restored))
 }
 
@@ -474,7 +474,7 @@ pub fn create_merge_commit_with_retirement(
 }
 
 /// Collect unique contributors from both parent commits' authors and contributor lists.
-fn merge_contributors(head: &Commit, other: &Commit) -> Option<Vec<CommitContributor>> {
+pub fn merge_contributors(head: &Commit, other: &Commit) -> Option<Vec<CommitContributor>> {
     let mut seen = std::collections::BTreeSet::new();
     let mut out = Vec::new();
 
@@ -496,7 +496,7 @@ fn merge_contributors(head: &Commit, other: &Commit) -> Option<Vec<CommitContrib
     if out.is_empty() { None } else { Some(out) }
 }
 
-fn load_eval_suite(store: &dyn Store, suite_hash_str: &str) -> Result<EvalSuite, MorphError> {
+pub fn load_eval_suite(store: &dyn Store, suite_hash_str: &str) -> Result<EvalSuite, MorphError> {
     let h = Hash::from_hex(suite_hash_str)?;
     match store.get(&h)? {
         MorphObject::EvalSuite(s) => Ok(s),

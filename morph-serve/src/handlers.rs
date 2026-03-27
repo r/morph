@@ -305,6 +305,6 @@ pub async fn api_compat_graph(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let ctx = state.default_repo()?;
     let store = ctx.open_store()?;
-    let graph = crate::build_graph_response(store.as_ref())?;
+    let graph = crate::graph::build_graph_response(store.as_ref())?;
     Ok(Json(graph))
 }
