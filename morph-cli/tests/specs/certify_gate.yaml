@@ -1,0 +1,151 @@
+# Certify and Gate YAML specs (Phase 6)
+
+- name: certify_current_commit_with_metrics_file
+  files:
+    a.txt: "hello"
+    policy.json: '{"required_metrics":["tests_passed"],"thresholds":{"tests_passed":1.0}}'
+    metrics.json: '{"tests_passed": 42.0, "tests_total": 42.0}'
+  steps:
+    - morph: [policy, set, policy.json]
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "initial commit"]
+      capture: commit_hash
+    - morph: [certify, --metrics-file, metrics.json]
+      stdout_contains: "PASS"
+
+- name: certify_specific_commit
+  files:
+    a.txt: "hello"
+    metrics.json: '{"acc": 0.95}'
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "initial"]
+      capture: commit_hash
+    - morph: [certify, --metrics-file, metrics.json, --commit, "${commit_hash}"]
+      stdout_contains: "PASS"
+
+- name: certify_fails_missing_required_metric
+  files:
+    a.txt: "hello"
+    policy.json: '{"required_metrics":["acc","f1"]}'
+    metrics.json: '{"acc": 0.95}'
+  steps:
+    - morph: [policy, set, policy.json]
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "initial"]
+    - morph: [certify, --metrics-file, metrics.json]
+      expect_exit: 1
+      stderr_contains: "FAIL"
+
+- name: certify_fails_below_threshold
+  files:
+    a.txt: "hello"
+    policy.json: '{"required_metrics":["acc"],"thresholds":{"acc":0.9}}'
+    metrics.json: '{"acc": 0.8}'
+  steps:
+    - morph: [policy, set, policy.json]
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "initial"]
+    - morph: [certify, --metrics-file, metrics.json]
+      expect_exit: 1
+      stderr_contains:
+        - "FAIL"
+        - "threshold"
+
+- name: certify_with_runner
+  files:
+    a.txt: "hello"
+    metrics.json: '{"acc": 0.95}'
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "initial"]
+    - morph: [certify, --metrics-file, metrics.json, --runner, ci-runner-v2]
+      stdout_contains: "PASS"
+
+- name: gate_passes_for_certified_commit
+  files:
+    a.txt: "hello"
+    policy.json: '{"required_metrics":["acc"],"thresholds":{"acc":0.8}}'
+    metrics.json: '{"acc": 0.95}'
+  steps:
+    - morph: [policy, set, policy.json]
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "initial"]
+      capture: commit_hash
+    - morph: [certify, --metrics-file, metrics.json]
+      stdout_contains: "PASS"
+    - morph: [gate]
+      stdout_contains: "PASS"
+
+- name: gate_fails_when_metrics_missing
+  files:
+    a.txt: "hello"
+    policy.json: '{"required_metrics":["acc","f1"]}'
+    metrics.json: '{"acc": 0.95}'
+  steps:
+    - morph: [policy, set, policy.json]
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "initial"]
+    - morph: [certify, --metrics-file, metrics.json]
+      expect_exit: 1
+    - morph: [gate]
+      expect_exit: 1
+      stderr_contains:
+        - "FAIL"
+        - "f1"
+
+- name: gate_fails_below_threshold
+  files:
+    a.txt: "hello"
+    policy.json: '{"required_metrics":["acc"],"thresholds":{"acc":0.95}}'
+    metrics.json: '{"acc": 0.8}'
+  steps:
+    - morph: [policy, set, policy.json]
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "initial"]
+    - morph: [certify, --metrics-file, metrics.json]
+      expect_exit: 1
+    - morph: [gate]
+      expect_exit: 1
+      stderr_contains:
+        - "FAIL"
+        - "threshold"
+
+- name: gate_fails_uncertified
+  files:
+    a.txt: "hello"
+    policy.json: '{"required_metrics":["acc"]}'
+    metrics.json: '{"acc": 0.95}'
+  steps:
+    - morph: [policy, set, policy.json]
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "initial", --metrics, '{"acc": 0.95}']
+    - morph: [gate]
+      expect_exit: 1
+      stderr_contains: "not certified"
+
+- name: ci_json_output_certify
+  files:
+    a.txt: "hello"
+    metrics.json: '{"acc": 0.95}'
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "initial"]
+    - morph: [certify, --metrics-file, metrics.json, --json]
+      stdout_contains:
+        - "passed"
+        - "true"
+        - "metrics_provided"
+
+- name: ci_json_output_gate
+  files:
+    a.txt: "hello"
+    metrics.json: '{"acc": 0.95}'
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "initial"]
+    - morph: [certify, --metrics-file, metrics.json]
+    - morph: [gate, --json]
+      stdout_contains:
+        - "passed"
+        - "true"

@@ -1,0 +1,36 @@
+# Policy management YAML specs (Phase 6)
+
+- name: policy_round_trip
+  files:
+    policy.json: '{"required_metrics":["acc","f1"],"thresholds":{"acc":0.8},"directions":{},"default_eval_suite":null,"merge_policy":"dominance","ci_defaults":{"runner":"ci-v1"}}'
+  steps:
+    - morph: [policy, show]
+      stdout_contains: "required_metrics"
+    - morph: [policy, set, policy.json]
+      stdout_contains: "Policy updated"
+    - morph: [policy, show]
+      stdout_contains:
+        - "acc"
+        - "f1"
+        - "0.8"
+        - "dominance"
+        - "ci-v1"
+
+- name: policy_set_default_eval
+  files:
+    a.txt: "aaa"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "initial"]
+      capture: commit_hash
+    - morph: [pipeline, identity-hash]
+      capture: id_hash
+    - morph: [policy, set-default-eval, "${id_hash}"]
+      stdout_contains: "Default eval suite set to"
+    - morph: [policy, show]
+      stdout_contains: "${id_hash}"
+
+- name: policy_show_default_is_empty
+  steps:
+    - morph: [policy, show]
+      stdout_contains: "required_metrics"

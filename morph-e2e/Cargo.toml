@@ -15,6 +15,7 @@ cucumber = { version = "0.21", features = ["macros"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 assert_cmd = "2.0"
 predicates = "2.1"
+serde_json = "1.0"
 
 # Cucumber runs as an integration test; harness = false so Cucumber controls output.
 [[test]]

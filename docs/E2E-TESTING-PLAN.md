@@ -77,6 +77,15 @@ These become the first set of E2E spec files; the harness runs them and reports 
 
 The same **spec format** can be extended with `instance`, `agent_id`, and `sync` sections so one harness drives all phases.
 
+### Phase 3 multi-instance implementation
+
+Multi-instance E2E testing is supported through:
+
+- **Cucumber**: `Given a second morph repo at "<name>"` creates and initializes a subdirectory repo. `When I run "..." in directory "<name>"` runs morph in that subdirectory.
+- **YAML specs**: The `cwd` field on any step overrides the working directory, enabling multi-repo sequences within a single spec.
+- **Feature file**: `morph-e2e/features/remote_sync_workflow.feature`
+- **YAML specs**: `morph-cli/tests/specs/remote.yaml`, `morph-cli/tests/specs/push_pull.yaml`
+
 ---
 
 ## Implementation layout

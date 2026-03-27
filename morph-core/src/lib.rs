@@ -15,6 +15,8 @@ pub mod annotate;
 pub mod index;
 pub mod tree;
 pub mod extract;
+pub mod sync;
+pub mod policy;
 
 pub use hash::{canonical_json, content_hash, content_hash_git, Hash};
 pub use objects::MorphObject;
@@ -34,6 +36,16 @@ pub use annotate::{create_annotation, list_annotations};
 pub use index::{read_index, write_index, clear_index, update_index, StagingIndex};
 pub use tree::{build_tree, flatten_tree, restore_tree, empty_tree_hash};
 pub use migrate::{migrate_0_0_to_0_2, migrate_0_2_to_0_3};
+pub use sync::{
+    RemoteSpec, read_remotes, write_remotes, add_remote,
+    collect_reachable_objects, is_ancestor,
+    push_branch, fetch_remote, pull_branch,
+    open_remote_store, list_refs,
+};
+pub use policy::{
+    RepoPolicy, CertificationResult, GateResult,
+    read_policy, write_policy, certify_commit, gate_check,
+};
 
 mod morphignore;
 mod migrate;

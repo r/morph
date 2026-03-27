@@ -120,6 +120,67 @@ enum Command {
         #[arg(short, long)]
         message: Option<String>,
     },
+    /// Manage named remotes
+    Remote {
+        #[command(subcommand)]
+        sub: RemoteCmd,
+    },
+    /// Push a branch to a remote repository
+    Push {
+        /// Remote name (e.g. "origin")
+        remote: String,
+        /// Branch to push
+        branch: String,
+    },
+    /// Fetch branches from a remote into remote-tracking refs
+    Fetch {
+        /// Remote name
+        remote: String,
+    },
+    /// Pull: fetch from remote + fast-forward local branch
+    Pull {
+        /// Remote name
+        remote: String,
+        /// Branch to pull
+        branch: String,
+    },
+    /// List all refs (local branches and remote-tracking refs)
+    Refs,
+    /// Certify a commit using externally produced metrics (CI/team workflow)
+    Certify {
+        /// Path to a JSON file with metric name/value pairs (e.g. {"acc": 0.95, "f1": 0.9})
+        #[arg(long)]
+        metrics_file: PathBuf,
+        /// Commit hash to certify (defaults to HEAD)
+        #[arg(long)]
+        commit: Option<String>,
+        /// Eval suite hash used during evaluation
+        #[arg(long)]
+        eval_suite: Option<String>,
+        /// CI runner or evaluator identity
+        #[arg(long)]
+        runner: Option<String>,
+        /// Author identity
+        #[arg(long)]
+        author: Option<String>,
+        /// Emit JSON output instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
+    /// Check whether a commit satisfies the project's behavioral policy (CI gate)
+    Gate {
+        /// Commit hash to check (defaults to HEAD)
+        #[arg(long)]
+        commit: Option<String>,
+        /// Emit JSON output instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
+    /// Manage repository behavioral policy
+    Policy {
+        #[command(subcommand)]
+        sub: PolicyCmd,
+    },
     /// Attach an annotation to an object (or event)
     Annotate {
         target_hash: String,
@@ -252,6 +313,35 @@ enum PromptCmd {
         /// If trace is missing, run morph upgrade and retry once (may fix store version mismatches)
         #[arg(long)]
         run_upgrade: bool,
+    },
+}
+
+#[derive(clap::Subcommand)]
+enum RemoteCmd {
+    /// Add a named remote
+    Add {
+        /// Remote name (e.g. "origin")
+        name: String,
+        /// Path to the remote Morph repository
+        path: PathBuf,
+    },
+    /// List configured remotes
+    List,
+}
+
+#[derive(clap::Subcommand)]
+enum PolicyCmd {
+    /// Show the current repository policy
+    Show,
+    /// Set the repository policy from a JSON file
+    Set {
+        /// Path to a JSON file containing the policy
+        file: PathBuf,
+    },
+    /// Set the default eval suite for certification
+    SetDefaultEval {
+        /// Eval suite hash
+        hash: String,
     },
 }
 
@@ -798,6 +888,167 @@ fn main() -> anyhow::Result<()> {
             let hash = morph_core::rollup(&store, &base_ref, &tip_ref, message)?;
             println!("{}", hash);
         }
+        Command::Remote { sub } => match sub {
+            RemoteCmd::Add { name, path } => {
+                let (repo_root, _store) = get_store(verbose)?;
+                let morph_dir = repo_root.join(".morph");
+                let abs_path = if path.is_absolute() {
+                    path.to_string_lossy().to_string()
+                } else {
+                    std::env::current_dir()?
+                        .join(&path)
+                        .to_string_lossy()
+                        .to_string()
+                };
+                morph_core::add_remote(&morph_dir, &name, &abs_path)?;
+                println!("Remote '{}' added: {}", name, abs_path);
+            }
+            RemoteCmd::List => {
+                let (repo_root, _store) = get_store(verbose)?;
+                let morph_dir = repo_root.join(".morph");
+                let remotes = morph_core::read_remotes(&morph_dir)?;
+                for (name, spec) in &remotes {
+                    println!("{}\t{}", name, spec.path);
+                }
+            }
+        },
+        Command::Push { remote, branch } => {
+            let (repo_root, local_store) = get_store(verbose)?;
+            let morph_dir = repo_root.join(".morph");
+            let remotes = morph_core::read_remotes(&morph_dir)?;
+            let spec = remotes
+                .get(&remote)
+                .ok_or_else(|| anyhow::anyhow!("remote '{}' not found. Run 'morph remote add {} <path>' first.", remote, remote))?;
+            verbose_msg(verbose, &format!("opening remote store at {}", spec.path));
+            let remote_store = morph_core::open_remote_store(&spec.path)?;
+            let tip = morph_core::push_branch(local_store.as_ref(), remote_store.as_ref(), &branch)?;
+            println!("Pushed {} -> {}/{} ({})", branch, remote, branch, tip);
+        }
+        Command::Fetch { remote } => {
+            let (repo_root, local_store) = get_store(verbose)?;
+            let morph_dir = repo_root.join(".morph");
+            let remotes = morph_core::read_remotes(&morph_dir)?;
+            let spec = remotes
+                .get(&remote)
+                .ok_or_else(|| anyhow::anyhow!("remote '{}' not found. Run 'morph remote add {} <path>' first.", remote, remote))?;
+            verbose_msg(verbose, &format!("fetching from {}", spec.path));
+            let remote_store = morph_core::open_remote_store(&spec.path)?;
+            let updated = morph_core::fetch_remote(local_store.as_ref(), remote_store.as_ref(), &remote)?;
+            if updated.is_empty() {
+                println!("Already up to date.");
+            } else {
+                for (branch, hash) in &updated {
+                    println!("{}/{} -> {}", remote, branch, hash);
+                }
+            }
+        }
+        Command::Pull { remote, branch } => {
+            let (repo_root, local_store) = get_store(verbose)?;
+            let morph_dir = repo_root.join(".morph");
+            let remotes = morph_core::read_remotes(&morph_dir)?;
+            let spec = remotes
+                .get(&remote)
+                .ok_or_else(|| anyhow::anyhow!("remote '{}' not found. Run 'morph remote add {} <path>' first.", remote, remote))?;
+            verbose_msg(verbose, &format!("pulling {}/{} from {}", remote, branch, spec.path));
+            let remote_store = morph_core::open_remote_store(&spec.path)?;
+            let tip = morph_core::pull_branch(local_store.as_ref(), remote_store.as_ref(), &remote, &branch)?;
+            println!("Updated {} -> {} ({})", branch, tip, remote);
+        }
+        Command::Refs => {
+            let (_repo_root, store) = get_store(verbose)?;
+            let refs = morph_core::list_refs(store.as_ref())?;
+            for (name, hash) in &refs {
+                println!("{}\t{}", hash, name);
+            }
+        }
+        Command::Certify { metrics_file, commit, eval_suite, runner, author, json } => {
+            let (repo_root, store) = get_store(verbose)?;
+            let morph_dir = repo_root.join(".morph");
+            let commit_hash = match commit {
+                Some(ref h) => parse_hash(h)?,
+                None => morph_core::resolve_head(&store)?
+                    .ok_or_else(|| anyhow::anyhow!("no HEAD commit; specify --commit"))?,
+            };
+            verbose_msg(verbose, &format!("certifying commit {}", commit_hash));
+            let full_path = if metrics_file.is_absolute() { metrics_file } else { repo_root.join(&metrics_file) };
+            let metrics_str = std::fs::read_to_string(&full_path)?;
+            let metrics: std::collections::BTreeMap<String, f64> =
+                serde_json::from_str(&metrics_str).map_err(|e| anyhow::anyhow!("invalid metrics JSON: {}", e))?;
+            let result = morph_core::certify_commit(
+                &store, &morph_dir, &commit_hash, &metrics,
+                runner.as_deref().or(author.as_deref()),
+                eval_suite.as_deref(),
+            )?;
+            if json {
+                let out = serde_json::to_string_pretty(&result).map_err(|e| anyhow::anyhow!("{}", e))?;
+                println!("{}", out);
+            } else if result.passed {
+                println!("PASS: commit {} certified", commit_hash);
+                for (k, v) in &result.metrics_provided {
+                    println!("  {} = {}", k, v);
+                }
+            } else {
+                eprintln!("FAIL: commit {} not certified", commit_hash);
+                for f in &result.failures {
+                    eprintln!("  {}", f);
+                }
+                std::process::exit(1);
+            }
+        }
+        Command::Gate { commit, json } => {
+            let (repo_root, store) = get_store(verbose)?;
+            let morph_dir = repo_root.join(".morph");
+            let commit_hash = match commit {
+                Some(ref h) => parse_hash(h)?,
+                None => morph_core::resolve_head(&store)?
+                    .ok_or_else(|| anyhow::anyhow!("no HEAD commit; specify --commit"))?,
+            };
+            verbose_msg(verbose, &format!("gate check for commit {}", commit_hash));
+            let result = morph_core::gate_check(&store, &morph_dir, &commit_hash)?;
+            if json {
+                let out = serde_json::to_string_pretty(&result).map_err(|e| anyhow::anyhow!("{}", e))?;
+                println!("{}", out);
+                if !result.passed {
+                    std::process::exit(1);
+                }
+            } else if result.passed {
+                println!("PASS: commit {} satisfies policy", commit_hash);
+            } else {
+                eprintln!("FAIL: commit {} does not satisfy policy", commit_hash);
+                for r in &result.reasons {
+                    eprintln!("  {}", r);
+                }
+                std::process::exit(1);
+            }
+        }
+        Command::Policy { sub } => match sub {
+            PolicyCmd::Show => {
+                let (repo_root, _store) = get_store(verbose)?;
+                let morph_dir = repo_root.join(".morph");
+                let policy = morph_core::read_policy(&morph_dir)?;
+                let out = serde_json::to_string_pretty(&policy).map_err(|e| anyhow::anyhow!("{}", e))?;
+                println!("{}", out);
+            }
+            PolicyCmd::Set { file } => {
+                let (repo_root, _store) = get_store(verbose)?;
+                let morph_dir = repo_root.join(".morph");
+                let full = if file.is_absolute() { file } else { repo_root.join(&file) };
+                let data = std::fs::read_to_string(&full)?;
+                let policy: morph_core::RepoPolicy =
+                    serde_json::from_str(&data).map_err(|e| anyhow::anyhow!("invalid policy JSON: {}", e))?;
+                morph_core::write_policy(&morph_dir, &policy)?;
+                println!("Policy updated");
+            }
+            PolicyCmd::SetDefaultEval { hash } => {
+                let (repo_root, _store) = get_store(verbose)?;
+                let morph_dir = repo_root.join(".morph");
+                let _ = parse_hash(&hash)?;
+                let mut policy = morph_core::read_policy(&morph_dir)?;
+                policy.default_eval_suite = Some(hash.clone());
+                morph_core::write_policy(&morph_dir, &policy)?;
+                println!("Default eval suite set to {}", hash);
+            }
+        },
         Command::Annotate { target_hash, kind, data, sub, author } => {
             let (_repo_root, store) = get_store(verbose)?;
             verbose_msg(verbose, &format!("annotate {} kind={}", target_hash, kind));

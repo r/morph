@@ -1126,6 +1126,7 @@ dependencies = [
  "assert_cmd",
  "cucumber",
  "predicates 2.1.5",
+ "serde_json",
  "tempfile",
  "tokio",
 ]
