@@ -1,11 +1,13 @@
 //! Storage backend: trait and filesystem implementation.
 //!
-//! - [FsStore]: 0.0 layout, hash = SHA-256(canonical_json).
-//! - [GixStore]: 0.2 layout, hash = Git format SHA-256("blob "+len+"\0"+canonical_json). Same dir layout as FsStore.
+//! Both store variants use the same filesystem layout (`objects/<hash>.json`, `refs/`).
+//! They differ only in their content-addressing hash function:
+//! - [FsStore]: Legacy 0.0 layout, hash = SHA-256(canonical_json).
+//! - [GixStore]: 0.2+ layout, hash = Git-format SHA-256("blob "+len+"\0"+canonical_json).
 
 use crate::hash::Hash;
 use crate::objects::MorphObject;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, thiserror::Error)]
 pub enum MorphError {
@@ -19,7 +21,6 @@ pub enum MorphError {
     NotFound(String),
     #[error("Not a morph repository")]
     NotRepo,
-    /// Repo store version is older than what this tool supports; user must run `morph upgrade` (CLI only).
     #[error("Upgrade required: {0}")]
     UpgradeRequired(String),
 }
@@ -57,8 +58,6 @@ impl MorphObject {
 }
 
 /// Abstract storage interface (v0-spec §3).
-/// For refs: ref_read/ref_write work with resolved hashes; ref_read_raw/ref_write_raw
-/// work with raw ref content (e.g. "ref: heads/main" for symbolic HEAD).
 pub trait Store {
     fn put(&self, object: &MorphObject) -> Result<Hash, MorphError>;
     fn get(&self, hash: &Hash) -> Result<MorphObject, MorphError>;
@@ -70,69 +69,142 @@ pub trait Store {
     fn ref_read_raw(&self, name: &str) -> Result<Option<String>, MorphError>;
     /// Write raw ref content (symbolic or hash).
     fn ref_write_raw(&self, name: &str, value: &str) -> Result<(), MorphError>;
+    /// Delete a ref file.
+    fn ref_delete(&self, name: &str) -> Result<(), MorphError>;
     /// Path to refs directory (e.g. for listing branches).
-    fn refs_dir(&self) -> std::path::PathBuf;
+    fn refs_dir(&self) -> PathBuf;
     /// Compute the content hash for an object without storing it.
     fn hash_object(&self, object: &MorphObject) -> Result<Hash, MorphError>;
 }
 
 impl Store for Box<dyn Store + '_> {
-    fn put(&self, object: &MorphObject) -> Result<Hash, MorphError> {
-        self.as_ref().put(object)
-    }
-    fn get(&self, hash: &Hash) -> Result<MorphObject, MorphError> {
-        self.as_ref().get(hash)
-    }
-    fn has(&self, hash: &Hash) -> Result<bool, MorphError> {
-        self.as_ref().has(hash)
-    }
-    fn list(&self, type_filter: ObjectType) -> Result<Vec<Hash>, MorphError> {
-        self.as_ref().list(type_filter)
-    }
-    fn ref_read(&self, name: &str) -> Result<Option<Hash>, MorphError> {
-        self.as_ref().ref_read(name)
-    }
-    fn ref_write(&self, name: &str, hash: &Hash) -> Result<(), MorphError> {
-        self.as_ref().ref_write(name, hash)
-    }
-    fn ref_read_raw(&self, name: &str) -> Result<Option<String>, MorphError> {
-        self.as_ref().ref_read_raw(name)
-    }
-    fn ref_write_raw(&self, name: &str, value: &str) -> Result<(), MorphError> {
-        self.as_ref().ref_write_raw(name, value)
-    }
-    fn refs_dir(&self) -> std::path::PathBuf {
-        self.as_ref().refs_dir()
-    }
-    fn hash_object(&self, object: &MorphObject) -> Result<Hash, MorphError> {
-        self.as_ref().hash_object(object)
-    }
+    fn put(&self, object: &MorphObject) -> Result<Hash, MorphError> { self.as_ref().put(object) }
+    fn get(&self, hash: &Hash) -> Result<MorphObject, MorphError> { self.as_ref().get(hash) }
+    fn has(&self, hash: &Hash) -> Result<bool, MorphError> { self.as_ref().has(hash) }
+    fn list(&self, tf: ObjectType) -> Result<Vec<Hash>, MorphError> { self.as_ref().list(tf) }
+    fn ref_read(&self, name: &str) -> Result<Option<Hash>, MorphError> { self.as_ref().ref_read(name) }
+    fn ref_write(&self, name: &str, hash: &Hash) -> Result<(), MorphError> { self.as_ref().ref_write(name, hash) }
+    fn ref_read_raw(&self, name: &str) -> Result<Option<String>, MorphError> { self.as_ref().ref_read_raw(name) }
+    fn ref_write_raw(&self, name: &str, value: &str) -> Result<(), MorphError> { self.as_ref().ref_write_raw(name, value) }
+    fn ref_delete(&self, name: &str) -> Result<(), MorphError> { self.as_ref().ref_delete(name) }
+    fn refs_dir(&self) -> PathBuf { self.as_ref().refs_dir() }
+    fn hash_object(&self, object: &MorphObject) -> Result<Hash, MorphError> { self.as_ref().hash_object(object) }
 }
 
+// ── Filesystem-backed store ──────────────────────────────────────────
+
+type HashFn = fn(&MorphObject) -> Result<Hash, MorphError>;
+
 /// Filesystem-backed store. Objects at `root/objects/<hash>.json`, refs at `root/refs/`.
+///
+/// The hash function is configurable: legacy stores use `content_hash` (plain SHA-256),
+/// while v0.2+ stores use `content_hash_git` (Git blob-format SHA-256).
 pub struct FsStore {
-    root: std::path::PathBuf,
+    root: PathBuf,
+    hash_fn: HashFn,
 }
 
 impl FsStore {
+    /// Create a legacy store (v0.0/v0.1). Hash = SHA-256(canonical_json).
     pub fn new(root: impl AsRef<Path>) -> Self {
-        FsStore {
-            root: root.as_ref().to_path_buf(),
-        }
+        FsStore { root: root.as_ref().to_path_buf(), hash_fn: crate::content_hash }
     }
 
-    pub fn objects_dir(&self) -> std::path::PathBuf {
-        self.root.join("objects")
+    /// Create a Git-format store (v0.2+). Hash = SHA-256("blob "+len+"\0"+canonical_json).
+    pub fn new_git(root: impl AsRef<Path>) -> Self {
+        FsStore { root: root.as_ref().to_path_buf(), hash_fn: crate::content_hash_git }
     }
 
-    pub fn refs_dir(&self) -> std::path::PathBuf {
-        self.root.join("refs")
-    }
+    pub fn objects_dir(&self) -> PathBuf { self.root.join("objects") }
 
-    fn object_path(&self, hash: &Hash) -> std::path::PathBuf {
+    pub fn refs_dir(&self) -> PathBuf { self.root.join("refs") }
+
+    fn object_path(&self, hash: &Hash) -> PathBuf {
         self.objects_dir().join(format!("{}.json", hash))
     }
 }
+
+impl Store for FsStore {
+    fn put(&self, object: &MorphObject) -> Result<Hash, MorphError> {
+        let hash = (self.hash_fn)(object)?;
+        let path = self.object_path(&hash);
+        fs_put(&self.root, object, hash, &path)
+    }
+
+    fn get(&self, hash: &Hash) -> Result<MorphObject, MorphError> {
+        fs_get(&self.object_path(hash), hash)
+    }
+
+    fn has(&self, hash: &Hash) -> Result<bool, MorphError> {
+        Ok(self.object_path(hash).exists())
+    }
+
+    fn list(&self, type_filter: ObjectType) -> Result<Vec<Hash>, MorphError> {
+        fs_list(&self.root, &self.objects_dir(), type_filter, &|h| self.get(h))
+    }
+
+    fn ref_read(&self, name: &str) -> Result<Option<Hash>, MorphError> {
+        fs_ref_read(&self.refs_dir(), name)
+    }
+
+    fn ref_write(&self, name: &str, hash: &Hash) -> Result<(), MorphError> {
+        fs_ref_write(&self.refs_dir(), name, hash)
+    }
+
+    fn ref_read_raw(&self, name: &str) -> Result<Option<String>, MorphError> {
+        fs_ref_read_raw(&self.refs_dir(), name)
+    }
+
+    fn ref_write_raw(&self, name: &str, value: &str) -> Result<(), MorphError> {
+        fs_ref_write_raw(&self.refs_dir(), name, value)
+    }
+
+    fn ref_delete(&self, name: &str) -> Result<(), MorphError> {
+        fs_ref_delete(&self.refs_dir(), name)
+    }
+
+    fn refs_dir(&self) -> PathBuf { self.root.join("refs") }
+
+    fn hash_object(&self, object: &MorphObject) -> Result<Hash, MorphError> {
+        (self.hash_fn)(object)
+    }
+}
+
+/// Backward-compatible alias: 0.2+ store with Git-format hashes.
+/// Same filesystem layout as [FsStore], different hash function.
+pub struct GixStore(FsStore);
+
+impl GixStore {
+    pub fn new(root: impl AsRef<Path>) -> Self {
+        GixStore(FsStore::new_git(root))
+    }
+
+    pub fn objects_dir(&self) -> PathBuf { self.0.objects_dir() }
+
+    pub fn refs_dir(&self) -> PathBuf { self.0.refs_dir() }
+}
+
+macro_rules! delegate_store {
+    ($ty:ty) => {
+        impl Store for $ty {
+            fn put(&self, o: &MorphObject) -> Result<Hash, MorphError> { self.0.put(o) }
+            fn get(&self, h: &Hash) -> Result<MorphObject, MorphError> { self.0.get(h) }
+            fn has(&self, h: &Hash) -> Result<bool, MorphError> { self.0.has(h) }
+            fn list(&self, tf: ObjectType) -> Result<Vec<Hash>, MorphError> { self.0.list(tf) }
+            fn ref_read(&self, n: &str) -> Result<Option<Hash>, MorphError> { self.0.ref_read(n) }
+            fn ref_write(&self, n: &str, h: &Hash) -> Result<(), MorphError> { self.0.ref_write(n, h) }
+            fn ref_read_raw(&self, n: &str) -> Result<Option<String>, MorphError> { self.0.ref_read_raw(n) }
+            fn ref_write_raw(&self, n: &str, v: &str) -> Result<(), MorphError> { self.0.ref_write_raw(n, v) }
+            fn ref_delete(&self, n: &str) -> Result<(), MorphError> { self.0.ref_delete(n) }
+            fn refs_dir(&self) -> PathBuf { self.0.refs_dir() }
+            fn hash_object(&self, o: &MorphObject) -> Result<Hash, MorphError> { self.0.hash_object(o) }
+        }
+    };
+}
+
+delegate_store!(GixStore);
+
+// ── Shared filesystem helpers ────────────────────────────────────────
 
 fn type_index_dir(object: &MorphObject) -> Option<&'static str> {
     match object {
@@ -144,9 +216,16 @@ fn type_index_dir(object: &MorphObject) -> Option<&'static str> {
     }
 }
 
-// ── Shared filesystem helpers (used by both FsStore and GixStore) ────
+fn type_index_for_object_type(t: ObjectType) -> Option<&'static str> {
+    match t {
+        ObjectType::Run => Some("runs"),
+        ObjectType::Trace => Some("traces"),
+        ObjectType::EvalSuite => Some("evals"),
+        _ => None,
+    }
+}
 
-fn fs_get(object_path: &std::path::Path, hash: &Hash) -> Result<MorphObject, MorphError> {
+fn fs_get(object_path: &Path, hash: &Hash) -> Result<MorphObject, MorphError> {
     let bytes = std::fs::read(object_path).map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             MorphError::NotFound(hash.to_string())
@@ -157,17 +236,7 @@ fn fs_get(object_path: &std::path::Path, hash: &Hash) -> Result<MorphObject, Mor
     serde_json::from_slice(&bytes).map_err(|e| MorphError::Serialization(e.to_string()))
 }
 
-/// Map ObjectType to the type-index directory name, if one exists.
-fn type_index_for_object_type(t: ObjectType) -> Option<&'static str> {
-    match t {
-        ObjectType::Run => Some("runs"),
-        ObjectType::Trace => Some("traces"),
-        ObjectType::EvalSuite => Some("evals"),
-        _ => None,
-    }
-}
-
-fn fs_list_hashes_from_dir(dir: &std::path::Path) -> Result<Vec<Hash>, MorphError> {
+fn fs_list_hashes_from_dir(dir: &Path) -> Result<Vec<Hash>, MorphError> {
     if !dir.exists() {
         return Ok(Vec::new());
     }
@@ -187,11 +256,15 @@ fn fs_list_hashes_from_dir(dir: &std::path::Path) -> Result<Vec<Hash>, MorphErro
     Ok(hashes)
 }
 
-fn fs_list(root: &std::path::Path, objects_dir: &std::path::Path, type_filter: ObjectType, getter: &dyn Fn(&Hash) -> Result<MorphObject, MorphError>) -> Result<Vec<Hash>, MorphError> {
+fn fs_list(
+    root: &Path,
+    objects_dir: &Path,
+    type_filter: ObjectType,
+    getter: &dyn Fn(&Hash) -> Result<MorphObject, MorphError>,
+) -> Result<Vec<Hash>, MorphError> {
     if let Some(index_dir) = type_index_for_object_type(type_filter) {
         return fs_list_hashes_from_dir(&root.join(index_dir));
     }
-
     if !objects_dir.exists() {
         return Ok(Vec::new());
     }
@@ -214,7 +287,7 @@ fn fs_list(root: &std::path::Path, objects_dir: &std::path::Path, type_filter: O
     Ok(hashes)
 }
 
-fn fs_ref_read(refs_dir: &std::path::Path, name: &str) -> Result<Option<Hash>, MorphError> {
+fn fs_ref_read(refs_dir: &Path, name: &str) -> Result<Option<Hash>, MorphError> {
     let path = refs_dir.join(name);
     if !path.exists() {
         return Ok(None);
@@ -226,7 +299,7 @@ fn fs_ref_read(refs_dir: &std::path::Path, name: &str) -> Result<Option<Hash>, M
     Hash::from_hex(&s).map(Some)
 }
 
-fn fs_ref_write(refs_dir: &std::path::Path, name: &str, hash: &Hash) -> Result<(), MorphError> {
+fn fs_ref_write(refs_dir: &Path, name: &str, hash: &Hash) -> Result<(), MorphError> {
     let path = refs_dir.join(name);
     if let Some(parent) = path.parent() {
         if path != *refs_dir {
@@ -237,7 +310,7 @@ fn fs_ref_write(refs_dir: &std::path::Path, name: &str, hash: &Hash) -> Result<(
     Ok(())
 }
 
-fn fs_ref_read_raw(refs_dir: &std::path::Path, name: &str) -> Result<Option<String>, MorphError> {
+fn fs_ref_read_raw(refs_dir: &Path, name: &str) -> Result<Option<String>, MorphError> {
     let path = refs_dir.join(name);
     if !path.exists() {
         return Ok(None);
@@ -246,7 +319,7 @@ fn fs_ref_read_raw(refs_dir: &std::path::Path, name: &str) -> Result<Option<Stri
     Ok(if s.is_empty() { None } else { Some(s) })
 }
 
-fn fs_ref_write_raw(refs_dir: &std::path::Path, name: &str, value: &str) -> Result<(), MorphError> {
+fn fs_ref_write_raw(refs_dir: &Path, name: &str, value: &str) -> Result<(), MorphError> {
     let path = refs_dir.join(name);
     if let Some(parent) = path.parent() {
         if path != *refs_dir {
@@ -258,11 +331,20 @@ fn fs_ref_write_raw(refs_dir: &std::path::Path, name: &str, value: &str) -> Resu
     Ok(())
 }
 
+fn fs_ref_delete(refs_dir: &Path, name: &str) -> Result<(), MorphError> {
+    let path = refs_dir.join(name);
+    if !path.exists() {
+        return Err(MorphError::NotFound(format!("ref '{}' not found", name)));
+    }
+    std::fs::remove_file(&path)?;
+    Ok(())
+}
+
 fn fs_put(
-    root: &std::path::Path,
+    root: &Path,
     object: &MorphObject,
     hash: Hash,
-    object_path: &std::path::Path,
+    object_path: &Path,
 ) -> Result<Hash, MorphError> {
     let json = if object_path.exists() {
         None
@@ -288,118 +370,6 @@ fn fs_put(
     }
 
     Ok(hash)
-}
-
-// ── FsStore implementation ───────────────────────────────────────────
-
-impl Store for FsStore {
-    fn put(&self, object: &MorphObject) -> Result<Hash, MorphError> {
-        let hash = crate::content_hash(object)?;
-        let path = self.object_path(&hash);
-        fs_put(&self.root, object, hash, &path)
-    }
-
-    fn get(&self, hash: &Hash) -> Result<MorphObject, MorphError> {
-        fs_get(&self.object_path(hash), hash)
-    }
-
-    fn has(&self, hash: &Hash) -> Result<bool, MorphError> {
-        Ok(self.object_path(hash).exists())
-    }
-
-    fn list(&self, type_filter: ObjectType) -> Result<Vec<Hash>, MorphError> {
-        fs_list(&self.root, &self.objects_dir(), type_filter, &|h| self.get(h))
-    }
-
-    fn ref_read(&self, name: &str) -> Result<Option<Hash>, MorphError> {
-        fs_ref_read(&self.refs_dir(), name)
-    }
-
-    fn ref_write(&self, name: &str, hash: &Hash) -> Result<(), MorphError> {
-        fs_ref_write(&self.refs_dir(), name, hash)
-    }
-
-    fn ref_read_raw(&self, name: &str) -> Result<Option<String>, MorphError> {
-        fs_ref_read_raw(&self.refs_dir(), name)
-    }
-
-    fn ref_write_raw(&self, name: &str, value: &str) -> Result<(), MorphError> {
-        fs_ref_write_raw(&self.refs_dir(), name, value)
-    }
-
-    fn refs_dir(&self) -> std::path::PathBuf {
-        self.root.join("refs")
-    }
-
-    fn hash_object(&self, object: &MorphObject) -> Result<Hash, MorphError> {
-        crate::content_hash(object)
-    }
-}
-
-/// 0.2 store: same directory layout as FsStore but uses Git-format content hash
-/// (SHA-256 of "blob "+len+"\0"+canonical_json). Used for repo_version "0.2".
-pub struct GixStore {
-    root: std::path::PathBuf,
-}
-
-impl GixStore {
-    pub fn new(root: impl AsRef<Path>) -> Self {
-        GixStore {
-            root: root.as_ref().to_path_buf(),
-        }
-    }
-
-    pub fn objects_dir(&self) -> std::path::PathBuf {
-        self.root.join("objects")
-    }
-
-    fn object_path(&self, hash: &Hash) -> std::path::PathBuf {
-        self.objects_dir().join(format!("{}.json", hash))
-    }
-}
-
-impl Store for GixStore {
-    fn put(&self, object: &MorphObject) -> Result<Hash, MorphError> {
-        let hash = crate::content_hash_git(object)?;
-        let path = self.object_path(&hash);
-        fs_put(&self.root, object, hash, &path)
-    }
-
-    fn get(&self, hash: &Hash) -> Result<MorphObject, MorphError> {
-        fs_get(&self.object_path(hash), hash)
-    }
-
-    fn has(&self, hash: &Hash) -> Result<bool, MorphError> {
-        Ok(self.object_path(hash).exists())
-    }
-
-    fn list(&self, type_filter: ObjectType) -> Result<Vec<Hash>, MorphError> {
-        fs_list(&self.root, &self.objects_dir(), type_filter, &|h| self.get(h))
-    }
-
-    fn ref_read(&self, name: &str) -> Result<Option<Hash>, MorphError> {
-        fs_ref_read(&self.refs_dir(), name)
-    }
-
-    fn ref_write(&self, name: &str, hash: &Hash) -> Result<(), MorphError> {
-        fs_ref_write(&self.refs_dir(), name, hash)
-    }
-
-    fn ref_read_raw(&self, name: &str) -> Result<Option<String>, MorphError> {
-        fs_ref_read_raw(&self.refs_dir(), name)
-    }
-
-    fn ref_write_raw(&self, name: &str, value: &str) -> Result<(), MorphError> {
-        fs_ref_write_raw(&self.refs_dir(), name, value)
-    }
-
-    fn refs_dir(&self) -> std::path::PathBuf {
-        self.root.join("refs")
-    }
-
-    fn hash_object(&self, object: &MorphObject) -> Result<Hash, MorphError> {
-        crate::content_hash_git(object)
-    }
 }
 
 #[cfg(test)]
@@ -441,7 +411,6 @@ mod tests {
     fn ref_write_read() {
         let dir = tempfile::tempdir().unwrap();
         let store = FsStore::new(dir.path());
-        store.refs_dir();
         std::fs::create_dir_all(store.refs_dir()).unwrap();
         let blob = MorphObject::Blob(Blob {
             kind: "x".into(),
@@ -517,6 +486,19 @@ mod tests {
         assert_eq!(store.ref_read("heads/main").unwrap(), Some(hash));
     }
 
+    #[test]
+    fn ref_delete_removes_ref() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FsStore::new(dir.path());
+        std::fs::create_dir_all(store.refs_dir().join("tags")).unwrap();
+        let blob = MorphObject::Blob(Blob { kind: "x".into(), content: serde_json::json!({}) });
+        let hash = store.put(&blob).unwrap();
+        store.ref_write("tags/v1", &hash).unwrap();
+        assert!(store.ref_read("tags/v1").unwrap().is_some());
+        store.ref_delete("tags/v1").unwrap();
+        assert!(store.ref_read("tags/v1").unwrap().is_none());
+    }
+
     // --- GixStore: same Store contract, Git-format hash ---
 
     #[test]
@@ -531,7 +513,6 @@ mod tests {
         let got = store.get(&hash).unwrap();
         assert!(matches!(got, MorphObject::Blob(_)));
         assert!(store.has(&hash).unwrap());
-        // Git-format hash differs from legacy content_hash
         let legacy_hash = crate::content_hash(&blob).unwrap();
         assert_ne!(hash, legacy_hash);
     }

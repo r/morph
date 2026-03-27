@@ -7,7 +7,7 @@
 //! - `DominanceResult` / `DominanceViolation`: per-metric dominance failure explanations
 
 use crate::commit::{current_branch, resolve_head};
-use crate::objects::{Commit, CommitContributor, EvalContract, EvalSuite, MorphObject};
+use crate::objects::{Commit, EvalContract, EvalSuite, MorphObject};
 use crate::store::{MorphError, Store};
 use crate::Hash;
 use std::collections::BTreeMap;
@@ -229,11 +229,7 @@ fn compute_reference_bar(
 }
 
 fn load_eval_suite(store: &dyn Store, hash_str: &str) -> Result<EvalSuite, MorphError> {
-    let h = Hash::from_hex(hash_str)?;
-    match store.get(&h)? {
-        MorphObject::EvalSuite(s) => Ok(s),
-        _ => Ok(EvalSuite { cases: vec![], metrics: vec![] }),
-    }
+    crate::commit::load_eval_suite(store, hash_str)
 }
 
 /// Prepare a merge plan: resolve both parents, compute union suite, reference bar.
@@ -366,31 +362,14 @@ pub fn execute_merge(
     });
     let hash = store.put(&commit)?;
 
-    let branch = current_branch(store)?.unwrap_or_else(|| "main".to_string());
+    let branch = current_branch(store)?.unwrap_or_else(|| crate::commit::DEFAULT_BRANCH.to_string());
     store.ref_write(&format!("heads/{}", branch), &hash)?;
 
     Ok(hash)
 }
 
-fn merge_contributors(head: &Commit, other: &Commit) -> Option<Vec<CommitContributor>> {
-    let mut seen = std::collections::BTreeSet::new();
-    let mut out = Vec::new();
-    for commit in [head, other] {
-        if seen.insert(commit.author.clone()) {
-            out.push(CommitContributor {
-                id: commit.author.clone(),
-                role: None,
-            });
-        }
-        if let Some(contribs) = &commit.contributors {
-            for c in contribs {
-                if seen.insert(c.id.clone()) {
-                    out.push(c.clone());
-                }
-            }
-        }
-    }
-    if out.is_empty() { None } else { Some(out) }
+fn merge_contributors(head: &Commit, other: &Commit) -> Option<Vec<crate::objects::CommitContributor>> {
+    crate::commit::merge_contributors(head, other)
 }
 
 #[cfg(test)]

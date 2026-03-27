@@ -95,7 +95,7 @@ morph-mcp/      MCP server (primary write path from IDE): Cursor, Claude Code
 morph-serve/    Browser-based repo visualization (morph visualize)
 ```
 
-**Storage backend**: Trait-based (`Store`). v0 ships two filesystem implementations (`FsStore` for 0.0, `GixStore` for 0.2+) with identical directory layouts but different hash functions. SQLite and remote backends are anticipated by the trait interface.
+**Storage backend**: Trait-based (`Store`). v0 ships a single filesystem implementation (`FsStore`) supporting two hash modes: legacy (v0.0, plain SHA-256) and Git-format (v0.2+, `"blob "+len+"\0"+data`). SQLite and remote backends are anticipated by the trait interface.
 
 **Write path**: IDE (via MCP) → morph-mcp → morph-core → `.morph/objects/`.
 **Read path**: CLI → morph-core → `.morph/objects/`.
