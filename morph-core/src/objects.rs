@@ -79,13 +79,16 @@ pub struct PipelineGraph {
 
 /// A node in the pipeline DAG. `kind` is one of: prompt_call, tool_call,
 /// retrieval, transform, identity, review (paper §3.3).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PipelineNode {
     pub id: String,
     pub kind: String,
+    #[serde(rename = "ref", skip_serializing_if = "Option::is_none", default)]
     pub ref_: Option<String>,
+    #[serde(default)]
     pub params: BTreeMap<String, serde_json::Value>,
     /// Per-node environment config (paper ε : V → EnvConfig ∪ {⊥}).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub env: Option<BTreeMap<String, serde_json::Value>>,
 }
 
@@ -307,56 +310,3 @@ pub enum MorphObject {
     Annotation(Annotation),
 }
 
-// Serde: PipelineNode uses "ref" in JSON but "ref" is a Rust keyword. Use ref_ with rename.
-impl Serialize for PipelineNode {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        #[derive(Serialize)]
-        struct PipelineNodeOut<'a> {
-            id: &'a str,
-            kind: &'a str,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            r#ref: Option<&'a String>,
-            params: &'a BTreeMap<String, serde_json::Value>,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            env: Option<&'a BTreeMap<String, serde_json::Value>>,
-        }
-        PipelineNodeOut {
-            id: &self.id,
-            kind: &self.kind,
-            r#ref: self.ref_.as_ref(),
-            params: &self.params,
-            env: self.env.as_ref(),
-        }
-        .serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for PipelineNode {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        struct PipelineNodeIn {
-            id: String,
-            kind: String,
-            #[serde(default)]
-            r#ref: Option<String>,
-            #[serde(default)]
-            params: BTreeMap<String, serde_json::Value>,
-            #[serde(default)]
-            env: Option<BTreeMap<String, serde_json::Value>>,
-        }
-        let in_ = PipelineNodeIn::deserialize(deserializer)?;
-        Ok(PipelineNode {
-            id: in_.id,
-            kind: in_.kind,
-            ref_: in_.r#ref,
-            params: in_.params,
-            env: in_.env,
-        })
-    }
-}

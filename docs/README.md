@@ -80,8 +80,8 @@ Historical design documents that guided implementation decisions. Kept for refer
 
 | Document | Status |
 |---|---|
-| [plan-blob-store-sqlite.md](plans/plan-blob-store-sqlite.md) | Partially superseded by GixStore |
-| [plan-gix-store-option-b.md](plans/plan-gix-store-option-b.md) | Implemented as GixStore (store version 0.2) |
+| [plan-blob-store-sqlite.md](plans/plan-blob-store-sqlite.md) | Partially superseded by FsStore Git-format hashing |
+| [plan-gix-store-option-b.md](plans/plan-gix-store-option-b.md) | Implemented as `FsStore::new_git()` (store version 0.2+) |
 | [plan-morph-viz.md](plans/plan-morph-viz.md) | Implemented as `morph visualize` |
 
 ---
@@ -95,7 +95,7 @@ morph-mcp/      MCP server (primary write path from IDE): Cursor, Claude Code
 morph-serve/    Browser-based repo visualization (morph visualize)
 ```
 
-**Storage backend**: Trait-based (`Store`). v0 ships two filesystem backends selected by `repo_version` in `.morph/config.json`: **`FsStore`** (0.0, legacy: SHA-256 of canonical JSON only) and **`GixStore`** (0.2+, Git-style `"blob "+len+"\0"+data` hashing; required for tree commits in 0.3). Use `morph upgrade` to migrate. SQLite and remote backends are anticipated by the trait interface.
+**Storage backend**: Trait-based (`Store`). v0 ships a single filesystem backend (`FsStore`) with two hash modes, selected by `repo_version` in `.morph/config.json`: **`FsStore::new`** (0.0, legacy: SHA-256 of canonical JSON only) and **`FsStore::new_git`** (0.2+, Git-style `"blob "+len+"\0"+data` hashing; required for tree commits in 0.3). Use `morph upgrade` to migrate. SQLite and remote backends are anticipated by the trait interface.
 
 **Write path**: IDE (via MCP) → morph-mcp → morph-core → `.morph/objects/`.
 **Read path**: CLI → morph-core → `.morph/objects/`.

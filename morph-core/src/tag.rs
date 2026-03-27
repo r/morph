@@ -9,8 +9,8 @@ const TAGS_PREFIX: &str = "tags/";
 pub fn create_tag(store: &dyn Store, name: &str, target: &Hash) -> Result<(), MorphError> {
     let ref_path = format!("{}{}", TAGS_PREFIX, name);
     if store.ref_read(&ref_path)?.is_some() {
-        return Err(MorphError::Serialization(format!(
-            "tag '{}' already exists",
+        return Err(MorphError::AlreadyExists(format!(
+            "tag '{}'",
             name
         )));
     }

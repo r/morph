@@ -88,9 +88,10 @@ pub fn content_hash_git(obj: &crate::objects::MorphObject) -> Result<Hash, crate
 }
 
 /// Serialize to canonical JSON (deterministic, for hashing). Uses compact form.
+/// All map-typed fields in MorphObject use BTreeMap, which iterates in sorted key order,
+/// so serde_json::to_string produces deterministic output directly.
 pub fn canonical_json(obj: &crate::objects::MorphObject) -> Result<String, crate::store::MorphError> {
-    let value = serde_json::to_value(obj).map_err(|e| crate::store::MorphError::Serialization(e.to_string()))?;
-    serde_json::to_string(&value).map_err(|e| crate::store::MorphError::Serialization(e.to_string()))
+    serde_json::to_string(obj).map_err(|e| crate::store::MorphError::Serialization(e.to_string()))
 }
 
 #[cfg(test)]

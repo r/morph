@@ -1,10 +1,10 @@
 //! One-time migration from store 0.0 (or 0.1) to 0.2 (Git-format hashes).
 //!
 //! Loads all objects from the old store, rewrites hash references in dependency order,
-//! writes to GixStore, updates refs and repo_version.
+//! writes to FsStore (Git-format hashing), updates refs and repo_version.
 
 use crate::objects::*;
-use crate::store::{GixStore, MorphError, Store};
+use crate::store::{FsStore, MorphError, Store};
 use crate::Hash;
 use std::collections::HashMap;
 use std::path::Path;
@@ -41,9 +41,9 @@ pub fn migrate_0_0_to_0_2(morph_dir: &Path) -> Result<(), MorphError> {
     }
 
     let mut map: HashMap<String, Hash> = HashMap::new();
-    let gix = GixStore::new(morph_dir);
-    std::fs::create_dir_all(gix.objects_dir())?;
-    std::fs::create_dir_all(gix.refs_dir())?;
+    let git_store = FsStore::new_git(morph_dir);
+    std::fs::create_dir_all(git_store.objects_dir())?;
+    std::fs::create_dir_all(git_store.refs_dir())?;
 
     // Dependency order: no-refs first, then Tree, Pipeline, Commit, Run, TraceRollup, Annotation
     let order = dependency_order();
@@ -53,7 +53,7 @@ pub fn migrate_0_0_to_0_2(morph_dir: &Path) -> Result<(), MorphError> {
                 continue;
             }
             let rewritten = rewrite_object(obj, &map)?;
-            let new_hash = gix.put(&rewritten)?;
+            let new_hash = git_store.put(&rewritten)?;
             map.insert(old_hash.to_string(), new_hash);
         }
     }
@@ -69,7 +69,7 @@ pub fn migrate_0_0_to_0_2(morph_dir: &Path) -> Result<(), MorphError> {
             if content.len() == 64 {
                 if Hash::from_hex(&content).is_ok() {
                     if let Some(&new_h) = map.get(&content) {
-                        gix.ref_write(&format!("heads/{}", name), &new_h)?;
+                        git_store.ref_write(&format!("heads/{}", name), &new_h)?;
                     }
                 }
             }
@@ -276,13 +276,13 @@ mod tests {
             crate::repo::read_repo_version(&morph_dir).unwrap(),
             "0.2"
         );
-        let gix = GixStore::new(&morph_dir);
-        let head_raw = gix.ref_read_raw("HEAD").unwrap();
+        let git_store = FsStore::new_git(&morph_dir);
+        let head_raw = git_store.ref_read_raw("HEAD").unwrap();
         assert!(head_raw.as_deref().map(|s| s.contains("heads/main")).unwrap_or(false));
-        let head_hash = crate::commit::resolve_head(&gix).unwrap();
+        let head_hash = crate::commit::resolve_head(&git_store).unwrap();
         assert!(head_hash.is_some());
         let head = head_hash.unwrap();
-        let obj = gix.get(&head).unwrap();
+        let obj = git_store.get(&head).unwrap();
         assert!(matches!(obj, MorphObject::Commit(_)));
         // New hashes differ from old
         assert_ne!(head, commit_hash);

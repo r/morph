@@ -1,9 +1,10 @@
 //! Storage backend: trait and filesystem implementation.
 //!
-//! Both store variants use the same filesystem layout (`objects/<hash>.json`, `refs/`).
-//! They differ only in their content-addressing hash function:
-//! - [FsStore]: Legacy 0.0 layout, hash = SHA-256(canonical_json).
-//! - [GixStore]: 0.2+ layout, hash = Git-format SHA-256("blob "+len+"\0"+canonical_json).
+//! [FsStore] supports two hash modes via its constructors:
+//! - [`FsStore::new`]: Legacy 0.0 layout, hash = SHA-256(canonical_json).
+//! - [`FsStore::new_git`]: 0.2+ layout, hash = Git-format SHA-256("blob "+len+"\0"+canonical_json).
+//!
+//! Both use the same filesystem layout (`objects/<hash>.json`, `refs/`).
 
 use crate::hash::Hash;
 use crate::objects::MorphObject;
@@ -23,6 +24,8 @@ pub enum MorphError {
     NotRepo,
     #[error("Upgrade required: {0}")]
     UpgradeRequired(String),
+    #[error("already exists: {0}")]
+    AlreadyExists(String),
 }
 
 /// Object type filter for list operations.
@@ -171,38 +174,8 @@ impl Store for FsStore {
 }
 
 /// Backward-compatible alias: 0.2+ store with Git-format hashes.
-/// Same filesystem layout as [FsStore], different hash function.
-pub struct GixStore(FsStore);
-
-impl GixStore {
-    pub fn new(root: impl AsRef<Path>) -> Self {
-        GixStore(FsStore::new_git(root))
-    }
-
-    pub fn objects_dir(&self) -> PathBuf { self.0.objects_dir() }
-
-    pub fn refs_dir(&self) -> PathBuf { self.0.refs_dir() }
-}
-
-macro_rules! delegate_store {
-    ($ty:ty) => {
-        impl Store for $ty {
-            fn put(&self, o: &MorphObject) -> Result<Hash, MorphError> { self.0.put(o) }
-            fn get(&self, h: &Hash) -> Result<MorphObject, MorphError> { self.0.get(h) }
-            fn has(&self, h: &Hash) -> Result<bool, MorphError> { self.0.has(h) }
-            fn list(&self, tf: ObjectType) -> Result<Vec<Hash>, MorphError> { self.0.list(tf) }
-            fn ref_read(&self, n: &str) -> Result<Option<Hash>, MorphError> { self.0.ref_read(n) }
-            fn ref_write(&self, n: &str, h: &Hash) -> Result<(), MorphError> { self.0.ref_write(n, h) }
-            fn ref_read_raw(&self, n: &str) -> Result<Option<String>, MorphError> { self.0.ref_read_raw(n) }
-            fn ref_write_raw(&self, n: &str, v: &str) -> Result<(), MorphError> { self.0.ref_write_raw(n, v) }
-            fn ref_delete(&self, n: &str) -> Result<(), MorphError> { self.0.ref_delete(n) }
-            fn refs_dir(&self) -> PathBuf { self.0.refs_dir() }
-            fn hash_object(&self, o: &MorphObject) -> Result<Hash, MorphError> { self.0.hash_object(o) }
-        }
-    };
-}
-
-delegate_store!(GixStore);
+#[deprecated(note = "use FsStore::new_git() directly")]
+pub type GixStore = FsStore;
 
 // ── Shared filesystem helpers ────────────────────────────────────────
 
@@ -499,12 +472,12 @@ mod tests {
         assert!(store.ref_read("tags/v1").unwrap().is_none());
     }
 
-    // --- GixStore: same Store contract, Git-format hash ---
+    // --- FsStore::new_git: same Store contract, Git-format hash ---
 
     #[test]
-    fn gix_store_put_get_roundtrip() {
+    fn git_store_put_get_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
-        let store = GixStore::new(dir.path());
+        let store = FsStore::new_git(dir.path());
         let blob = MorphObject::Blob(Blob {
             kind: "prompt".into(),
             content: serde_json::json!({"x": 1}),
@@ -518,9 +491,9 @@ mod tests {
     }
 
     #[test]
-    fn gix_store_ref_write_read_and_symbolic_head() {
+    fn git_store_ref_write_read_and_symbolic_head() {
         let dir = tempfile::tempdir().unwrap();
-        let store = GixStore::new(dir.path());
+        let store = FsStore::new_git(dir.path());
         std::fs::create_dir_all(store.refs_dir()).unwrap();
         let blob = MorphObject::Blob(Blob {
             kind: "x".into(),
@@ -535,9 +508,9 @@ mod tests {
     }
 
     #[test]
-    fn gix_store_list_filters_by_type() {
+    fn git_store_list_filters_by_type() {
         let dir = tempfile::tempdir().unwrap();
-        let store = GixStore::new(dir.path());
+        let store = FsStore::new_git(dir.path());
         let blob = MorphObject::Blob(Blob {
             kind: "prompt".into(),
             content: serde_json::json!({"body": "x"}),

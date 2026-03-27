@@ -176,8 +176,8 @@ The v0 implementation provides two backends, selected by `repo_version` in `.mor
 | Store version | Backend | Hash function | Notes |
 |---|---|---|---|
 | `"0.0"` | **FsStore** — flat `objects/<hash>.json` | SHA-256 of canonical JSON | Created by `morph init`. Legacy. |
-| `"0.2"` | **GixStore** — same directory layout | SHA-256 of `"blob " + len + "\0" + canonical_json` (Git object format) | Created by `morph upgrade` from 0.0. |
-| `"0.3"` | **GixStore** + tree commits | Same as 0.2 | Adds file tree storage in commits. Current. |
+| `"0.2"` | **FsStore (Git-format)** — same directory layout | SHA-256 of `"blob " + len + "\0" + canonical_json` (Git object format) | Created by `morph upgrade` from 0.0. |
+| `"0.3"` | **FsStore (Git-format)** + tree commits | Same as 0.2 | Adds file tree storage in commits. Current. |
 
 Both backends use the same directory layout: `objects/<hash>.json` for objects, `refs/` for references, and type-index directories (`runs/`, `traces/`, `prompts/`, `evals/`) for fast type-filtered listing. The `list(type)` operation uses type-index directories when available, falling back to full object scan for types without indexes.
 
@@ -993,7 +993,7 @@ Correct foundations cannot.
 
 The reference v0 implementation is in Rust.
 
-- **Storage:** Trait-based `Store` interface with two filesystem backends (`FsStore` for store version 0.0, `GixStore` for 0.2+). Both use flat JSON files in `.morph/objects/<hash>.json` with type-index directories for fast listing. `morph upgrade` migrates between versions. Future backends (SQLite, S3) plug into the same trait.
+- **Storage:** Trait-based `Store` interface with a single filesystem backend (`FsStore`) supporting two hash modes: `FsStore::new` for legacy store version 0.0, `FsStore::new_git` for 0.2+. Both use flat JSON files in `.morph/objects/<hash>.json` with type-index directories for fast listing. `morph upgrade` migrates between versions. Future backends (SQLite, S3) plug into the same trait.
 - **Metrics validation:** Built-in aggregation (`mean`, `min`, `p95`, `lower_ci_bound`), direction-aware threshold checks (`maximize`/`minimize`), and componentwise dominance checks. Morph does not execute tests; it validates and compares reported metric vectors.
 - **Crates:**
 

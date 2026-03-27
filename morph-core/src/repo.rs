@@ -10,10 +10,10 @@ use std::path::Path;
 /// Store version written by init and read for upgrade checks. "0.0" = FsStore layout.
 pub const STORE_VERSION_INIT: &str = "0.0";
 
-/// Store version after migration to Git-format hashes. "0.2" = GixStore.
+/// Store version after migration to Git-format hashes. "0.2" = FsStore with Git-format hashing.
 pub const STORE_VERSION_0_2: &str = "0.2";
 
-/// Store version with file tree storage in commits. "0.3" = GixStore + tree commits.
+/// Store version with file tree storage in commits. "0.3" = Git-format hashing + tree commits.
 pub const STORE_VERSION_0_3: &str = "0.3";
 
 /// Directory names under .morph/
@@ -40,7 +40,7 @@ pub fn init_repo(root: impl AsRef<Path>) -> Result<FsStore, MorphError> {
                 ".morph exists and is not a directory",
             )));
         }
-        return Err(MorphError::Serialization(
+        return Err(MorphError::AlreadyExists(
             "already a morph repository (directory .morph exists)".into(),
         ));
     }
@@ -91,7 +91,7 @@ pub fn require_store_version(morph_dir: &Path, allowed: &[&str]) -> Result<(), M
 }
 
 /// Open the store for an existing repo at `morph_dir`. Returns the backend appropriate for
-/// the repo's `repo_version` (0.0 → FsStore, 0.2 → GixStore).
+/// the repo's `repo_version` (0.0 → legacy hashing, 0.2+ → Git-format hashing).
 pub fn open_store(morph_dir: &Path) -> Result<Box<dyn Store>, MorphError> {
     let version = read_repo_version(morph_dir)?;
     Ok(match version.as_str() {
@@ -146,7 +146,7 @@ mod tests {
         let second = init_repo(dir.path());
         match &second {
             Err(e) => {
-                assert!(matches!(e, MorphError::Serialization(_)));
+                assert!(matches!(e, MorphError::AlreadyExists(_)));
                 assert!(e.to_string().contains("already a morph repository"));
             }
             Ok(_) => panic!("second init should error when .morph already exists"),

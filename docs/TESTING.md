@@ -6,7 +6,7 @@
 |-------|-------|----------|
 | **morph-core** | 234 unit tests across 20 modules | `#[cfg(test)]` blocks in each source file |
 | **morph-cli** | 113 integration tests + 9 unit tests | YAML specs in `morph-cli/tests/specs/*.yaml`, compiled by `build.rs`; unit tests in `setup.rs` |
-| **morph-e2e** | 29 Cucumber e2e scenarios | `morph-e2e/features/*.feature`, step defs in `morph-e2e/tests/cucumber.rs` |
+| **morph-e2e** | 35 Cucumber e2e scenarios (3 skipped in CI) | `morph-e2e/features/*.feature`, step defs in `morph-e2e/tests/cucumber.rs` |
 | **morph-mcp** | 16 integration tests | `#[cfg(test)]` in `morph-mcp/src/main.rs` |
 | **morph-serve** | 34 unit/API tests (views, service, handlers, org policy, multi-repo) | `morph-serve/src/tests.rs` + `org_policy::tests` |
 
@@ -20,7 +20,7 @@
 
 ### morph-mcp integration tests
 
-All 14 MCP tools tested: **init** (success + already-initialized error), **record_session** (hash return), **record_run**, **record_eval** (file-based metrics), **stage** (explicit paths + default `.`), **commit** (basic, with metrics, with `--from-run` provenance), **branch** (success + no-commit error), **checkout** (branch switch), **annotate** (annotation creation), **status** (file listing), **log** (commit history), **show** (object JSON), **diff** (between commits), **merge** (behavioral dominance), **repo_store** (not-found error message).
+All 15 MCP tools tested (16 test functions): **init** (success + already-initialized error), **record_session** (hash return), **record_run**, **record_eval** (file-based metrics), **stage** (explicit paths + default `.`), **commit** (basic, with metrics, with `--from-run` provenance), **branch** (success + no-commit error), **checkout** (branch switch), **annotate** (annotation creation), **status** (file listing), **log** (commit history), **show** (object JSON), **diff** (between commits), **merge** (behavioral dominance), **repo_store** (not-found error message).
 
 ---
 
@@ -75,7 +75,7 @@ Each YAML spec supports: file/directory setup (`files`, `dirs`), sequenced CLI c
 
 ## Known gaps
 
-- **GixStore-specific paths**: `status()` and `record_session()` are now backend-aware (use `store.hash_object()`), but explicit GixStore integration tests would catch backend-specific regressions.
+- **Git-format hash paths**: `status()` and `record_session()` are backend-aware (use `store.hash_object()`), but explicit integration tests for Git-format hashing (via `FsStore::new_git()`) would catch hash-mode-specific regressions.
 - **proptest**: In dev-dependencies but not yet used. Good candidate for property-based tests on hash determinism and serialization round-trips.
 - **Network transport**: Phase 5 sync uses local filesystem paths only. Network transport (HTTP, SSH) tests will be needed when that transport is added.
 - **MCP certification/gating**: The certification and gate flows are available via CLI only. MCP exposure would allow IDE-driven certification workflows.

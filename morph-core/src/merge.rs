@@ -228,9 +228,6 @@ fn compute_reference_bar(
     bar
 }
 
-fn load_eval_suite(store: &dyn Store, hash_str: &str) -> Result<EvalSuite, MorphError> {
-    crate::commit::load_eval_suite(store, hash_str)
-}
 
 /// Prepare a merge plan: resolve both parents, compute union suite, reference bar.
 ///
@@ -265,10 +262,10 @@ pub fn prepare_merge(
     };
 
     let union = match eval_suite_hash {
-        Some(h) => load_eval_suite(store, &h.to_string())?,
+        Some(h) => crate::commit::load_eval_suite(store, &h.to_string())?,
         None => {
-            let head_suite = load_eval_suite(store, &head_commit.eval_contract.suite)?;
-            let other_suite = load_eval_suite(store, &other_commit.eval_contract.suite)?;
+            let head_suite = crate::commit::load_eval_suite(store, &head_commit.eval_contract.suite)?;
+            let other_suite = crate::commit::load_eval_suite(store, &other_commit.eval_contract.suite)?;
             crate::metrics::union_suites(&head_suite, &other_suite)?
         }
     };
@@ -339,7 +336,7 @@ pub fn execute_merge(
         None
     };
 
-    let merged_contributors = merge_contributors(&plan.head_commit, &plan.other_commit);
+    let merged_contributors = crate::commit::merge_contributors(&plan.head_commit, &plan.other_commit);
 
     let parents = vec![plan.head_hash.to_string(), plan.other_hash.to_string()];
     let timestamp = chrono::Utc::now().to_rfc3339();
@@ -368,9 +365,6 @@ pub fn execute_merge(
     Ok(hash)
 }
 
-fn merge_contributors(head: &Commit, other: &Commit) -> Option<Vec<crate::objects::CommitContributor>> {
-    crate::commit::merge_contributors(head, other)
-}
 
 #[cfg(test)]
 mod tests {
