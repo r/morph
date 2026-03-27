@@ -22,7 +22,7 @@ pub struct MorphWorld {
     pub canon_path: Option<std::path::PathBuf>,
     /// Last command stdout.
     pub last_stdout: String,
-    /// Last command stderr: String,
+    /// Last command stderr.
     pub last_stderr: String,
     /// Last command exit code.
     pub last_exit: Option<i32>,
