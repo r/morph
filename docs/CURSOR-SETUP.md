@@ -154,6 +154,11 @@ When you want a snapshot:
 | `morph_annotate` | Attach metadata to any object |
 | `morph_branch` | Create a branch at HEAD |
 | `morph_checkout` | Switch HEAD and restore working tree |
+| `morph_status` | Show working-space status (new/tracked files) |
+| `morph_log` | Show commit history from HEAD or a named ref |
+| `morph_show` | Show a stored object as pretty JSON |
+| `morph_diff` | Compare two commits/refs and show file-level changes |
+| `morph_merge` | Merge a branch (requires behavioral dominance) |
 
 All tools accept optional `workspace_path`. To get a run's prompt from the CLI, run **`morph prompt show [REF]`** in the repo (e.g. `morph prompt show latest~1`). Ref is like Git: **`latest`** (default), **`latest~N`** or **`latest-N`** (Nth run back), or a **64-char run hash**. If the trace is missing, pass **`--run-upgrade`** to run `morph upgrade` and retry once. If omitted, uses the resolved workspace (see section 2).
 

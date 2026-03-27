@@ -277,6 +277,182 @@ impl MorphServer {
         };
         Ok(CallToolResult::success(vec![Content::text(format!("{}{}", msg, tree_msg))]))
     }
+
+    #[tool(description = "Show working-space status: files staged, tracked, and untracked")]
+    async fn morph_status(
+        &self,
+        params: Parameters<WorkspaceOnlyParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        let (repo_root, store) = self.repo_store(params.0.workspace_path.as_deref())
+            .map_err(|e| McpError::invalid_params(e, None))?;
+        let entries = morph_core::status(&store, &repo_root)
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let mut out = String::new();
+        for e in &entries {
+            let status = if e.in_store { "tracked" } else { "new" };
+            let hash_str = e.hash.as_ref().map(|h| h.to_string()).unwrap_or_default();
+            out.push_str(&format!("{} {} {}\n", status, hash_str, e.path.display()));
+        }
+        if out.is_empty() {
+            out = "clean (no changes)".to_string();
+        }
+        Ok(CallToolResult::success(vec![Content::text(out)]))
+    }
+
+    #[tool(description = "Show commit history from HEAD or a named ref. Returns commit hashes and messages.")]
+    async fn morph_log(
+        &self,
+        params: Parameters<LogParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref())
+            .map_err(|e| McpError::invalid_params(e, None))?;
+        let ref_name = params.0.ref_name.as_deref().unwrap_or("HEAD");
+        let hashes = morph_core::log_from(&store, ref_name)
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let mut out = String::new();
+        for h in &hashes {
+            let obj = store.get(h).map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+            if let morph_core::MorphObject::Commit(c) = obj {
+                out.push_str(&format!("{} {}\n", h, c.message));
+            }
+        }
+        Ok(CallToolResult::success(vec![Content::text(out)]))
+    }
+
+    #[tool(description = "Show a stored Morph object as pretty JSON (commit, run, trace, pipeline, etc.)")]
+    async fn morph_show(
+        &self,
+        params: Parameters<ShowParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref())
+            .map_err(|e| McpError::invalid_params(e, None))?;
+        let hash = Hash::from_hex(&params.0.hash)
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let obj = store.get(&hash)
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let json = serde_json::to_string_pretty(&obj)
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(description = "Diff two commits (or refs) and show file-level changes. Returns lines like 'A path', 'M path', 'D path'.")]
+    async fn morph_diff(
+        &self,
+        params: Parameters<DiffParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref())
+            .map_err(|e| McpError::invalid_params(e, None))?;
+        let resolve = |r: &str| -> Result<Hash, String> {
+            if r.len() == 64 && r.chars().all(|c| c.is_ascii_hexdigit()) {
+                Hash::from_hex(r).map_err(|e| e.to_string())
+            } else if r == "HEAD" {
+                morph_core::resolve_head(&store)
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| "HEAD has no commits".to_string())
+            } else {
+                store.ref_read(&format!("heads/{}", r))
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| format!("unknown ref: {}", r))
+            }
+        };
+        let old_hash = resolve(&params.0.old_ref).map_err(|e| McpError::invalid_params(e, None))?;
+        let new_hash = resolve(&params.0.new_ref).map_err(|e| McpError::invalid_params(e, None))?;
+        let entries = morph_core::diff_commits(&store, &old_hash, &new_hash)
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let mut out = String::new();
+        for e in &entries {
+            out.push_str(&format!("{}  {}\n", e.status, e.path));
+        }
+        if out.is_empty() {
+            out = "no changes".to_string();
+        }
+        Ok(CallToolResult::success(vec![Content::text(out)]))
+    }
+
+    #[tool(description = "Merge a branch into the current branch (requires behavioral dominance). Required: branch, message, pipeline (hash), metrics (JSON object of metric name/value). Optional: eval_suite, author, retire (comma-separated metric names to retire).")]
+    async fn morph_merge(
+        &self,
+        params: Parameters<MergeParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        let (repo_root, store) = self.repo_store(params.0.workspace_path.as_deref())
+            .map_err(|e| McpError::invalid_params(e, None))?;
+        let pipeline = Hash::from_hex(&params.0.pipeline)
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let suite = params.0.eval_suite
+            .as_deref()
+            .map(Hash::from_hex)
+            .transpose()
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let retired: Option<Vec<String>> = params.0.retire
+            .as_deref()
+            .map(|s| s.split(',').map(|r| r.trim().to_string()).collect());
+        let morph_dir = repo_root.join(".morph");
+        let version = morph_core::read_repo_version(&morph_dir)
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let plan = morph_core::prepare_merge(
+            &store,
+            &params.0.branch,
+            suite.as_ref(),
+            retired.as_deref(),
+        ).map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let hash = morph_core::execute_merge(
+            &store,
+            &plan,
+            &pipeline,
+            params.0.metrics,
+            params.0.message,
+            params.0.author,
+            Some(&repo_root),
+            Some(&version),
+        ).map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        Ok(CallToolResult::success(vec![Content::text(hash.to_string())]))
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Default)]
+struct WorkspaceOnlyParams {
+    #[serde(default)]
+    workspace_path: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct LogParams {
+    #[serde(default)]
+    ref_name: Option<String>,
+    #[serde(default)]
+    workspace_path: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ShowParams {
+    hash: String,
+    #[serde(default)]
+    workspace_path: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct DiffParams {
+    old_ref: String,
+    new_ref: String,
+    #[serde(default)]
+    workspace_path: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct MergeParams {
+    branch: String,
+    message: String,
+    pipeline: String,
+    #[serde(default)]
+    metrics: std::collections::BTreeMap<String, f64>,
+    #[serde(default)]
+    eval_suite: Option<String>,
+    #[serde(default)]
+    author: Option<String>,
+    #[serde(default)]
+    retire: Option<String>,
+    #[serde(default)]
+    workspace_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Default)]
@@ -384,6 +560,462 @@ impl ServerHandler for MorphServer {
             capabilities: ServerCapabilities::builder().enable_tools().build(),
             ..Default::default()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rmcp::handler::server::wrapper::Parameters;
+    use rmcp::model::RawContent;
+
+    fn setup_repo() -> (tempfile::TempDir, MorphServer) {
+        let dir = tempfile::tempdir().unwrap();
+        morph_core::init_repo(dir.path()).unwrap();
+        let server = MorphServer::new(Some(dir.path().to_path_buf()));
+        (dir, server)
+    }
+
+    fn extract_text(result: &CallToolResult) -> &str {
+        match &*result.content[0] {
+            RawContent::Text(t) => &t.text,
+            _ => panic!("expected text content"),
+        }
+    }
+
+    #[tokio::test]
+    async fn init_creates_morph_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let server = MorphServer::new(None);
+        let path_str = dir.path().to_str().unwrap().to_string();
+        let result = server
+            .morph_init(Parameters(InitParams {
+                path: Some(path_str),
+            }))
+            .await
+            .unwrap();
+        assert!(dir.path().join(".morph").is_dir());
+        assert!(extract_text(&result).contains("Initialized"));
+    }
+
+    #[tokio::test]
+    async fn init_already_initialized_fails() {
+        let (dir, server) = setup_repo();
+        let path_str = dir.path().to_str().unwrap().to_string();
+        let result = server
+            .morph_init(Parameters(InitParams {
+                path: Some(path_str),
+            }))
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn record_session_returns_hash() {
+        let (dir, server) = setup_repo();
+        let ws = dir.path().to_str().unwrap().to_string();
+        let result = server
+            .morph_record_session(Parameters(RecordSessionParams {
+                prompt: "What is 2+2?".into(),
+                response: "4".into(),
+                workspace_path: Some(ws),
+                model_name: Some("test-model".into()),
+                agent_id: Some("test-agent".into()),
+            }))
+            .await
+            .unwrap();
+        let text = extract_text(&result);
+        assert_eq!(text.len(), 64, "expected 64-char hash, got: {}", text);
+    }
+
+    #[tokio::test]
+    async fn stage_and_commit_workflow() {
+        let (dir, server) = setup_repo();
+        let ws = dir.path().to_str().unwrap().to_string();
+        std::fs::write(dir.path().join("hello.txt"), "hello world").unwrap();
+
+        let stage_result = server
+            .morph_stage(Parameters(StageParams {
+                workspace_path: Some(ws.clone()),
+                paths: Some(vec!["hello.txt".into()]),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(extract_text(&stage_result).trim().len(), 64);
+
+        let commit_result = server
+            .morph_commit(Parameters(CommitParams {
+                message: "first commit".into(),
+                pipeline: None,
+                eval_suite: None,
+                workspace_path: Some(ws),
+                metrics: None,
+                author: Some("test-author".into()),
+                from_run: None,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(extract_text(&commit_result).len(), 64);
+    }
+
+    #[tokio::test]
+    async fn branch_and_checkout() {
+        let (dir, server) = setup_repo();
+        let ws = dir.path().to_str().unwrap().to_string();
+        std::fs::write(dir.path().join("f.txt"), "content").unwrap();
+
+        server
+            .morph_stage(Parameters(StageParams {
+                workspace_path: Some(ws.clone()),
+                paths: Some(vec![".".into()]),
+            }))
+            .await
+            .unwrap();
+        server
+            .morph_commit(Parameters(CommitParams {
+                message: "initial".into(),
+                pipeline: None,
+                eval_suite: None,
+                workspace_path: Some(ws.clone()),
+                metrics: None,
+                author: None,
+                from_run: None,
+            }))
+            .await
+            .unwrap();
+
+        let branch_result = server
+            .morph_branch(Parameters(BranchParams {
+                name: "feature".into(),
+                workspace_path: Some(ws.clone()),
+            }))
+            .await
+            .unwrap();
+        assert!(extract_text(&branch_result).contains("Created branch feature"));
+
+        let checkout_result = server
+            .morph_checkout(Parameters(CheckoutParams {
+                ref_name: "feature".into(),
+                workspace_path: Some(ws),
+            }))
+            .await
+            .unwrap();
+        assert!(extract_text(&checkout_result).contains("Switched to branch feature"));
+    }
+
+    #[tokio::test]
+    async fn branch_without_commit_fails() {
+        let (_dir, server) = setup_repo();
+        let ws = _dir.path().to_str().unwrap().to_string();
+        let result = server
+            .morph_branch(Parameters(BranchParams {
+                name: "feature".into(),
+                workspace_path: Some(ws),
+            }))
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn annotate_creates_annotation() {
+        let (dir, server) = setup_repo();
+        let ws = dir.path().to_str().unwrap().to_string();
+
+        let session_result = server
+            .morph_record_session(Parameters(RecordSessionParams {
+                prompt: "test".into(),
+                response: "response".into(),
+                workspace_path: Some(ws.clone()),
+                model_name: None,
+                agent_id: None,
+            }))
+            .await
+            .unwrap();
+        let run_hash = extract_text(&session_result).to_string();
+
+        let mut data = std::collections::BTreeMap::new();
+        data.insert("note".to_string(), serde_json::json!("good session"));
+        let ann_result = server
+            .morph_annotate(Parameters(AnnotateParams {
+                target_hash: run_hash,
+                kind: "review".into(),
+                data: Some(data),
+                target_sub: None,
+                workspace_path: Some(ws),
+                author: Some("reviewer".into()),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(extract_text(&ann_result).len(), 64);
+    }
+
+    #[tokio::test]
+    async fn record_eval_from_file() {
+        let (dir, server) = setup_repo();
+        let ws = dir.path().to_str().unwrap().to_string();
+        let metrics_file = dir.path().join("metrics.json");
+        std::fs::write(&metrics_file, r#"{"metrics": {"acc": 0.95}}"#).unwrap();
+
+        let result = server
+            .morph_record_eval(Parameters(RecordEvalParams {
+                file: "metrics.json".into(),
+                workspace_path: Some(ws),
+            }))
+            .await
+            .unwrap();
+        assert!(extract_text(&result).contains("0.95"));
+    }
+
+    #[tokio::test]
+    async fn commit_with_metrics() {
+        let (dir, server) = setup_repo();
+        let ws = dir.path().to_str().unwrap().to_string();
+        std::fs::write(dir.path().join("code.py"), "print('hello')").unwrap();
+
+        server
+            .morph_stage(Parameters(StageParams {
+                workspace_path: Some(ws.clone()),
+                paths: Some(vec![".".into()]),
+            }))
+            .await
+            .unwrap();
+
+        let mut metrics = std::collections::BTreeMap::new();
+        metrics.insert("tests_passed".to_string(), 42.0);
+        metrics.insert("coverage".to_string(), 0.85);
+        let result = server
+            .morph_commit(Parameters(CommitParams {
+                message: "commit with metrics".into(),
+                pipeline: None,
+                eval_suite: None,
+                workspace_path: Some(ws),
+                metrics: Some(metrics),
+                author: Some("agent".into()),
+                from_run: None,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(extract_text(&result).len(), 64);
+    }
+
+    #[tokio::test]
+    async fn commit_with_from_run_provenance() {
+        let (dir, server) = setup_repo();
+        let ws = dir.path().to_str().unwrap().to_string();
+        std::fs::write(dir.path().join("code.txt"), "fn main() {}").unwrap();
+
+        let session_result = server
+            .morph_record_session(Parameters(RecordSessionParams {
+                prompt: "Build it".into(),
+                response: "Built".into(),
+                workspace_path: Some(ws.clone()),
+                model_name: Some("gpt-4".into()),
+                agent_id: Some("cursor-agent".into()),
+            }))
+            .await
+            .unwrap();
+        let run_hash = extract_text(&session_result).to_string();
+
+        server
+            .morph_stage(Parameters(StageParams {
+                workspace_path: Some(ws.clone()),
+                paths: Some(vec![".".into()]),
+            }))
+            .await
+            .unwrap();
+
+        let commit_result = server
+            .morph_commit(Parameters(CommitParams {
+                message: "evidence-backed commit".into(),
+                pipeline: None,
+                eval_suite: None,
+                workspace_path: Some(ws),
+                metrics: None,
+                author: None,
+                from_run: Some(run_hash),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(extract_text(&commit_result).len(), 64);
+    }
+
+    #[tokio::test]
+    async fn repo_store_not_found_gives_clear_error() {
+        let server = MorphServer::new(Some(PathBuf::from("/tmp/nonexistent-morph-repo-xyz")));
+        let result = server.repo_store(None);
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        assert!(err.contains("not a morph repository"), "got: {}", err);
+    }
+
+    #[tokio::test]
+    async fn stage_default_paths() {
+        let (dir, server) = setup_repo();
+        let ws = dir.path().to_str().unwrap().to_string();
+        std::fs::write(dir.path().join("a.txt"), "aaa").unwrap();
+        std::fs::write(dir.path().join("b.txt"), "bbb").unwrap();
+
+        let result = server
+            .morph_stage(Parameters(StageParams {
+                workspace_path: Some(ws),
+                paths: None,
+            }))
+            .await
+            .unwrap();
+        let lines: Vec<&str> = extract_text(&result).trim().lines().collect();
+        assert!(lines.len() >= 2, "expected at least 2 staged files");
+    }
+
+    #[tokio::test]
+    async fn status_shows_files() {
+        let (dir, server) = setup_repo();
+        let ws = dir.path().to_str().unwrap().to_string();
+        std::fs::write(dir.path().join("code.py"), "print('hi')").unwrap();
+
+        let result = server
+            .morph_status(Parameters(WorkspaceOnlyParams {
+                workspace_path: Some(ws),
+            }))
+            .await
+            .unwrap();
+        assert!(extract_text(&result).contains("code.py"));
+    }
+
+    #[tokio::test]
+    async fn log_shows_commits() {
+        let (dir, server) = setup_repo();
+        let ws = dir.path().to_str().unwrap().to_string();
+        std::fs::write(dir.path().join("f.txt"), "data").unwrap();
+
+        server
+            .morph_stage(Parameters(StageParams {
+                workspace_path: Some(ws.clone()),
+                paths: Some(vec![".".into()]),
+            }))
+            .await
+            .unwrap();
+        server
+            .morph_commit(Parameters(CommitParams {
+                message: "test-commit-msg".into(),
+                pipeline: None,
+                eval_suite: None,
+                workspace_path: Some(ws.clone()),
+                metrics: None,
+                author: None,
+                from_run: None,
+            }))
+            .await
+            .unwrap();
+
+        let result = server
+            .morph_log(Parameters(LogParams {
+                ref_name: None,
+                workspace_path: Some(ws),
+            }))
+            .await
+            .unwrap();
+        assert!(extract_text(&result).contains("test-commit-msg"));
+    }
+
+    #[tokio::test]
+    async fn show_returns_json() {
+        let (dir, server) = setup_repo();
+        let ws = dir.path().to_str().unwrap().to_string();
+        std::fs::write(dir.path().join("x.txt"), "hello").unwrap();
+
+        server
+            .morph_stage(Parameters(StageParams {
+                workspace_path: Some(ws.clone()),
+                paths: Some(vec![".".into()]),
+            }))
+            .await
+            .unwrap();
+        let commit_result = server
+            .morph_commit(Parameters(CommitParams {
+                message: "initial".into(),
+                pipeline: None,
+                eval_suite: None,
+                workspace_path: Some(ws.clone()),
+                metrics: None,
+                author: None,
+                from_run: None,
+            }))
+            .await
+            .unwrap();
+        let commit_hash = extract_text(&commit_result).to_string();
+
+        let result = server
+            .morph_show(Parameters(ShowParams {
+                hash: commit_hash,
+                workspace_path: Some(ws),
+            }))
+            .await
+            .unwrap();
+        let text = extract_text(&result);
+        assert!(text.contains("commit"));
+        assert!(text.contains("initial"));
+    }
+
+    #[tokio::test]
+    async fn diff_between_commits() {
+        let (dir, server) = setup_repo();
+        let ws = dir.path().to_str().unwrap().to_string();
+        std::fs::write(dir.path().join("a.txt"), "v1").unwrap();
+
+        server
+            .morph_stage(Parameters(StageParams {
+                workspace_path: Some(ws.clone()),
+                paths: Some(vec![".".into()]),
+            }))
+            .await
+            .unwrap();
+        let c1_result = server
+            .morph_commit(Parameters(CommitParams {
+                message: "first".into(),
+                pipeline: None,
+                eval_suite: None,
+                workspace_path: Some(ws.clone()),
+                metrics: None,
+                author: None,
+                from_run: None,
+            }))
+            .await
+            .unwrap();
+        let c1 = extract_text(&c1_result).to_string();
+
+        std::fs::write(dir.path().join("b.txt"), "new file").unwrap();
+        server
+            .morph_stage(Parameters(StageParams {
+                workspace_path: Some(ws.clone()),
+                paths: Some(vec!["b.txt".into()]),
+            }))
+            .await
+            .unwrap();
+        let c2_result = server
+            .morph_commit(Parameters(CommitParams {
+                message: "second".into(),
+                pipeline: None,
+                eval_suite: None,
+                workspace_path: Some(ws.clone()),
+                metrics: None,
+                author: None,
+                from_run: None,
+            }))
+            .await
+            .unwrap();
+        let c2 = extract_text(&c2_result).to_string();
+
+        let result = server
+            .morph_diff(Parameters(DiffParams {
+                old_ref: c1,
+                new_ref: c2,
+                workspace_path: Some(ws),
+            }))
+            .await
+            .unwrap();
+        let text = extract_text(&result);
+        assert!(text.contains("A"), "expected 'A' for added file");
+        assert!(text.contains("b.txt"));
     }
 }
 

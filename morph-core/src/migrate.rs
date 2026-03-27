@@ -287,4 +287,51 @@ mod tests {
         // New hashes differ from old
         assert_ne!(head, commit_hash);
     }
+
+    #[test]
+    fn migrate_0_2_to_0_3_bumps_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let _ = init_repo(dir.path()).unwrap();
+        let morph_dir = dir.path().join(".morph");
+        set_repo_version(&morph_dir, "0.2").unwrap();
+        assert_eq!(crate::repo::read_repo_version(&morph_dir).unwrap(), "0.2");
+
+        migrate_0_2_to_0_3(&morph_dir).unwrap();
+        assert_eq!(crate::repo::read_repo_version(&morph_dir).unwrap(), "0.3");
+    }
+
+    #[test]
+    fn migrate_0_2_to_0_3_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let _ = init_repo(dir.path()).unwrap();
+        let morph_dir = dir.path().join(".morph");
+        set_repo_version(&morph_dir, "0.2").unwrap();
+
+        migrate_0_2_to_0_3(&morph_dir).unwrap();
+        migrate_0_2_to_0_3(&morph_dir).unwrap();
+        assert_eq!(crate::repo::read_repo_version(&morph_dir).unwrap(), "0.3");
+    }
+
+    #[test]
+    fn migrate_0_0_to_0_2_empty_objects_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let _ = init_repo(dir.path()).unwrap();
+        let morph_dir = dir.path().join(".morph");
+
+        migrate_0_0_to_0_2(&morph_dir).unwrap();
+        assert_eq!(crate::repo::read_repo_version(&morph_dir).unwrap(), "0.2");
+    }
+
+    #[test]
+    fn migrate_0_0_to_0_2_no_objects_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let morph_dir = dir.path().join(".morph");
+        std::fs::create_dir_all(&morph_dir).unwrap();
+        std::fs::write(
+            morph_dir.join("config.json"),
+            r#"{"repo_version":"0.0"}"#,
+        ).unwrap();
+
+        migrate_0_0_to_0_2(&morph_dir).unwrap();
+    }
 }

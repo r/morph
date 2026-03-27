@@ -17,6 +17,10 @@ pub mod tree;
 pub mod extract;
 pub mod sync;
 pub mod policy;
+pub mod diff;
+pub mod tag;
+pub mod stash;
+pub mod revert;
 
 pub use hash::{canonical_json, content_hash, content_hash_git, Hash};
 pub use objects::MorphObject;
@@ -46,6 +50,10 @@ pub use policy::{
     RepoPolicy, CertificationResult, GateResult,
     read_policy, write_policy, certify_commit, gate_check,
 };
+pub use diff::{diff_trees, diff_commits, diff_file_maps, DiffEntry, DiffStatus};
+pub use tag::{create_tag, list_tags, delete_tag};
+pub use stash::{stash_save, stash_list, stash_pop, StashEntry};
+pub use revert::revert_commit;
 
 mod morphignore;
 mod migrate;

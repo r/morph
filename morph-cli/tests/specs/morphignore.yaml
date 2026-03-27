@@ -1,0 +1,34 @@
+# Tests for .morphignore behavior
+- name: morphignore_excludes_files_from_status
+  files:
+    .morphignore: "*.log"
+    code.txt: "fn main() {}"
+    debug.log: "log output"
+  steps:
+    - morph: [status]
+      stdout_contains: "code.txt"
+      stdout_not_contains: "debug.log"
+
+- name: morphignore_excludes_files_from_add
+  files:
+    .morphignore: "*.tmp"
+    code.txt: "fn main() {}"
+    scratch.tmp: "temporary"
+  steps:
+    - morph: [add, .]
+    - morph: [status]
+      stdout_not_contains: "scratch.tmp"
+
+- name: morphignore_directory_pattern
+  files:
+    .morphignore: "build/"
+    src/main.rs: "fn main() {}"
+  dirs:
+    - build
+  steps:
+    - write_file:
+        path: build/output.bin
+        content: binary
+    - morph: [status]
+      stdout_contains: "src/main.rs"
+      stdout_not_contains: "build/output.bin"

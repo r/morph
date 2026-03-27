@@ -1,0 +1,35 @@
+# Tests for `morph stash`
+- name: stash_save_clears_index
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, .]
+    - morph: [stash, save, -m, wip]
+      stdout_contains: "Saved"
+    - morph: [stash, pop]
+      stdout_contains: "Restored"
+
+- name: stash_list
+  files:
+    a.txt: "hello"
+    b.txt: "world"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [stash, save, -m, first]
+    - morph: [add, b.txt]
+    - morph: [stash, save, -m, second]
+    - morph: [stash, list]
+      stdout_contains:
+        - "first"
+        - "second"
+
+- name: stash_save_empty_fails
+  steps:
+    - morph: [stash, save]
+      expect_exit: 1
+      stderr_contains: "nothing to stash"
+
+- name: stash_pop_empty_fails
+  steps:
+    - morph: [stash, pop]
+      expect_exit: 1

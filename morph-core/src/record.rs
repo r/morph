@@ -191,4 +191,287 @@ mod tests {
             .collect();
         assert_eq!(traces.len(), 1, "traces/ should contain exactly one file");
     }
+
+    #[test]
+    fn record_run_ingests_run_from_json_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FsStore::new(dir.path().to_path_buf());
+
+        let trace = MorphObject::Trace(Trace {
+            events: vec![TraceEvent {
+                id: "e1".into(),
+                seq: 0,
+                ts: "2025-01-01T00:00:00Z".into(),
+                kind: "prompt".into(),
+                payload: BTreeMap::new(),
+            }],
+        });
+        let trace_hash = store.put(&trace).unwrap();
+
+        let run = MorphObject::Run(Run {
+            pipeline: "0".repeat(64),
+            commit: None,
+            environment: RunEnvironment {
+                model: "test".into(),
+                version: "0".into(),
+                parameters: BTreeMap::new(),
+                toolchain: BTreeMap::new(),
+            },
+            input_state_hash: "0".repeat(64),
+            output_artifacts: vec![],
+            metrics: BTreeMap::new(),
+            trace: trace_hash.to_string(),
+            agent: AgentInfo {
+                id: "test-agent".into(),
+                version: "1".into(),
+                policy: None,
+                instance_id: None,
+            },
+            contributors: None,
+            morph_version: None,
+        });
+        let run_json = serde_json::to_string_pretty(&run).unwrap();
+        let run_file = dir.path().join("run.json");
+        std::fs::write(&run_file, &run_json).unwrap();
+
+        let hash = record_run(&store, &run_file, None, &[]).unwrap();
+        let obj = store.get(&hash).unwrap();
+        assert!(matches!(obj, MorphObject::Run(_)));
+    }
+
+    #[test]
+    fn record_run_with_trace_file_validates_hash() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FsStore::new(dir.path().to_path_buf());
+
+        let trace = MorphObject::Trace(Trace {
+            events: vec![TraceEvent {
+                id: "e1".into(),
+                seq: 0,
+                ts: "2025-01-01T00:00:00Z".into(),
+                kind: "prompt".into(),
+                payload: BTreeMap::new(),
+            }],
+        });
+        let trace_json = serde_json::to_string_pretty(&trace).unwrap();
+        let trace_file = dir.path().join("trace.json");
+        std::fs::write(&trace_file, &trace_json).unwrap();
+        let trace_hash = store.put(&trace).unwrap();
+
+        let run = MorphObject::Run(Run {
+            pipeline: "0".repeat(64),
+            commit: None,
+            environment: RunEnvironment {
+                model: "test".into(),
+                version: "0".into(),
+                parameters: BTreeMap::new(),
+                toolchain: BTreeMap::new(),
+            },
+            input_state_hash: "0".repeat(64),
+            output_artifacts: vec![],
+            metrics: BTreeMap::new(),
+            trace: trace_hash.to_string(),
+            agent: AgentInfo {
+                id: "cli".into(),
+                version: "0".into(),
+                policy: None,
+                instance_id: None,
+            },
+            contributors: None,
+            morph_version: None,
+        });
+        let run_json = serde_json::to_string_pretty(&run).unwrap();
+        let run_file = dir.path().join("run.json");
+        std::fs::write(&run_file, &run_json).unwrap();
+
+        let hash = record_run(&store, &run_file, Some(trace_file.as_path()), &[]).unwrap();
+        assert!(store.get(&hash).is_ok());
+    }
+
+    #[test]
+    fn record_run_trace_hash_mismatch_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FsStore::new(dir.path().to_path_buf());
+
+        let trace = MorphObject::Trace(Trace {
+            events: vec![TraceEvent {
+                id: "different".into(),
+                seq: 0,
+                ts: "2025-01-01T00:00:00Z".into(),
+                kind: "prompt".into(),
+                payload: BTreeMap::new(),
+            }],
+        });
+        let trace_json = serde_json::to_string_pretty(&trace).unwrap();
+        let trace_file = dir.path().join("trace.json");
+        std::fs::write(&trace_file, &trace_json).unwrap();
+
+        let run = MorphObject::Run(Run {
+            pipeline: "0".repeat(64),
+            commit: None,
+            environment: RunEnvironment {
+                model: "test".into(),
+                version: "0".into(),
+                parameters: BTreeMap::new(),
+                toolchain: BTreeMap::new(),
+            },
+            input_state_hash: "0".repeat(64),
+            output_artifacts: vec![],
+            metrics: BTreeMap::new(),
+            trace: "a".repeat(64),
+            agent: AgentInfo {
+                id: "cli".into(),
+                version: "0".into(),
+                policy: None,
+                instance_id: None,
+            },
+            contributors: None,
+            morph_version: None,
+        });
+        let run_json = serde_json::to_string_pretty(&run).unwrap();
+        let run_file = dir.path().join("run.json");
+        std::fs::write(&run_file, &run_json).unwrap();
+
+        let result = record_run(&store, &run_file, Some(trace_file.as_path()), &[]);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("trace hash mismatch"), "expected mismatch error, got: {}", err);
+    }
+
+    #[test]
+    fn record_run_rejects_non_run_object() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FsStore::new(dir.path().to_path_buf());
+
+        let blob = MorphObject::Blob(Blob {
+            kind: "prompt".into(),
+            content: serde_json::json!({"text": "hello"}),
+        });
+        let blob_json = serde_json::to_string_pretty(&blob).unwrap();
+        let run_file = dir.path().join("run.json");
+        std::fs::write(&run_file, &blob_json).unwrap();
+
+        let result = record_run(&store, &run_file, None, &[]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not a Run"));
+    }
+
+    #[test]
+    fn record_eval_metrics_parses_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("metrics.json");
+        std::fs::write(&path, r#"{"metrics": {"accuracy": 0.95, "latency": 1.2}}"#).unwrap();
+
+        let metrics = record_eval_metrics(&path).unwrap();
+        assert_eq!(metrics.len(), 2);
+        assert!((metrics["accuracy"] - 0.95).abs() < 1e-10);
+        assert!((metrics["latency"] - 1.2).abs() < 1e-10);
+    }
+
+    #[test]
+    fn record_eval_metrics_rejects_missing_metrics_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("metrics.json");
+        std::fs::write(&path, r#"{"accuracy": 0.95}"#).unwrap();
+
+        let result = record_eval_metrics(&path);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("missing 'metrics' key"));
+    }
+
+    #[test]
+    fn record_eval_metrics_rejects_non_numeric_metric() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("metrics.json");
+        std::fs::write(&path, r#"{"metrics": {"name": "not-a-number"}}"#).unwrap();
+
+        let result = record_eval_metrics(&path);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("must be a number"));
+    }
+
+    #[test]
+    fn record_eval_metrics_rejects_non_object_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("metrics.json");
+        std::fs::write(&path, r#"[1, 2, 3]"#).unwrap();
+
+        let result = record_eval_metrics(&path);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("expected JSON object"));
+    }
+
+    #[test]
+    fn record_eval_metrics_rejects_non_object_metrics() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("metrics.json");
+        std::fs::write(&path, r#"{"metrics": "not-an-object"}"#).unwrap();
+
+        let result = record_eval_metrics(&path);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("metrics must be an object"));
+    }
+
+    #[test]
+    fn record_session_uses_defaults_for_model_and_agent() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FsStore::new(dir.path().to_path_buf());
+        let hash = record_session(&store, "p", "r", None, None).unwrap();
+        let obj = store.get(&hash).unwrap();
+        if let MorphObject::Run(run) = obj {
+            assert_eq!(run.environment.model, "cursor");
+            assert_eq!(run.agent.id, "cursor");
+        } else {
+            panic!("expected Run");
+        }
+    }
+
+    #[test]
+    fn record_run_with_artifacts() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FsStore::new(dir.path().to_path_buf());
+
+        let artifact = MorphObject::Artifact(crate::objects::Artifact {
+            kind: "model".into(),
+            content: "base64data".into(),
+            metadata: BTreeMap::new(),
+        });
+        let art_json = serde_json::to_string_pretty(&artifact).unwrap();
+        let art_file = dir.path().join("artifact.json");
+        std::fs::write(&art_file, &art_json).unwrap();
+
+        let trace = MorphObject::Trace(Trace {
+            events: vec![],
+        });
+        let trace_hash = store.put(&trace).unwrap();
+
+        let run = MorphObject::Run(Run {
+            pipeline: "0".repeat(64),
+            commit: None,
+            environment: RunEnvironment {
+                model: "test".into(),
+                version: "0".into(),
+                parameters: BTreeMap::new(),
+                toolchain: BTreeMap::new(),
+            },
+            input_state_hash: "0".repeat(64),
+            output_artifacts: vec![],
+            metrics: BTreeMap::new(),
+            trace: trace_hash.to_string(),
+            agent: AgentInfo {
+                id: "test".into(),
+                version: "1".into(),
+                policy: None,
+                instance_id: None,
+            },
+            contributors: None,
+            morph_version: None,
+        });
+        let run_json = serde_json::to_string_pretty(&run).unwrap();
+        let run_file = dir.path().join("run.json");
+        std::fs::write(&run_file, &run_json).unwrap();
+
+        let hash = record_run(&store, &run_file, None, &[art_file.as_path()]).unwrap();
+        assert!(store.get(&hash).is_ok());
+    }
 }

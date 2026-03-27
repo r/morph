@@ -24,6 +24,27 @@ morph setup cursor   # writes .cursor/ (MCP, hooks, rules)
 
 Then open the project in Cursor. Ensure `morph` and `morph-mcp` are on your PATH. The MCP server and hooks will record prompts/responses and let the agent commit via Morph.
 
+## Core commands
+
+```bash
+morph init                  # initialize a morph repo
+morph add .                 # stage files
+morph commit -m "message"   # create a behavioral commit
+morph log                   # view commit history
+morph diff <ref1> <ref2>    # compare two commits/branches
+morph branch <name>         # create a branch
+morph checkout <name>       # switch branches
+morph merge <branch> ...    # behavioral merge (dominance required)
+morph tag <name>            # tag the current commit
+morph stash save            # save staged work for later
+morph stash pop             # restore most recent stash
+morph revert <hash>         # undo a commit
+morph status                # show working directory state
+morph run record-session    # record an agent prompt/response
+morph certify               # certify a commit against policy
+morph gate                  # check if a commit passes policy
+```
+
 ## Hosted service (team inspection)
 
 Run the Morph hosted service for shared, browser-based inspection of behavioral history:

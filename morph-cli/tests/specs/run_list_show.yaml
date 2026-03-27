@@ -1,0 +1,53 @@
+# Tests for `morph run list` and `morph run show` commands
+- name: run_list_shows_recorded_runs
+  steps:
+    - morph: [run, record-session, --prompt, "Fix the bug", --response, "Bug fixed"]
+      capture: run_hash_1
+      assert_hash: true
+    - morph: [run, record-session, --prompt, "Add feature", --response, "Feature added"]
+      capture: run_hash_2
+      assert_hash: true
+    - morph: [run, list]
+      capture: list_output
+      stdout_contains:
+        - "${run_hash_1}"
+        - "${run_hash_2}"
+
+- name: run_list_empty_repo
+  steps:
+    - morph: [run, list]
+
+- name: run_show_displays_summary
+  steps:
+    - morph: [run, record-session, --prompt, "Hello", --response, "World", --model-name, test-model, --agent-id, agent-42]
+      capture: run_hash
+      assert_hash: true
+    - morph: [run, show, "${run_hash}"]
+      stdout_contains:
+        - "agent-42"
+
+- name: run_show_json_output
+  steps:
+    - morph: [run, record-session, --prompt, "Prompt", --response, "Response"]
+      capture: run_hash
+      assert_hash: true
+    - morph: [run, show, "${run_hash}", --json]
+      stdout_contains:
+        - "pipeline"
+        - "environment"
+        - "trace"
+
+- name: run_show_with_trace
+  steps:
+    - morph: [run, record-session, --prompt, "What is 2+2?", --response, "2+2 equals 4."]
+      capture: run_hash
+      assert_hash: true
+    - morph: [run, show, "${run_hash}", --with-trace]
+      stdout_contains:
+        - "What is 2+2?"
+        - "2+2 equals 4."
+
+- name: run_show_invalid_hash_fails
+  steps:
+    - morph: [run, show, "not-a-valid-hash"]
+      expect_exit: 1

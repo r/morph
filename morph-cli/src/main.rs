@@ -209,6 +209,35 @@ enum Command {
         #[command(subcommand)]
         sub: SetupCmd,
     },
+    /// Compare two commits (or refs) and show file-level changes
+    Diff {
+        /// First ref (branch, tag, or commit hash). Default: parent of HEAD.
+        old_ref: String,
+        /// Second ref. Default: HEAD.
+        #[arg(default_value = "HEAD")]
+        new_ref: String,
+    },
+    /// Create, list, or delete tags
+    Tag {
+        /// Tag name to create (omit to list all tags)
+        name: Option<String>,
+        /// Delete the named tag
+        #[arg(short, long)]
+        delete: bool,
+    },
+    /// Stash staged changes (save/pop/list)
+    Stash {
+        #[command(subcommand)]
+        sub: StashCmd,
+    },
+    /// Create a new commit that undoes a previous commit's changes
+    Revert {
+        /// Commit hash to revert
+        commit: String,
+        /// Author identity
+        #[arg(long)]
+        author: Option<String>,
+    },
     /// Upgrade the repo store to the latest version (required before using MCP on older repos).
     Upgrade,
     /// Inspect traces (prompt/response events)
@@ -250,6 +279,19 @@ enum TraceCmd {
         /// Trace hash (64 hex chars)
         hash: String,
     },
+}
+
+#[derive(clap::Subcommand)]
+enum StashCmd {
+    /// Save staged changes and clear the index
+    Save {
+        #[arg(short, long)]
+        message: Option<String>,
+    },
+    /// Restore the most recent stash
+    Pop,
+    /// List all stashes
+    List,
 }
 
 #[cfg(feature = "cursor-setup")]
@@ -452,6 +494,76 @@ fn main() -> anyhow::Result<()> {
                 println!("  .cursor/mcp.json: {}", if report.mcp_json_updated { "updated" } else { "unchanged" });
             }
         },
+        Command::Diff { old_ref, new_ref } => {
+            let (_repo_root, store) = get_store(verbose)?;
+            let resolve = |r: &str| -> Result<morph_core::Hash, anyhow::Error> {
+                if r.len() == 64 && r.chars().all(|c| c.is_ascii_hexdigit()) {
+                    Ok(morph_core::Hash::from_hex(r)?)
+                } else if r == "HEAD" {
+                    morph_core::resolve_head(&store)?
+                        .ok_or_else(|| anyhow::anyhow!("HEAD has no commits"))
+                } else {
+                    store.ref_read(&format!("heads/{}", r))?
+                        .or_else(|| store.ref_read(&format!("tags/{}", r)).ok().flatten())
+                        .ok_or_else(|| anyhow::anyhow!("unknown ref: {}", r))
+                }
+            };
+            let old_hash = resolve(&old_ref)?;
+            let new_hash = resolve(&new_ref)?;
+            let entries = morph_core::diff_commits(&store, &old_hash, &new_hash)?;
+            if entries.is_empty() {
+                verbose_msg(verbose, "no changes");
+            }
+            for e in &entries {
+                println!("{}  {}", e.status, e.path);
+            }
+        }
+        Command::Tag { name, delete } => {
+            let (_repo_root, store) = get_store(verbose)?;
+            if delete {
+                let name = name.ok_or_else(|| anyhow::anyhow!("tag name required with -d"))?;
+                morph_core::delete_tag(&store, &name)?;
+                println!("Deleted tag {}", name);
+            } else if let Some(name) = name {
+                let head = morph_core::resolve_head(&store)?
+                    .ok_or_else(|| anyhow::anyhow!("no commit yet"))?;
+                morph_core::create_tag(&store, &name, &head)?;
+                println!("Tagged {} as {}", head, name);
+            } else {
+                let tags = morph_core::list_tags(&store)?;
+                for (name, hash) in &tags {
+                    println!("{}  {}", name, hash);
+                }
+            }
+        }
+        Command::Stash { sub } => match sub {
+            StashCmd::Save { message } => {
+                let (repo_root, _store) = get_store(verbose)?;
+                let morph_dir = repo_root.join(".morph");
+                let entry = morph_core::stash_save(&morph_dir, message.as_deref())?;
+                println!("Saved stash {}{}", entry.id, entry.message.as_ref().map(|m| format!(": {}", m)).unwrap_or_default());
+            }
+            StashCmd::Pop => {
+                let (repo_root, _store) = get_store(verbose)?;
+                let morph_dir = repo_root.join(".morph");
+                let entry = morph_core::stash_pop(&morph_dir)?;
+                println!("Restored stash {}{}", entry.id, entry.message.as_ref().map(|m| format!(": {}", m)).unwrap_or_default());
+            }
+            StashCmd::List => {
+                let (repo_root, _store) = get_store(verbose)?;
+                let morph_dir = repo_root.join(".morph");
+                let stashes = morph_core::stash_list(&morph_dir)?;
+                for (i, entry) in stashes.iter().enumerate() {
+                    println!("stash@{{{}}}: {}", i, entry.message.as_deref().unwrap_or("(no message)"));
+                }
+            }
+        }
+        Command::Revert { commit, author } => {
+            let (_repo_root, store) = get_store(verbose)?;
+            let hash = parse_hash(&commit)?;
+            let revert_hash = morph_core::revert_commit(&store, &hash, author)?;
+            println!("{}", revert_hash);
+        }
         Command::Upgrade => {
             let cwd = std::env::current_dir()?;
             verbose_msg(verbose, &format!("looking for repo from {}", cwd.display()));
