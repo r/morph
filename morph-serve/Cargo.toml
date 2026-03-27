@@ -2,7 +2,7 @@
 name = "morph-serve"
 version = "0.1.0"
 edition = "2021"
-description = "Serve a Morph repo for browser-based browsing (library for morph serve)"
+description = "Morph hosted service: shared inspection and policy layer for team collaboration"
 
 [lib]
 name = "morph_serve"
@@ -17,3 +17,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile = "3.10"
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

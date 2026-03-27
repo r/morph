@@ -1002,4 +1002,57 @@ The reference v0 implementation is in Rust.
 | `morph-core` | Library: object model, storage, hashing, commits, metrics, trees, migration |
 | `morph-cli` | CLI: read path + manual writes (`morph init`, `add`, `commit`, `log`, ...) |
 | `morph-mcp` | Cursor MCP server: primary write path from the IDE |
-| `morph-serve` | Browser visualization: `morph visualize` serves a web UI for browsing commits |
+| `morph-serve` | Hosted service: shared inspection and policy layer (`morph serve` and `morph visualize`) with stable JSON API, multi-repo support, behavioral status derivation, org-level policy |
+
+---
+
+# 15. Hosted Service (Phase 7)
+
+The hosted service (`morph serve`) exposes the Morph object graph through a stable HTTP/JSON API for collaborative team inspection.
+
+## Starting the service
+
+```bash
+morph serve                              # serve current repo on :8765
+morph serve --port 9000                  # custom port
+morph serve --repo alpha=/path/to/repo   # multi-repo mode
+morph serve --org-policy org-policy.json # apply org-level policy
+```
+
+## API surface
+
+All repo-scoped endpoints live under `/api/repos/{name}/...`.
+
+| Endpoint | Method | Returns |
+|---|---|---|
+| `/api/repos` | GET | List of configured repos with summary stats |
+| `/api/repos/{repo}/summary` | GET | Repo summary: head, branches, commit/run counts |
+| `/api/repos/{repo}/branches` | GET | Branch listing with current branch |
+| `/api/repos/{repo}/commits` | GET | Commit history from HEAD with behavioral badges |
+| `/api/repos/{repo}/commits/{hash}` | GET | Full commit detail with behavioral status |
+| `/api/repos/{repo}/runs` | GET | Run listing |
+| `/api/repos/{repo}/runs/{hash}` | GET | Run detail with agent, environment, metrics |
+| `/api/repos/{repo}/traces/{hash}` | GET | Trace events (prompt/response text) |
+| `/api/repos/{repo}/pipelines/{hash}` | GET | Pipeline graph, provenance, attribution |
+| `/api/repos/{repo}/objects/{hash}` | GET | Raw object JSON |
+| `/api/repos/{repo}/annotations/{hash}` | GET | Annotations on a target |
+| `/api/repos/{repo}/policy` | GET | Effective policy (repo + org merged) |
+| `/api/repos/{repo}/gate/{hash}` | GET | Gate check result for a commit |
+| `/api/org/policy` | GET/POST | Organization-level policy |
+
+Backward-compatible endpoints (`/api/log`, `/api/runs`, `/api/object/{hash}`, `/api/graph`) route to the default repo.
+
+## Behavioral status
+
+The commit detail endpoint returns a `behavioral_status` object:
+
+- `certified`: whether the commit has a passing certification annotation
+- `certification`: details (runner, eval_suite, metrics, failures)
+- `gate_passed`: whether the commit satisfies the repo policy
+- `gate_reasons`: list of reasons for gate failure
+- `is_merge`: true if the commit has 2+ parents
+- `merge_status`: parent metrics and dominance results for merge commits
+
+## Organization-level policy
+
+An optional org-level policy file can set default required_metrics, thresholds, and named presets. The effective policy for each repo is the union of org and repo policies (repo overrides win for thresholds).

@@ -1,26 +1,168 @@
-//! Library to serve a Morph repo for browser-based browsing.
-//! Used by `morph visualize`. Reads .morph/ directly; no export.
+//! Morph hosted service: shared inspection and policy layer.
+//!
+//! Serves one or more Morph repositories over HTTP with stable JSON APIs
+//! for browsing commits, runs, traces, pipelines, behavioral status,
+//! certifications, and org-level policy.
 
-use axum::{
-    extract::{Path, State},
-    http::StatusCode,
-    response::{Html, IntoResponse},
-    routing::get,
-    Json, Router,
-};
-use morph_core::{log_from, open_store, Hash, MorphObject, ObjectType, Store};
+pub mod handlers;
+pub mod org_policy;
+pub mod service;
+pub mod views;
+
+use axum::routing::get;
+use axum::Router;
+use handlers::AppState;
+use morph_core::objects::MorphObject;
+use morph_core::store::{MorphError, ObjectType, Store};
+use morph_core::{log_from, Hash};
+use service::RepoContext;
+use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::{Arc, RwLock};
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::EnvFilter;
 
-static INDEX_HTML: &str = include_str!("../static/index.html");
-static GRAPH_HTML: &str = include_str!("../static/graph.html");
-
+/// Configuration for the Morph hosted service.
 #[derive(Clone)]
-struct AppState {
-    morph_dir: PathBuf,
+pub struct ServiceConfig {
+    pub repos: Vec<RepoEntry>,
+    pub addr: SocketAddr,
+    pub org_policy_path: Option<PathBuf>,
 }
+
+/// A named repository entry.
+#[derive(Clone)]
+pub struct RepoEntry {
+    pub name: String,
+    pub morph_dir: PathBuf,
+}
+
+/// Build the Axum router (usable in tests without starting a server).
+pub fn build_router(config: &ServiceConfig) -> Router {
+    let mut repos = BTreeMap::new();
+    for entry in &config.repos {
+        repos.insert(
+            entry.name.clone(),
+            RepoContext {
+                name: entry.name.clone(),
+                morph_dir: entry.morph_dir.clone(),
+            },
+        );
+    }
+
+    let org = config
+        .org_policy_path
+        .as_ref()
+        .and_then(|p| org_policy::load_org_policy(p).ok().flatten());
+
+    let state = AppState {
+        repos: Arc::new(repos),
+        org_policy: Arc::new(RwLock::new(org)),
+        org_policy_path: config.org_policy_path.clone(),
+    };
+
+    Router::new()
+        // Static pages
+        .route("/", get(handlers::page_index))
+        .route("/index.html", get(handlers::page_index))
+        .route("/graph", get(handlers::page_graph))
+        .route("/graph.html", get(handlers::page_graph))
+        // Repo-scoped API
+        .route("/api/repos", get(handlers::api_repo_list))
+        .route("/api/repos/{repo}/summary", get(handlers::api_repo_summary))
+        .route("/api/repos/{repo}/branches", get(handlers::api_branches))
+        .route("/api/repos/{repo}/commits", get(handlers::api_commits))
+        .route(
+            "/api/repos/{repo}/commits/{hash}",
+            get(handlers::api_commit_detail),
+        )
+        .route("/api/repos/{repo}/runs", get(handlers::api_runs))
+        .route(
+            "/api/repos/{repo}/runs/{hash}",
+            get(handlers::api_run_detail),
+        )
+        .route(
+            "/api/repos/{repo}/traces/{hash}",
+            get(handlers::api_trace_detail),
+        )
+        .route(
+            "/api/repos/{repo}/pipelines/{hash}",
+            get(handlers::api_pipeline_detail),
+        )
+        .route(
+            "/api/repos/{repo}/objects/{hash}",
+            get(handlers::api_object),
+        )
+        .route(
+            "/api/repos/{repo}/annotations/{hash}",
+            get(handlers::api_annotations),
+        )
+        .route("/api/repos/{repo}/policy", get(handlers::api_policy))
+        .route(
+            "/api/repos/{repo}/gate/{hash}",
+            get(handlers::api_gate),
+        )
+        // Org-level policy
+        .route(
+            "/api/org/policy",
+            get(handlers::api_org_policy_get).post(handlers::api_org_policy_set),
+        )
+        // Backward-compatible endpoints (default repo)
+        .route("/api/log", get(handlers::api_compat_log))
+        .route("/api/runs", get(handlers::api_compat_runs))
+        .route("/api/object/{hash}", get(handlers::api_compat_object))
+        .route("/api/graph", get(handlers::api_compat_graph))
+        .with_state(state)
+        .layer(CorsLayer::permissive())
+}
+
+/// Legacy entry point: single repo. Backward-compatible with `morph visualize`.
+pub fn run_blocking(
+    morph_dir: PathBuf,
+    addr: SocketAddr,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let config = ServiceConfig {
+        repos: vec![RepoEntry {
+            name: "default".to_string(),
+            morph_dir,
+        }],
+        addr,
+        org_policy_path: None,
+    };
+    run_service(config)
+}
+
+/// Full service entry point with multi-repo and org policy support.
+pub fn run_service(
+    config: ServiceConfig,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::from_default_env().add_directive("morph_serve=info".parse()?),
+        )
+        .try_init()
+        .ok();
+
+    let addr = config.addr;
+    let repo_names: Vec<_> = config.repos.iter().map(|r| r.name.clone()).collect();
+    tracing::info!(
+        "morph serve at http://{} (repos: {})",
+        addr,
+        repo_names.join(", ")
+    );
+
+    let app = build_router(&config);
+
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(async {
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+        axum::serve(listener, app).await
+    })?;
+    Ok(())
+}
+
+// ── Graph response builder (used by backward-compat /api/graph) ─────
 
 #[derive(serde::Serialize)]
 struct GraphResponse {
@@ -42,110 +184,11 @@ struct GraphEdge {
     to: String,
 }
 
-/// Run the serve loop (blocking). Call from CLI. Binds to `addr`.
-pub fn run_blocking(
-    morph_dir: PathBuf,
-    addr: SocketAddr,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env().add_directive("morph_serve=info".parse()?))
-        .init();
-
-    tracing::info!(
-        "morph visualize at http://{} (repo: {})",
-        addr,
-        morph_dir.parent().unwrap_or(&morph_dir).display()
-    );
-
-    let state = AppState { morph_dir };
-
-    let app = Router::new()
-        .route("/", get(|| async { Html(INDEX_HTML) }))
-        .route("/index.html", get(|| async { Html(INDEX_HTML) }))
-        .route("/api/log", get(api_log))
-        .route("/api/runs", get(api_runs))
-        .route("/api/graph", get(api_graph))
-        .route("/api/object/{hash}", get(api_object))
-        .route("/graph", get(|| async { Html(GRAPH_HTML) }))
-        .route("/graph.html", get(|| async { Html(GRAPH_HTML) }))
-        .with_state(state)
-        .layer(CorsLayer::permissive());
-
-    let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(async {
-        let listener = tokio::net::TcpListener::bind(addr).await?;
-        axum::serve(listener, app).await
-    })?;
-    Ok(())
-}
-
-async fn api_log(State(state): State<AppState>) -> Result<Json<Vec<CommitEntry>>, ApiError> {
-    let store = open_store(&state.morph_dir)?;
-    let hashes = log_from(store.as_ref(), "HEAD")?;
-    let mut out = Vec::with_capacity(hashes.len());
-    for h in hashes {
-        let obj = store.get(&h)?;
-        let commit = match &obj {
-            MorphObject::Commit(c) => c,
-            _ => continue,
-        };
-        out.push(CommitEntry {
-            hash: h.to_string(),
-            message: commit.message.clone(),
-            author: commit.author.clone(),
-            timestamp: commit.timestamp.clone(),
-            pipeline: commit.pipeline.clone(),
-            parents: commit.parents.clone(),
-            eval_contract: commit.eval_contract.clone(),
-            tree: commit.tree.clone(),
-            morph_version: commit.morph_version.clone(),
-        });
-    }
-    Ok(Json(out))
-}
-
-async fn api_runs(State(state): State<AppState>) -> Result<Json<Vec<RunEntry>>, ApiError> {
-    let store = open_store(&state.morph_dir)?;
-    let hashes = store.list(ObjectType::Run)?;
-    let mut out = Vec::with_capacity(hashes.len());
-    for h in hashes {
-        let obj = store.get(&h)?;
-        if let MorphObject::Run(run) = &obj {
-            out.push(RunEntry {
-                hash: h.to_string(),
-                trace: run.trace.clone(),
-                pipeline: run.pipeline.clone(),
-                agent: format!("{} {}", run.agent.id, run.agent.version),
-            });
-        }
-    }
-    Ok(Json(out))
-}
-
-#[derive(serde::Serialize)]
-struct RunEntry {
-    hash: String,
-    trace: String,
-    pipeline: String,
-    agent: String,
-}
-
-#[derive(serde::Serialize)]
-struct CommitEntry {
-    hash: String,
-    message: String,
-    author: String,
-    timestamp: String,
-    pipeline: String,
-    parents: Vec<String>,
-    eval_contract: morph_core::objects::EvalContract,
-    tree: Option<String>,
-    morph_version: Option<String>,
-}
-
-async fn api_graph(State(state): State<AppState>) -> Result<Json<GraphResponse>, ApiError> {
-    let store = open_store(&state.morph_dir)?;
-    let mut nodes: std::collections::HashMap<String, GraphNode> = std::collections::HashMap::new();
+pub(crate) fn build_graph_response(
+    store: &dyn Store,
+) -> Result<serde_json::Value, MorphError> {
+    let mut nodes: std::collections::HashMap<String, GraphNode> =
+        std::collections::HashMap::new();
     let mut edges: Vec<GraphEdge> = Vec::new();
 
     fn ensure_node(
@@ -164,8 +207,12 @@ async fn api_graph(State(state): State<AppState>) -> Result<Json<GraphResponse>,
             match store.get(&h) {
                 Ok(obj) => {
                     let (t, l) = match &obj {
-                        MorphObject::Commit(c) => ("commit", c.message.lines().next().unwrap_or("").to_string()),
-                        MorphObject::Run(r) => ("run", format!("{} {}", r.agent.id, r.agent.version)),
+                        MorphObject::Commit(c) => {
+                            ("commit", c.message.lines().next().unwrap_or("").to_string())
+                        }
+                        MorphObject::Run(r) => {
+                            ("run", format!("{} {}", r.agent.id, r.agent.version))
+                        }
                         MorphObject::Trace(_) => ("trace", "trace".to_string()),
                         MorphObject::Pipeline(_) => ("pipeline", "pipeline".to_string()),
                         MorphObject::Tree(_) => ("tree", "tree".to_string()),
@@ -180,17 +227,24 @@ async fn api_graph(State(state): State<AppState>) -> Result<Json<GraphResponse>,
                                 .next()
                                 .unwrap_or("")
                                 .trim();
-                            let label = if text.is_empty() {
+                            let lbl = if text.is_empty() {
                                 id[..12.min(id.len())].to_string()
                             } else {
                                 let truncated = if text.len() > 24 { &text[..24] } else { text };
                                 format!("{}…", truncated.trim_end())
                             };
-                            ("prompt", label)
+                            ("prompt", lbl)
                         }
                         _ => ("object", id[..12.min(id.len())].to_string()),
                     };
-                    (t.to_string(), if l.is_empty() { id[..12.min(id.len())].to_string() } else { l })
+                    (
+                        t.to_string(),
+                        if l.is_empty() {
+                            id[..12.min(id.len())].to_string()
+                        } else {
+                            l
+                        },
+                    )
                 }
                 Err(_) => ("object".to_string(), id[..12.min(id.len())].to_string()),
             }
@@ -201,13 +255,17 @@ async fn api_graph(State(state): State<AppState>) -> Result<Json<GraphResponse>,
             id.to_string(),
             GraphNode {
                 id: id.to_string(),
-                node_type: node_type,
-                label: if node_label.is_empty() { id[..12.min(id.len())].to_string() } else { node_label },
+                node_type,
+                label: if node_label.is_empty() {
+                    id[..12.min(id.len())].to_string()
+                } else {
+                    node_label
+                },
             },
         );
     }
 
-    if let Ok(commit_hashes) = log_from(store.as_ref(), "HEAD") {
+    if let Ok(commit_hashes) = log_from(store, "HEAD") {
         for h in commit_hashes {
             let id = h.to_string();
             let obj = match store.get(&h) {
@@ -219,17 +277,36 @@ async fn api_graph(State(state): State<AppState>) -> Result<Json<GraphResponse>,
                 _ => continue,
             };
             let msg = commit.message.lines().next().unwrap_or("").trim();
-            let label = if msg.is_empty() { id[..12.min(id.len())].to_string() } else { msg.to_string() };
-            ensure_node(&mut nodes, store.as_ref(), &id, "commit", label);
+            let label = if msg.is_empty() {
+                id[..12.min(id.len())].to_string()
+            } else {
+                msg.to_string()
+            };
+            ensure_node(&mut nodes, store, &id, "commit", label);
             if let Some(ref tree) = commit.tree {
-                edges.push(GraphEdge { from: id.clone(), to: tree.clone() });
-                ensure_node(&mut nodes, store.as_ref(), tree, "tree", "tree".to_string());
+                edges.push(GraphEdge {
+                    from: id.clone(),
+                    to: tree.clone(),
+                });
+                ensure_node(&mut nodes, store, tree, "tree", "tree".to_string());
             }
-            edges.push(GraphEdge { from: id.clone(), to: commit.pipeline.clone() });
-            ensure_node(&mut nodes, store.as_ref(), &commit.pipeline, "pipeline", "pipeline".to_string());
+            edges.push(GraphEdge {
+                from: id.clone(),
+                to: commit.pipeline.clone(),
+            });
+            ensure_node(
+                &mut nodes,
+                store,
+                &commit.pipeline,
+                "pipeline",
+                "pipeline".to_string(),
+            );
             for p in &commit.parents {
-                edges.push(GraphEdge { from: p.clone(), to: id.clone() });
-                ensure_node(&mut nodes, store.as_ref(), p, "?", "".to_string());
+                edges.push(GraphEdge {
+                    from: p.clone(),
+                    to: id.clone(),
+                });
+                ensure_node(&mut nodes, store, p, "?", "".to_string());
             }
         }
     }
@@ -246,14 +323,31 @@ async fn api_graph(State(state): State<AppState>) -> Result<Json<GraphResponse>,
             _ => continue,
         };
         let label = format!("{} {}", run.agent.id, run.agent.version);
-        ensure_node(&mut nodes, store.as_ref(), &id, "run", label);
-        edges.push(GraphEdge { from: id.clone(), to: run.trace.clone() });
-        ensure_node(&mut nodes, store.as_ref(), &run.trace, "trace", "trace".to_string());
-        edges.push(GraphEdge { from: id.clone(), to: run.pipeline.clone() });
-        ensure_node(&mut nodes, store.as_ref(), &run.pipeline, "pipeline", "pipeline".to_string());
+        ensure_node(&mut nodes, store, &id, "run", label);
+        edges.push(GraphEdge {
+            from: id.clone(),
+            to: run.trace.clone(),
+        });
+        ensure_node(
+            &mut nodes,
+            store,
+            &run.trace,
+            "trace",
+            "trace".to_string(),
+        );
+        edges.push(GraphEdge {
+            from: id.clone(),
+            to: run.pipeline.clone(),
+        });
+        ensure_node(
+            &mut nodes,
+            store,
+            &run.pipeline,
+            "pipeline",
+            "pipeline".to_string(),
+        );
     }
 
-    // Add prompt nodes and pipeline -> prompt edges for each pipeline's prompts
     let pipeline_ids: Vec<String> = nodes
         .values()
         .filter(|n| n.node_type == "pipeline")
@@ -273,7 +367,7 @@ async fn api_graph(State(state): State<AppState>) -> Result<Json<GraphResponse>,
                 if prompt_hash.is_empty() {
                     continue;
                 }
-                ensure_node(&mut nodes, store.as_ref(), prompt_hash, "?", String::new());
+                ensure_node(&mut nodes, store, prompt_hash, "?", String::new());
                 if !edges.iter().any(|e| e.from == pipeline_id && e.to == *prompt_hash) {
                     edges.push(GraphEdge {
                         from: pipeline_id.clone(),
@@ -284,40 +378,13 @@ async fn api_graph(State(state): State<AppState>) -> Result<Json<GraphResponse>,
         }
     }
 
-    let nodes: Vec<GraphNode> = nodes.into_values().collect();
-    Ok(Json(GraphResponse { nodes, edges }))
+    let nodes_vec: Vec<GraphNode> = nodes.into_values().collect();
+    let resp = GraphResponse {
+        nodes: nodes_vec,
+        edges,
+    };
+    serde_json::to_value(&resp).map_err(|e| MorphError::Serialization(e.to_string()))
 }
 
-async fn api_object(
-    State(state): State<AppState>,
-    Path(hash_str): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let hash = Hash::from_hex(&hash_str).map_err(|_| ApiError::BadHash)?;
-    let store = open_store(&state.morph_dir)?;
-    let obj = store.get(&hash)?;
-    let json = serde_json::to_value(&obj).map_err(|e| ApiError::Serialize(e.to_string()))?;
-    Ok(Json(json))
-}
-
-enum ApiError {
-    Store(morph_core::MorphError),
-    BadHash,
-    Serialize(String),
-}
-
-impl From<morph_core::MorphError> for ApiError {
-    fn from(e: morph_core::MorphError) -> Self {
-        ApiError::Store(e)
-    }
-}
-
-impl IntoResponse for ApiError {
-    fn into_response(self) -> axum::response::Response {
-        let (status, msg) = match &self {
-            ApiError::Store(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
-            ApiError::BadHash => (StatusCode::BAD_REQUEST, "invalid hash".into()),
-            ApiError::Serialize(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.clone()),
-        };
-        (status, Html(msg)).into_response()
-    }
-}
+#[cfg(test)]
+mod tests;

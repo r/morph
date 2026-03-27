@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Morph repo browser</title>
+  <title>Morph — Hosted Inspection</title>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -19,39 +19,40 @@
       padding: 0.75rem 1rem;
       border-bottom: 1px solid #27272a;
       font-weight: 600;
+      display: flex; align-items: center; gap: 1rem;
     }
+    header a { color: inherit; text-decoration: none; }
+    header .nav-link { font-size: 0.85rem; font-weight: normal; color: #3b82f6; }
+    header select { background: #18181b; color: #e4e4e7; border: 1px solid #3f3f46; border-radius: 4px; padding: 0.25rem 0.5rem; font-size: 0.8rem; }
     main {
       flex: 1;
       display: flex;
       overflow: hidden;
     }
     #strip {
-      width: 320px;
-      min-width: 280px;
+      width: 320px; min-width: 280px;
       border-right: 1px solid #27272a;
-      overflow-y: auto;
-      padding: 0.5rem;
+      overflow-y: auto; padding: 0.5rem;
     }
     .commit-card {
-      padding: 0.6rem 0.75rem;
-      margin-bottom: 0.25rem;
-      border-radius: 8px;
-      cursor: pointer;
-      border: 1px solid transparent;
-      background: #18181b;
+      padding: 0.6rem 0.75rem; margin-bottom: 0.25rem;
+      border-radius: 8px; cursor: pointer;
+      border: 1px solid transparent; background: #18181b;
     }
     .commit-card:hover { background: #27272a; }
     .commit-card.selected { border-color: #3b82f6; background: #1e3a5f33; }
     .commit-hash { font-family: ui-monospace, monospace; font-size: 0.7rem; color: #71717a; }
     .commit-msg { font-size: 0.9rem; margin-top: 0.2rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .commit-meta { font-size: 0.75rem; color: #a1a1aa; margin-top: 0.15rem; }
-    .version-badge { display: inline-block; font-size: 0.65rem; padding: 0.1rem 0.35rem; border-radius: 3px; background: #3b82f6; color: #fff; margin-left: 0.4rem; vertical-align: middle; }
-    .version-badge.pre-tree { background: #71717a; }
+    .badge { display: inline-block; font-size: 0.65rem; padding: 0.1rem 0.35rem; border-radius: 3px; color: #fff; margin-left: 0.4rem; vertical-align: middle; }
+    .badge-version { background: #3b82f6; }
+    .badge-pre-tree { background: #71717a; }
+    .badge-certified { background: #22c55e; }
+    .badge-merge { background: #a855f7; }
+    .badge-uncertified { background: #ef4444; font-size: 0.6rem; }
     .no-tree-label { font-size: 0.7rem; color: #f59e0b; margin-left: 0.4rem; }
     #detail {
-      flex: 1;
-      overflow-y: auto;
-      padding: 1rem;
+      flex: 1; overflow-y: auto; padding: 1rem;
     }
     #detail .section { margin-bottom: 1rem; }
     #detail h2 { font-size: 0.85rem; color: #a1a1aa; margin: 0 0 0.4rem 0; text-transform: uppercase; letter-spacing: 0.05em; }
@@ -60,6 +61,12 @@
     #detail .hash a:hover { text-decoration: underline; }
     .metrics { display: flex; flex-wrap: wrap; gap: 0.5rem; }
     .metric { padding: 0.25rem 0.5rem; background: #27272a; border-radius: 4px; font-size: 0.8rem; }
+    .metric.pass { border-left: 3px solid #22c55e; }
+    .metric.fail { border-left: 3px solid #ef4444; }
+    .status-box { padding: 0.75rem; border-radius: 8px; margin-bottom: 0.5rem; font-size: 0.85rem; }
+    .status-pass { background: #14532d33; border: 1px solid #22c55e44; }
+    .status-fail { background: #450a0a33; border: 1px solid #ef444444; }
+    .status-neutral { background: #27272a; border: 1px solid #3f3f46; }
     .prompt-row { margin-bottom: 0.5rem; }
     .prompt-row .hash-link { color: #3b82f6; cursor: pointer; font-family: ui-monospace, monospace; font-size: 0.8rem; }
     .prompt-body {
@@ -67,9 +74,6 @@
       font-family: ui-monospace, monospace; font-size: 0.8rem; white-space: pre-wrap; word-break: break-word;
       border: 1px solid #27272a;
     }
-    .object-browser { margin-top: 0.5rem; }
-    .object-browser input { width: 100%; max-width: 400px; padding: 0.4rem 0.6rem; border-radius: 6px; border: 1px solid #27272a; background: #18181b; color: #e4e4e7; font-family: ui-monospace, monospace; }
-    .object-browser button { margin-left: 0.5rem; padding: 0.4rem 0.75rem; border-radius: 6px; border: none; background: #3b82f6; color: #fff; cursor: pointer; }
     .tree-entries { list-style: none; padding: 0; margin: 0.25rem 0 0 0; }
     .tree-entries li { padding: 0.25rem 0; font-family: ui-monospace, monospace; font-size: 0.85rem; }
     .tree-entries li a { color: #3b82f6; cursor: pointer; text-decoration: none; }
@@ -77,19 +81,33 @@
     .empty-detail { color: #71717a; font-size: 0.9rem; }
     .error { color: #f87171; font-size: 0.85rem; }
     .loading { color: #a1a1aa; }
+    .object-browser { margin-top: 0.5rem; }
+    .object-browser input { width: 100%; max-width: 400px; padding: 0.4rem 0.6rem; border-radius: 6px; border: 1px solid #27272a; background: #18181b; color: #e4e4e7; font-family: ui-monospace, monospace; }
+    .object-browser button { margin-left: 0.5rem; padding: 0.4rem 0.75rem; border-radius: 6px; border: none; background: #3b82f6; color: #fff; cursor: pointer; }
+    .evidence-list { padding: 0; margin: 0.25rem 0 0 0; list-style: none; }
+    .evidence-list li { padding: 0.15rem 0; font-family: ui-monospace, monospace; font-size: 0.8rem; }
+    .evidence-list li a { color: #3b82f6; text-decoration: none; }
+    .contributors { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .contributor { padding: 0.2rem 0.5rem; background: #27272a; border-radius: 4px; font-size: 0.8rem; }
   </style>
 </head>
 <body>
-  <header><a href="/" style="color:inherit;text-decoration:none;">Morph repo browser</a> <a href="/graph" style="font-size:0.85rem;font-weight:normal;margin-left:1rem;color:#3b82f6;">Graph</a></header>
+  <header>
+    <a href="/">Morph Hosted Inspector</a>
+    <a href="/graph" class="nav-link">Graph</a>
+    <select id="repoSelect" style="display:none"></select>
+  </header>
   <main>
     <section id="strip" aria-label="Commit history"></section>
     <section id="detail" aria-label="Detail">
-      <p class="empty-detail">Select a commit or fetch an object by hash.</p>
+      <p class="empty-detail">Select a commit or run to inspect behavioral evidence.</p>
     </section>
   </main>
   <script>
     const strip = document.getElementById('strip');
     const detail = document.getElementById('detail');
+    const repoSelect = document.getElementById('repoSelect');
+    let currentRepo = 'default';
 
     async function api(path) {
       const r = await fetch(path);
@@ -97,183 +115,282 @@
       return r.json();
     }
 
-    function renderDetail(content) {
-      detail.innerHTML = content;
+    function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+    async function initRepos() {
+      try {
+        const data = await api('/api/repos');
+        if (data.repos.length > 1) {
+          repoSelect.style.display = '';
+          data.repos.forEach(r => {
+            const o = document.createElement('option');
+            o.value = r.name; o.textContent = r.name;
+            repoSelect.appendChild(o);
+          });
+          repoSelect.addEventListener('change', () => { currentRepo = repoSelect.value; loadStrip(); });
+        }
+        if (data.repos.length > 0) currentRepo = data.repos[0].name;
+      } catch(_) {}
+      loadStrip();
     }
 
-    function renderCommitDetail(commit, program) {
-      let metricsHtml = '';
-      if (commit.eval_contract && commit.eval_contract.observed_metrics) {
-        const m = commit.eval_contract.observed_metrics;
-        metricsHtml = '<div class="metrics">' + Object.entries(m).map(([k, v]) => `<span class="metric">${k}: ${v}</span>`).join('') + '</div>';
+    async function loadStrip() {
+      strip.innerHTML = '<span class="loading">Loading…</span>';
+      detail.innerHTML = '<p class="empty-detail">Select a commit or run to inspect.</p>';
+      try {
+        const [commitData, runData] = await Promise.all([
+          api(`/api/repos/${currentRepo}/commits`),
+          api(`/api/repos/${currentRepo}/runs`)
+        ]);
+        const commits = commitData.commits || [];
+        const runs = runData.runs || [];
+        strip.innerHTML = '';
+
+        if (!commits.length && !runs.length) {
+          strip.innerHTML = '<p class="empty-detail">No commits and no runs.</p>';
+          return;
+        }
+
+        if (commits.length) {
+          const sec = document.createElement('div');
+          sec.innerHTML = '<h3 style="font-size:0.75rem;color:#71717a;margin:0 0 0.5rem 0;text-transform:uppercase;">Commits</h3>';
+          strip.appendChild(sec);
+          commits.forEach(c => {
+            const card = document.createElement('div');
+            card.className = 'commit-card';
+            const vBadge = c.morph_version ? `<span class="badge badge-version">v${esc(c.morph_version)}</span>` : `<span class="badge badge-pre-tree">pre-tree</span>`;
+            const mergeBadge = c.is_merge ? `<span class="badge badge-merge">merge</span>` : '';
+            const certBadge = c.certified ? `<span class="badge badge-certified">certified</span>` : '';
+            const noTree = !c.has_tree ? `<span class="no-tree-label">no tree</span>` : '';
+            const metricInfo = c.metric_count > 0 ? ` · ${c.metric_count} metrics` : '';
+            card.innerHTML = `<div class="commit-hash">${c.hash.slice(0,12)}…${vBadge}${mergeBadge}${certBadge}${noTree}</div><div class="commit-msg">${esc(c.message.split('\n')[0] || '(no message)')}</div><div class="commit-meta">${esc(c.author)}${metricInfo}</div>`;
+            card.addEventListener('click', () => loadCommitDetail(c.hash, card));
+            strip.appendChild(card);
+          });
+        }
+
+        if (runs.length) {
+          const sec = document.createElement('div');
+          sec.style.marginTop = '1rem';
+          sec.innerHTML = '<h3 style="font-size:0.75rem;color:#71717a;margin:0 0 0.5rem 0;text-transform:uppercase;">Runs</h3>';
+          strip.appendChild(sec);
+          runs.forEach(r => {
+            const card = document.createElement('div');
+            card.className = 'commit-card';
+            card.innerHTML = `<div class="commit-hash">${r.hash.slice(0,12)}…</div><div class="commit-meta">${esc(r.agent)}</div>`;
+            card.addEventListener('click', () => loadRunDetail(r.hash, card));
+            sec.appendChild(card);
+          });
+        }
+      } catch(err) {
+        strip.innerHTML = `<p class="error">${esc(err.message)}</p>`;
       }
-      let promptsHtml = '';
-      if (program && program.prompts && program.prompts.length) {
-        promptsHtml = '<div class="section"><h2>Prompts</h2>' + program.prompts.map(h => `
-          <div class="prompt-row" data-prompt-hash="${h}">
-            <span class="hash-link" data-fetch="${h}">${h.slice(0,12)}… (expand)</span>
-            <div class="prompt-body" data-prompt-body="${h}" style="display:none"></div>
-          </div>`).join('') + '</div>';
+    }
+
+    function selectCard(card) {
+      strip.querySelectorAll('.commit-card').forEach(x => x.classList.remove('selected'));
+      card.classList.add('selected');
+    }
+
+    async function loadCommitDetail(hash, card) {
+      selectCard(card);
+      detail.innerHTML = '<span class="loading">Loading…</span>';
+      try {
+        const c = await api(`/api/repos/${currentRepo}/commits/${hash}`);
+        let html = '';
+
+        // Header
+        const vBadge = c.morph_version ? `<span class="badge badge-version">v${esc(c.morph_version)}</span>` : `<span class="badge badge-pre-tree">pre-tree</span>`;
+        html += `<div class="section"><h2>Commit ${vBadge}</h2><p class="hash">${c.hash}</p><p>${esc(c.message)}</p><p class="commit-meta">${esc(c.author)} · ${c.timestamp}</p></div>`;
+
+        // Behavioral status
+        const bs = c.behavioral_status;
+        if (bs) {
+          let statusClass = 'status-neutral';
+          let statusText = 'No certification';
+          if (bs.certified) { statusClass = 'status-pass'; statusText = 'Certified'; }
+          else if (bs.gate_passed === false) { statusClass = 'status-fail'; statusText = 'Gate failed'; }
+
+          html += `<div class="section"><h2>Behavioral Status</h2><div class="status-box ${statusClass}">`;
+          html += `<strong>${statusText}</strong>`;
+          if (bs.certification) {
+            const cert = bs.certification;
+            html += `<br>Runner: ${esc(cert.runner || '—')}`;
+            if (cert.failures && cert.failures.length) html += `<br>Failures: ${cert.failures.map(f => esc(f)).join(', ')}`;
+          }
+          if (bs.gate_reasons && bs.gate_reasons.length) {
+            html += `<br>Gate reasons: ${bs.gate_reasons.map(r => esc(r)).join('; ')}`;
+          }
+          html += '</div>';
+
+          if (bs.is_merge && bs.merge_status) {
+            const ms = bs.merge_status;
+            html += `<div class="status-box ${(ms.dominates_a && ms.dominates_b) ? 'status-pass' : 'status-neutral'}">`;
+            html += `<strong>Merge</strong> — parents: <span class="hash"><a href="#" data-load-commit="${ms.parent_a}">${ms.parent_a.slice(0,12)}…</a></span>, <span class="hash"><a href="#" data-load-commit="${ms.parent_b}">${ms.parent_b.slice(0,12)}…</a></span>`;
+            if (ms.dominates_a !== null) html += `<br>Dominates parent A: ${ms.dominates_a ? '✓' : '✗'}`;
+            if (ms.dominates_b !== null) html += `<br>Dominates parent B: ${ms.dominates_b ? '✓' : '✗'}`;
+            html += '</div>';
+          }
+          html += '</div>';
+        }
+
+        // Metrics
+        if (c.eval_contract && c.eval_contract.observed_metrics) {
+          const m = c.eval_contract.observed_metrics;
+          if (Object.keys(m).length) {
+            html += '<div class="section"><h2>Metrics</h2><div class="metrics">' + Object.entries(m).map(([k,v]) => `<span class="metric">${esc(k)}: ${v}</span>`).join('') + '</div></div>';
+          }
+        }
+
+        // Contributors
+        if (c.contributors && c.contributors.length) {
+          html += '<div class="section"><h2>Contributors</h2><div class="contributors">' + c.contributors.map(ct => `<span class="contributor">${esc(ct.id)}${ct.role ? ' ('+esc(ct.role)+')' : ''}</span>`).join('') + '</div></div>';
+        }
+
+        // Evidence refs
+        if (c.evidence_refs && c.evidence_refs.length) {
+          html += '<div class="section"><h2>Evidence</h2><ul class="evidence-list">' + c.evidence_refs.map(h => `<li><a href="#" data-fetch="${h}">${h.slice(0,12)}…</a></li>`).join('') + '</ul></div>';
+        }
+
+        // Tree
+        if (c.tree) {
+          html += `<div class="section"><h2>File tree</h2><p class="hash"><a href="#" data-fetch="${c.tree}">${c.tree}</a></p></div>`;
+        }
+
+        // Pipeline
+        html += `<div class="section"><h2>Pipeline</h2><p class="hash"><a href="#" data-load-pipeline="${c.pipeline}">${c.pipeline}</a></p></div>`;
+
+        // Eval suite
+        html += `<div class="section"><h2>Eval contract</h2><p class="hash">Suite: <a href="#" data-fetch="${c.eval_contract.suite}">${c.eval_contract.suite}</a></p></div>`;
+
+        // Object browser
+        html += `<div class="section"><h2>Browse object</h2><div class="object-browser"><input type="text" id="objHash" placeholder="Paste any object hash" /><button type="button" id="fetchObj">Fetch</button></div><div id="objectResult"></div></div>`;
+
+        detail.innerHTML = html;
+        wireDetailLinks();
+      } catch(err) {
+        detail.innerHTML = `<p class="error">${esc(err.message)}</p>`;
       }
-      const versionHtml = commit.morph_version
-        ? `<span class="version-badge">v${escapeHtml(commit.morph_version)}</span>`
-        : `<span class="version-badge pre-tree">pre-tree</span>`;
-      let treeHtml = '';
-      if (commit.tree) {
-        treeHtml = `<div class="section"><h2>File tree</h2><p class="hash"><a href="#" data-fetch="${commit.tree}">${commit.tree}</a></p></div>`;
-      } else {
-        treeHtml = `<div class="section"><h2>File tree</h2><p class="no-tree-label">This commit predates file tree storage (pre-0.3). No file snapshot available.</p></div>`;
+    }
+
+    async function loadRunDetail(hash, card) {
+      selectCard(card);
+      detail.innerHTML = '<span class="loading">Loading…</span>';
+      try {
+        const r = await api(`/api/repos/${currentRepo}/runs/${hash}`);
+        let html = `<div class="section"><h2>Run</h2><p class="hash">${r.hash}</p>`;
+        html += `<p>Agent: ${esc(r.agent.id)} ${esc(r.agent.version)}</p>`;
+        html += `<p>Model: ${esc(r.environment.model)} ${esc(r.environment.version)}</p></div>`;
+
+        if (Object.keys(r.metrics).length) {
+          html += '<div class="section"><h2>Metrics</h2><div class="metrics">' + Object.entries(r.metrics).map(([k,v]) => `<span class="metric">${esc(k)}: ${v}</span>`).join('') + '</div></div>';
+        }
+
+        html += `<div class="section"><h2>Trace</h2><p class="hash"><a href="#" data-load-trace="${r.trace}">${r.trace}</a></p></div>`;
+        html += `<div class="section"><h2>Pipeline</h2><p class="hash"><a href="#" data-load-pipeline="${r.pipeline}">${r.pipeline}</a></p></div>`;
+
+        if (r.contributors && r.contributors.length) {
+          html += '<div class="section"><h2>Contributors</h2><div class="contributors">' + r.contributors.map(ct => `<span class="contributor">${esc(ct.id)} ${esc(ct.version)}${ct.role ? ' ('+esc(ct.role)+')' : ''}</span>`).join('') + '</div></div>';
+        }
+
+        html += `<div class="section"><h2>Browse object</h2><div class="object-browser"><input type="text" id="objHash" placeholder="Paste any object hash" /><button type="button" id="fetchObj">Fetch</button></div><div id="objectResult"></div></div>`;
+
+        detail.innerHTML = html;
+        wireDetailLinks();
+      } catch(err) {
+        detail.innerHTML = `<p class="error">${esc(err.message)}</p>`;
       }
-      const objectBrowser = `<div class="section"><h2>Browse object</h2><div class="object-browser"><input type="text" id="objHash" placeholder="Paste any object hash" /><button type="button" id="fetchObj">Fetch</button></div><div id="objectResult"></div></div>`;
-      renderDetail(`
-        <div class="section"><h2>Commit ${versionHtml}</h2><p class="hash">${commit.hash}</p><p>${escapeHtml(commit.message)}</p><p class="commit-meta">${escapeHtml(commit.author)} · ${commit.timestamp}</p></div>
-        ${treeHtml}
-        <div class="section"><h2>Program</h2><p class="hash"><a href="#" data-fetch="${commit.program}">${commit.program}</a></p></div>
-        <div class="section"><h2>Eval contract</h2><p class="hash">Suite: <a href="#" data-fetch="${commit.eval_contract.suite}">${commit.eval_contract.suite}</a></p>${metricsHtml}</div>
-        ${promptsHtml}
-        ${objectBrowser}
-      `);
+    }
+
+    async function loadTraceDetail(hash) {
+      try {
+        const t = await api(`/api/repos/${currentRepo}/traces/${hash}`);
+        let html = `<div class="section"><h2>Trace (${t.event_count} events)</h2><p class="hash">${t.hash}</p></div>`;
+        t.events.forEach(ev => {
+          const text = ev.payload && ev.payload.text ? esc(ev.payload.text) : '';
+          html += `<div class="section"><h2>${esc(ev.kind)} (#${ev.seq})</h2><pre class="prompt-body">${text || '(no text)'}</pre></div>`;
+        });
+        detail.innerHTML = html;
+      } catch(err) {
+        detail.innerHTML = `<p class="error">${esc(err.message)}</p>`;
+      }
+    }
+
+    async function loadPipelineDetail(hash) {
+      try {
+        const p = await api(`/api/repos/${currentRepo}/pipelines/${hash}`);
+        let html = `<div class="section"><h2>Pipeline</h2><p class="hash">${p.hash}</p>`;
+        html += `<p>${p.node_count} nodes, ${p.edge_count} edges</p></div>`;
+
+        if (p.provenance) {
+          html += `<div class="section"><h2>Provenance</h2><div class="status-box status-neutral">`;
+          html += `Method: ${esc(p.provenance.method)}`;
+          if (p.provenance.derived_from_run) html += `<br>From run: <a href="#" data-load-run="${p.provenance.derived_from_run}" style="color:#3b82f6">${p.provenance.derived_from_run.slice(0,12)}…</a>`;
+          if (p.provenance.derived_from_trace) html += `<br>From trace: <a href="#" data-load-trace="${p.provenance.derived_from_trace}" style="color:#3b82f6">${p.provenance.derived_from_trace.slice(0,12)}…</a>`;
+          html += '</div></div>';
+        }
+
+        if (p.graph && p.graph.nodes.length) {
+          html += '<div class="section"><h2>Graph</h2>';
+          p.graph.nodes.forEach(n => {
+            html += `<div class="metric">${esc(n.id)} (${esc(n.kind)})${n.ref ? ' → ' + n.ref.slice(0,12) + '…' : ''}</div> `;
+          });
+          html += '</div>';
+        }
+
+        if (p.prompts && p.prompts.length) {
+          html += '<div class="section"><h2>Prompts</h2><ul class="evidence-list">' + p.prompts.map(h => `<li><a href="#" data-fetch="${h}">${h.slice(0,12)}…</a></li>`).join('') + '</ul></div>';
+        }
+
+        detail.innerHTML = html;
+        wireDetailLinks();
+      } catch(err) {
+        detail.innerHTML = `<p class="error">${esc(err.message)}</p>`;
+      }
+    }
+
+    async function fetchAndShowObject(hash) {
+      if (!hash) return;
+      const target = document.getElementById('objectResult') || detail;
+      target.innerHTML = '<span class="loading">Loading…</span>';
+      try {
+        const obj = await api(`/api/repos/${currentRepo}/objects/${hash}`);
+        if (obj.type === 'tree') {
+          const entries = obj.entries || [];
+          target.innerHTML = '<ul class="tree-entries">' + entries.map(e => `<li><a href="#" data-fetch="${e.hash}">${esc(e.name)}</a> <span class="hash">${e.hash.slice(0,12)}…</span></li>`).join('') + '</ul>';
+        } else {
+          target.innerHTML = '<pre class="prompt-body">' + esc(JSON.stringify(obj, null, 2)) + '</pre>';
+        }
+        wireDetailLinks();
+      } catch(err) {
+        target.innerHTML = `<p class="error">${esc(err.message)}</p>`;
+      }
+    }
+
+    function wireDetailLinks() {
       detail.querySelectorAll('[data-fetch]').forEach(el => {
-        el.addEventListener('click', (e) => { e.preventDefault(); fetchAndShowObject(el.dataset.fetch); });
+        el.addEventListener('click', e => { e.preventDefault(); fetchAndShowObject(el.dataset.fetch); });
+      });
+      detail.querySelectorAll('[data-load-commit]').forEach(el => {
+        el.addEventListener('click', e => { e.preventDefault(); loadCommitDetail(el.dataset.loadCommit, el); });
+      });
+      detail.querySelectorAll('[data-load-trace]').forEach(el => {
+        el.addEventListener('click', e => { e.preventDefault(); loadTraceDetail(el.dataset.loadTrace); });
+      });
+      detail.querySelectorAll('[data-load-pipeline]').forEach(el => {
+        el.addEventListener('click', e => { e.preventDefault(); loadPipelineDetail(el.dataset.loadPipeline); });
+      });
+      detail.querySelectorAll('[data-load-run]').forEach(el => {
+        el.addEventListener('click', e => { e.preventDefault(); loadRunDetail(el.dataset.loadRun, el); });
       });
       const fetchBtn = detail.querySelector('#fetchObj');
       const objInput = detail.querySelector('#objHash');
       if (fetchBtn && objInput) {
         fetchBtn.addEventListener('click', () => fetchAndShowObject(objInput.value.trim()));
       }
-      detail.querySelectorAll('[data-prompt-hash]').forEach(row => {
-        const link = row.querySelector('.hash-link');
-        const bodyEl = row.querySelector('[data-prompt-body]');
-        link.addEventListener('click', async (e) => {
-          e.preventDefault();
-          if (bodyEl.style.display === 'none') {
-            try {
-              const obj = await api('/api/object/' + link.dataset.fetch);
-              const body = obj.content && obj.content.body != null ? obj.content.body : JSON.stringify(obj.content, null, 2);
-              bodyEl.textContent = body;
-              bodyEl.style.display = 'block';
-              link.textContent = link.dataset.fetch.slice(0, 12) + '… (collapse)';
-            } catch (err) {
-              bodyEl.textContent = 'Error: ' + err.message;
-              bodyEl.style.display = 'block';
-            }
-          } else {
-            bodyEl.style.display = 'none';
-            bodyEl.textContent = '';
-            link.textContent = link.dataset.fetch.slice(0, 12) + '… (expand)';
-          }
-        });
-      });
     }
 
-    function escapeHtml(s) {
-      const div = document.createElement('div');
-      div.textContent = s;
-      return div.innerHTML;
-    }
-
-    async function fetchAndShowObject(hash) {
-      if (!hash) return;
-      const resultEl = detail.querySelector('#objectResult');
-      const container = resultEl ? resultEl.parentElement : detail;
-      const target = resultEl || detail;
-      if (resultEl) resultEl.innerHTML = '<span class="loading">Loading…</span>';
-      try {
-        const obj = await api('/api/object/' + hash);
-        if (obj.type === 'tree') {
-          const entries = obj.entries || [];
-          target.innerHTML = (resultEl ? '' : '<div class="section"><h2>Object</h2></div>') + '<ul class="tree-entries">' + entries.map(e => `<li><a href="#" data-fetch="${e.hash}">${escapeHtml(e.name)}</a> <span class="hash">${e.hash.slice(0,12)}…</span></li>`).join('') + '</ul>';
-          target.querySelectorAll('[data-fetch]').forEach(a => { a.addEventListener('click', (e) => { e.preventDefault(); fetchAndShowObject(a.dataset.fetch); }); });
-        } else if (obj.type === 'blob') {
-          const body = obj.content && obj.content.body != null ? obj.content.body : JSON.stringify(obj.content, null, 2);
-          target.innerHTML = (resultEl ? '' : '<div class="section"><h2>Object</h2></div>') + '<pre class="prompt-body">' + escapeHtml(body) + '</pre>';
-        } else if (obj.Trace && Array.isArray(obj.Trace.events)) {
-          const events = obj.Trace.events;
-          let html = (resultEl ? '' : '<div class="section"><h2>Trace</h2></div>');
-          events.forEach(ev => {
-            const text = (ev.payload && ev.payload.text) ? escapeHtml(ev.payload.text) : '';
-            const kind = escapeHtml(ev.kind || '');
-            html += `<div class="section"><h2>${kind}</h2><pre class="prompt-body">${text || '(no text)'}</pre></div>`;
-          });
-          target.innerHTML = html;
-        } else {
-          target.innerHTML = (resultEl ? '' : '<div class="section"><h2>Object</h2></div>') + '<pre class="prompt-body">' + escapeHtml(JSON.stringify(obj, null, 2)) + '</pre>';
-        }
-      } catch (err) {
-        (resultEl || detail).innerHTML = (resultEl ? '' : '') + '<p class="error">' + escapeHtml(err.message) + '</p>';
-      }
-    }
-
-    (async () => {
-      strip.innerHTML = '<span class="loading">Loading…</span>';
-      try {
-        const [log, runs] = await Promise.all([api('/api/log'), api('/api/runs')]);
-        strip.innerHTML = '';
-        if (log.length) {
-          const commitSection = document.createElement('div');
-          commitSection.innerHTML = '<h3 style="font-size:0.75rem;color:#71717a;margin:0.0 0 0.5rem 0;text-transform:uppercase;">Commits</h3>';
-          strip.appendChild(commitSection);
-        }
-        if (!log.length && !runs.length) {
-          strip.innerHTML = '<p class="empty-detail">No commits and no runs. Record a session (Cursor/MCP) or run <code>morph commit</code>.</p>';
-          return;
-        }
-        log.forEach(c => {
-          const card = document.createElement('div');
-          card.className = 'commit-card';
-          const vBadge = c.morph_version
-            ? `<span class="version-badge">v${escapeHtml(c.morph_version)}</span>`
-            : `<span class="version-badge pre-tree">pre-tree</span>`;
-          const noTree = !c.tree ? `<span class="no-tree-label">no file tree</span>` : '';
-          card.innerHTML = `<div class="commit-hash">${c.hash.slice(0,12)}…${vBadge}${noTree}</div><div class="commit-msg">${escapeHtml(c.message.split('\n')[0] || '(no message)')}</div><div class="commit-meta">${escapeHtml(c.author)}</div>`;
-          card.addEventListener('click', async () => {
-            strip.querySelectorAll('.commit-card').forEach(x => x.classList.remove('selected'));
-            card.classList.add('selected');
-            detail.innerHTML = '<span class="loading">Loading…</span>';
-            let program = null;
-            try {
-              program = await api('/api/object/' + c.program);
-            } catch (_) {}
-            renderCommitDetail(c, program);
-          });
-          strip.appendChild(card);
-        });
-        if (runs.length) {
-          const runSection = document.createElement('div');
-          runSection.style.marginTop = '1rem';
-          runSection.innerHTML = '<h3 style="font-size:0.75rem;color:#71717a;margin:0 0 0.5rem 0;text-transform:uppercase;">Runs</h3>';
-          strip.appendChild(runSection);
-          runs.forEach(r => {
-            const card = document.createElement('div');
-            card.className = 'commit-card';
-            card.innerHTML = `<div class="commit-hash">${r.hash.slice(0,12)}…</div><div class="commit-meta">${escapeHtml(r.agent)}</div>`;
-            card.addEventListener('click', () => {
-              strip.querySelectorAll('.commit-card').forEach(x => x.classList.remove('selected'));
-              card.classList.add('selected');
-              detail.innerHTML = '<span class="loading">Loading…</span>';
-              fetchAndShowObject(r.hash).then(() => {
-                const resultEl = detail.querySelector('#objectResult');
-                const pre = resultEl && resultEl.querySelector('pre');
-                if (pre && r.trace) {
-                  const wrap = document.createElement('div');
-                  wrap.className = 'section';
-                  wrap.style.marginTop = '0.5rem';
-                  wrap.innerHTML = `<h2>Trace</h2><p class="hash"><a href="#" data-fetch="${r.trace}">${r.trace.slice(0,12)}… (view prompt/response)</a></p>`;
-                  wrap.querySelector('[data-fetch]').addEventListener('click', (e) => { e.preventDefault(); fetchAndShowObject(r.trace); });
-                  (resultEl || detail).appendChild(wrap);
-                }
-              });
-            });
-            runSection.appendChild(card);
-          });
-        }
-        if (!log.length && runs.length) {
-          strip.insertAdjacentHTML('afterbegin', '<p class="empty-detail">No commits.</p>');
-        }
-      } catch (err) {
-        strip.innerHTML = '<p class="error">' + escapeHtml(err.message) + '</p>';
-      }
-    })();
+    initRepos();
   </script>
 </body>
 </html>

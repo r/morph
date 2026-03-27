@@ -156,3 +156,4 @@ morph gate --json
 - **Branches**: Each system has its own. You can align names (`main` in both) for clarity, but Morph never reads Git refs.
 - **Remotes**: Morph has its own remote model. Use `morph remote add` to configure Morph remotes, and Git remotes for source. They are independent.
 - **CI**: Clone the Git repo (including `.morph/` if committed), then run Morph CLI against the same tree. Use `morph certify` and `morph gate` for behavioral gating.
+- **Hosted service**: Run `morph serve` to expose a shared HTTP API for browsing Morph state (commits, behavioral status, runs, pipelines). The service reads from `.morph/` and is complementary to Git hosting (GitHub, GitLab). Think of it as a behavioral evidence dashboard alongside your code review tool.

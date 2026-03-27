@@ -1,0 +1,11 @@
+- name: serve_help
+  steps:
+    - morph: [serve, --help]
+      stdout_contains: "Run the Morph hosted service"
+
+- name: serve_requires_repo_or_flag
+  init: false
+  steps:
+    - morph: [serve, --port, "0"]
+      expect_exit: 1
+      stderr_contains: "not a morph repository"

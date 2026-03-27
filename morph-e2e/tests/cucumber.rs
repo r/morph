@@ -27,6 +27,14 @@ pub struct MorphWorld {
     pub captures: HashMap<String, String>,
     /// After a concurrent step: exit codes from each agent.
     pub concurrent_exit_codes: Vec<i32>,
+    /// PID of a background morph serve process.
+    pub serve_pid: Option<u32>,
+    /// Port the server is listening on.
+    pub serve_port: Option<u16>,
+    /// Last HTTP response body (JSON).
+    pub last_http_body: Option<serde_json::Value>,
+    /// Last HTTP status code.
+    pub last_http_status: Option<u16>,
 }
 
 /// Split CLI string into args, respecting double-quoted strings.
@@ -496,6 +504,127 @@ fn then_repo_has_n_run_records(w: &mut MorphWorld, n: u32) {
         n,
         count
     );
+}
+
+// --- Hosted service steps (Phase 7) ---
+
+#[when(regex = r#"I start the morph server on port "(\d+)""#)]
+fn when_start_server(w: &mut MorphWorld, port: u16) {
+    let root = w.temp_dir.as_ref().expect("given a morph repo first");
+    // Kill any leftover process on this port from a previous test run
+    let _ = std::process::Command::new("sh")
+        .args(["-c", &format!("lsof -ti tcp:{} | xargs kill -9 2>/dev/null", port)])
+        .output();
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
+    let child = std::process::Command::new(
+        assert_cmd::cargo::cargo_bin("morph"),
+    )
+        .args(["serve", "--port", &port.to_string(), "--interface", "127.0.0.1"])
+        .current_dir(root.path())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("start morph serve");
+    w.serve_pid = Some(child.id());
+    w.serve_port = Some(port);
+    let url = format!("http://127.0.0.1:{}/api/repos", port);
+    for _ in 0..60 {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        let probe = std::process::Command::new("curl")
+            .args(["-s", "-o", "/dev/null", "-w", "%{http_code}", &url])
+            .output();
+        if let Ok(out) = probe {
+            let code = String::from_utf8_lossy(&out.stdout);
+            if code.trim() == "200" {
+                return;
+            }
+        }
+    }
+    panic!("morph serve did not become ready on port {} within 9 seconds", port);
+}
+
+#[when(regex = r#"I query the server at "([^"]+)""#)]
+fn when_query_server(w: &mut MorphWorld, path: String) {
+    let port = w.serve_port.expect("server must be started first");
+    let path = substitute_placeholders(&path, &w.captures);
+    let url = format!("http://127.0.0.1:{}{}", port, path);
+    let output = std::process::Command::new("curl")
+        .args(["-s", "-w", "\n%{http_code}", &url])
+        .output()
+        .expect("curl must be available");
+    let raw = String::from_utf8_lossy(&output.stdout);
+    let parts: Vec<&str> = raw.rsplitn(2, '\n').collect();
+    let status_str = parts[0].trim();
+    let body_str = if parts.len() > 1 { parts[1] } else { "" };
+    w.last_http_status = status_str.parse::<u16>().ok();
+    w.last_http_body = serde_json::from_str(body_str).ok();
+}
+
+#[then(regex = r#"the JSON response field "([^"]+)" equals "([^"]*)""#)]
+fn then_json_field_equals(w: &mut MorphWorld, field_path: String, expected: String) {
+    let expected = substitute_placeholders(&expected, &w.captures);
+    let body = w.last_http_body.as_ref().expect("must query server first");
+    let val = json_path(body, &field_path);
+    let val_str = match val {
+        Some(serde_json::Value::String(s)) => s.clone(),
+        Some(serde_json::Value::Bool(b)) => b.to_string(),
+        Some(serde_json::Value::Number(n)) => n.to_string(),
+        Some(v) => v.to_string(),
+        None => panic!(
+            "JSON field '{}' not found in response: {}",
+            field_path,
+            serde_json::to_string_pretty(body).unwrap_or_default()
+        ),
+    };
+    assert_eq!(
+        val_str, expected,
+        "JSON field '{}': expected '{}', got '{}'\nfull body: {}",
+        field_path, expected, val_str,
+        serde_json::to_string_pretty(body).unwrap_or_default()
+    );
+}
+
+#[then(regex = r#"the JSON response field "([^"]+)" is present"#)]
+fn then_json_field_present(w: &mut MorphWorld, field_path: String) {
+    let body = w.last_http_body.as_ref().expect("must query server first");
+    let val = json_path(body, &field_path);
+    assert!(
+        val.is_some() && !val.unwrap().is_null(),
+        "JSON field '{}' should be present in response: {}",
+        field_path,
+        serde_json::to_string_pretty(body).unwrap_or_default()
+    );
+}
+
+#[then(regex = r#"the JSON response code is "(\d+)""#)]
+fn then_json_response_code(w: &mut MorphWorld, code: u16) {
+    let status = w.last_http_status.expect("must query server first");
+    assert_eq!(
+        status, code,
+        "expected HTTP status {}, got {}",
+        code, status
+    );
+}
+
+#[when(expr = "I stop the morph server")]
+#[then(expr = "I stop the morph server")]
+fn stop_server(w: &mut MorphWorld) {
+    if let Some(pid) = w.serve_pid.take() {
+        let _ = std::process::Command::new("kill")
+            .arg(pid.to_string())
+            .output();
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+/// Navigate a dotted path into a serde_json::Value.
+fn json_path<'a>(val: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
+    let mut current = val;
+    for key in path.split('.') {
+        current = current.get(key)?;
+    }
+    Some(current)
 }
 
 #[tokio::main]
