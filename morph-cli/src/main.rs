@@ -55,6 +55,14 @@ enum Command {
         metrics: Option<String>,
         #[arg(long)]
         author: Option<String>,
+        /// Derive provenance (evidence_refs, env_constraints, contributors) from a recorded Run hash
+        #[arg(long)]
+        from_run: Option<String>,
+    },
+    /// Show a stored Morph object (commit, run, trace, etc.) as pretty JSON
+    Show {
+        /// Object hash (64 hex chars)
+        hash: String,
     },
     /// Show commit history
     Log {
@@ -539,7 +547,7 @@ fn main() -> anyhow::Result<()> {
                 println!("{}", h);
             }
         }
-        Command::Commit { message, pipeline, eval_suite, metrics, author } => {
+        Command::Commit { message, pipeline, eval_suite, metrics, author, from_run } => {
             let (repo_root, store) = get_store(verbose)?;
             let morph_dir = repo_root.join(".morph");
             let version = read_repo_version(&morph_dir)?;
@@ -560,7 +568,15 @@ fn main() -> anyhow::Result<()> {
                 .transpose()
                 .map_err(|e| anyhow::anyhow!("invalid --metrics JSON: {}", e))?
                 .unwrap_or_default();
-            let hash = morph_core::create_tree_commit(
+            let provenance = match from_run {
+                Some(ref run_hash_str) => {
+                    let run_hash = parse_hash(run_hash_str)?;
+                    verbose_msg(verbose, &format!("resolving provenance from run {}", run_hash));
+                    Some(morph_core::resolve_provenance_from_run(&store, &run_hash)?)
+                }
+                None => None,
+            };
+            let hash = morph_core::create_tree_commit_with_provenance(
                 &store,
                 &repo_root,
                 prog_hash.as_ref(),
@@ -569,9 +585,18 @@ fn main() -> anyhow::Result<()> {
                 message,
                 author,
                 Some(&version),
+                provenance.as_ref(),
             )?;
             verbose_msg(verbose, &format!("created commit {}", hash));
             println!("{}", hash);
+        }
+        Command::Show { hash } => {
+            let (_repo_root, store) = get_store(verbose)?;
+            verbose_msg(verbose, &format!("show object {}", hash));
+            let h = parse_hash(&hash)?;
+            let obj = store.get(&h)?;
+            let json = serde_json::to_string_pretty(&obj).map_err(|e| anyhow::anyhow!("{}", e))?;
+            println!("{}", json);
         }
         Command::Log { ref_name } => {
             let (_repo_root, store) = get_store(verbose)?;

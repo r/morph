@@ -624,6 +624,7 @@ Pipeline manifests are created via `morph pipeline create <file>` and exist only
 ```
 morph add .
 morph commit -m "message"
+morph commit -m "message" --from-run <run_hash>
 ```
 
 `morph add .` stages files and updates the staging index. `morph commit -m "message"` builds the tree from the index, creates the commit, and clears the index.
@@ -633,6 +634,14 @@ morph commit -m "message"
 - Pipeline graph integrity (DAG, valid node/edge kinds)
 - Eval suite presence and hash integrity
 - Uses **recorded** observed metrics (from external evaluation or prior `morph eval record`) to form the eval contract
+
+`--from-run <run_hash>` derives commit provenance from a recorded Run:
+
+- `evidence_refs`: the run hash and its trace hash
+- `env_constraints`: the Run's environment (model, version, parameters, toolchain)
+- `contributors`: the run's agent (with role "primary") and any additional contributors
+
+If the run hash points to a missing object, a non-Run object, or a Run whose trace cannot be resolved, commit creation fails with a clear error. When `--from-run` is omitted, provenance fields are absent (plain VCS commit).
 
 Morph does not run the eval suite; external tools do. Morph applies its **metrics validation layer** (aggregation, threshold checks) to reported scores.
 
@@ -709,7 +718,15 @@ morph annotations <object_hash> --sub <event_id>
 
 `morph annotations` lists all annotations on a given object, optionally filtered by sub-target.
 
-## 6.11 Utilities
+## 6.11 Object Inspection
+
+```
+morph show <hash>
+```
+
+`morph show` accepts any Morph object hash and prints its stored content as pretty JSON. Works for commits, runs, traces, pipelines, blobs, eval suites, annotations, and all other object types. Use it to inspect commit provenance (`evidence_refs`, `env_constraints`, `contributors`) after creation.
+
+## 6.12 Utilities
 
 ```
 morph hash-object <file>

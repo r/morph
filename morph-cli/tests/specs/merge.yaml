@@ -1,0 +1,61 @@
+- name: merge_happy_path
+  files:
+    prog.json: '{"graph":{"nodes":[{"id":"n1","kind":"identity","ref":null,"params":{}}],"edges":[]},"prompts":[],"eval_suite":null,"provenance":null}'
+    .morph/evals/e.json: '{"cases":[],"metrics":[{"name":"acc","aggregation":"mean","threshold":0.0}]}'
+    a.txt: "aaa"
+  steps:
+    - morph: [pipeline, create, prog.json]
+      capture: prog_hash
+    - morph: [add, .morph/evals/e.json]
+      capture_first_line: suite_hash
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "main commit", --pipeline, "${prog_hash}", --eval-suite, "${suite_hash}", --metrics, '{"acc": 0.9}']
+      capture: main_commit
+    - morph: [branch, feature]
+    - morph: [checkout, feature]
+    - write_file:
+        path: b.txt
+        content: "bbb"
+    - morph: [add, b.txt]
+    - morph: [commit, -m, "feature commit", --pipeline, "${prog_hash}", --eval-suite, "${suite_hash}", --metrics, '{"acc": 0.85}']
+    - morph: [checkout, main]
+    - morph: [merge, feature, -m, "merged feature", --pipeline, "${prog_hash}", --eval-suite, "${suite_hash}", --metrics, '{"acc": 0.92}']
+      capture: merge_hash
+      assert_hash: true
+    - morph: [log]
+      stdout_contains: "merged feature"
+
+- name: merge_rejects_weak_metrics
+  files:
+    prog.json: '{"graph":{"nodes":[{"id":"n1","kind":"identity","ref":null,"params":{}}],"edges":[]},"prompts":[],"eval_suite":null,"provenance":null}'
+    .morph/evals/e.json: '{"cases":[],"metrics":[{"name":"acc","aggregation":"mean","threshold":0.0}]}'
+    a.txt: "aaa"
+  steps:
+    - morph: [pipeline, create, prog.json]
+      capture: prog_hash
+    - morph: [add, .morph/evals/e.json]
+      capture_first_line: suite_hash
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "main commit", --pipeline, "${prog_hash}", --eval-suite, "${suite_hash}", --metrics, '{"acc": 0.9}']
+    - morph: [branch, feature]
+    - morph: [checkout, feature]
+    - write_file:
+        path: b.txt
+        content: "bbb"
+    - morph: [add, b.txt]
+    - morph: [commit, -m, "feature commit", --pipeline, "${prog_hash}", --eval-suite, "${suite_hash}", --metrics, '{"acc": 0.85}']
+    - morph: [checkout, main]
+    - morph: [merge, feature, -m, "bad merge", --pipeline, "${prog_hash}", --eval-suite, "${suite_hash}", --metrics, '{"acc": 0.87}']
+      expect_exit: 1
+      stderr_contains: "rejected"
+
+- name: merge_nonexistent_branch_fails
+  files:
+    a.txt: "aaa"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "initial"]
+    - morph: [pipeline, identity-hash]
+      capture: prog_hash
+    - morph: [merge, nosuchbranch, -m, "merge", --pipeline, "${prog_hash}", --eval-suite, "${prog_hash}", --metrics, '{"acc": 1.0}']
+      expect_exit: 1

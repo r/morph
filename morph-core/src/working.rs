@@ -48,18 +48,21 @@ pub fn blob_from_file(path: &Path, kind: &str) -> Result<MorphObject, MorphError
 /// If content has "encoding": "base64", decodes body and writes raw bytes.
 pub fn materialize_blob(store: &dyn Store, hash: &Hash, dest: &Path) -> Result<(), MorphError> {
     let obj = store.get(hash)?;
-    let blob = match &obj {
-        MorphObject::Blob(b) => b,
-        _ => return Err(MorphError::Serialization("object is not a blob".into())),
-    };
-    let body_str: std::borrow::Cow<str> = match blob.content.get("body").and_then(|v| v.as_str()) {
-        Some(s) => std::borrow::Cow::Borrowed(s),
-        None => std::borrow::Cow::Owned(serde_json::to_string(&blob.content).unwrap_or_default()),
-    };
-    let bytes: Vec<u8> = if blob.content.get("encoding").and_then(|v| v.as_str()) == Some("base64") {
-        BASE64.decode(body_str.as_ref().as_bytes()).map_err(|e| MorphError::Serialization(format!("invalid base64: {}", e)))?
-    } else {
-        body_str.as_bytes().to_vec()
+    let bytes: Vec<u8> = match &obj {
+        MorphObject::Blob(blob) => {
+            let body_str: std::borrow::Cow<str> = match blob.content.get("body").and_then(|v| v.as_str()) {
+                Some(s) => std::borrow::Cow::Borrowed(s),
+                None => std::borrow::Cow::Owned(serde_json::to_string(&blob.content).unwrap_or_default()),
+            };
+            if blob.content.get("encoding").and_then(|v| v.as_str()) == Some("base64") {
+                BASE64.decode(body_str.as_ref().as_bytes()).map_err(|e| MorphError::Serialization(format!("invalid base64: {}", e)))?
+            } else {
+                body_str.as_bytes().to_vec()
+            }
+        }
+        other => serde_json::to_string_pretty(other)
+            .map_err(|e| MorphError::Serialization(e.to_string()))?
+            .into_bytes(),
     };
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;

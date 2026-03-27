@@ -170,7 +170,7 @@ impl MorphServer {
         Ok(CallToolResult::success(vec![Content::text(out)]))
     }
 
-    #[tool(description = "Create a commit. Required: message. Optional: pipeline (hash), eval_suite (hash), metrics (JSON object), author.")]
+    #[tool(description = "Create a commit. Required: message. Optional: pipeline (hash), eval_suite (hash), metrics (JSON object), author, from_run (run hash for evidence-backed provenance).")]
     async fn morph_commit(
         &self,
         params: Parameters<CommitParams>,
@@ -193,7 +193,16 @@ impl MorphServer {
             .0
             .metrics
             .unwrap_or_default();
-        let hash = morph_core::create_tree_commit(
+        let provenance = match params.0.from_run {
+            Some(ref run_hash_str) => {
+                let run_hash = Hash::from_hex(run_hash_str)
+                    .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+                Some(morph_core::resolve_provenance_from_run(&store, &run_hash)
+                    .map_err(|e| McpError::invalid_params(e.to_string(), None))?)
+            }
+            None => None,
+        };
+        let hash = morph_core::create_tree_commit_with_provenance(
             &store,
             &repo_root,
             prog_hash.as_ref(),
@@ -202,6 +211,7 @@ impl MorphServer {
             params.0.message,
             params.0.author,
             Some(&version),
+            provenance.as_ref(),
         )
         .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
         Ok(CallToolResult::success(vec![Content::text(hash.to_string())]))
@@ -325,6 +335,9 @@ struct CommitParams {
     metrics: Option<std::collections::BTreeMap<String, f64>>,
     #[serde(default)]
     author: Option<String>,
+    /// Run hash to derive provenance from (evidence_refs, env_constraints, contributors).
+    #[serde(default)]
+    from_run: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

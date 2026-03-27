@@ -1,0 +1,45 @@
+- name: branch_create
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "initial"]
+      capture: commit_hash
+    - morph: [branch, feature]
+      stdout_contains: "Created branch feature"
+    - morph: [branch]
+      stdout_contains:
+        - main
+        - feature
+  assert:
+    - kind: file_exists
+      path: .morph/refs/heads/feature
+
+- name: branch_list_shows_current
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "initial"]
+    - morph: [branch]
+      stdout_contains: "* main"
+
+- name: branch_no_commit_fails
+  steps:
+    - morph: [branch, feature]
+      expect_exit: 1
+      stderr_contains: "no commit"
+
+- name: branch_create_already_exists
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "initial"]
+    - morph: [branch, feature]
+      stdout_contains: "Created branch feature"
+    - morph: [branch, feature]
+      stdout_contains: "Created branch feature"
+  assert:
+    - kind: file_exists
+      path: .morph/refs/heads/feature

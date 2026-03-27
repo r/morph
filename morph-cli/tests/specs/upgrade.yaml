@@ -1,0 +1,10 @@
+- name: upgrade_latest_no_op
+  steps:
+    - morph: [upgrade]
+      stdout_contains: "Migrated"
+    - morph: [upgrade]
+      stdout_contains: "No upgrade needed"
+
+- name: upgrade_from_repo_root
+  steps:
+    - morph: [upgrade]
