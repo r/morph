@@ -1,0 +1,46 @@
+# Tests for `morph tag`
+- name: tag_create_and_list
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, .]
+    - morph: [commit, -m, first]
+    - morph: [tag, v1.0]
+    - morph: [tag]
+      stdout_contains: "v1.0"
+
+- name: tag_duplicate_fails
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, .]
+    - morph: [commit, -m, first]
+    - morph: [tag, v1.0]
+    - morph: [tag, v1.0]
+      expect_exit: 1
+      stderr_contains: "already exists"
+
+- name: tag_delete
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, .]
+    - morph: [commit, -m, first]
+    - morph: [tag, v1.0]
+    - morph: [tag, -d, v1.0]
+      stdout_contains: "Deleted"
+    - morph: [tag]
+      stdout_not_contains: "v1.0"
+
+- name: tag_delete_nonexistent_fails
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, .]
+    - morph: [commit, -m, first]
+    - morph: [tag, -d, nope]
+      expect_exit: 1
+
+- name: tag_list_empty
+  steps:
+    - morph: [tag]

@@ -4,19 +4,23 @@
 
 | Crate | Tests | Location |
 |-------|-------|----------|
-| **morph-core** | 182 unit tests across 16 modules | `#[cfg(test)]` blocks in each source file |
-| **morph-cli** | 76 integration tests | YAML specs in `morph-cli/tests/specs/*.yaml`, compiled by `build.rs` |
-| **morph-e2e** | 25 Cucumber e2e scenarios | `morph-e2e/features/*.feature`, step defs in `morph-e2e/tests/cucumber.rs` |
-| **morph-mcp** | None yet | -- |
-| **morph-serve** | 34+ unit/API tests (views, service, handlers, org policy, multi-repo) | `morph-serve/src/tests.rs` + `org_policy::tests` |
+| **morph-core** | 233 unit tests across 20 modules | `#[cfg(test)]` blocks in each source file |
+| **morph-cli** | 113 integration tests + 9 unit tests | YAML specs in `morph-cli/tests/specs/*.yaml`, compiled by `build.rs`; unit tests in `setup.rs` |
+| **morph-e2e** | 29 Cucumber e2e scenarios | `morph-e2e/features/*.feature`, step defs in `morph-e2e/tests/cucumber.rs` |
+| **morph-mcp** | 16 integration tests | `#[cfg(test)]` in `morph-mcp/src/main.rs` |
+| **morph-serve** | 34 unit/API tests (views, service, handlers, org policy, multi-repo) | `morph-serve/src/tests.rs` + `org_policy::tests` |
 
 ### morph-core unit test modules
 
-`hash` (including paper-aligned fields: review nodes, per-node env, set-valued attribution), `store` (FsStore + GixStore), `repo`, `working`, `commit` (including merge with union suite, **provenance from run**, evidence_refs, env_constraints, contributors), `metrics` (direction-aware thresholds, metric retirement), `merge` (merge planning, dominance explanation, direction-aware reference bar, metric retirement in dominance checks, execute merge), `annotate`, `identity`, `record`, `index`, `tree`, `migrate`, `extract` (pipeline extraction from runs: graph shape, provenance, attribution, error paths), **`sync`** (remote config round-trip, reachable object collection, ancestry checks, push to empty remote, push non-fast-forward rejection, push idempotency, hash preservation across sync, fetch creates remote-tracking refs, fetch does not overwrite local branches, fetch transfers only missing objects, pull fast-forward, pull divergence rejection, evidence-backed commit sync, remote store open/validation, ref listing), **`policy`** (policy round-trip, config preservation, default policy, certification pass/fail with required metrics/thresholds/directions, gate pass/fail for certified/uncertified commits, gate failure reason identification, certification annotation recording).
+`hash` (including paper-aligned fields: review nodes, per-node env, set-valued attribution), `store` (FsStore + GixStore), `repo`, `working`, `commit` (including merge with union suite, **provenance from run**, evidence_refs, env_constraints, contributors), `metrics` (direction-aware thresholds, metric retirement), `merge` (merge planning, dominance explanation, direction-aware reference bar, metric retirement in dominance checks, execute merge), `annotate`, `identity`, `record` (**record_run** with trace validation/mismatch/artifacts/error paths, **record_eval_metrics** with validation/error paths, record_session defaults), `index`, `tree`, `migrate` (**0.0→0.2** hash rewriting, **0.2→0.3** version bump, idempotency, empty/missing objects dir), `extract` (pipeline extraction from runs: graph shape, provenance, attribution, error paths), **`sync`** (remote config round-trip, reachable object collection, ancestry checks, push/fetch/pull scenarios, evidence-backed sync), **`policy`** (policy round-trip, certification pass/fail, gate pass/fail, annotation recording), **`morphignore`** (load/match patterns, glob, directory, negation, nested paths, multiple patterns, paths outside repo), **`diff`** (empty trees, added/deleted/modified/mixed changes, nested trees, store-backed diff, None-to-tree and tree-to-None), **`tag`** (create/list/delete, duplicate tag error, nonexistent delete error, empty repo), **`stash`** (save/pop roundtrip, empty index error, empty pop error, LIFO ordering, list, no-message save), **`revert`** (parent tree restoration, root commit → empty tree, non-commit error, branch ref update).
 
 ### morph-cli integration tests
 
-`init`, `status`, `add`, `prompt create/materialize`, `pipeline create/show`, `commit + log`, `run record + eval record`, `annotate + annotations`, `branch`, `checkout`, `merge` (including auto-union suite, explained metric failure, retirement), `merge_plan` (parent inspection, reference bar, retirement preview, incompatible suites), `rollup`, `upgrade`, `errors`, **`provenance`** (evidence-backed commits with `--from-run`, `morph show`), **`pipeline_extract`** (trace-backed pipeline extraction with `--from-run`, reviewer attribution, reuse in commits, error paths), **`remote`** (add/list remotes, push to empty remote, push idempotent, push to missing remote fails, refs listing), **`push_pull`** (fetch creates remote-tracking refs, pull fast-forwards, push non-fast-forward fails, evidence-backed commit closure transfer, refs show remote-tracking after fetch), **`policy`** (round-trip set/show, set-default-eval, default empty policy), **`certify_gate`** (certify with metrics file, certify specific commit, certify fail on missing metrics, certify fail below threshold, certify with runner, gate pass for certified commit, gate fail on missing metrics, gate fail below threshold, gate fail uncertified, JSON output for certify and gate).
+`init`, `status`, `add`, `prompt create/materialize`, **`prompt show`** (latest, by run hash, no-runs error), `pipeline create/show`, `commit + log`, `run record + eval record`, **`run list`** (populated + empty), **`run show`** (summary, JSON, with-trace, invalid hash), **`trace show`** (event display), `annotate + annotations`, `branch`, `checkout`, `merge`, `merge_plan`, `rollup`, `upgrade`, **`diff`** (added files, modified files, no changes, HEAD shorthand), **`tag`** (create/list, duplicate error, delete, delete nonexistent, list empty), **`stash`** (save/pop, list, empty save error, empty pop error), **`revert`** (undo commit, invalid hash error), **`error_paths`**, **`morphignore`**, `errors`, **`provenance`**, **`pipeline_extract`**, **`remote`**, **`push_pull`**, **`policy`**, **`certify_gate`**.
+
+### morph-mcp integration tests
+
+All 14 MCP tools tested: **init** (success + already-initialized error), **record_session** (hash return), **record_run**, **record_eval** (file-based metrics), **stage** (explicit paths + default `.`), **commit** (basic, with metrics, with `--from-run` provenance), **branch** (success + no-commit error), **checkout** (branch switch), **annotate** (annotation creation), **status** (file listing), **log** (commit history), **show** (object JSON), **diff** (between commits), **merge** (behavioral dominance), **repo_store** (not-found error message).
 
 ---
 
@@ -26,6 +30,7 @@
 cargo test                    # all workspace tests (unit + integration)
 cargo test -p morph-core      # core library only
 cargo test -p morph-cli       # CLI integration tests only
+cargo test -p morph-mcp       # MCP server tests
 cargo test -p morph-e2e --test cucumber   # e2e (Cucumber; runs real morph CLI)
 cargo test --lib              # unit tests only (no integration)
 ```
@@ -70,12 +75,9 @@ Each YAML spec supports: file/directory setup (`files`, `dirs`), sequenced CLI c
 
 ## Known gaps
 
-- **morph-mcp**: No tests. An integration harness that speaks MCP over stdio would cover the primary write path.
-- **morph-serve**: 34+ tests covering repo list/summary, branch listing, commit list/detail, run/trace/pipeline detail, annotations, policy, gate status, behavioral status (certification/merge), org policy CRUD, multi-repo, backward-compatible endpoints, and error paths.
 - **GixStore-specific paths**: `status()` and `record_session()` are now backend-aware (use `store.hash_object()`), but explicit GixStore integration tests would catch backend-specific regressions.
 - **proptest**: In dev-dependencies but not yet used. Good candidate for property-based tests on hash determinism and serialization round-trips.
-- **Error paths**: Many functions have untested error branches (malformed JSON, permission errors, missing refs).
-- **CLI gaps**: `branch`, `checkout`, `merge`, `rollup`, `upgrade`, `errors`, `provenance`, `remote`, `push_pull`, `policy`, and `certify_gate` now have YAML specs. MCP integration tests are still missing.
-- **Direction-aware dominance**: `check_dominance()` assumes all metrics are "maximize". The new `merge` module's `MergePlan::check_dominance()` and `check_dominance_with_suite()` respect per-metric direction. Tests cover both maximize and minimize directions during merge planning.
 - **Network transport**: Phase 5 sync uses local filesystem paths only. Network transport (HTTP, SSH) tests will be needed when that transport is added.
 - **MCP certification/gating**: The certification and gate flows are available via CLI only. MCP exposure would allow IDE-driven certification workflows.
+- **`morph blame`**: Per-file/per-line attribution showing which commit/agent modified each part. Planned but not yet implemented.
+- **E2E hosted service**: 3 Cucumber scenarios are skipped due to server binding constraints in CI.

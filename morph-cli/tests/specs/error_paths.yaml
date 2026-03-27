@@ -1,0 +1,39 @@
+# Additional error-path tests beyond errors.yaml
+- name: checkout_no_commits_fails
+  steps:
+    - morph: [checkout, main]
+      expect_exit: 1
+
+- name: show_invalid_hash_fails
+  steps:
+    - morph: [show, not-a-hash]
+      expect_exit: 1
+
+- name: show_missing_object_fails
+  steps:
+    - morph: [show, aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]
+      expect_exit: 1
+
+- name: pipeline_show_missing_fails
+  steps:
+    - morph: [pipeline, show, aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]
+      expect_exit: 1
+
+- name: rollup_no_commits_fails
+  steps:
+    - morph: [rollup, HEAD, HEAD, -m, squash]
+      expect_exit: 1
+
+- name: annotate_invalid_target_fails
+  steps:
+    - morph: [annotate, not-a-hash, -k, note, -d, "{}"]
+      expect_exit: 1
+
+- name: commit_empty_message_still_works
+  files:
+    hello.txt: "hello"
+  steps:
+    - morph: [add, hello.txt]
+    - morph: [commit, -m, ""]
+      capture: hash
+      assert_hash: true

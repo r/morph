@@ -34,3 +34,85 @@ pub fn is_ignored(
     };
     matches!(m.matched(relative, is_dir), ignore::Match::Ignore(_))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn load_returns_none_when_no_morphignore() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(load_morphignore(dir.path()).is_none());
+    }
+
+    #[test]
+    fn load_returns_matcher_when_file_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(".morphignore"), "*.log\n").unwrap();
+        assert!(load_morphignore(dir.path()).is_some());
+    }
+
+    #[test]
+    fn is_ignored_returns_false_when_no_matcher() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("foo.txt");
+        assert!(!is_ignored(None, dir.path(), &p, false));
+    }
+
+    #[test]
+    fn simple_glob_pattern_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(".morphignore"), "*.log\n").unwrap();
+        let matcher = load_morphignore(dir.path()).unwrap();
+        assert!(is_ignored(Some(&matcher), dir.path(), &dir.path().join("debug.log"), false));
+        assert!(!is_ignored(Some(&matcher), dir.path(), &dir.path().join("readme.md"), false));
+    }
+
+    #[test]
+    fn directory_pattern_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(".morphignore"), "build/\n").unwrap();
+        let matcher = load_morphignore(dir.path()).unwrap();
+        assert!(is_ignored(Some(&matcher), dir.path(), &dir.path().join("build"), true));
+        assert!(!is_ignored(Some(&matcher), dir.path(), &dir.path().join("build"), false));
+    }
+
+    #[test]
+    fn negation_pattern_unignores() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(".morphignore"), "*.log\n!important.log\n").unwrap();
+        let matcher = load_morphignore(dir.path()).unwrap();
+        assert!(is_ignored(Some(&matcher), dir.path(), &dir.path().join("debug.log"), false));
+        assert!(!is_ignored(Some(&matcher), dir.path(), &dir.path().join("important.log"), false));
+    }
+
+    #[test]
+    fn nested_path_matching() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(".morphignore"), "logs/*.log\n").unwrap();
+        let matcher = load_morphignore(dir.path()).unwrap();
+        assert!(is_ignored(Some(&matcher), dir.path(), &dir.path().join("logs/app.log"), false));
+        assert!(!is_ignored(Some(&matcher), dir.path(), &dir.path().join("app.log"), false));
+    }
+
+    #[test]
+    fn path_outside_repo_root_not_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(".morphignore"), "*.log\n").unwrap();
+        let matcher = load_morphignore(dir.path()).unwrap();
+        let outside = Path::new("/tmp/somewhere/else/debug.log");
+        assert!(!is_ignored(Some(&matcher), dir.path(), outside, false));
+    }
+
+    #[test]
+    fn multiple_patterns() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(".morphignore"), "*.log\n*.tmp\ntarget/\n").unwrap();
+        let matcher = load_morphignore(dir.path()).unwrap();
+        assert!(is_ignored(Some(&matcher), dir.path(), &dir.path().join("a.log"), false));
+        assert!(is_ignored(Some(&matcher), dir.path(), &dir.path().join("b.tmp"), false));
+        assert!(is_ignored(Some(&matcher), dir.path(), &dir.path().join("target"), true));
+        assert!(!is_ignored(Some(&matcher), dir.path(), &dir.path().join("src/main.rs"), false));
+    }
+}

@@ -1,0 +1,21 @@
+# Tests for `morph prompt show` command
+- name: prompt_show_latest_session
+  steps:
+    - morph: [run, record-session, --prompt, "What does this code do?", --response, "It calculates fibonacci numbers"]
+      capture: run_hash
+      assert_hash: true
+    - morph: [prompt, show, latest]
+      stdout_contains: "What does this code do?"
+
+- name: prompt_show_by_run_hash
+  steps:
+    - morph: [run, record-session, --prompt, "Hello prompt", --response, "Hello response"]
+      capture: run_hash
+      assert_hash: true
+    - morph: [prompt, show, "${run_hash}"]
+      stdout_contains: "Hello prompt"
+
+- name: prompt_show_no_runs_fails
+  steps:
+    - morph: [prompt, show, latest]
+      expect_exit: 1

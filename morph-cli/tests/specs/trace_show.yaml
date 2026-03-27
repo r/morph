@@ -1,0 +1,12 @@
+# Tests for `morph trace show` command
+- name: trace_show_displays_events
+  steps:
+    - morph: [run, record-session, --prompt, "Build the feature", --response, "Feature built successfully"]
+      capture: run_hash
+      assert_hash: true
+    - morph: [run, show, "${run_hash}", --json]
+      capture: run_json
+    - morph: [run, show, "${run_hash}", --with-trace]
+      stdout_contains:
+        - "Build the feature"
+        - "Feature built successfully"

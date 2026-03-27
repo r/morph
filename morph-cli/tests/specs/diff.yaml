@@ -1,0 +1,60 @@
+# Tests for `morph diff`
+- name: diff_shows_added_files
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, .]
+    - morph: [commit, -m, first]
+      capture: c1
+    - write_file:
+        path: b.txt
+        content: "world"
+    - morph: [add, b.txt]
+    - morph: [commit, -m, second]
+      capture: c2
+    - morph: [diff, "${c1}", "${c2}"]
+      stdout_contains:
+        - "A"
+        - "b.txt"
+
+- name: diff_shows_modified_files
+  files:
+    a.txt: "version1"
+  steps:
+    - morph: [add, .]
+    - morph: [commit, -m, first]
+      capture: c1
+    - write_file:
+        path: a.txt
+        content: "version2"
+    - morph: [add, a.txt]
+    - morph: [commit, -m, second]
+      capture: c2
+    - morph: [diff, "${c1}", "${c2}"]
+      stdout_contains:
+        - "M"
+        - "a.txt"
+
+- name: diff_no_changes_empty_output
+  files:
+    a.txt: "same"
+  steps:
+    - morph: [add, .]
+    - morph: [commit, -m, first]
+      capture: c1
+    - morph: [diff, "${c1}", "${c1}"]
+
+- name: diff_head_shorthand
+  files:
+    a.txt: "v1"
+  steps:
+    - morph: [add, .]
+    - morph: [commit, -m, first]
+      capture: c1
+    - write_file:
+        path: b.txt
+        content: "new"
+    - morph: [add, b.txt]
+    - morph: [commit, -m, second]
+    - morph: [diff, "${c1}", HEAD]
+      stdout_contains: "b.txt"
