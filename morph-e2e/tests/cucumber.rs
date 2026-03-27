@@ -96,7 +96,7 @@ fn given_morph_repo(w: &mut MorphWorld) {
         .arg(&canon)
         .assert()
         .success();
-    w.captures.insert("repo_path".to_string(), path.to_string_lossy().to_string());
+    w.captures.insert("repo_path".to_string(), canon.to_string_lossy().to_string());
     w.temp_dir = Some(temp);
     // Store canonicalized path for assertions
     w.canon_path = Some(canon);
