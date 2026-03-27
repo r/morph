@@ -1,0 +1,31 @@
+- name: rollup_squashes_commits
+  files:
+    a.txt: "aaa"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "first"]
+      capture: base_hash
+    - write_file:
+        path: b.txt
+        content: "bbb"
+    - morph: [add, b.txt]
+    - morph: [commit, -m, "second"]
+    - write_file:
+        path: c.txt
+        content: "ccc"
+    - morph: [add, c.txt]
+    - morph: [commit, -m, "third"]
+    - morph: [rollup, "${base_hash}", HEAD, -m, "squashed"]
+      capture: rollup_hash
+      assert_hash: true
+    - morph: [log]
+      stdout_contains: "squashed"
+
+- name: rollup_nonexistent_ref_fails
+  files:
+    a.txt: "aaa"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "initial"]
+    - morph: [rollup, nosuchref, HEAD]
+      expect_exit: 1

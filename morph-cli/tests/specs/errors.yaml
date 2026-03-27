@@ -1,0 +1,16 @@
+- name: commit_no_staged_files
+  steps:
+    - morph: [commit, -m, "empty"]
+      capture: commit_hash
+      assert_hash: true
+
+- name: log_no_commits
+  steps:
+    - morph: [log]
+
+- name: status_outside_repo
+  init: false
+  steps:
+    - morph: [status]
+      expect_exit: 1
+      stderr_contains: "not a morph repository"

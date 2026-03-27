@@ -241,29 +241,56 @@ fn emit_step(code: &mut String, step: &Step, idx: usize) {
 
     if let Some(ref contains) = step.stdout_contains {
         for s in contains.items() {
-            write!(
-                code,
-                "\n            .stdout(predicates::prelude::predicate::str::contains({s:?}))",
-            )
-            .unwrap();
+            if s.contains("${") {
+                let fmt_str = escape_braces_for_format(s);
+                write!(
+                    code,
+                    "\n            .stdout(predicates::prelude::predicate::str::contains(format!({fmt_str:?})))",
+                )
+                .unwrap();
+            } else {
+                write!(
+                    code,
+                    "\n            .stdout(predicates::prelude::predicate::str::contains({s:?}))",
+                )
+                .unwrap();
+            }
         }
     }
     if let Some(ref not_contains) = step.stdout_not_contains {
         for s in not_contains.items() {
-            write!(
-                code,
-                "\n            .stdout(predicates::prelude::predicate::str::contains({s:?}).not())",
-            )
-            .unwrap();
+            if s.contains("${") {
+                let fmt_str = escape_braces_for_format(s);
+                write!(
+                    code,
+                    "\n            .stdout(predicates::prelude::predicate::str::contains(format!({fmt_str:?})).not())",
+                )
+                .unwrap();
+            } else {
+                write!(
+                    code,
+                    "\n            .stdout(predicates::prelude::predicate::str::contains({s:?}).not())",
+                )
+                .unwrap();
+            }
         }
     }
     if let Some(ref contains) = step.stderr_contains {
         for s in contains.items() {
-            write!(
-                code,
-                "\n            .stderr(predicates::prelude::predicate::str::contains({s:?}))",
-            )
-            .unwrap();
+            if s.contains("${") {
+                let fmt_str = escape_braces_for_format(s);
+                write!(
+                    code,
+                    "\n            .stderr(predicates::prelude::predicate::str::contains(format!({fmt_str:?})))",
+                )
+                .unwrap();
+            } else {
+                write!(
+                    code,
+                    "\n            .stderr(predicates::prelude::predicate::str::contains({s:?}))",
+                )
+                .unwrap();
+            }
         }
     }
     writeln!(code).unwrap();

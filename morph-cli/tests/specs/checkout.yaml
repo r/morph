@@ -1,0 +1,46 @@
+- name: checkout_branch
+  files:
+    main_file.txt: "on main"
+  steps:
+    - morph: [add, main_file.txt]
+    - morph: [commit, -m, "main commit"]
+    - morph: [branch, feature]
+    - morph: [checkout, feature]
+      stdout_contains: "Switched to branch feature"
+    - morph: [checkout, main]
+      stdout_contains: "Switched to branch main"
+
+- name: checkout_restores_tree
+  files:
+    a.txt: "aaa"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "main commit"]
+    - morph: [branch, feature]
+    - morph: [checkout, feature]
+    - write_file:
+        path: b.txt
+        content: "bbb"
+    - morph: [add, b.txt]
+    - morph: [commit, -m, "feature commit"]
+    - morph: [checkout, main]
+  assert:
+    - kind: file_exists
+      path: a.txt
+    - kind: file_not_exists
+      path: b.txt
+
+- name: checkout_detached
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "initial"]
+      capture: commit_hash
+    - morph: [checkout, "${commit_hash}"]
+      stdout_contains: "Detached HEAD"
+
+- name: checkout_nonexistent_fails
+  steps:
+    - morph: [checkout, nosuchbranch]
+      expect_exit: 1

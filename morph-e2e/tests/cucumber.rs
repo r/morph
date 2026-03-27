@@ -122,6 +122,32 @@ fn when_capture_last_output(w: &mut MorphWorld, name: String) {
     w.captures.insert(name, line);
 }
 
+#[when(regex = r#"I write file "([^"]+)" with captures and content "([^"]*)""#)]
+fn when_write_file_with_captures(w: &mut MorphWorld, path: String, content: String) {
+    let root = w.temp_dir.as_ref().expect("given a morph repo first");
+    let content = substitute_placeholders(&content, &w.captures);
+    let full = root.path().join(&path);
+    if let Some(parent) = full.parent() {
+        std::fs::create_dir_all(parent).expect("create parent dirs");
+    }
+    std::fs::write(&full, content).expect("write file");
+}
+
+#[when(regex = r#"I commit with from-run "([^"]*)" and message "([^"]*)""#)]
+fn when_commit_with_from_run(w: &mut MorphWorld, run_hash: String, message: String) {
+    let root = w.temp_dir.as_ref().expect("given a morph repo first");
+    let run_hash = substitute_placeholders(&run_hash, &w.captures);
+    let output = Command::cargo_bin("morph")
+        .expect("morph binary")
+        .args(["commit", "-m", &message, "--from-run", &run_hash])
+        .current_dir(root.path())
+        .output()
+        .expect("run morph");
+    w.last_stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    w.last_stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    w.last_exit = output.status.code();
+}
+
 #[when(regex = r#"I run commit with message "([^"]*)" using captured pipeline and eval suite"#)]
 fn when_run_commit_captured(w: &mut MorphWorld, message: String) {
     let prog = w.captures.get("prog_hash").expect("capture prog_hash first");
@@ -171,6 +197,7 @@ fn when_run_record_session(w: &mut MorphWorld, prompt: String, response: String)
 
 #[then(regex = r#"stdout contains "([^"]+)""#)]
 fn then_stdout_contains(w: &mut MorphWorld, needle: String) {
+    let needle = substitute_placeholders(&needle, &w.captures);
     assert!(
         w.last_stdout.contains(&needle),
         "stdout should contain {:?}\nstdout: {}",
@@ -218,6 +245,61 @@ fn last_command_succeeded(w: &mut MorphWorld) {
         Some(0),
         "expected exit 0, got {:?}\nstderr: {}",
         w.last_exit,
+        w.last_stderr
+    );
+}
+
+#[when(regex = r#"I commit with message "([^"]*)" pipeline "([^"]*)" suite "([^"]*)" and metrics \{([^\}]*)\}"#)]
+fn when_commit_with_metrics(w: &mut MorphWorld, msg: String, pipeline: String, suite: String, metrics_inner: String) {
+    let root = w.temp_dir.as_ref().expect("given a morph repo first");
+    let pipeline = substitute_placeholders(&pipeline, &w.captures);
+    let suite = substitute_placeholders(&suite, &w.captures);
+    let metrics_json = format!("{{{}}}", metrics_inner);
+    let output = Command::cargo_bin("morph")
+        .expect("morph binary")
+        .args(["commit", "-m", &msg, "--pipeline", &pipeline, "--eval-suite", &suite, "--metrics", &metrics_json])
+        .current_dir(root.path())
+        .output()
+        .expect("run morph");
+    w.last_stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    w.last_stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    w.last_exit = output.status.code();
+}
+
+#[when(regex = r#"I merge "([^"]*)" with message "([^"]*)" pipeline "([^"]*)" suite "([^"]*)" and metrics \{([^\}]*)\}"#)]
+fn when_merge_with_metrics(w: &mut MorphWorld, branch: String, msg: String, pipeline: String, suite: String, metrics_inner: String) {
+    let root = w.temp_dir.as_ref().expect("given a morph repo first");
+    let pipeline = substitute_placeholders(&pipeline, &w.captures);
+    let suite = substitute_placeholders(&suite, &w.captures);
+    let metrics_json = format!("{{{}}}", metrics_inner);
+    let output = Command::cargo_bin("morph")
+        .expect("morph binary")
+        .args(["merge", &branch, "-m", &msg, "--pipeline", &pipeline, "--eval-suite", &suite, "--metrics", &metrics_json])
+        .current_dir(root.path())
+        .output()
+        .expect("run morph");
+    w.last_stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    w.last_stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    w.last_exit = output.status.code();
+}
+
+#[then(expr = "the last command failed")]
+fn last_command_failed(w: &mut MorphWorld) {
+    assert_ne!(
+        w.last_exit,
+        Some(0),
+        "expected non-zero exit, got {:?}\nstdout: {}",
+        w.last_exit,
+        w.last_stdout
+    );
+}
+
+#[then(regex = r#"stderr contains "([^"]+)""#)]
+fn then_stderr_contains(w: &mut MorphWorld, needle: String) {
+    assert!(
+        w.last_stderr.contains(&needle),
+        "stderr should contain {:?}\nstderr: {}",
+        needle,
         w.last_stderr
     );
 }

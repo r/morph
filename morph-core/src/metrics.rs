@@ -506,4 +506,66 @@ mod tests {
         let retired = retire_metrics(&suite, &["acc".to_string()]).unwrap();
         assert!(retired.metrics.is_empty());
     }
+
+    // ── check_dominance edge cases ───────────────────────────────────
+
+    #[test]
+    fn dominance_merged_has_extra_metrics() {
+        let mut merged = BTreeMap::new();
+        merged.insert("acc".into(), 0.95);
+        merged.insert("f1".into(), 0.90);
+        let mut parent = BTreeMap::new();
+        parent.insert("acc".into(), 0.9);
+        assert!(check_dominance(&merged, &parent), "superset should dominate");
+    }
+
+    #[test]
+    fn dominance_merged_missing_parent_metric_fails() {
+        let mut merged = BTreeMap::new();
+        merged.insert("f1".into(), 0.95);
+        let mut parent = BTreeMap::new();
+        parent.insert("acc".into(), 0.9);
+        assert!(!check_dominance(&merged, &parent), "missing parent metric should fail");
+    }
+
+    #[test]
+    fn dominance_with_suite_metric_missing_from_both() {
+        let suite = EvalSuite {
+            cases: vec![],
+            metrics: vec![
+                EvalMetric::new("acc", "mean", 0.0),
+                EvalMetric::new("recall", "mean", 0.0),
+            ],
+        };
+        let mut merged = BTreeMap::new();
+        merged.insert("acc".into(), 0.95);
+        let mut parent = BTreeMap::new();
+        parent.insert("acc".into(), 0.9);
+        assert!(
+            check_dominance_with_suite(&merged, &parent, &suite),
+            "metric missing from both should pass (only parent keys are checked)"
+        );
+    }
+
+    // ── aggregate single-element slices ──────────────────────────────
+
+    #[test]
+    fn aggregate_single_mean() {
+        assert!((aggregate(&[42.0], "mean").unwrap() - 42.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn aggregate_single_min() {
+        assert_eq!(aggregate(&[42.0], "min").unwrap(), 42.0);
+    }
+
+    #[test]
+    fn aggregate_single_p95() {
+        assert!((aggregate(&[42.0], "p95").unwrap() - 42.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn aggregate_single_lower_ci_bound() {
+        assert!((aggregate(&[42.0], "lower_ci_bound").unwrap() - 42.0).abs() < 1e-9);
+    }
 }

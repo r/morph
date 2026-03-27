@@ -1,0 +1,95 @@
+# Evidence-backed commit provenance tests (Phase 2).
+
+- name: commit_from_recorded_session_persists_evidence
+  files:
+    code.txt: "fn main() {}"
+  steps:
+    - morph: [run, record-session, --prompt, "Fix the bug", --response, "Done."]
+      capture: run_hash
+      assert_hash: true
+
+    - morph: [add, code.txt]
+
+    - morph: [commit, -m, evidence commit, --from-run, "${run_hash}"]
+      capture: commit_hash
+      assert_hash: true
+
+    - morph: [show, "${commit_hash}"]
+      stdout_contains:
+        - "${run_hash}"
+        - "evidence_refs"
+        - "env_constraints"
+        - "contributors"
+
+- name: commit_from_recorded_run_persists_env_and_contributors
+  files:
+    trace.json: '{"type":"trace","events":[{"id":"e1","seq":0,"ts":"2025-01-01T00:00:00Z","kind":"prompt","payload":{}}]}'
+    code.txt: "hello"
+  steps:
+    - compute_hash:
+        var: trace_hash
+        json: '{"type":"trace","events":[{"id":"e1","seq":0,"ts":"2025-01-01T00:00:00Z","kind":"prompt","payload":{}}]}'
+
+    - write_file:
+        path: run.json
+        content: '{"type":"run","pipeline":"0000000000000000000000000000000000000000000000000000000000000000","commit":null,"environment":{"model":"claude-4","version":"2025-06-01","parameters":{"temperature":0.5},"toolchain":{"rust":"1.80"}},"input_state_hash":"0000000000000000000000000000000000000000000000000000000000000000","output_artifacts":[],"metrics":{},"trace":"${trace_hash}","agent":{"id":"primary-agent","version":"1.0","policy":null},"contributors":[{"id":"review-agent","version":"2.0","role":"review"},{"id":"retrieval-agent","version":"1.5","role":"retrieval"}]}'
+
+    - morph: [run, record, run.json, --trace, trace.json]
+      capture: run_hash
+      assert_hash: true
+
+    - morph: [add, code.txt]
+
+    - morph: [commit, -m, multi-contributor commit, --from-run, "${run_hash}"]
+      capture: commit_hash
+      assert_hash: true
+
+    - morph: [show, "${commit_hash}"]
+      stdout_contains:
+        - "claude-4"
+        - "2025-06-01"
+        - "temperature"
+        - "primary-agent"
+        - "review-agent"
+        - "retrieval-agent"
+        - "primary"
+        - "review"
+        - "retrieval"
+        - "${run_hash}"
+        - "${trace_hash}"
+
+- name: commit_from_missing_run_fails
+  files:
+    code.txt: "hello"
+  steps:
+    - morph: [add, code.txt]
+
+    - morph: [commit, -m, bad commit, --from-run, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+      expect_exit: 1
+
+- name: plain_commit_without_provenance_still_works
+  files:
+    code.txt: "hello"
+  steps:
+    - morph: [add, code.txt]
+
+    - morph: [commit, -m, plain commit]
+      capture: commit_hash
+      assert_hash: true
+
+    - morph: [show, "${commit_hash}"]
+      stdout_contains:
+        - "plain commit"
+
+- name: show_displays_any_object
+  files:
+    trace.json: '{"type":"trace","events":[{"id":"e1","seq":0,"ts":"2025-01-01T00:00:00Z","kind":"prompt","payload":{}}]}'
+  steps:
+    - morph: [hash-object, trace.json]
+      capture: trace_hash
+      assert_hash: true
+
+    - morph: [show, "${trace_hash}"]
+      stdout_contains:
+        - "trace"
+        - "e1"

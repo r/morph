@@ -7,6 +7,79 @@ use chrono::Utc;
 use std::collections::BTreeMap;
 use std::path::Path;
 
+/// Provenance derived from a Run, to be attached to a commit.
+/// Groups evidence_refs, env_constraints, and contributors into a single value
+/// so callers don't thread three unrelated optionals through every layer.
+#[derive(Clone, Debug)]
+pub struct CommitProvenance {
+    pub evidence_refs: Vec<String>,
+    pub env_constraints: BTreeMap<String, serde_json::Value>,
+    pub contributors: Vec<CommitContributor>,
+}
+
+/// Load a stored Run by hash and derive commit provenance from it.
+///
+/// Validates that the object is a Run and that its trace resolves to a Trace.
+/// Returns deterministic evidence_refs (run hash, then trace hash),
+/// env_constraints mapped from Run.environment, and contributors from
+/// Run.agent + Run.contributors.
+pub fn resolve_provenance_from_run(
+    store: &dyn Store,
+    run_hash: &Hash,
+) -> Result<CommitProvenance, MorphError> {
+    let obj = store.get(run_hash)?;
+    let run = match obj {
+        MorphObject::Run(r) => r,
+        _ => return Err(MorphError::Serialization(format!(
+            "object {} is not a Run", run_hash
+        ))),
+    };
+
+    let trace_hash = Hash::from_hex(&run.trace)
+        .map_err(|_| MorphError::InvalidHash(run.trace.clone()))?;
+    match store.get(&trace_hash)? {
+        MorphObject::Trace(_) => {}
+        _ => return Err(MorphError::Serialization(format!(
+            "object {} (referenced by run.trace) is not a Trace", run.trace
+        ))),
+    }
+
+    let mut evidence_refs = vec![run_hash.to_string(), trace_hash.to_string()];
+    evidence_refs.dedup();
+
+    let mut env_constraints = BTreeMap::new();
+    env_constraints.insert("model".into(), serde_json::Value::String(run.environment.model.clone()));
+    env_constraints.insert("version".into(), serde_json::Value::String(run.environment.version.clone()));
+    env_constraints.insert("parameters".into(), serde_json::to_value(&run.environment.parameters).unwrap_or_default());
+    env_constraints.insert("toolchain".into(), serde_json::to_value(&run.environment.toolchain).unwrap_or_default());
+
+    let mut seen = std::collections::BTreeSet::new();
+    let mut contributors = Vec::new();
+
+    seen.insert(run.agent.id.clone());
+    contributors.push(CommitContributor {
+        id: run.agent.id.clone(),
+        role: Some("primary".into()),
+    });
+
+    if let Some(run_contribs) = &run.contributors {
+        for c in run_contribs {
+            if seen.insert(c.id.clone()) {
+                contributors.push(CommitContributor {
+                    id: c.id.clone(),
+                    role: c.role.clone(),
+                });
+            }
+        }
+    }
+
+    Ok(CommitProvenance {
+        evidence_refs,
+        env_constraints,
+        contributors,
+    })
+}
+
 const HEAD_REF: &str = "HEAD";
 const DEFAULT_BRANCH: &str = "main";
 
@@ -80,6 +153,7 @@ pub fn create_commit(
 
 /// Create a commit with tree built from the staging index.
 /// `program_hash` and `eval_suite_hash` are optional: defaults to identity program / empty eval suite.
+/// `provenance` is optional: when provided, populates evidence_refs, env_constraints, and contributors.
 /// Clears the staging index after commit.
 pub fn create_tree_commit(
     store: &dyn Store,
@@ -90,6 +164,24 @@ pub fn create_tree_commit(
     message: String,
     author: Option<String>,
     morph_version: Option<&str>,
+) -> Result<Hash, MorphError> {
+    create_tree_commit_with_provenance(
+        store, repo_root, program_hash, eval_suite_hash,
+        observed_metrics, message, author, morph_version, None,
+    )
+}
+
+/// Create a tree commit with optional run-backed provenance.
+pub fn create_tree_commit_with_provenance(
+    store: &dyn Store,
+    repo_root: &Path,
+    program_hash: Option<&Hash>,
+    eval_suite_hash: Option<&Hash>,
+    observed_metrics: BTreeMap<String, f64>,
+    message: String,
+    author: Option<String>,
+    morph_version: Option<&str>,
+    provenance: Option<&CommitProvenance>,
 ) -> Result<Hash, MorphError> {
     let morph_dir = repo_root.join(".morph");
     let index = crate::index::read_index(&morph_dir)?;
@@ -119,6 +211,15 @@ pub fn create_tree_commit(
     let timestamp = Utc::now().to_rfc3339();
     let author = author.unwrap_or_else(|| "morph".to_string());
 
+    let (contributors, env_constraints, evidence_refs) = match provenance {
+        Some(p) => (
+            Some(p.contributors.clone()),
+            Some(p.env_constraints.clone()),
+            Some(p.evidence_refs.clone()),
+        ),
+        None => (None, None, None),
+    };
+
     let commit = MorphObject::Commit(Commit {
         tree: Some(tree_hash.to_string()),
         pipeline: prog_hash,
@@ -126,13 +227,13 @@ pub fn create_tree_commit(
         message,
         timestamp,
         author,
-        contributors: None,
+        contributors,
         eval_contract: EvalContract {
             suite: suite_hash,
             observed_metrics,
         },
-        env_constraints: None,
-        evidence_refs: None,
+        env_constraints,
+        evidence_refs,
         morph_version: morph_version.map(String::from),
     });
     let hash = store.put(&commit)?;
@@ -157,11 +258,21 @@ pub fn set_head_detached(store: &dyn Store, hash: &Hash) -> Result<(), MorphErro
 
 /// Checkout a branch or commit: set HEAD and restore the working tree from the commit's tree.
 /// If the commit has no tree (pre-0.3), only sets HEAD without touching the working tree.
+/// Files from the previous commit's tree that are absent in the target tree are removed.
 pub fn checkout_tree(
     store: &dyn Store,
     repo_root: &Path,
     ref_name: &str,
 ) -> Result<(Hash, bool), MorphError> {
+    let old_tree_hash_str = resolve_head(store)?
+        .and_then(|h| {
+            if let Ok(MorphObject::Commit(c)) = store.get(&h) {
+                c.tree.clone()
+            } else {
+                None
+            }
+        });
+
     let (hash, is_branch) = if ref_name.len() == 64 && ref_name.chars().all(|c| c.is_ascii_hexdigit()) {
         let h = Hash::from_hex(ref_name)?;
         set_head_detached(store, &h)?;
@@ -187,6 +298,23 @@ pub fn checkout_tree(
 
     let tree_restored = if let Some(tree_hash_str) = &commit.tree {
         let tree_hash = Hash::from_hex(tree_hash_str)?;
+
+        if let Some(old_hash_str) = &old_tree_hash_str {
+            if let Ok(old_hash) = Hash::from_hex(old_hash_str) {
+                if let Ok(old_files) = crate::tree::flatten_tree(store, &old_hash) {
+                    let new_files = crate::tree::flatten_tree(store, &tree_hash)?;
+                    for (path, _) in &old_files {
+                        if !new_files.contains_key(path) {
+                            let full = repo_root.join(path);
+                            if full.exists() {
+                                let _ = std::fs::remove_file(&full);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         crate::tree::restore_tree(store, &tree_hash, repo_root)?;
         true
     } else {
@@ -421,6 +549,13 @@ pub fn rollup(
 fn resolve_ref(store: &dyn Store, ref_str: &str) -> Result<Option<Hash>, MorphError> {
     if ref_str == "HEAD" {
         resolve_head(store)
+    } else if ref_str.len() == 64 && ref_str.chars().all(|c| c.is_ascii_hexdigit()) {
+        let h = Hash::from_hex(ref_str)?;
+        if store.has(&h)? {
+            Ok(Some(h))
+        } else {
+            Ok(None)
+        }
     } else {
         let p = if ref_str.starts_with("heads/") {
             ref_str.to_string()
@@ -806,5 +941,328 @@ mod tests {
         };
         assert_eq!(rollup_commit.tree, tip_commit.tree, "rollup should preserve tip's tree");
         assert_eq!(rollup_commit.morph_version.as_deref(), Some("0.3"), "rollup should preserve morph_version");
+    }
+
+    // ── checkout_tree error paths ────────────────────────────────────
+
+    #[test]
+    fn checkout_tree_nonexistent_branch_returns_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let _fs = crate::repo::init_repo(root).unwrap();
+        let morph_dir = root.join(".morph");
+        let store = crate::open_store(&morph_dir).unwrap();
+
+        let result = checkout_tree(store.as_ref(), root, "nosuchbranch");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, MorphError::NotFound(_)));
+    }
+
+    #[test]
+    fn checkout_tree_detached_head() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let _fs = crate::repo::init_repo(root).unwrap();
+        let morph_dir = root.join(".morph");
+        let store = crate::open_store(&morph_dir).unwrap();
+
+        std::fs::write(root.join("x.txt"), "x").unwrap();
+        crate::add_paths(&store, root, &[std::path::PathBuf::from(".")]).unwrap();
+        let c1 = create_tree_commit(store.as_ref(), root, None, None, BTreeMap::new(), "c1".into(), None, Some("0.3")).unwrap();
+
+        let (hash, tree_restored) = checkout_tree(store.as_ref(), root, &c1.to_string()).unwrap();
+        assert_eq!(hash, c1);
+        assert!(tree_restored);
+
+        let branch = current_branch(store.as_ref()).unwrap();
+        assert!(branch.is_none(), "HEAD should be detached");
+    }
+
+    // ── log_from edge cases ──────────────────────────────────────────
+
+    #[test]
+    fn log_from_empty_repo_returns_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let _fs = crate::repo::init_repo(root).unwrap();
+        let morph_dir = root.join(".morph");
+        let store = crate::open_store(&morph_dir).unwrap();
+
+        let log = log_from(store.as_ref(), "HEAD").unwrap();
+        assert!(log.is_empty());
+    }
+
+    #[test]
+    fn log_from_invalid_ref_returns_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let _fs = crate::repo::init_repo(root).unwrap();
+        let morph_dir = root.join(".morph");
+        let store = crate::open_store(&morph_dir).unwrap();
+
+        let log = log_from(store.as_ref(), "nosuchbranch").unwrap();
+        assert!(log.is_empty(), "non-existent branch should return empty log");
+    }
+
+    // ── create_tree_commit with empty index ──────────────────────────
+
+    #[test]
+    fn create_tree_commit_empty_index_succeeds() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let _fs = crate::repo::init_repo(root).unwrap();
+        let morph_dir = root.join(".morph");
+        let store = crate::open_store(&morph_dir).unwrap();
+
+        let hash = create_tree_commit(
+            store.as_ref(), root, None, None, BTreeMap::new(), "empty".into(), None, Some("0.3"),
+        ).unwrap();
+
+        let commit = match store.get(&hash).unwrap() {
+            MorphObject::Commit(c) => c,
+            _ => panic!("expected commit"),
+        };
+        assert!(commit.tree.is_some(), "should still have a tree (empty tree)");
+    }
+
+    // ── rollup edge case: base == tip ────────────────────────────────
+
+    #[test]
+    fn rollup_base_equals_tip() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let _fs = crate::repo::init_repo(root).unwrap();
+        let morph_dir = root.join(".morph");
+        let store = crate::open_store(&morph_dir).unwrap();
+
+        std::fs::write(root.join("a.txt"), "aaa").unwrap();
+        crate::add_paths(&store, root, &[std::path::PathBuf::from(".")]).unwrap();
+        let c1 = create_tree_commit(store.as_ref(), root, None, None, BTreeMap::new(), "only".into(), None, Some("0.3")).unwrap();
+
+        let rollup_hash = rollup(store.as_ref(), &c1.to_string(), &c1.to_string(), Some("self-rollup".into())).unwrap();
+
+        let rollup_commit = match store.get(&rollup_hash).unwrap() {
+            MorphObject::Commit(c) => c,
+            _ => panic!("expected commit"),
+        };
+        assert_eq!(rollup_commit.parents.len(), 1);
+        assert_eq!(rollup_commit.parents[0], c1.to_string());
+        assert_eq!(rollup_commit.message, "self-rollup");
+    }
+
+    // ── provenance tests ─────────────────────────────────────────────
+
+    fn setup_repo() -> (tempfile::TempDir, Box<dyn crate::store::Store>) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let _ = crate::repo::init_repo(root).unwrap();
+        let morph_dir = root.join(".morph");
+        let store = crate::open_store(&morph_dir).unwrap();
+        (dir, store)
+    }
+
+    fn store_test_run(store: &dyn crate::store::Store) -> (Hash, Hash) {
+        use crate::objects::*;
+
+        let trace = MorphObject::Trace(Trace {
+            events: vec![TraceEvent {
+                id: "evt_1".into(),
+                seq: 0,
+                ts: "2025-01-01T00:00:00Z".into(),
+                kind: "prompt".into(),
+                payload: BTreeMap::new(),
+            }],
+        });
+        let trace_hash = store.put(&trace).unwrap();
+
+        let identity = crate::identity::identity_pipeline();
+        let pipeline_hash = store.put(&identity).unwrap();
+
+        let mut params = BTreeMap::new();
+        params.insert("temperature".into(), serde_json::json!(0.7));
+        let mut toolchain = BTreeMap::new();
+        toolchain.insert("rust".into(), serde_json::json!("1.75"));
+
+        let run = MorphObject::Run(Run {
+            pipeline: pipeline_hash.to_string(),
+            commit: None,
+            environment: RunEnvironment {
+                model: "gpt-4o".into(),
+                version: "2025-01-01".into(),
+                parameters: params,
+                toolchain,
+            },
+            input_state_hash: "0".repeat(64),
+            output_artifacts: vec![],
+            metrics: BTreeMap::new(),
+            trace: trace_hash.to_string(),
+            agent: AgentInfo {
+                id: "agent-1".into(),
+                version: "1.0".into(),
+                policy: None,
+                instance_id: None,
+            },
+            contributors: Some(vec![
+                ContributorInfo {
+                    id: "agent-2".into(),
+                    version: "2.0".into(),
+                    policy: None,
+                    instance_id: None,
+                    role: Some("review".into()),
+                },
+            ]),
+            morph_version: None,
+        });
+        let run_hash = store.put(&run).unwrap();
+        (run_hash, trace_hash)
+    }
+
+    #[test]
+    fn tree_commit_without_from_run_leaves_provenance_absent() {
+        let (dir, store) = setup_repo();
+        let root = dir.path();
+        std::fs::write(root.join("f.txt"), "data").unwrap();
+        crate::add_paths(&store, root, &[std::path::PathBuf::from(".")]).unwrap();
+
+        let hash = create_tree_commit(
+            store.as_ref(), root, None, None, BTreeMap::new(),
+            "plain".into(), None, Some("0.3"),
+        ).unwrap();
+
+        let commit = match store.get(&hash).unwrap() {
+            MorphObject::Commit(c) => c,
+            _ => panic!("expected commit"),
+        };
+        assert!(commit.evidence_refs.is_none(), "evidence_refs should be absent");
+        assert!(commit.env_constraints.is_none(), "env_constraints should be absent");
+        assert!(commit.contributors.is_none(), "contributors should be absent");
+    }
+
+    #[test]
+    fn tree_commit_from_run_persists_evidence_refs() {
+        let (dir, store) = setup_repo();
+        let root = dir.path();
+        let (run_hash, trace_hash) = store_test_run(store.as_ref());
+
+        std::fs::write(root.join("f.txt"), "data").unwrap();
+        crate::add_paths(&store, root, &[std::path::PathBuf::from(".")]).unwrap();
+
+        let provenance = resolve_provenance_from_run(store.as_ref(), &run_hash).unwrap();
+        let hash = create_tree_commit_with_provenance(
+            store.as_ref(), root, None, None, BTreeMap::new(),
+            "with-run".into(), None, Some("0.3"), Some(&provenance),
+        ).unwrap();
+
+        let commit = match store.get(&hash).unwrap() {
+            MorphObject::Commit(c) => c,
+            _ => panic!("expected commit"),
+        };
+        let refs = commit.evidence_refs.as_ref().expect("evidence_refs should be present");
+        assert_eq!(refs.len(), 2);
+        assert_eq!(refs[0], run_hash.to_string());
+        assert_eq!(refs[1], trace_hash.to_string());
+    }
+
+    #[test]
+    fn tree_commit_from_run_persists_env_constraints() {
+        let (dir, store) = setup_repo();
+        let root = dir.path();
+        let (run_hash, _) = store_test_run(store.as_ref());
+
+        std::fs::write(root.join("f.txt"), "data").unwrap();
+        crate::add_paths(&store, root, &[std::path::PathBuf::from(".")]).unwrap();
+
+        let provenance = resolve_provenance_from_run(store.as_ref(), &run_hash).unwrap();
+        let hash = create_tree_commit_with_provenance(
+            store.as_ref(), root, None, None, BTreeMap::new(),
+            "env".into(), None, Some("0.3"), Some(&provenance),
+        ).unwrap();
+
+        let commit = match store.get(&hash).unwrap() {
+            MorphObject::Commit(c) => c,
+            _ => panic!("expected commit"),
+        };
+        let env = commit.env_constraints.as_ref().expect("env_constraints should be present");
+        assert_eq!(env.get("model").and_then(|v| v.as_str()), Some("gpt-4o"));
+        assert_eq!(env.get("version").and_then(|v| v.as_str()), Some("2025-01-01"));
+        assert!(env.contains_key("parameters"));
+        assert!(env.contains_key("toolchain"));
+    }
+
+    #[test]
+    fn tree_commit_from_run_persists_contributors_deduped() {
+        let (dir, store) = setup_repo();
+        let root = dir.path();
+        let (run_hash, _) = store_test_run(store.as_ref());
+
+        std::fs::write(root.join("f.txt"), "data").unwrap();
+        crate::add_paths(&store, root, &[std::path::PathBuf::from(".")]).unwrap();
+
+        let provenance = resolve_provenance_from_run(store.as_ref(), &run_hash).unwrap();
+        let hash = create_tree_commit_with_provenance(
+            store.as_ref(), root, None, None, BTreeMap::new(),
+            "contribs".into(), None, Some("0.3"), Some(&provenance),
+        ).unwrap();
+
+        let commit = match store.get(&hash).unwrap() {
+            MorphObject::Commit(c) => c,
+            _ => panic!("expected commit"),
+        };
+        let contribs = commit.contributors.as_ref().expect("contributors should be present");
+        assert_eq!(contribs.len(), 2);
+        assert_eq!(contribs[0].id, "agent-1");
+        assert_eq!(contribs[0].role.as_deref(), Some("primary"));
+        assert_eq!(contribs[1].id, "agent-2");
+        assert_eq!(contribs[1].role.as_deref(), Some("review"));
+    }
+
+    #[test]
+    fn resolve_provenance_fails_on_missing_object() {
+        let (_, store) = setup_repo();
+        let fake_hash = Hash::from_hex(&"a".repeat(64)).unwrap();
+        let result = resolve_provenance_from_run(store.as_ref(), &fake_hash);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolve_provenance_fails_on_non_run_object() {
+        let (_, store) = setup_repo();
+        let blob = MorphObject::Blob(Blob { kind: "x".into(), content: serde_json::json!({}) });
+        let blob_hash = store.put(&blob).unwrap();
+        let result = resolve_provenance_from_run(store.as_ref(), &blob_hash);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("not a Run"), "error should mention 'not a Run': {}", err_msg);
+    }
+
+    #[test]
+    fn resolve_provenance_fails_on_missing_trace() {
+        use crate::objects::*;
+        let (_, store) = setup_repo();
+
+        let identity = crate::identity::identity_pipeline();
+        let pipeline_hash = store.put(&identity).unwrap();
+
+        let run = MorphObject::Run(Run {
+            pipeline: pipeline_hash.to_string(),
+            commit: None,
+            environment: RunEnvironment {
+                model: "test".into(),
+                version: "1".into(),
+                parameters: BTreeMap::new(),
+                toolchain: BTreeMap::new(),
+            },
+            input_state_hash: "0".repeat(64),
+            output_artifacts: vec![],
+            metrics: BTreeMap::new(),
+            trace: "b".repeat(64),
+            agent: AgentInfo { id: "a".into(), version: "1".into(), policy: None, instance_id: None },
+            contributors: None,
+            morph_version: None,
+        });
+        let run_hash = store.put(&run).unwrap();
+        let result = resolve_provenance_from_run(store.as_ref(), &run_hash);
+        assert!(result.is_err());
     }
 }
