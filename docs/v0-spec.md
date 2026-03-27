@@ -815,18 +815,148 @@ How v0 satisfies each Morph axiom:
 
 ---
 
-# 10. Out of Scope (v0)
+# 10. Remote Sync (Phase 5)
+
+Morph supports distributing history across multiple repositories via named remotes.
+
+## 10.1 Remote Model
+
+A remote is another Morph repository reachable via a filesystem path. Both local and remote repos use the same object format and ref layout — sync copies missing objects and updates refs safely.
+
+Phase 5 uses local-path transport only. The architecture is designed to grow into network transport later.
+
+## 10.2 Ref Layout
+
+- **Local branches:** `refs/heads/<branch>`
+- **Remote-tracking refs:** `refs/remotes/<remote>/<branch>`
+- **Remote repos:** standard `refs/heads/<branch>` layout
+
+Fetch creates remote-tracking refs. It never overwrites local branches.
+
+## 10.3 Object Transfer
+
+Sync is content-addressed and minimal:
+- Determines which objects are reachable from the branch tip
+- Transfers only objects the destination lacks
+- Preserves object hashes exactly (no rewriting)
+
+The reachable closure from a commit includes: the commit, its tree and all entries recursively, the pipeline and its prompts/eval_suite/provenance refs, the eval contract suite, evidence_refs (runs, traces, and their transitive references), and parent commits recursively.
+
+## 10.4 Fast-Forward Policy
+
+- `push` updates a remote branch only if it is absent or a fast-forward
+- `pull` updates a local branch only if it is a fast-forward from the fetched remote-tracking ref
+- Non-fast-forward operations fail with a clear explanation
+
+## 10.5 CLI Commands
+
+```
+morph remote add <name> <path>    # configure a named remote
+morph remote list                  # list configured remotes
+morph push <remote> <branch>       # push branch to remote
+morph fetch <remote>               # fetch remote branches into tracking refs
+morph pull <remote> <branch>       # fetch + fast-forward local branch
+morph refs                         # list all refs (local + remote-tracking)
+```
+
+## 10.6 Configuration
+
+Remotes are stored in `.morph/config.json` under the `"remotes"` key:
+
+```json
+{
+  "repo_version": "0.0",
+  "remotes": {
+    "origin": { "path": "/path/to/remote/repo" }
+  }
+}
+```
+
+---
+
+# 11. Repository Policy and CI Gating (Phase 6)
+
+Morph supports repository-level behavioral policy for CI integration and team workflows.
+
+## 11.1 Repository Policy
+
+A repository-level policy is stored in `.morph/config.json` under the `"policy"` key:
+
+```json
+{
+  "repo_version": "0.0",
+  "policy": {
+    "required_metrics": ["tests_passed", "pass_rate"],
+    "thresholds": { "pass_rate": 0.95 },
+    "directions": { "latency": "minimize" },
+    "default_eval_suite": "<eval_suite_hash or null>",
+    "merge_policy": "dominance",
+    "ci_defaults": { "runner": "github-actions" }
+  }
+}
+```
+
+Fields:
+- **required_metrics**: Metric names that must be present for certification.
+- **thresholds**: Minimum values per metric (direction-aware).
+- **directions**: Override direction per metric ("maximize" default, or "minimize").
+- **default_eval_suite**: Hash of the default eval suite for certification.
+- **merge_policy**: "dominance" (default) requires behavioral dominance at merge.
+- **ci_defaults**: Default CI runner metadata.
+
+## 11.2 Certification
+
+`morph certify --metrics-file <file>` validates externally produced metrics against the configured policy:
+1. Checks that all required metrics are present.
+2. Checks that all thresholds are satisfied (direction-aware).
+3. Records the result as a certification Annotation on the commit.
+
+Certification does not execute evaluations. External tools (CI, test runners, human reviewers) produce the metrics; Morph validates and records them.
+
+## 11.3 Gate
+
+`morph gate` checks whether a commit satisfies the project's behavioral policy:
+1. Verifies required metrics exist (in commit or certification).
+2. Verifies thresholds are met.
+3. Verifies the commit has a passing certification annotation.
+
+Gate is read-only and suitable for CI blocking steps. Exit code 0 = pass, 1 = fail.
+
+## 11.4 CLI Commands
+
+```
+morph policy show                       # display current policy
+morph policy set <file>                 # set policy from JSON file
+morph policy set-default-eval <hash>    # set default eval suite
+morph certify --metrics-file <file>     # certify HEAD or --commit <hash>
+morph certify --metrics-file <file> --json  # JSON output for CI
+morph gate                              # gate check on HEAD
+morph gate --commit <hash> --json       # gate check with JSON output
+```
+
+## 11.5 CI Integration Pattern
+
+1. Developer works locally, records Morph history.
+2. Git branch is pushed for review.
+3. CI runs evaluations externally.
+4. CI calls `morph certify --metrics-file results.json --runner ci-v2`.
+5. CI calls `morph gate` as a blocking step.
+6. Team inspects `morph log` and `morph show` to review behavioral evidence.
+
+---
+
+# 12. Out of Scope (v0)
 
 - Distributed run deduplication
 - Cryptographic signatures
 - Policy enforcement at network level
 - Advanced statistical testing (two-sample equivalence, Bayesian comparison)
 - Federated merge verification
-- Remote push/pull protocol
+- Network-based remote transport (HTTP, SSH)
 
 ---
 
-# 11. v0 Success Criteria
+# 12. v0 Success Criteria
 
 Morph v0 is successful if:
 
@@ -842,7 +972,7 @@ Morph v0 is successful if:
 
 ---
 
-# 12. Guiding Constraint
+# 13. Guiding Constraint
 
 If something feels too clever, remove it.
 
@@ -859,7 +989,7 @@ Correct foundations cannot.
 
 ---
 
-# 13. Implementation: Rust (v0)
+# 14. Implementation: Rust (v0)
 
 The reference v0 implementation is in Rust.
 

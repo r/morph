@@ -71,13 +71,38 @@ fn given_morph_repo(w: &mut MorphWorld) {
         .arg(path)
         .assert()
         .success();
+    w.captures.insert("repo_path".to_string(), path.to_string_lossy().to_string());
     w.temp_dir = Some(temp);
+}
+
+#[given(regex = r#"a second morph repo at "([^"]+)""#)]
+fn given_second_repo(w: &mut MorphWorld, subdir: String) {
+    let root = w.temp_dir.as_ref().expect("given a morph repo first");
+    let remote_path = root.path().join(&subdir);
+    std::fs::create_dir_all(&remote_path).expect("create subdir");
+    Command::cargo_bin("morph")
+        .expect("morph binary")
+        .arg("init")
+        .arg(&remote_path)
+        .assert()
+        .success();
+    w.captures.insert(subdir, remote_path.to_string_lossy().to_string());
 }
 
 #[given(regex = r#"a file "([^"]+)" with content "([^"]*)""#)]
 fn given_file(w: &mut MorphWorld, path: String, content: String) {
     let root = w.temp_dir.as_ref().expect("given a morph repo first");
     let full = root.path().join(&path);
+    if let Some(parent) = full.parent() {
+        std::fs::create_dir_all(parent).expect("create parent");
+    }
+    std::fs::write(&full, content).expect("write file");
+}
+
+#[given(regex = r#"a file "([^"]+)" in directory "([^"]+)" with content "([^"]*)""#)]
+fn given_file_in_dir(w: &mut MorphWorld, path: String, subdir: String, content: String) {
+    let root = w.temp_dir.as_ref().expect("given a morph repo first");
+    let full = root.path().join(&subdir).join(&path);
     if let Some(parent) = full.parent() {
         std::fs::create_dir_all(parent).expect("create parent");
     }
@@ -106,7 +131,7 @@ fn given_suite_with_old_metric(w: &mut MorphWorld) {
     std::fs::write(evals_dir.join("e.json"), eval).expect("write e.json");
 }
 
-#[when(regex = r#"I run "([^"]+)""#)]
+#[when(regex = r#"^I run "([^"]+)"$"#)]
 fn when_run(w: &mut MorphWorld, cmd: String) {
     let root = w.temp_dir.as_ref().expect("given a morph repo first");
     let cmd = substitute_placeholders(&cmd, &w.captures);
@@ -127,10 +152,80 @@ fn when_run(w: &mut MorphWorld, cmd: String) {
     w.last_exit = output.status.code();
 }
 
+#[when(regex = r#"^I run "([^"]+)" in directory "([^"]+)"$"#)]
+fn when_run_in_dir(w: &mut MorphWorld, cmd: String, subdir: String) {
+    let root = w.temp_dir.as_ref().expect("given a morph repo first");
+    let dir = root.path().join(&subdir);
+    let cmd = substitute_placeholders(&cmd, &w.captures);
+    let parts = split_cli_args(&cmd);
+    let (bin, args) = parts.split_first().expect("non-empty command");
+    let output = if *bin == "morph" {
+        Command::cargo_bin("morph")
+            .expect("morph binary")
+            .args(args)
+            .current_dir(&dir)
+            .output()
+            .expect("run morph")
+    } else {
+        panic!("only morph commands supported, got {}", bin);
+    };
+    w.last_stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    w.last_stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    w.last_exit = output.status.code();
+}
+
 #[when(regex = r#"I capture the last output as "([^"]+)""#)]
 fn when_capture_last_output(w: &mut MorphWorld, name: String) {
     let line = w.last_stdout.trim().lines().last().unwrap_or("").trim().to_string();
     w.captures.insert(name, line);
+}
+
+#[when(regex = r#"I create a JSON file "([^"]+)" with metrics "([^"]*)""#)]
+fn when_create_json_metrics_file(w: &mut MorphWorld, path: String, kv_pairs: String) {
+    let root = w.temp_dir.as_ref().expect("given a morph repo first");
+    let mut map = serde_json::Map::new();
+    for pair in kv_pairs.split(',') {
+        let pair = pair.trim();
+        if let Some((k, v)) = pair.split_once('=') {
+            let val: f64 = v.trim().parse().expect("metric value must be a number");
+            map.insert(k.trim().to_string(), serde_json::Value::from(val));
+        }
+    }
+    let json = serde_json::to_string_pretty(&map).expect("serialize JSON");
+    let full = root.path().join(&path);
+    if let Some(parent) = full.parent() {
+        std::fs::create_dir_all(parent).expect("create parent dirs");
+    }
+    std::fs::write(&full, json).expect("write JSON file");
+}
+
+#[when(regex = r#"I create a policy file "([^"]+)" with required "([^"]*)" and thresholds "([^"]*)""#)]
+fn when_create_policy_file(w: &mut MorphWorld, path: String, required: String, thresholds_str: String) {
+    let root = w.temp_dir.as_ref().expect("given a morph repo first");
+    let required_metrics: Vec<String> = if required.is_empty() {
+        vec![]
+    } else {
+        required.split(',').map(|s| s.trim().to_string()).collect()
+    };
+    let mut thresholds = serde_json::Map::new();
+    if !thresholds_str.is_empty() {
+        for pair in thresholds_str.split(',') {
+            if let Some((k, v)) = pair.trim().split_once('=') {
+                let val: f64 = v.trim().parse().expect("threshold value must be a number");
+                thresholds.insert(k.trim().to_string(), serde_json::Value::from(val));
+            }
+        }
+    }
+    let policy = serde_json::json!({
+        "required_metrics": required_metrics,
+        "thresholds": thresholds,
+    });
+    let json = serde_json::to_string_pretty(&policy).expect("serialize policy JSON");
+    let full = root.path().join(&path);
+    if let Some(parent) = full.parent() {
+        std::fs::create_dir_all(parent).expect("create parent dirs");
+    }
+    std::fs::write(&full, json).expect("write policy file");
 }
 
 #[when(regex = r#"I write file "([^"]+)" with captures and content "([^"]*)""#)]

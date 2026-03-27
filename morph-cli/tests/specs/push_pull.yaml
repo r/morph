@@ -1,0 +1,165 @@
+# Push, fetch, and pull integration tests.
+# Uses `cwd` to run morph in subdirectories for multi-repo tests.
+
+- name: fetch_creates_remote_tracking_ref
+  init: false
+  dirs:
+    - repo_a
+    - repo_b
+  steps:
+    - morph: [init, "${repo}/repo_a"]
+    - morph: [init, "${repo}/repo_b"]
+
+    # Create a commit in repo_a
+    - write_file:
+        path: repo_a/hello.txt
+        content: "world"
+    - morph: [add, hello.txt]
+      cwd: repo_a
+    - morph: [commit, -m, "first commit"]
+      cwd: repo_a
+      capture: commit_hash
+      assert_hash: true
+
+    # Fetch from repo_a into repo_b
+    - morph: [remote, add, origin, "${repo}/repo_a"]
+      cwd: repo_b
+    - morph: [fetch, origin]
+      cwd: repo_b
+      stdout_contains: "origin/main"
+  assert:
+    - kind: file_exists
+      path: repo_b/.morph/refs/remotes/origin/main
+
+- name: pull_fast_forwards_local_branch
+  init: false
+  dirs:
+    - repo_a
+    - repo_b
+  steps:
+    - morph: [init, "${repo}/repo_a"]
+    - morph: [init, "${repo}/repo_b"]
+
+    # Create commit in repo_a
+    - write_file:
+        path: repo_a/data.txt
+        content: "data"
+    - morph: [add, data.txt]
+      cwd: repo_a
+    - morph: [commit, -m, "remote commit"]
+      cwd: repo_a
+
+    # Pull into repo_b
+    - morph: [remote, add, origin, "${repo}/repo_a"]
+      cwd: repo_b
+    - morph: [pull, origin, main]
+      cwd: repo_b
+      stdout_contains: "Updated"
+
+    # Verify repo_b now has the commit
+    - morph: [log]
+      cwd: repo_b
+      stdout_contains: "remote commit"
+
+- name: push_non_fast_forward_fails
+  init: false
+  dirs:
+    - local
+    - remote
+  steps:
+    - morph: [init, "${repo}/local"]
+    - morph: [init, "${repo}/remote"]
+
+    # Divergent histories
+    - write_file:
+        path: local/local.txt
+        content: "local"
+    - morph: [add, local.txt]
+      cwd: local
+    - morph: [commit, -m, "local commit"]
+      cwd: local
+
+    - write_file:
+        path: remote/remote.txt
+        content: "remote"
+    - morph: [add, remote.txt]
+      cwd: remote
+    - morph: [commit, -m, "remote commit"]
+      cwd: remote
+
+    # Push should fail
+    - morph: [remote, add, origin, "${repo}/remote"]
+      cwd: local
+    - morph: [push, origin, main]
+      cwd: local
+      expect_exit: 1
+      stderr_contains: "non-fast-forward"
+
+- name: push_transfers_evidence_backed_commit_closure
+  init: false
+  dirs:
+    - local
+    - remote
+  steps:
+    - morph: [init, "${repo}/local"]
+    - morph: [init, "${repo}/remote"]
+
+    # Record a session in local
+    - morph: [run, record-session, --prompt, "fix bug", --response, "done"]
+      cwd: local
+      capture: run_hash
+      assert_hash: true
+
+    # Create evidence-backed commit
+    - write_file:
+        path: local/code.txt
+        content: "fn main() {}"
+    - morph: [add, code.txt]
+      cwd: local
+    - morph: [commit, -m, "evidence commit", --from-run, "${run_hash}"]
+      cwd: local
+      capture: commit_hash
+      assert_hash: true
+
+    # Push to remote
+    - morph: [remote, add, origin, "${repo}/remote"]
+      cwd: local
+    - morph: [push, origin, main]
+      cwd: local
+      stdout_contains: "Pushed"
+
+    # Verify evidence objects exist in remote
+    - morph: [show, "${commit_hash}"]
+      cwd: remote
+      stdout_contains:
+        - "evidence_refs"
+        - "${run_hash}"
+
+- name: refs_shows_remote_tracking_after_fetch
+  init: false
+  dirs:
+    - repo_a
+    - repo_b
+  steps:
+    - morph: [init, "${repo}/repo_a"]
+    - morph: [init, "${repo}/repo_b"]
+
+    # Create commit in repo_a
+    - write_file:
+        path: repo_a/file.txt
+        content: "data"
+    - morph: [add, file.txt]
+      cwd: repo_a
+    - morph: [commit, -m, "commit"]
+      cwd: repo_a
+
+    # Fetch into repo_b
+    - morph: [remote, add, origin, "${repo}/repo_a"]
+      cwd: repo_b
+    - morph: [fetch, origin]
+      cwd: repo_b
+
+    # Refs should show both local and remote-tracking
+    - morph: [refs]
+      cwd: repo_b
+      stdout_contains: "remotes/origin/main"

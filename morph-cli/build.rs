@@ -30,6 +30,9 @@ struct Step {
     compute_hash: Option<ComputeHash>,
     #[serde(default)]
     write_file: Option<WriteFile>,
+    /// Override working directory for this step (relative to temp dir).
+    #[serde(default)]
+    cwd: Option<String>,
     #[serde(default)]
     expect_exit: Option<i32>,
     #[serde(default)]
@@ -215,7 +218,16 @@ fn emit_step(code: &mut String, step: &Step, idx: usize) {
         "        let mut cmd = cargo_bin_cmd!(\"morph\");"
     )
     .unwrap();
-    writeln!(code, "        cmd.current_dir(path);").unwrap();
+    if let Some(ref dir) = step.cwd {
+        if dir.contains("${") {
+            let fmt_str = escape_braces_for_format(dir);
+            writeln!(code, "        cmd.current_dir(path.join(format!({:?})));", fmt_str).unwrap();
+        } else {
+            writeln!(code, "        cmd.current_dir(path.join({:?}));", dir).unwrap();
+        }
+    } else {
+        writeln!(code, "        cmd.current_dir(path);").unwrap();
+    }
 
     for arg in args {
         if arg.contains("${") {
