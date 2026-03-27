@@ -13,6 +13,7 @@ pub mod record;
 pub mod annotate;
 pub mod index;
 pub mod tree;
+pub mod extract;
 
 pub use hash::{canonical_json, content_hash, content_hash_git, Hash};
 pub use objects::MorphObject;
@@ -26,6 +27,7 @@ pub use working::{find_repo, blob_from_prompt_file, blob_from_file, materialize_
 pub use commit::{create_commit, create_tree_commit, create_tree_commit_with_provenance, create_merge_commit, create_merge_commit_full, create_merge_commit_with_retirement, rollup, resolve_head, current_branch, set_head_branch, set_head_detached, checkout_tree, log_from, CommitProvenance, resolve_provenance_from_run};
 pub use metrics::{aggregate, check_thresholds, check_dominance, check_dominance_with_suite, aggregate_suite, union_suites, retire_metrics};
 pub use record::{record_run, record_eval_metrics, record_session};
+pub use extract::extract_pipeline_from_run;
 pub use annotate::{create_annotation, list_annotations};
 pub use index::{read_index, write_index, clear_index, update_index, StagingIndex};
 pub use tree::{build_tree, flatten_tree, restore_tree, empty_tree_hash};

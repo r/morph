@@ -1,0 +1,83 @@
+# Pipeline extraction tests (Phase 3): morph pipeline extract --from-run
+
+- name: extract_pipeline_from_recorded_session
+  files:
+    code.txt: "fn main() {}"
+  steps:
+    - morph: [run, record-session, --prompt, "Explain recursion", --response, "Recursion is when a function calls itself."]
+      capture: run_hash
+      assert_hash: true
+
+    - morph: [pipeline, extract, --from-run, "${run_hash}"]
+      capture: pipeline_hash
+      assert_hash: true
+
+    - morph: [pipeline, show, "${pipeline_hash}"]
+      stdout_contains:
+        - "prompt_call"
+        - "review"
+        - "derived_from_run"
+        - "derived_from_trace"
+        - "derived_from_event"
+        - "extracted"
+        - "${run_hash}"
+        - "generate"
+
+- name: extract_pipeline_from_recorded_run_with_reviewer
+  files:
+    trace.json: '{"type":"trace","events":[{"id":"evt_prompt","seq":0,"ts":"2025-01-01T00:00:00Z","kind":"prompt","payload":{"text":"Build feature"}},{"id":"evt_response","seq":1,"ts":"2025-01-01T00:00:01Z","kind":"response","payload":{"text":"Feature built"}}]}'
+  steps:
+    - compute_hash:
+        var: trace_hash
+        json: '{"type":"trace","events":[{"id":"evt_prompt","seq":0,"ts":"2025-01-01T00:00:00Z","kind":"prompt","payload":{"text":"Build feature"}},{"id":"evt_response","seq":1,"ts":"2025-01-01T00:00:01Z","kind":"response","payload":{"text":"Feature built"}}]}'
+
+    - write_file:
+        path: run.json
+        content: '{"type":"run","pipeline":"0000000000000000000000000000000000000000000000000000000000000000","commit":null,"environment":{"model":"claude-4","version":"2025-06-01","parameters":{"temperature":0.5},"toolchain":{}},"input_state_hash":"0000000000000000000000000000000000000000000000000000000000000000","output_artifacts":[],"metrics":{},"trace":"${trace_hash}","agent":{"id":"primary-agent","version":"1.0","policy":null},"contributors":[{"id":"review-agent","version":"2.0","role":"review"}]}'
+
+    - morph: [run, record, run.json, --trace, trace.json]
+      capture: run_hash
+      assert_hash: true
+
+    - morph: [pipeline, extract, --from-run, "${run_hash}"]
+      capture: pipeline_hash
+      assert_hash: true
+
+    - morph: [pipeline, show, "${pipeline_hash}"]
+      stdout_contains:
+        - "review"
+        - "review-agent"
+        - "primary-agent"
+        - "prompt_call"
+        - "derived_from_run"
+        - "derived_from_trace"
+        - "derived_from_event"
+        - "extracted"
+
+- name: extract_pipeline_from_missing_run_fails
+  steps:
+    - morph: [pipeline, extract, --from-run, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+      expect_exit: 1
+
+- name: extracted_pipeline_is_reusable_in_commit
+  files:
+    code.txt: "fn main() {}"
+  steps:
+    - morph: [run, record-session, --prompt, "Fix the bug", --response, "Bug fixed."]
+      capture: run_hash
+      assert_hash: true
+
+    - morph: [pipeline, extract, --from-run, "${run_hash}"]
+      capture: pipeline_hash
+      assert_hash: true
+
+    - morph: [add, code.txt]
+
+    - morph: [commit, -m, pipeline commit, --pipeline, "${pipeline_hash}"]
+      capture: commit_hash
+      assert_hash: true
+
+    - morph: [show, "${commit_hash}"]
+      stdout_contains:
+        - "${pipeline_hash}"
+        - "pipeline commit"

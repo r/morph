@@ -258,6 +258,12 @@ enum PipelineCmd {
     },
     /// Print the identity pipeline hash (and ensure it exists in the store). Use from repo root for hook scripts.
     IdentityHash,
+    /// Extract a Pipeline from a recorded Run (trace-backed pipeline extraction)
+    Extract {
+        /// Source Run hash to extract the Pipeline from
+        #[arg(long)]
+        from_run: String,
+    },
 }
 
 fn get_store(verbose: bool) -> anyhow::Result<(PathBuf, Box<dyn Store>)> {
@@ -521,6 +527,14 @@ fn main() -> anyhow::Result<()> {
                 let obj = store.get(&h)?;
                 let json = serde_json::to_string_pretty(&obj).map_err(|e| anyhow::anyhow!("{}", e))?;
                 println!("{}", json);
+            }
+            PipelineCmd::Extract { from_run } => {
+                let (_repo_root, store) = get_store(verbose)?;
+                verbose_msg(verbose, &format!("extracting pipeline from run {}", from_run));
+                let run_hash = parse_hash(&from_run)?;
+                let pipeline_hash = morph_core::extract_pipeline_from_run(&store, &run_hash)?;
+                verbose_msg(verbose, &format!("created pipeline {}", pipeline_hash));
+                println!("{}", pipeline_hash);
             }
         },
         Command::Status => {
