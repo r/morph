@@ -260,7 +260,13 @@ pub enum StashCmd {
 #[cfg(feature = "cursor-setup")]
 #[derive(clap::Subcommand)]
 pub enum SetupCmd {
+    /// Install Cursor hooks, MCP config, and rules
     Cursor {
+        #[arg(long, default_value = ".")]
+        path: PathBuf,
+    },
+    /// Install OpenCode MCP config, AGENTS.md, and recording plugin
+    Opencode {
         #[arg(long, default_value = ".")]
         path: PathBuf,
     },

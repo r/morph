@@ -82,6 +82,15 @@ fn main() -> anyhow::Result<()> {
                 println!("  .cursor/hooks.json: {}", if report.hooks_json_updated { "updated" } else { "unchanged" });
                 println!("  .cursor/mcp.json: {}", if report.mcp_json_updated { "updated" } else { "unchanged" });
             }
+            SetupCmd::Opencode { path } => {
+                let root = std::path::Path::new(&path).canonicalize().unwrap_or_else(|_| path.clone());
+                verbose_msg(verbose, &format!("setting up OpenCode integration at {}", root.display()));
+                let report = setup::setup_opencode(&root)?;
+                println!("OpenCode integration installed in {}", root.display());
+                println!("  opencode.json: {}", if report.opencode_json_updated { "updated" } else { "unchanged" });
+                println!("  AGENTS.md: {}", if report.agents_md_written { "written" } else { "unchanged" });
+                println!("  .opencode/plugins/morph-record.ts: {}", if report.plugin_written { "written" } else { "unchanged" });
+            }
         },
 
         Command::Upgrade => {

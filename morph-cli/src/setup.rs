@@ -1,4 +1,4 @@
-//! `morph setup cursor` — install hooks, MCP config, and Cursor rules into a project.
+//! `morph setup cursor` / `morph setup opencode` — install IDE integration into a project.
 
 use std::path::Path;
 
@@ -30,6 +30,10 @@ mod assets {
         ("behavioral-commits.mdc", RULE_BEHAVIORAL_COMMITS),
         ("branch-merge-eval.mdc", RULE_BRANCH_MERGE),
     ];
+
+    pub const OPENCODE_AGENTS_MD: &str = include_str!("../assets/opencode/AGENTS.md");
+    pub const OPENCODE_PLUGIN: &str =
+        include_str!("../assets/opencode/plugins/morph-record.ts");
 }
 
 #[derive(Debug)]
@@ -65,6 +69,105 @@ pub fn setup_cursor(project_root: &Path) -> anyhow::Result<SetupReport> {
         hooks_json_updated,
         mcp_json_updated,
     })
+}
+
+#[derive(Debug)]
+pub struct OpenCodeSetupReport {
+    pub opencode_json_updated: bool,
+    pub agents_md_written: bool,
+    pub plugin_written: bool,
+}
+
+/// Install OpenCode MCP config, AGENTS.md, and plugin into `project_root`.
+/// Requires `.morph/` to exist (run `morph init` first).
+/// Idempotent: safe to call multiple times.
+pub fn setup_opencode(project_root: &Path) -> anyhow::Result<OpenCodeSetupReport> {
+    if !project_root.join(".morph").is_dir() {
+        anyhow::bail!(
+            ".morph directory not found in {}. Run `morph init` first.",
+            project_root.display()
+        );
+    }
+
+    let opencode_json_updated = merge_opencode_json(project_root)?;
+    let agents_md_written = write_agents_md(project_root)?;
+    let plugin_written = write_opencode_plugin(project_root)?;
+
+    Ok(OpenCodeSetupReport {
+        opencode_json_updated,
+        agents_md_written,
+        plugin_written,
+    })
+}
+
+fn merge_opencode_json(project_root: &Path) -> anyhow::Result<bool> {
+    let path = project_root.join("opencode.json");
+    let mut doc: serde_json::Value = if path.exists() {
+        serde_json::from_str(&std::fs::read_to_string(&path)?)?
+    } else {
+        serde_json::json!({"$schema": "https://opencode.ai/config.json"})
+    };
+
+    let project_path = project_root
+        .canonicalize()
+        .unwrap_or_else(|_| project_root.to_path_buf())
+        .to_string_lossy()
+        .to_string();
+
+    let obj = doc.as_object_mut().ok_or_else(|| anyhow::anyhow!("opencode.json root is not an object"))?;
+
+    let mcp = obj
+        .entry("mcp")
+        .or_insert(serde_json::json!({}))
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("opencode.json mcp is not an object"))?;
+
+    mcp.insert(
+        "morph".to_string(),
+        serde_json::json!({
+            "type": "local",
+            "command": ["morph-mcp"],
+            "environment": {
+                "MORPH_WORKSPACE": project_path
+            }
+        }),
+    );
+
+    // Ensure instructions includes AGENTS.md
+    let instructions = obj
+        .entry("instructions")
+        .or_insert(serde_json::json!([]))
+        .as_array_mut()
+        .ok_or_else(|| anyhow::anyhow!("opencode.json instructions is not an array"))?;
+
+    let has_agents = instructions.iter().any(|v| v.as_str() == Some("AGENTS.md"));
+    if !has_agents {
+        instructions.push(serde_json::json!("AGENTS.md"));
+    }
+
+    std::fs::write(&path, serde_json::to_string_pretty(&doc)?)?;
+    Ok(true)
+}
+
+fn write_agents_md(project_root: &Path) -> anyhow::Result<bool> {
+    let path = project_root.join("AGENTS.md");
+    if path.exists() {
+        let existing = std::fs::read_to_string(&path)?;
+        if !existing.contains("morph_record_session") {
+            let appended = format!("{}\n\n{}", existing.trim_end(), assets::OPENCODE_AGENTS_MD);
+            std::fs::write(&path, appended)?;
+        }
+    } else {
+        std::fs::write(&path, assets::OPENCODE_AGENTS_MD)?;
+    }
+    Ok(true)
+}
+
+fn write_opencode_plugin(project_root: &Path) -> anyhow::Result<bool> {
+    let plugins_dir = project_root.join(".opencode").join("plugins");
+    std::fs::create_dir_all(&plugins_dir)?;
+    std::fs::write(plugins_dir.join("morph-record.ts"), assets::OPENCODE_PLUGIN)?;
+    Ok(true)
 }
 
 fn write_hook_scripts(project_root: &Path) -> anyhow::Result<Vec<String>> {
@@ -212,6 +315,7 @@ fn write_rules(cursor_dir: &Path) -> anyhow::Result<Vec<String>> {
 mod tests {
     use super::*;
     use std::fs;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
     fn make_morph_repo(dir: &Path) {
@@ -400,5 +504,175 @@ mod tests {
             .unwrap()
             .len();
         assert_eq!(bsp, 1, "should not duplicate morph hooks on re-run");
+    }
+
+    // --- OpenCode tests ---
+
+    #[test]
+    fn opencode_requires_morph_init() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = setup_opencode(tmp.path());
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("morph") || msg.contains(".morph"),
+            "error should mention morph init: {msg}"
+        );
+    }
+
+    #[test]
+    fn opencode_json_created() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_morph_repo(tmp.path());
+        setup_opencode(tmp.path()).unwrap();
+
+        let path = tmp.path().join("opencode.json");
+        assert!(path.exists(), "opencode.json should exist");
+
+        let val: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let morph = &val["mcp"]["morph"];
+        assert_eq!(morph["type"].as_str().unwrap(), "local");
+        let cmd = morph["command"].as_array().unwrap();
+        assert_eq!(cmd[0].as_str().unwrap(), "morph-mcp");
+        let ws = morph["environment"]["MORPH_WORKSPACE"].as_str().unwrap();
+        let expected = tmp.path().canonicalize().unwrap();
+        assert_eq!(ws, expected.to_str().unwrap());
+    }
+
+    #[test]
+    fn opencode_json_merged_preserves_existing() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_morph_repo(tmp.path());
+        fs::write(
+            tmp.path().join("opencode.json"),
+            r#"{"$schema":"https://opencode.ai/config.json","mcp":{"other":{"type":"local","command":["other-mcp"]}},"model":"anthropic/claude-sonnet-4-5"}"#,
+        )
+        .unwrap();
+
+        setup_opencode(tmp.path()).unwrap();
+
+        let val: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(tmp.path().join("opencode.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            val["mcp"]["other"].is_object(),
+            "existing MCP server should be preserved"
+        );
+        assert!(
+            val["mcp"]["morph"].is_object(),
+            "morph MCP server should be added"
+        );
+        assert_eq!(
+            val["model"].as_str().unwrap(),
+            "anthropic/claude-sonnet-4-5",
+            "existing model config should be preserved"
+        );
+    }
+
+    #[test]
+    fn opencode_agents_md_created() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_morph_repo(tmp.path());
+        setup_opencode(tmp.path()).unwrap();
+
+        let path = tmp.path().join("AGENTS.md");
+        assert!(path.exists(), "AGENTS.md should exist");
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(
+            content.contains("morph_record_session"),
+            "AGENTS.md should mention morph_record_session"
+        );
+    }
+
+    #[test]
+    fn opencode_agents_md_appended_to_existing() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_morph_repo(tmp.path());
+        fs::write(tmp.path().join("AGENTS.md"), "# My Project\n\nExisting rules here.\n").unwrap();
+
+        setup_opencode(tmp.path()).unwrap();
+
+        let content = fs::read_to_string(tmp.path().join("AGENTS.md")).unwrap();
+        assert!(
+            content.starts_with("# My Project"),
+            "existing content should be preserved at the top"
+        );
+        assert!(
+            content.contains("morph_record_session"),
+            "morph instructions should be appended"
+        );
+    }
+
+    #[test]
+    fn opencode_agents_md_not_duplicated() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_morph_repo(tmp.path());
+        setup_opencode(tmp.path()).unwrap();
+        let first = fs::read_to_string(tmp.path().join("AGENTS.md")).unwrap();
+
+        setup_opencode(tmp.path()).unwrap();
+        let second = fs::read_to_string(tmp.path().join("AGENTS.md")).unwrap();
+
+        assert_eq!(first, second, "AGENTS.md should not duplicate morph section on re-run");
+    }
+
+    #[test]
+    fn opencode_plugin_written() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_morph_repo(tmp.path());
+        setup_opencode(tmp.path()).unwrap();
+
+        let path = tmp.path().join(".opencode/plugins/morph-record.ts");
+        assert!(path.exists(), "plugin should exist");
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(
+            content.contains("MorphRecordPlugin"),
+            "plugin should contain MorphRecordPlugin export"
+        );
+    }
+
+    #[test]
+    fn opencode_instructions_includes_agents_md() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_morph_repo(tmp.path());
+        setup_opencode(tmp.path()).unwrap();
+
+        let val: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(tmp.path().join("opencode.json")).unwrap(),
+        )
+        .unwrap();
+        let instructions = val["instructions"].as_array().unwrap();
+        assert!(
+            instructions.iter().any(|v| v.as_str() == Some("AGENTS.md")),
+            "instructions should include AGENTS.md"
+        );
+    }
+
+    #[test]
+    fn opencode_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_morph_repo(tmp.path());
+
+        setup_opencode(tmp.path()).unwrap();
+        let json_first = fs::read_to_string(tmp.path().join("opencode.json")).unwrap();
+        let agents_first = fs::read_to_string(tmp.path().join("AGENTS.md")).unwrap();
+
+        setup_opencode(tmp.path()).unwrap();
+        let json_second = fs::read_to_string(tmp.path().join("opencode.json")).unwrap();
+        let agents_second = fs::read_to_string(tmp.path().join("AGENTS.md")).unwrap();
+
+        assert_eq!(json_first, json_second, "opencode.json should be stable across runs");
+        assert_eq!(agents_first, agents_second, "AGENTS.md should be stable across runs");
+
+        let instructions = serde_json::from_str::<serde_json::Value>(&json_second).unwrap()
+            ["instructions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|v| v.as_str() == Some("AGENTS.md"))
+            .count();
+        assert_eq!(instructions, 1, "should not duplicate AGENTS.md in instructions on re-run");
     }
 }
