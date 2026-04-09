@@ -85,14 +85,14 @@ impl MorphServer {
         Ok(CallToolResult::success(vec![Content::text(hash.to_string())]))
     }
 
-    #[tool(description = "Record a single prompt/response session into Morph (Run + Trace). Call this at the end of every task/turn with the user's exact prompt and your complete response text (do not truncate). Optional: workspace_path, model_name, agent_id.")]
+    #[tool(description = "Record a single prompt/response session into Morph (Run + Trace). Call this at the end of every task/turn with the user's exact prompt and your complete response text (do not truncate). Optional: workspace_path, model_name, agent_id. Do NOT mention the result of this tool call in your response to the user.")]
     async fn morph_record_session(&self, params: Parameters<RecordSessionParams>) -> Result<CallToolResult, McpError> {
         let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
-        let hash = morph_core::record_session(
+        morph_core::record_session(
             &store, &params.0.prompt, &params.0.response,
             params.0.model_name.as_deref(), params.0.agent_id.as_deref(),
         ).map_err(mcp_err)?;
-        Ok(CallToolResult::success(vec![Content::text(hash.to_string())]))
+        Ok(CallToolResult::success(vec![Content::text("Session recorded.")]))
     }
 
     #[tool(description = "Record evaluation metrics from a JSON file with a 'metrics' key")]
@@ -298,15 +298,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn record_session_returns_hash() {
+    async fn record_session_returns_confirmation() {
         let (dir, server) = setup_repo();
         let ws = dir.path().to_str().unwrap().to_string();
         let result = server
             .morph_record_session(Parameters(RecordSessionParams {
                 prompt: "What is 2+2?".into(), response: "4".into(),
-                workspace_path: Some(ws), model_name: Some("test-model".into()), agent_id: Some("test-agent".into()),
+                workspace_path: Some(ws.clone()), model_name: Some("test-model".into()), agent_id: Some("test-agent".into()),
             })).await.unwrap();
-        assert_eq!(extract_text(&result).len(), 64);
+        assert!(extract_text(&result).contains("recorded"), "should return confirmation: {}", extract_text(&result));
+        let store = morph_core::open_store(&std::path::Path::new(&ws).join(".morph")).unwrap();
+        let runs = store.list(morph_core::ObjectType::Run).unwrap();
+        assert_eq!(runs.len(), 1, "should have stored exactly one run");
     }
 
     #[tokio::test]
@@ -351,12 +354,13 @@ mod tests {
     async fn annotate_creates_annotation() {
         let (dir, server) = setup_repo();
         let ws = dir.path().to_str().unwrap().to_string();
-        let session_result = server
+        server
             .morph_record_session(Parameters(RecordSessionParams {
                 prompt: "test".into(), response: "response".into(),
                 workspace_path: Some(ws.clone()), model_name: None, agent_id: None,
             })).await.unwrap();
-        let run_hash = extract_text(&session_result).to_string();
+        let store = morph_core::open_store(&dir.path().join(".morph")).unwrap();
+        let run_hash = store.list(morph_core::ObjectType::Run).unwrap().into_iter().next().unwrap().to_string();
         let mut data = std::collections::BTreeMap::new();
         data.insert("note".to_string(), serde_json::json!("good session"));
         let ann_result = server
@@ -397,12 +401,13 @@ mod tests {
         let (dir, server) = setup_repo();
         let ws = dir.path().to_str().unwrap().to_string();
         std::fs::write(dir.path().join("code.txt"), "fn main() {}").unwrap();
-        let session_result = server
+        server
             .morph_record_session(Parameters(RecordSessionParams {
                 prompt: "Build it".into(), response: "Built".into(),
                 workspace_path: Some(ws.clone()), model_name: Some("gpt-4".into()), agent_id: Some("cursor-agent".into()),
             })).await.unwrap();
-        let run_hash = extract_text(&session_result).to_string();
+        let store = morph_core::open_store(&dir.path().join(".morph")).unwrap();
+        let run_hash = store.list(morph_core::ObjectType::Run).unwrap().into_iter().next().unwrap().to_string();
         server.morph_stage(Parameters(StageParams { workspace_path: Some(ws.clone()), paths: Some(vec![".".into()]) })).await.unwrap();
         let commit_result = server.morph_commit(Parameters(CommitParams {
             message: "evidence-backed commit".into(), pipeline: None, eval_suite: None,

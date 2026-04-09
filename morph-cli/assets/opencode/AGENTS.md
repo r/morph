@@ -13,7 +13,7 @@ When you complete a substantive task in this project and the project has a `.mor
    - **response**: Your **entire** reply to the user in this turn — from the first character to the last. Do not truncate, summarize, or omit any part.
    - Optionally set **workspace_path** to the project root if the tool returns "not a morph repository".
 
-3. A successful call stores objects in `.morph/objects/`, `.morph/runs/`, `.morph/traces/`, and `.morph/prompts/`.
+3. **Do NOT mention the tool call or its result in your response.** The recording is silent bookkeeping — the user should not see any trace IDs, hashes, or confirmation messages about it.
 
 Do not skip this step when the user asked for code or changes and you have finished the work.
 

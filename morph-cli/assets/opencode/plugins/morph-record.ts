@@ -1,19 +1,24 @@
 /**
  * Morph session recording plugin for OpenCode.
  *
- * Uses the `stop` hook (awaited — blocks the agent from exiting) to fetch
- * the session's messages via the SDK client and record them as a Morph
- * Run + Trace. Falls back to `session.idle` if the stop hook doesn't fire.
+ * Two capture strategies (whichever fires first wins):
+ *   1. `stop` hook — awaited, fetches full session via SDK client.
+ *   2. Event-based — captures prompt/response from `message.updated` events,
+ *      records on `session.idle`.
  *
- * If the agent already called `morph_record_session` via MCP during the
- * turn, we skip to avoid double-recording.
+ * If the agent already called `morph_record_session` via MCP, we skip to
+ * avoid double-recording.
  */
 
 import { appendFileSync, mkdirSync, writeFileSync } from "fs"
 import { join } from "path"
 
-const recordedSessions = new Set<string>()
+const recordedTurns = new Set<string>()
 let agentRecordedThisTurn = false
+
+let pendingPrompt = ""
+let pendingResponse = ""
+
 let eventSampleCount = 0
 const MAX_EVENT_SAMPLES = 30
 
@@ -36,72 +41,55 @@ function writeDebug(directory: string, filename: string, data: unknown) {
   } catch {}
 }
 
-function extractPartsText(parts: any[]): string {
-  if (!Array.isArray(parts)) return ""
-  return parts
-    .filter((p: any) => p.type === "text")
-    .map((p: any) => p.text || p.content || "")
-    .filter(Boolean)
-    .join("\n")
-}
-
 function extractText(content: unknown): string {
   if (typeof content === "string") return content
-  if (Array.isArray(content)) return extractPartsText(content)
+  if (Array.isArray(content)) {
+    return content
+      .filter((p: any) => p.type === "text")
+      .map((p: any) => p.text || p.content || "")
+      .filter(Boolean)
+      .join("\n")
+  }
   return ""
 }
 
-async function fetchSessionMessages(
-  client: any,
-  sessionId: string,
-  directory: string,
-): Promise<{ prompt: string; response: string }> {
-  let prompt = ""
-  let response = ""
-
-  const resp = await client.session.messages({ path: { id: sessionId } })
-  const messages: any[] = resp?.data ?? resp ?? []
-  appendLog(directory, `fetched ${messages.length} messages for ${sessionId}`)
-
-  for (const entry of messages) {
-    const info = entry.info || entry
-    const role = info.role
-    const parts = entry.parts || info.parts || []
-    const text = extractPartsText(parts) || extractText(info.content)
-
-    if (role === "user" && text) prompt = text
-    if (role === "assistant" && text) response = text
-  }
-
-  return { prompt, response }
+function turnKey(prompt: string): string {
+  return prompt.slice(0, 120)
 }
 
-async function recordSession(
+async function doRecord(
   $: any,
   directory: string,
-  sessionId: string,
   prompt: string,
   response: string,
+  source: string,
 ): Promise<boolean> {
-  const turnKey = `${sessionId}:${prompt.slice(0, 80)}`
-  if (recordedSessions.has(turnKey)) {
-    appendLog(directory, "skipping — already recorded this turn")
+  const key = turnKey(prompt)
+  if (recordedTurns.has(key)) {
+    appendLog(directory, `${source}: skipping — already recorded this turn`)
+    return false
+  }
+  if (!prompt && !response) {
+    appendLog(directory, `${source}: skipping — empty prompt and response`)
     return false
   }
 
   writeDebug(directory, "last-record.json", {
     timestamp: new Date().toISOString(),
-    sessionId,
+    source,
     promptLength: prompt.length,
     responseLength: response.length,
   })
 
-  await $`morph run record-session --prompt ${prompt} --response ${response}`.cwd(
-    directory,
-  )
+  await $`morph run record-session --prompt ${prompt} --response ${response}`
+    .cwd(directory)
+    .quiet()
 
-  recordedSessions.add(turnKey)
-  appendLog(directory, `recorded session (${prompt.length}+${response.length} chars)`)
+  recordedTurns.add(key)
+  appendLog(
+    directory,
+    `${source}: recorded (${prompt.length}+${response.length} chars)`,
+  )
   return true
 }
 
@@ -114,79 +102,102 @@ export const MorphRecordPlugin = async ({
   client: any
   directory: string
 }) => {
-  appendLog(directory, "plugin loaded (v3 — stop hook)")
+  appendLog(directory, "plugin loaded (v4 — dual capture)")
 
   return {
-    // Track if the agent already recorded via MCP (avoid double-recording)
     "tool.execute.after": async (input: any) => {
       if (
         input.tool === "morph_record_session" ||
         input.tool === "mcp_morph_record_session"
       ) {
         agentRecordedThisTurn = true
-        appendLog(directory, "agent called morph_record_session — will skip plugin recording")
+        appendLog(
+          directory,
+          "agent called morph_record_session — will skip plugin recording",
+        )
       }
     },
 
-    // Primary: stop hook is awaited, so recording completes before exit
     stop: async (input: any) => {
       const sessionId =
         input.sessionID || input.session_id || (input as any).id
 
-      appendLog(directory, `stop hook fired (session=${sessionId || "unknown"})`)
+      appendLog(
+        directory,
+        `stop hook fired (session=${sessionId || "unknown"})`,
+      )
 
       if (agentRecordedThisTurn) {
-        appendLog(directory, "agent already recorded — skipping")
+        appendLog(directory, "stop: agent already recorded — skipping")
         agentRecordedThisTurn = false
+        pendingPrompt = ""
+        pendingResponse = ""
         return
       }
 
-      if (!sessionId) {
-        appendLog(directory, "stop hook: no session ID, trying session.list")
+      // Strategy A: fetch messages via SDK
+      if (sessionId && client?.session?.messages) {
         try {
-          const sessResp = await client.session.list()
-          const sessions: any[] = sessResp?.data ?? sessResp ?? []
-          if (sessions.length > 0) {
-            const sid = sessions[0].id || sessions[0].sessionID
-            if (sid) {
-              const { prompt, response } = await fetchSessionMessages(
-                client,
-                sid,
-                directory,
-              )
-              if (prompt || response) {
-                await recordSession($, directory, sid, prompt, response)
-              }
+          const resp = await client.session.messages({
+            path: { id: sessionId },
+          })
+          const messages: any[] = resp?.data ?? resp ?? []
+          appendLog(
+            directory,
+            `stop: SDK returned ${messages.length} messages`,
+          )
+
+          let prompt = ""
+          let response = ""
+          for (const entry of messages) {
+            const info = entry.info || entry
+            const role = info.role
+            const parts = entry.parts || info.parts || []
+            const text = extractText(parts) || extractText(info.content)
+            if (role === "user" && text) prompt = text
+            if (role === "assistant" && text) response = text
+          }
+
+          if (prompt || response) {
+            const ok = await doRecord($, directory, prompt, response, "stop/sdk")
+            if (ok) {
+              pendingPrompt = ""
+              pendingResponse = ""
+              agentRecordedThisTurn = false
+              return
             }
+          } else {
+            appendLog(directory, "stop: SDK returned no usable prompt/response")
           }
         } catch (err: any) {
-          appendLog(directory, `stop fallback failed: ${err?.message || err}`)
+          appendLog(
+            directory,
+            `stop: SDK fetch failed: ${err?.message || err}`,
+          )
         }
-        agentRecordedThisTurn = false
-        return
       }
 
-      try {
-        const { prompt, response } = await fetchSessionMessages(
-          client,
-          sessionId,
+      // Strategy B: use event-captured data
+      if (pendingPrompt || pendingResponse) {
+        appendLog(directory, "stop: falling back to event-captured data")
+        await doRecord(
+          $,
           directory,
+          pendingPrompt,
+          pendingResponse,
+          "stop/events",
         )
-        if (prompt || response) {
-          await recordSession($, directory, sessionId, prompt, response)
-        } else {
-          appendLog(directory, "stop hook: no prompt/response in session messages")
-        }
-      } catch (err: any) {
-        appendLog(directory, `stop hook error: ${err?.message || err}`)
+      } else {
+        appendLog(directory, "stop: no data from SDK or events")
       }
 
+      pendingPrompt = ""
+      pendingResponse = ""
       agentRecordedThisTurn = false
     },
 
-    // Fallback: session.idle is fire-and-forget but catches edge cases
     event: async ({ event }: { event: any }) => {
-      // Diagnostic: log early events so we can debug payload shapes
+      // Diagnostic: log early events to debug payload shapes
       if (eventSampleCount < MAX_EVENT_SAMPLES) {
         eventSampleCount++
         const propKeys = event.properties
@@ -205,45 +216,94 @@ export const MorphRecordPlugin = async ({
             const s = JSON.stringify(v)
             safeProps[k] = s && s.length > 500 ? `(${s.length} chars)` : v
           }
-          writeDebug(directory, `event-${event.type}-${Date.now()}.json`, {
-            type: event.type,
-            propKeys,
-            sample: safeProps,
-          })
+          writeDebug(
+            directory,
+            `event-${event.type}-${eventSampleCount}.json`,
+            { type: event.type, propKeys, sample: safeProps },
+          )
         }
       }
 
-      if (event.type !== "session.idle") return
+      // Capture messages from events (used as fallback in stop hook and session.idle)
+      if (event.type === "message.updated") {
+        const msg =
+          event.properties?.message ||
+          event.properties?.info ||
+          event.properties
+        if (!msg) return
 
-      // session.idle is a backup — the stop hook should have handled it
-      const sessionId =
-        event.properties?.session?.id ||
-        event.properties?.sessionID ||
-        event.properties?.session_id ||
-        (event as any).session_id ||
-        (event as any).sessionID
+        const role = msg.role
+        const text =
+          extractText(msg.parts) || extractText(msg.content) || extractText(msg.text)
 
-      if (!sessionId) {
-        appendLog(directory, "session.idle: no session ID")
+        if (role === "user" && text) {
+          pendingPrompt = text
+          appendLog(directory, `event: captured prompt (${text.length} chars)`)
+        }
+        if (role === "assistant" && text) {
+          pendingResponse = text
+          appendLog(
+            directory,
+            `event: captured response (${text.length} chars)`,
+          )
+        }
         return
       }
 
-      if (recordedSessions.has(`${sessionId}:`)) return
+      if (event.type === "message.part.updated") {
+        const part = event.properties?.part || event.properties
+        const role =
+          part?.role ||
+          event.properties?.message?.role ||
+          event.properties?.info?.role
+        const text = extractText(part?.content) || extractText(part?.text)
 
-      appendLog(directory, `session.idle fallback for ${sessionId}`)
-
-      try {
-        const { prompt, response } = await fetchSessionMessages(
-          client,
-          sessionId,
-          directory,
-        )
-        if (prompt || response) {
-          await recordSession($, directory, sessionId, prompt, response)
+        if (role === "user" && text) {
+          pendingPrompt = text
         }
-      } catch (err: any) {
-        appendLog(directory, `session.idle error: ${err?.message || err}`)
+        if (role === "assistant" && text) {
+          pendingResponse = text
+        }
+        return
       }
+
+      // session.idle — fire-and-forget fallback if stop hook didn't fire
+      if (event.type !== "session.idle") return
+
+      if (agentRecordedThisTurn) {
+        agentRecordedThisTurn = false
+        pendingPrompt = ""
+        pendingResponse = ""
+        return
+      }
+
+      if (!pendingPrompt && !pendingResponse) {
+        appendLog(
+          directory,
+          "session.idle: no pending data — skipped",
+        )
+        return
+      }
+
+      appendLog(directory, "session.idle: recording from event-captured data")
+      try {
+        await doRecord(
+          $,
+          directory,
+          pendingPrompt,
+          pendingResponse,
+          "idle/events",
+        )
+      } catch (err: any) {
+        appendLog(
+          directory,
+          `session.idle error: ${err?.message || err}`,
+        )
+      }
+
+      pendingPrompt = ""
+      pendingResponse = ""
+      agentRecordedThisTurn = false
     },
   }
 }
