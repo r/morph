@@ -2,4 +2,6 @@
   init: false
   steps:
     - morph: ["--version"]
-      stdout_contains: "morph 0.2.0 (built"
+      stdout_contains:
+        - "morph 0.2.0 (built"
+        - "Z)"

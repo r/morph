@@ -40,9 +40,9 @@ While pre-1.0, treat minor as "feature" and patch as "fix".
 
 ## Version output format
 
-Both binaries include the build date automatically:
-- `morph --version` → `morph 0.2.0 (built 2026-04-09)`
-- `morph-mcp --version` → `morph-mcp 0.2.0 (built 2026-04-09)`
+Both binaries include the build timestamp automatically:
+- `morph --version` → `morph 0.2.0 (built 2026-04-09T15:30:42Z)`
+- `morph-mcp --version` → `morph-mcp 0.2.0 (built 2026-04-09T15:30:42Z)`
 
 The MCP server also reports its version in the `ServerInfo` response to clients.
 
