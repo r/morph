@@ -449,7 +449,9 @@ fn escape_braces_for_format(s: &str) -> String {
 // ── main ─────────────────────────────────────────────────────────────
 
 fn main() {
-    // Emit build timestamp for --version output
+    // Force build.rs to re-run every time so the timestamp is always fresh.
+    println!("cargo:rerun-if-changed=_always_rebuild");
+
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -462,8 +464,6 @@ fn main() {
     if !specs_dir.is_dir() {
         return;
     }
-
-    println!("cargo:rerun-if-changed=tests/specs");
 
     let out_dir = env::var("OUT_DIR").unwrap();
     let out_path = Path::new(&out_dir).join("spec_tests.rs");
@@ -480,7 +480,6 @@ fn main() {
     spec_files.sort();
 
     for entry in spec_files {
-        println!("cargo:rerun-if-changed={}", entry.display());
         let yaml = fs::read_to_string(&entry).expect("cannot read spec file");
         let specs: Vec<TestSpec> =
             serde_yaml::from_str(&yaml).unwrap_or_else(|e| panic!("bad YAML in {}: {}", entry.display(), e));

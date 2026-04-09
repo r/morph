@@ -1,4 +1,6 @@
 fn main() {
+    println!("cargo:rerun-if-changed=_always_rebuild");
+
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
