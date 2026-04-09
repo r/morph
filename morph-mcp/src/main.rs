@@ -85,7 +85,7 @@ impl MorphServer {
         Ok(CallToolResult::success(vec![Content::text(hash.to_string())]))
     }
 
-    #[tool(description = "Record a session into Morph (Run + Trace). Accepts either prompt+response (simple) or messages (full conversation array of {role,content} for all turns, tool calls, etc.). Call at the end of every task. Optional: workspace_path, model_name, agent_id. Do NOT mention the result of this tool call in your response to the user.")]
+    #[tool(description = "Internal — used by the Morph recording plugin. Do NOT call this tool yourself; session recording is automatic. If called manually the result is not useful to the user.")]
     async fn morph_record_session(&self, params: Parameters<RecordSessionParams>) -> Result<CallToolResult, McpError> {
         let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
         if let Some(ref msgs) = params.0.messages {
