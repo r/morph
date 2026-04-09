@@ -56,25 +56,36 @@ interface Message {
   content: string
 }
 
-function extractAllMessages(rawMessages: any[]): Message[] {
+interface FetchResult {
+  messages: Message[]
+  modelName: string
+}
+
+function extractAllMessages(rawMessages: any[]): FetchResult {
   const messages: Message[] = []
+  let modelName = ""
   for (const entry of rawMessages) {
     const info = entry.info || entry
     const role = info.role || "unknown"
     const parts = entry.parts || info.parts || []
     const text = extractPartsText(parts) || extractText(info.content)
+    if (!modelName && info.modelID) {
+      modelName = info.providerID
+        ? `${info.providerID}/${info.modelID}`
+        : info.modelID
+    }
     if (text) {
       messages.push({ role, content: text })
     }
   }
-  return messages
+  return { messages, modelName }
 }
 
 async function fetchAllMessages(
   client: any,
   sessionId: string,
   directory: string,
-): Promise<Message[]> {
+): Promise<FetchResult> {
   const resp = await client.session.messages({ path: { id: sessionId } })
   const raw: any[] = resp?.data ?? resp ?? []
   appendLog(directory, `fetched ${raw.length} raw messages for ${sessionId}`)
@@ -86,6 +97,7 @@ async function recordConversation(
   directory: string,
   sessionId: string,
   messages: Message[],
+  modelName: string,
 ): Promise<boolean> {
   const turnKey = `${sessionId}:${messages.length}:${messages[0]?.content?.slice(0, 40) || ""}`
   if (recordedSessions.has(turnKey)) {
@@ -98,17 +110,19 @@ async function recordConversation(
     sessionId,
     messageCount: messages.length,
     roles: messages.map((m) => m.role),
+    modelName,
   })
 
   const messagesJson = JSON.stringify(messages)
-  await $`morph run record-session --messages ${messagesJson}`
+  const model = modelName || "unknown"
+  await $`morph run record-session --messages ${messagesJson} --model-name ${model} --agent-id opencode`
     .cwd(directory)
     .quiet()
 
   recordedSessions.add(turnKey)
   appendLog(
     directory,
-    `recorded conversation (${messages.length} messages, ${messages.map((m) => m.role).join(",")})`,
+    `recorded conversation (${messages.length} messages, model=${model})`,
   )
   return true
 }
@@ -167,9 +181,15 @@ export const MorphRecordPlugin = async ({
       appendLog(directory, `session.idle: recording for ${sessionId}`)
 
       try {
-        const messages = await fetchAllMessages(client, sessionId, directory)
-        if (messages.length > 0) {
-          await recordConversation($, directory, sessionId, messages)
+        const result = await fetchAllMessages(client, sessionId, directory)
+        if (result.messages.length > 0) {
+          await recordConversation(
+            $,
+            directory,
+            sessionId,
+            result.messages,
+            result.modelName,
+          )
         } else {
           appendLog(directory, "session.idle: no messages found")
         }
