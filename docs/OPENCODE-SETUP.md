@@ -128,8 +128,42 @@ All tools accept optional `workspace_path`.
 |---------|-----|
 | "not a morph repository" | Run `morph init` in the project root, or set `MORPH_WORKSPACE` in `opencode.json` under `mcp.morph.environment`. |
 | MCP tools not available | Check `opencode mcp list` for server status. Ensure `morph-mcp` is on PATH or use the full path in `opencode.json`. |
-| Sessions not recorded | Ensure `AGENTS.md` exists and contains the morph_record_session instruction. Check that the morph MCP server is connected (`opencode mcp list`). |
+| Sessions not recorded | See [Debugging: nothing recorded](#debugging-nothing-recorded) below. |
 | Plugin not loaded | Ensure `.opencode/plugins/morph-record.ts` exists. OpenCode loads plugins from `.opencode/plugins/` at startup; restart if you added the file after launch. |
+
+### Debugging: nothing recorded
+
+If OpenCode detects the MCP server but `.morph/runs/` stays empty after a prompt, work through these checks:
+
+1. **Verify the repo is initialized:**
+   ```bash
+   ls .morph/
+   ```
+   You should see `objects/`, `runs/`, `traces/`, `prompts/`, and `version`. If missing, run `morph init`.
+
+2. **Test recording manually from the project root:**
+   ```bash
+   morph run record-session --prompt "test" --response "test"
+   ```
+   This should print a 64-character hash. If it errors, fix the reported issue first (usually a missing `.morph/` directory or `morph` not on PATH).
+
+3. **Check the plugin log.** After at least one OpenCode prompt+response cycle, check:
+   ```bash
+   cat .morph/hooks/logs/opencode-plugin.log
+   ```
+   - **"plugin loaded"** — confirms OpenCode loaded the plugin.
+   - **"captured prompt" / "captured response"** — the plugin saw `message.updated` events.
+   - **"recorded session via CLI"** — the CLI call succeeded.
+   - **"error recording session: ..."** — the CLI call failed; the error message tells you why.
+   - **"session.idle fired but no pending prompt/response"** — the plugin received the idle event but had no prompt/response to record. This means `message.updated` events aren't arriving as expected; check that `.opencode/plugins/morph-record.ts` is up to date (`morph setup opencode` to refresh).
+
+4. **Reinstall the plugin** if the log file doesn't appear at all:
+   ```bash
+   morph setup opencode
+   ```
+   Then restart OpenCode. The setup command overwrites `.opencode/plugins/morph-record.ts` with the latest version.
+
+5. **Check the agent-driven path.** The plugin is a fallback; the primary recording path is the agent calling `morph_record_session` via MCP as instructed in `AGENTS.md`. If the agent model isn't following those instructions, rely on the plugin. If both fail, test the MCP tool directly by asking the agent: *"Call morph_record_session with prompt 'test' and response 'test' and tell me what it returns."*
 
 ---
 
