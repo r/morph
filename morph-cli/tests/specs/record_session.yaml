@@ -14,3 +14,14 @@
       path: .morph/runs
     - kind: dir_not_empty
       path: .morph/traces
+
+- name: record_session_with_messages_json
+  steps:
+    - morph: [run, record-session, --messages, '[{"role":"user","content":"Build it"},{"role":"assistant","content":"On it"},{"role":"tool_call","content":"write_file"},{"role":"assistant","content":"Done"}]']
+      capture: run_hash
+      assert_hash: true
+  assert:
+    - kind: dir_not_empty
+      path: .morph/runs
+    - kind: dir_not_empty
+      path: .morph/traces

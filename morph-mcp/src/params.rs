@@ -67,14 +67,25 @@ pub struct RecordRunParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct RecordSessionParams {
-    pub prompt: String,
-    pub response: String,
+    #[serde(default)]
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub response: Option<String>,
+    /// Full conversation as array of {role, content} objects. When provided, prompt/response are ignored.
+    #[serde(default)]
+    pub messages: Option<Vec<MessageParam>>,
     #[serde(default)]
     pub workspace_path: Option<String>,
     #[serde(default)]
     pub model_name: Option<String>,
     #[serde(default)]
     pub agent_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MessageParam {
+    pub role: String,
+    pub content: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

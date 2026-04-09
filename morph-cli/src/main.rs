@@ -416,9 +416,22 @@ fn main() -> anyhow::Result<()> {
                 let refs: Vec<_> = artifact_paths.iter().map(|p| p.as_path()).collect();
                 println!("{}", morph_core::record_run(&store, &full_run, trace_opt.as_deref(), &refs)?);
             }
-            RunCmd::RecordSession { prompt, response, model_name, agent_id } => {
+            RunCmd::RecordSession { prompt, response, messages, model_name, agent_id } => {
                 let (_repo_root, store) = get_store(verbose)?;
-                println!("{}", morph_core::record_session(&store, &prompt, &response, model_name.as_deref(), agent_id.as_deref())?);
+                let hash = if let Some(ref json) = messages {
+                    let msgs: Vec<morph_core::ConversationMessage> = serde_json::from_str(json)
+                        .map_err(|e| anyhow::anyhow!("invalid --messages JSON: {}", e))?;
+                    morph_core::record_conversation(&store, &msgs, model_name.as_deref(), agent_id.as_deref())?
+                } else {
+                    morph_core::record_session(
+                        &store,
+                        prompt.as_deref().unwrap_or(""),
+                        response.as_deref().unwrap_or(""),
+                        model_name.as_deref(),
+                        agent_id.as_deref(),
+                    )?
+                };
+                println!("{}", hash);
             }
         },
 
@@ -672,7 +685,7 @@ fn cmd_prompt_show(verbose: bool, run_ref: &str, run_upgrade: bool) -> anyhow::R
 
         match store.get(&trace_hash) {
             Ok(MorphObject::Trace(t)) => {
-                let text = t.events.iter().filter(|e| e.kind == "prompt").last()
+                let text = t.events.iter().filter(|e| e.kind == "prompt" || e.kind == "user").last()
                     .and_then(|e| e.payload.get("text").and_then(|v| v.as_str())).unwrap_or("");
                 print!("{}", text);
                 return Ok(());
@@ -683,7 +696,7 @@ fn cmd_prompt_show(verbose: bool, run_ref: &str, run_upgrade: bool) -> anyhow::R
                 if trace_path.exists() {
                     let obj: MorphObject = serde_json::from_str(&std::fs::read_to_string(&trace_path)?)?;
                     if let MorphObject::Trace(t) = obj {
-                        let text = t.events.iter().filter(|e| e.kind == "prompt").last()
+                        let text = t.events.iter().filter(|e| e.kind == "prompt" || e.kind == "user").last()
                             .and_then(|e| e.payload.get("text").and_then(|v| v.as_str())).unwrap_or("");
                         print!("{}", text);
                         return Ok(());

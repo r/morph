@@ -85,13 +85,25 @@ impl MorphServer {
         Ok(CallToolResult::success(vec![Content::text(hash.to_string())]))
     }
 
-    #[tool(description = "Record a single prompt/response session into Morph (Run + Trace). Call this at the end of every task/turn with the user's exact prompt and your complete response text (do not truncate). Optional: workspace_path, model_name, agent_id. Do NOT mention the result of this tool call in your response to the user.")]
+    #[tool(description = "Record a session into Morph (Run + Trace). Accepts either prompt+response (simple) or messages (full conversation array of {role,content} for all turns, tool calls, etc.). Call at the end of every task. Optional: workspace_path, model_name, agent_id. Do NOT mention the result of this tool call in your response to the user.")]
     async fn morph_record_session(&self, params: Parameters<RecordSessionParams>) -> Result<CallToolResult, McpError> {
         let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
-        morph_core::record_session(
-            &store, &params.0.prompt, &params.0.response,
-            params.0.model_name.as_deref(), params.0.agent_id.as_deref(),
-        ).map_err(mcp_err)?;
+        if let Some(ref msgs) = params.0.messages {
+            let conversation: Vec<morph_core::ConversationMessage> = msgs.iter()
+                .map(|m| morph_core::ConversationMessage { role: m.role.clone(), content: m.content.clone() })
+                .collect();
+            morph_core::record_conversation(
+                &store, &conversation,
+                params.0.model_name.as_deref(), params.0.agent_id.as_deref(),
+            ).map_err(mcp_err)?;
+        } else {
+            morph_core::record_session(
+                &store,
+                params.0.prompt.as_deref().unwrap_or(""),
+                params.0.response.as_deref().unwrap_or(""),
+                params.0.model_name.as_deref(), params.0.agent_id.as_deref(),
+            ).map_err(mcp_err)?;
+        }
         Ok(CallToolResult::success(vec![Content::text("Session recorded.")]))
     }
 
@@ -303,13 +315,44 @@ mod tests {
         let ws = dir.path().to_str().unwrap().to_string();
         let result = server
             .morph_record_session(Parameters(RecordSessionParams {
-                prompt: "What is 2+2?".into(), response: "4".into(),
+                prompt: Some("What is 2+2?".into()), response: Some("4".into()), messages: None,
                 workspace_path: Some(ws.clone()), model_name: Some("test-model".into()), agent_id: Some("test-agent".into()),
             })).await.unwrap();
         assert!(extract_text(&result).contains("recorded"), "should return confirmation: {}", extract_text(&result));
         let store = morph_core::open_store(&std::path::Path::new(&ws).join(".morph")).unwrap();
         let runs = store.list(morph_core::ObjectType::Run).unwrap();
         assert_eq!(runs.len(), 1, "should have stored exactly one run");
+    }
+
+    #[tokio::test]
+    async fn record_session_with_messages() {
+        let (dir, server) = setup_repo();
+        let ws = dir.path().to_str().unwrap().to_string();
+        let result = server
+            .morph_record_session(Parameters(RecordSessionParams {
+                prompt: None, response: None,
+                messages: Some(vec![
+                    params::MessageParam { role: "user".into(), content: "Build a server".into() },
+                    params::MessageParam { role: "assistant".into(), content: "Creating files".into() },
+                    params::MessageParam { role: "tool_call".into(), content: "write_file(app.py)".into() },
+                    params::MessageParam { role: "tool_result".into(), content: "done".into() },
+                    params::MessageParam { role: "assistant".into(), content: "Server is ready!".into() },
+                ]),
+                workspace_path: Some(ws.clone()), model_name: Some("qwen-3.5".into()), agent_id: Some("opencode".into()),
+            })).await.unwrap();
+        assert!(extract_text(&result).contains("recorded"));
+        let store = morph_core::open_store(&std::path::Path::new(&ws).join(".morph")).unwrap();
+        let runs = store.list(morph_core::ObjectType::Run).unwrap();
+        assert_eq!(runs.len(), 1);
+        let run_obj = store.get(&runs[0]).unwrap();
+        if let morph_core::MorphObject::Run(run) = run_obj {
+            let trace_hash = morph_core::Hash::from_hex(&run.trace).unwrap();
+            if let morph_core::MorphObject::Trace(trace) = store.get(&trace_hash).unwrap() {
+                assert_eq!(trace.events.len(), 5, "trace should have 5 events");
+                assert_eq!(trace.events[0].kind, "user");
+                assert_eq!(trace.events[2].kind, "tool_call");
+            } else { panic!("expected Trace"); }
+        } else { panic!("expected Run"); }
     }
 
     #[tokio::test]
@@ -356,7 +399,7 @@ mod tests {
         let ws = dir.path().to_str().unwrap().to_string();
         server
             .morph_record_session(Parameters(RecordSessionParams {
-                prompt: "test".into(), response: "response".into(),
+                prompt: Some("test".into()), response: Some("response".into()), messages: None,
                 workspace_path: Some(ws.clone()), model_name: None, agent_id: None,
             })).await.unwrap();
         let store = morph_core::open_store(&dir.path().join(".morph")).unwrap();
@@ -403,7 +446,7 @@ mod tests {
         std::fs::write(dir.path().join("code.txt"), "fn main() {}").unwrap();
         server
             .morph_record_session(Parameters(RecordSessionParams {
-                prompt: "Build it".into(), response: "Built".into(),
+                prompt: Some("Build it".into()), response: Some("Built".into()), messages: None,
                 workspace_path: Some(ws.clone()), model_name: Some("gpt-4".into()), agent_id: Some("cursor-agent".into()),
             })).await.unwrap();
         let store = morph_core::open_store(&dir.path().join(".morph")).unwrap();

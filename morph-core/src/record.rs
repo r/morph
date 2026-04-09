@@ -57,6 +57,13 @@ pub fn record_eval_metrics(path: &Path) -> Result<std::collections::BTreeMap<Str
     Ok(out)
 }
 
+/// A single message in a conversation (user prompt, assistant response, tool call, etc.).
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct ConversationMessage {
+    pub role: String,
+    pub content: String,
+}
+
 /// Record a single prompt/response session as a Run with a Trace (no files).
 /// Uses the identity pipeline. Call this from the IDE so the agent can pass its own response text.
 pub fn record_session(
@@ -66,42 +73,57 @@ pub fn record_session(
     model_name: Option<&str>,
     agent_id: Option<&str>,
 ) -> Result<Hash, MorphError> {
+    let messages = vec![
+        ConversationMessage { role: "user".into(), content: prompt.to_string() },
+        ConversationMessage { role: "assistant".into(), content: response.to_string() },
+    ];
+    record_conversation(store, &messages, model_name, agent_id)
+}
+
+/// Record a full multi-turn conversation as a Run with a Trace.
+/// Each message becomes a TraceEvent preserving the complete back-and-forth
+/// (user prompts, assistant responses, tool calls, tool results, etc.).
+pub fn record_conversation(
+    store: &dyn Store,
+    messages: &[ConversationMessage],
+    model_name: Option<&str>,
+    agent_id: Option<&str>,
+) -> Result<Hash, MorphError> {
     let now = chrono::Utc::now().to_rfc3339();
-    let mut prompt_payload = BTreeMap::new();
-    prompt_payload.insert("text".to_string(), serde_json::Value::String(prompt.to_string()));
-    let mut response_payload = BTreeMap::new();
-    response_payload.insert("text".to_string(), serde_json::Value::String(response.to_string()));
 
-    let trace = MorphObject::Trace(Trace {
-        events: vec![
+    let events: Vec<TraceEvent> = messages
+        .iter()
+        .enumerate()
+        .map(|(i, msg)| {
+            let mut payload = BTreeMap::new();
+            payload.insert("text".into(), serde_json::Value::String(msg.content.clone()));
             TraceEvent {
-                id: "evt_prompt".to_string(),
-                seq: 0,
+                id: format!("evt_{}", i),
+                seq: i as u64,
                 ts: now.clone(),
-                kind: "prompt".to_string(),
-                payload: prompt_payload,
-            },
-            TraceEvent {
-                id: "evt_response".to_string(),
-                seq: 1,
-                ts: now.clone(),
-                kind: "response".to_string(),
-                payload: response_payload,
-            },
-        ],
-    });
+                kind: msg.role.clone(),
+                payload,
+            }
+        })
+        .collect();
 
+    let trace = MorphObject::Trace(Trace { events });
     let trace_hash = store.put(&trace)?;
 
     let identity = identity_pipeline();
     let pipeline_hash = store.put(&identity)?;
 
+    // Extract first user message and last assistant message for the prompt blob summary
+    let first_prompt = messages.iter().find(|m| m.role == "user").map(|m| m.content.as_str()).unwrap_or("");
+    let last_response = messages.iter().rev().find(|m| m.role == "assistant").map(|m| m.content.as_str()).unwrap_or("");
+
     let prompt_blob = MorphObject::Blob(Blob {
         kind: "prompt".to_string(),
         content: serde_json::json!({
-            "text": prompt,
-            "response": response,
+            "text": first_prompt,
+            "response": last_response,
             "timestamp": now,
+            "message_count": messages.len(),
         }),
     });
     store.put(&prompt_blob)?;
@@ -410,6 +432,44 @@ mod tests {
         let result = record_eval_metrics(&path);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("metrics must be an object"));
+    }
+
+    #[test]
+    fn record_conversation_stores_all_messages() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FsStore::new(dir.path().to_path_buf());
+        let messages = vec![
+            ConversationMessage { role: "user".into(), content: "Build a web server".into() },
+            ConversationMessage { role: "assistant".into(), content: "I'll create the files".into() },
+            ConversationMessage { role: "tool_call".into(), content: "write_file(server.py)".into() },
+            ConversationMessage { role: "tool_result".into(), content: "file written".into() },
+            ConversationMessage { role: "assistant".into(), content: "Done! Server is ready.".into() },
+        ];
+        let hash = record_conversation(&store, &messages, Some("qwen-3.5"), Some("opencode")).unwrap();
+        let run_obj = store.get(&hash).unwrap();
+        let run = match run_obj {
+            MorphObject::Run(r) => r,
+            _ => panic!("expected Run"),
+        };
+        assert_eq!(run.environment.model, "qwen-3.5");
+        assert_eq!(run.agent.id, "opencode");
+
+        let trace_hash = Hash::from_hex(&run.trace).unwrap();
+        let trace_obj = store.get(&trace_hash).unwrap();
+        let trace = match trace_obj {
+            MorphObject::Trace(t) => t,
+            _ => panic!("expected Trace"),
+        };
+        assert_eq!(trace.events.len(), 5);
+        assert_eq!(trace.events[0].kind, "user");
+        assert_eq!(trace.events[1].kind, "assistant");
+        assert_eq!(trace.events[2].kind, "tool_call");
+        assert_eq!(trace.events[3].kind, "tool_result");
+        assert_eq!(trace.events[4].kind, "assistant");
+        assert_eq!(
+            trace.events[0].payload["text"].as_str().unwrap(),
+            "Build a web server"
+        );
     }
 
     #[test]

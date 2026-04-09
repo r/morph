@@ -301,10 +301,13 @@ pub enum RunCmd {
         artifact: Vec<PathBuf>,
     },
     RecordSession {
-        #[arg(long)]
-        prompt: String,
-        #[arg(long)]
-        response: String,
+        #[arg(long, required_unless_present = "messages")]
+        prompt: Option<String>,
+        #[arg(long, required_unless_present = "messages")]
+        response: Option<String>,
+        /// JSON array of messages: [{"role":"user","content":"..."},{"role":"assistant","content":"..."},...]
+        #[arg(long, conflicts_with_all = ["prompt", "response"])]
+        messages: Option<String>,
         #[arg(long)]
         model_name: Option<String>,
         #[arg(long)]

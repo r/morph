@@ -46,22 +46,15 @@ pub fn extract_pipeline_from_run(
         }
     };
 
-    if trace.events.len() != 2 {
-        return Err(MorphError::Serialization(format!(
-            "unsupported trace shape: expected 2 events (prompt, response), got {}",
-            trace.events.len()
-        )));
-    }
+    let prompt_event = trace.events.iter()
+        .find(|e| e.kind == "prompt" || e.kind == "user")
+        .ok_or_else(|| MorphError::Serialization(
+            "unsupported trace shape: no prompt/user event found".into()
+        ))?;
 
-    let prompt_event = &trace.events[0];
-    let response_event = &trace.events[1];
-
-    if prompt_event.kind != "prompt" || response_event.kind != "response" {
-        return Err(MorphError::Serialization(format!(
-            "unsupported trace shape: expected (prompt, response), got ({}, {})",
-            prompt_event.kind, response_event.kind
-        )));
-    }
+    let response_event = trace.events.iter().rev()
+        .find(|e| e.kind == "response" || e.kind == "assistant")
+        .unwrap_or(prompt_event);
 
     let prompt_text = prompt_event
         .payload
@@ -324,7 +317,7 @@ mod tests {
         let prov = pipeline.provenance.as_ref().expect("provenance should be present");
         assert_eq!(prov.derived_from_run.as_deref(), Some(run_hash.to_string().as_str()));
         assert_eq!(prov.derived_from_trace.as_deref(), Some(trace_hash.to_string().as_str()));
-        assert_eq!(prov.derived_from_event.as_deref(), Some("evt_response"));
+        assert_eq!(prov.derived_from_event.as_deref(), Some("evt_1"));
         assert_eq!(prov.method, "extracted");
     }
 
@@ -531,11 +524,11 @@ mod tests {
         let result = extract_pipeline_from_run(store.as_ref(), &run_hash);
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("unsupported trace shape"), "error: {}", msg);
+        assert!(msg.contains("no prompt/user event found"), "error: {}", msg);
     }
 
     #[test]
-    fn extract_fails_on_wrong_event_count() {
+    fn extract_fails_on_no_prompt_event() {
         let (_dir, store) = setup_repo();
 
         let trace = MorphObject::Trace(Trace {
@@ -543,7 +536,7 @@ mod tests {
                 id: "e1".into(),
                 seq: 0,
                 ts: "2025-01-01T00:00:00Z".into(),
-                kind: "prompt".into(),
+                kind: "system".into(),
                 payload: BTreeMap::new(),
             }],
         });
@@ -578,6 +571,6 @@ mod tests {
         let result = extract_pipeline_from_run(store.as_ref(), &run_hash);
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("unsupported trace shape"), "error: {}", msg);
+        assert!(msg.contains("no prompt/user event found"), "error: {}", msg);
     }
 }
