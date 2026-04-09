@@ -6,12 +6,23 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "morph")]
 #[command(about = "Version control for transformation pipelines")]
+#[command(version = long_version())]
 pub struct Cli {
     #[arg(short, long, global = true)]
     pub verbose: bool,
 
     #[command(subcommand)]
     pub command: Command,
+}
+
+fn long_version() -> &'static str {
+    const V: &str = concat!(
+        env!("CARGO_PKG_VERSION"),
+        " (built ",
+        env!("MORPH_BUILD_DATE"),
+        ")"
+    );
+    V
 }
 
 #[derive(clap::Subcommand)]

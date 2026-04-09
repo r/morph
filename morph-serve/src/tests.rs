@@ -439,6 +439,49 @@ async fn test_compat_graph() {
     assert!(json["edges"].is_array());
 }
 
+#[tokio::test]
+async fn test_compat_graph_with_runs() {
+    let (dir, store) = setup_repo();
+    morph_core::record_session(store.as_ref(), "prompt", "response", Some("gpt"), Some("agent"))
+        .unwrap();
+
+    let app = build_router(&make_config(&dir));
+    let (status, json) = get_json(app, "/api/graph").await;
+    assert_eq!(status, StatusCode::OK);
+    let nodes = json["nodes"].as_array().unwrap();
+    let edges = json["edges"].as_array().unwrap();
+    assert!(nodes.len() >= 3, "should have run, trace, and pipeline nodes");
+    assert!(edges.len() >= 2, "should have run->trace and run->pipeline edges");
+
+    let types: Vec<&str> = nodes.iter().map(|n| n["type"].as_str().unwrap()).collect();
+    assert!(types.contains(&"run"), "should contain a run node");
+    assert!(types.contains(&"trace"), "should contain a trace node");
+    assert!(types.contains(&"pipeline"), "should contain a pipeline node");
+
+    let node_ids: std::collections::HashSet<&str> =
+        nodes.iter().map(|n| n["id"].as_str().unwrap()).collect();
+    for e in edges {
+        assert!(
+            node_ids.contains(e["from"].as_str().unwrap()),
+            "edge 'from' should reference an existing node"
+        );
+        assert!(
+            node_ids.contains(e["to"].as_str().unwrap()),
+            "edge 'to' should reference an existing node"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_compat_graph_empty() {
+    let (dir, _store) = setup_repo();
+    let app = build_router(&make_config(&dir));
+    let (status, json) = get_json(app, "/api/graph").await;
+    assert_eq!(status, StatusCode::OK);
+    let nodes = json["nodes"].as_array().unwrap();
+    assert!(nodes.is_empty(), "empty repo should return no nodes");
+}
+
 // ── Org policy endpoints ────────────────────────────────────────────
 
 #[tokio::test]

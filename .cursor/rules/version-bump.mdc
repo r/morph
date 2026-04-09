@@ -1,0 +1,53 @@
+---
+description: Bump the Morph version number when making user-visible changes
+globs:
+alwaysApply: true
+---
+
+# Version Bumping
+
+When you make a **user-visible change** to Morph (new CLI command, changed behavior, new MCP tool, bug fix, etc.) you MUST bump the version number. Version numbers live in **one place**: the workspace `Cargo.toml`.
+
+## Where the version is defined
+
+```toml
+# Cargo.toml (workspace root)
+[workspace.package]
+version = "X.Y.Z"
+```
+
+All crates inherit this via `version.workspace = true`. Do NOT edit individual crate `Cargo.toml` versions.
+
+## When to bump
+
+| Change type | Bump | Example |
+|---|---|---|
+| Breaking CLI/MCP change | **minor** (0.X.0) | Removing a flag, renaming a command |
+| New feature or command | **minor** (0.X.0) | Adding `morph cherry-pick` |
+| Bug fix or small improvement | **patch** (0.0.X) | Fixing a crash in `morph merge` |
+| Internal refactor only | No bump needed | Renaming a private function |
+
+While pre-1.0, treat minor as "feature" and patch as "fix".
+
+## How to bump
+
+1. Edit the `version` field in the **workspace** `Cargo.toml`:
+   ```toml
+   [workspace.package]
+   version = "0.3.0"  # was 0.2.0
+   ```
+2. That's it. All crates pick it up automatically. The build date is embedded at compile time.
+
+## Version output format
+
+Both binaries include the build date automatically:
+- `morph --version` → `morph 0.2.0 (built 2026-04-09)`
+- `morph-mcp --version` → `morph-mcp 0.2.0 (built 2026-04-09)`
+
+The MCP server also reports its version in the `ServerInfo` response to clients.
+
+## Checklist
+
+- [ ] Version bumped in workspace `Cargo.toml` for user-visible changes
+- [ ] `cargo build` succeeds after the bump
+- [ ] Version appears correct in `morph --version` output

@@ -1,0 +1,5 @@
+- name: version_flag_prints_version
+  init: false
+  steps:
+    - morph: ["--version"]
+      stdout_contains: "morph 0.2.0 (built"

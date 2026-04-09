@@ -1,6 +1,6 @@
 [package]
 name = "morph-serve"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 description = "Morph hosted service: shared inspection and policy layer for team collaboration"
 

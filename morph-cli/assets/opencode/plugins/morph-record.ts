@@ -1,19 +1,21 @@
 /**
  * Morph session recording plugin for OpenCode.
  *
- * Tracks prompts and responses via the generic event handler. When the session
- * goes idle, calls `morph run record-session` to persist the turn as a Morph
- * Run + Trace.
+ * Uses the `stop` hook (awaited — blocks the agent from exiting) to fetch
+ * the session's messages via the SDK client and record them as a Morph
+ * Run + Trace. Falls back to `session.idle` if the stop hook doesn't fire.
  *
- * This provides always-on recording without relying on the agent to call
- * morph_record_session via MCP.
+ * If the agent already called `morph_record_session` via MCP during the
+ * turn, we skip to avoid double-recording.
  */
 
-import { writeFileSync, appendFileSync, mkdirSync } from "fs"
+import { appendFileSync, mkdirSync, writeFileSync } from "fs"
 import { join } from "path"
 
-let pendingPrompt = ""
-let pendingResponse = ""
+const recordedSessions = new Set<string>()
+let agentRecordedThisTurn = false
+let eventSampleCount = 0
+const MAX_EVENT_SAMPLES = 30
 
 function appendLog(directory: string, line: string) {
   try {
@@ -34,6 +36,75 @@ function writeDebug(directory: string, filename: string, data: unknown) {
   } catch {}
 }
 
+function extractPartsText(parts: any[]): string {
+  if (!Array.isArray(parts)) return ""
+  return parts
+    .filter((p: any) => p.type === "text")
+    .map((p: any) => p.text || p.content || "")
+    .filter(Boolean)
+    .join("\n")
+}
+
+function extractText(content: unknown): string {
+  if (typeof content === "string") return content
+  if (Array.isArray(content)) return extractPartsText(content)
+  return ""
+}
+
+async function fetchSessionMessages(
+  client: any,
+  sessionId: string,
+  directory: string,
+): Promise<{ prompt: string; response: string }> {
+  let prompt = ""
+  let response = ""
+
+  const resp = await client.session.messages({ path: { id: sessionId } })
+  const messages: any[] = resp?.data ?? resp ?? []
+  appendLog(directory, `fetched ${messages.length} messages for ${sessionId}`)
+
+  for (const entry of messages) {
+    const info = entry.info || entry
+    const role = info.role
+    const parts = entry.parts || info.parts || []
+    const text = extractPartsText(parts) || extractText(info.content)
+
+    if (role === "user" && text) prompt = text
+    if (role === "assistant" && text) response = text
+  }
+
+  return { prompt, response }
+}
+
+async function recordSession(
+  $: any,
+  directory: string,
+  sessionId: string,
+  prompt: string,
+  response: string,
+): Promise<boolean> {
+  const turnKey = `${sessionId}:${prompt.slice(0, 80)}`
+  if (recordedSessions.has(turnKey)) {
+    appendLog(directory, "skipping — already recorded this turn")
+    return false
+  }
+
+  writeDebug(directory, "last-record.json", {
+    timestamp: new Date().toISOString(),
+    sessionId,
+    promptLength: prompt.length,
+    responseLength: response.length,
+  })
+
+  await $`morph run record-session --prompt ${prompt} --response ${response}`.cwd(
+    directory,
+  )
+
+  recordedSessions.add(turnKey)
+  appendLog(directory, `recorded session (${prompt.length}+${response.length} chars)`)
+  return true
+}
+
 export const MorphRecordPlugin = async ({
   $,
   client,
@@ -43,87 +114,135 @@ export const MorphRecordPlugin = async ({
   client: any
   directory: string
 }) => {
-  appendLog(directory, "plugin loaded")
+  appendLog(directory, "plugin loaded (v3 — stop hook)")
 
   return {
-    event: async ({ event }: { event: any }) => {
-      if (event.type === "message.updated") {
-        const msg = event.properties?.message
-        if (!msg) return
+    // Track if the agent already recorded via MCP (avoid double-recording)
+    "tool.execute.after": async (input: any) => {
+      if (
+        input.tool === "morph_record_session" ||
+        input.tool === "mcp_morph_record_session"
+      ) {
+        agentRecordedThisTurn = true
+        appendLog(directory, "agent called morph_record_session — will skip plugin recording")
+      }
+    },
 
-        if (msg.role === "user" && msg.content) {
-          const text =
-            typeof msg.content === "string"
-              ? msg.content
-              : Array.isArray(msg.content)
-                ? msg.content
-                    .filter((p: any) => p.type === "text")
-                    .map((p: any) => p.text)
-                    .join("\n")
-                : ""
-          if (text) {
-            pendingPrompt = text
-            appendLog(directory, "captured prompt")
-          }
-        }
+    // Primary: stop hook is awaited, so recording completes before exit
+    stop: async (input: any) => {
+      const sessionId =
+        input.sessionID || input.session_id || (input as any).id
 
-        if (msg.role === "assistant" && msg.content) {
-          const text =
-            typeof msg.content === "string"
-              ? msg.content
-              : Array.isArray(msg.content)
-                ? msg.content
-                    .filter((p: any) => p.type === "text")
-                    .map((p: any) => p.text)
-                    .join("\n")
-                : ""
-          if (text) {
-            pendingResponse = text
-            appendLog(directory, "captured response")
-          }
-        }
+      appendLog(directory, `stop hook fired (session=${sessionId || "unknown"})`)
 
+      if (agentRecordedThisTurn) {
+        appendLog(directory, "agent already recorded — skipping")
+        agentRecordedThisTurn = false
         return
+      }
+
+      if (!sessionId) {
+        appendLog(directory, "stop hook: no session ID, trying session.list")
+        try {
+          const sessResp = await client.session.list()
+          const sessions: any[] = sessResp?.data ?? sessResp ?? []
+          if (sessions.length > 0) {
+            const sid = sessions[0].id || sessions[0].sessionID
+            if (sid) {
+              const { prompt, response } = await fetchSessionMessages(
+                client,
+                sid,
+                directory,
+              )
+              if (prompt || response) {
+                await recordSession($, directory, sid, prompt, response)
+              }
+            }
+          }
+        } catch (err: any) {
+          appendLog(directory, `stop fallback failed: ${err?.message || err}`)
+        }
+        agentRecordedThisTurn = false
+        return
+      }
+
+      try {
+        const { prompt, response } = await fetchSessionMessages(
+          client,
+          sessionId,
+          directory,
+        )
+        if (prompt || response) {
+          await recordSession($, directory, sessionId, prompt, response)
+        } else {
+          appendLog(directory, "stop hook: no prompt/response in session messages")
+        }
+      } catch (err: any) {
+        appendLog(directory, `stop hook error: ${err?.message || err}`)
+      }
+
+      agentRecordedThisTurn = false
+    },
+
+    // Fallback: session.idle is fire-and-forget but catches edge cases
+    event: async ({ event }: { event: any }) => {
+      // Diagnostic: log early events so we can debug payload shapes
+      if (eventSampleCount < MAX_EVENT_SAMPLES) {
+        eventSampleCount++
+        const propKeys = event.properties
+          ? Object.keys(event.properties)
+          : []
+        appendLog(
+          directory,
+          `event[${eventSampleCount}]: ${event.type} propKeys=[${propKeys.join(",")}]`,
+        )
+        if (
+          event.type === "message.updated" ||
+          event.type === "message.part.updated"
+        ) {
+          const safeProps: Record<string, unknown> = {}
+          for (const [k, v] of Object.entries(event.properties || {})) {
+            const s = JSON.stringify(v)
+            safeProps[k] = s && s.length > 500 ? `(${s.length} chars)` : v
+          }
+          writeDebug(directory, `event-${event.type}-${Date.now()}.json`, {
+            type: event.type,
+            propKeys,
+            sample: safeProps,
+          })
+        }
       }
 
       if (event.type !== "session.idle") return
-      if (!pendingPrompt && !pendingResponse) {
-        appendLog(
-          directory,
-          "session.idle fired but no pending prompt/response — skipped",
-        )
+
+      // session.idle is a backup — the stop hook should have handled it
+      const sessionId =
+        event.properties?.session?.id ||
+        event.properties?.sessionID ||
+        event.properties?.session_id ||
+        (event as any).session_id ||
+        (event as any).sessionID
+
+      if (!sessionId) {
+        appendLog(directory, "session.idle: no session ID")
         return
       }
 
-      const prompt = pendingPrompt
-      const response = pendingResponse
-      pendingPrompt = ""
-      pendingResponse = ""
+      if (recordedSessions.has(`${sessionId}:`)) return
+
+      appendLog(directory, `session.idle fallback for ${sessionId}`)
 
       try {
-        writeDebug(directory, "last-opencode-idle.json", {
-          timestamp: new Date().toISOString(),
-          promptLength: prompt.length,
-          responseLength: response.length,
-        })
-
-        await $`morph run record-session --prompt ${prompt} --response ${response}`.cwd(
+        const { prompt, response } = await fetchSessionMessages(
+          client,
+          sessionId,
           directory,
         )
-
-        appendLog(directory, "recorded session via CLI")
+        if (prompt || response) {
+          await recordSession($, directory, sessionId, prompt, response)
+        }
       } catch (err: any) {
-        const errMsg = err?.message || String(err)
-        appendLog(directory, `error recording session: ${errMsg}`)
-        try {
-          await client?.app?.log?.({
-            body: {
-              service: "morph-record",
-              level: "error",
-              message: `Failed to record Morph session: ${errMsg}`,
-            },
-          })
-        } catch {}
+        appendLog(directory, `session.idle error: ${err?.message || err}`)
       }
     },
   }

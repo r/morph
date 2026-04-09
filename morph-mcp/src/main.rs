@@ -245,7 +245,7 @@ impl ServerHandler for MorphServer {
         ServerInfo {
             server_info: rmcp::model::Implementation {
                 name: "morph-mcp".into(),
-                version: env!("CARGO_PKG_VERSION").into(),
+                version: concat!(env!("CARGO_PKG_VERSION"), " (built ", env!("MORPH_BUILD_DATE"), ")").into(),
                 ..Default::default()
             },
             instructions: Some(
@@ -484,14 +484,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--help" || a == "-h") {
         eprintln!(
-            "morph-mcp {}\n\nMCP server for Morph. Cursor starts this process and talks over stdio.\n\
+            "morph-mcp {} (built {})\n\nMCP server for Morph. Cursor starts this process and talks over stdio.\n\
              Optional: set MORPH_WORKSPACE or pass it as first arg.\nVerify: morph-mcp --version",
-            env!("CARGO_PKG_VERSION")
+            env!("CARGO_PKG_VERSION"),
+            env!("MORPH_BUILD_DATE"),
         );
         return Ok(());
     }
     if args.iter().any(|a| a == "--version" || a == "-V") {
-        eprintln!("morph-mcp {}", env!("CARGO_PKG_VERSION"));
+        eprintln!("morph-mcp {} (built {})", env!("CARGO_PKG_VERSION"), env!("MORPH_BUILD_DATE"));
         return Ok(());
     }
     let default_workspace = default_workspace_from_env_and_args(&args);
