@@ -3,8 +3,10 @@
     a.txt: "aaa"
   steps:
     - morph: [add, a.txt]
-    - morph: [commit, -m, "first"]
-      capture: base_hash
+    - morph: [commit, -m, "first", --json]
+      capture_json_field:
+        var: base_hash
+        field: hash
     - write_file:
         path: b.txt
         content: "bbb"

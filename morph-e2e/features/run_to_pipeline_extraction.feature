@@ -21,7 +21,7 @@ Feature: Run to Pipeline extraction (Phase 3)
     And stdout contains "<run_hash>"
     When I run "morph add src/app.rs"
     And the last command succeeded
-    When I run "morph commit -m pipeline-commit --pipeline <pipeline_hash>"
+    When I run "morph commit -m pipeline-commit --pipeline <pipeline_hash> --json"
     And the last command succeeded
     And I capture the last output as "commit_hash"
     When I run "morph show <commit_hash>"

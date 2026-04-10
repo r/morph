@@ -16,9 +16,11 @@
         content: "world"
     - morph: [add, hello.txt]
       cwd: repo_a
-    - morph: [commit, -m, "first commit"]
+    - morph: [commit, -m, "first commit", --json]
       cwd: repo_a
-      capture: commit_hash
+      capture_json_field:
+        var: commit_hash
+        field: hash
       assert_hash: true
 
     # Fetch from repo_a into repo_b
@@ -116,9 +118,11 @@
         content: "fn main() {}"
     - morph: [add, code.txt]
       cwd: local
-    - morph: [commit, -m, "evidence commit", --from-run, "${run_hash}"]
+    - morph: [commit, -m, "evidence commit", --from-run, "${run_hash}", --json]
       cwd: local
-      capture: commit_hash
+      capture_json_field:
+        var: commit_hash
+        field: hash
       assert_hash: true
 
     # Push to remote

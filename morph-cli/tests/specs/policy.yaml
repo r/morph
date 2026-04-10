@@ -21,8 +21,10 @@
     a.txt: "aaa"
   steps:
     - morph: [add, a.txt]
-    - morph: [commit, -m, "initial"]
-      capture: commit_hash
+    - morph: [commit, -m, "initial", --json]
+      capture_json_field:
+        var: commit_hash
+        field: hash
     - morph: [pipeline, identity-hash]
       capture: id_hash
     - morph: [policy, set-default-eval, "${id_hash}"]

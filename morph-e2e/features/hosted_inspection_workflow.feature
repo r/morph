@@ -8,7 +8,7 @@ Feature: Hosted inspection workflow
     And a file "src/main.py" with content "print('hello')"
     When I run "morph add ."
     Then the last command succeeded
-    When I run "morph commit -m initial --metrics {\"acc\":0.95,\"f1\":0.88}"
+    When I run "morph commit -m initial --metrics {\"acc\":0.95,\"f1\":0.88} --json"
     Then the last command succeeded
     When I capture the last output as "commit_hash"
     When I create a JSON file "metrics.json" with metrics "acc=0.95,f1=0.88"

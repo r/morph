@@ -4,14 +4,18 @@
     a.txt: "original"
   steps:
     - morph: [add, .]
-    - morph: [commit, -m, first]
-      capture: c1
+    - morph: [commit, -m, first, --json]
+      capture_json_field:
+        var: c1
+        field: hash
     - write_file:
         path: a.txt
         content: "changed"
     - morph: [add, .]
-    - morph: [commit, -m, second]
-      capture: c2
+    - morph: [commit, -m, second, --json]
+      capture_json_field:
+        var: c2
+        field: hash
     - morph: [revert, "${c2}"]
       capture: revert_hash
       assert_hash: true

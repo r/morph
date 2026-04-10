@@ -67,7 +67,10 @@ fn main() -> anyhow::Result<()> {
         Command::Init { path } => {
             verbose_msg(verbose, &format!("initializing repo at {}", path.display()));
             morph_core::init_repo(&path)?;
-            println!("Initialized Morph repository in {}", path.display());
+            let abs_morph = path.canonicalize()
+                .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(&path))
+                .join(".morph");
+            println!("Initialized empty Morph repository in {}/", abs_morph.display());
         }
 
         #[cfg(feature = "cursor-setup")]
@@ -295,12 +298,22 @@ fn main() -> anyhow::Result<()> {
 
         Command::Add { paths } => {
             let (repo_root, store) = get_store(verbose)?;
-            for h in morph_core::add_paths(&store, &repo_root, &paths)? {
-                println!("{}", h);
+            let any_dir = paths.iter().any(|p| {
+                p.as_os_str() == "." || repo_root.join(p).is_dir()
+            });
+            let hashes = morph_core::add_paths(&store, &repo_root, &paths)?;
+            if any_dir && !verbose {
+                if !hashes.is_empty() {
+                    eprintln!("{} file{} staged", hashes.len(), if hashes.len() == 1 { "" } else { "s" });
+                }
+            } else {
+                for h in &hashes {
+                    println!("{}", h);
+                }
             }
         }
 
-        Command::Commit { message, pipeline, eval_suite, metrics, author, from_run } => {
+        Command::Commit { message, pipeline, eval_suite, metrics, author, from_run, json } => {
             let (repo_root, store) = get_store(verbose)?;
             let morph_dir = repo_root.join(".morph");
             let version = read_repo_version(&morph_dir)?;
@@ -318,11 +331,35 @@ fn main() -> anyhow::Result<()> {
                 }
                 None => None,
             };
+
+            let branch = morph_core::current_branch(&store)?.unwrap_or_else(|| "main".to_string());
+            let is_root = morph_core::resolve_head(&store)?.is_none();
+            let index = morph_core::read_index(&morph_dir)?;
+            let file_count = index.entries.len();
+
             let hash = morph_core::create_tree_commit_with_provenance(
                 &store, &repo_root, prog_hash.as_ref(), suite_hash.as_ref(),
-                observed_metrics, message, author, Some(&version), provenance.as_ref(),
+                observed_metrics, message.clone(), author, Some(&version), provenance.as_ref(),
             )?;
-            println!("{}", hash);
+
+            if json {
+                let out = serde_json::json!({
+                    "hash": hash.to_string(),
+                    "branch": branch,
+                    "root_commit": is_root,
+                    "message": message,
+                    "files_changed": file_count,
+                });
+                println!("{}", serde_json::to_string(&out).unwrap());
+            } else {
+                let short = &hash.to_string()[..8];
+                let root_tag = if is_root { " (root-commit)" } else { "" };
+                let first_line = message.lines().next().unwrap_or("");
+                println!("[{}{} {}] {}", branch, root_tag, short, first_line);
+                if file_count > 0 {
+                    println!(" {} file{} changed", file_count, if file_count == 1 { "" } else { "s" });
+                }
+            }
         }
 
         Command::Show { hash } => {

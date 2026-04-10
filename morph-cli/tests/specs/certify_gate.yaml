@@ -8,8 +8,10 @@
   steps:
     - morph: [policy, set, policy.json]
     - morph: [add, a.txt]
-    - morph: [commit, -m, "initial commit"]
-      capture: commit_hash
+    - morph: [commit, -m, "initial commit", --json]
+      capture_json_field:
+        var: commit_hash
+        field: hash
     - morph: [certify, --metrics-file, metrics.json]
       stdout_contains: "PASS"
 
@@ -19,8 +21,10 @@
     metrics.json: '{"acc": 0.95}'
   steps:
     - morph: [add, a.txt]
-    - morph: [commit, -m, "initial"]
-      capture: commit_hash
+    - morph: [commit, -m, "initial", --json]
+      capture_json_field:
+        var: commit_hash
+        field: hash
     - morph: [certify, --metrics-file, metrics.json, --commit, "${commit_hash}"]
       stdout_contains: "PASS"
 
@@ -70,8 +74,10 @@
   steps:
     - morph: [policy, set, policy.json]
     - morph: [add, a.txt]
-    - morph: [commit, -m, "initial"]
-      capture: commit_hash
+    - morph: [commit, -m, "initial", --json]
+      capture_json_field:
+        var: commit_hash
+        field: hash
     - morph: [certify, --metrics-file, metrics.json]
       stdout_contains: "PASS"
     - morph: [gate]

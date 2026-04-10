@@ -34,6 +34,8 @@
     hello.txt: "hello"
   steps:
     - morph: [add, hello.txt]
-    - morph: [commit, -m, ""]
-      capture: hash
+    - morph: [commit, -m, "", --json]
+      capture_json_field:
+        var: hash
+        field: hash
       assert_hash: true

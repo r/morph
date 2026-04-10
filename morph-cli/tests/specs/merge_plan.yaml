@@ -14,8 +14,10 @@
     - morph: [add, .morph/evals/eb.json]
       capture_first_line: suite_b_hash
     - morph: [add, a.txt]
-    - morph: [commit, -m, "main commit", --pipeline, "${prog_hash}", --eval-suite, "${suite_a_hash}", --metrics, '{"acc": 0.9}']
-      capture: main_commit
+    - morph: [commit, -m, "main commit", --pipeline, "${prog_hash}", --eval-suite, "${suite_a_hash}", --metrics, '{"acc": 0.9}', --json]
+      capture_json_field:
+        var: main_commit
+        field: hash
     - morph: [branch, feature]
     - morph: [checkout, feature]
     - write_file:

@@ -9,12 +9,43 @@
     - morph: [add, .morph/evals/e.json]
       capture_first_line: suite_hash
 
-    - morph: [commit, -m, first commit, --pipeline, "${prog_hash}", --eval-suite, "${suite_hash}", --metrics, "{}"]
-      capture: commit_hash
+    - morph: [commit, -m, first commit, --pipeline, "${prog_hash}", --eval-suite, "${suite_hash}", --metrics, "{}", --json]
+      capture_json_field:
+        var: commit_hash
+        field: hash
       assert_hash: true
 
     - morph: [log]
       stdout_contains: first commit
+
+# Commit prints git-style summary to stdout by default.
+- name: commit_prints_summary
+  files:
+    foo.txt: "hello"
+  steps:
+    - morph: [add, foo.txt]
+    - morph: [commit, -m, "my first commit"]
+      stdout_contains:
+        - "[main (root-commit)"
+        - "my first commit"
+        - "1 file changed"
+
+# Commit --json outputs structured JSON.
+- name: commit_json_output
+  files:
+    bar.txt: "world"
+  steps:
+    - morph: [add, bar.txt]
+    - morph: [commit, -m, "json test", --json]
+      capture_json_field:
+        var: commit_hash
+        field: hash
+      assert_hash: true
+      stdout_contains:
+        - "\"hash\""
+        - "\"branch\""
+        - "\"root_commit\""
+        - "\"files_changed\""
 
 # Commit project files only (no prompt/response yet). Check filesystem and CLI.
 - name: commit_project_files_only
@@ -29,8 +60,10 @@
       capture: prog_hash
     - morph: [add, .morph/evals/e.json]
       capture_first_line: suite_hash
-    - morph: [commit, -m, first commit, --pipeline, "${prog_hash}", --eval-suite, "${suite_hash}", --metrics, "{}"]
-      capture: commit_hash
+    - morph: [commit, -m, first commit, --pipeline, "${prog_hash}", --eval-suite, "${suite_hash}", --metrics, "{}", --json]
+      capture_json_field:
+        var: commit_hash
+        field: hash
       assert_hash: true
     - morph: [log]
       stdout_contains: first commit
@@ -53,8 +86,10 @@
       capture: prog_hash
     - morph: [add, .morph/evals/e.json]
       capture_first_line: suite_hash
-    - morph: [commit, -m, with session, --pipeline, "${prog_hash}", --eval-suite, "${suite_hash}", --metrics, "{}"]
-      capture: commit_hash
+    - morph: [commit, -m, with session, --pipeline, "${prog_hash}", --eval-suite, "${suite_hash}", --metrics, "{}", --json]
+      capture_json_field:
+        var: commit_hash
+        field: hash
       assert_hash: true
     - morph: [log]
       stdout_contains: with session

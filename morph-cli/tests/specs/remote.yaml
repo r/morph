@@ -33,8 +33,10 @@
     - morph: [init, "${repo}/remote_repo"]
     - morph: [remote, add, origin, "${repo}/remote_repo"]
     - morph: [add, hello.txt]
-    - morph: [commit, -m, "first commit"]
-      capture: commit_hash
+    - morph: [commit, -m, "first commit", --json]
+      capture_json_field:
+        var: commit_hash
+        field: hash
       assert_hash: true
     - morph: [push, origin, main]
       stdout_contains: "Pushed"

@@ -1,7 +1,9 @@
 - name: commit_no_staged_files
   steps:
-    - morph: [commit, -m, "empty"]
-      capture: commit_hash
+    - morph: [commit, -m, "empty", --json]
+      capture_json_field:
+        var: commit_hash
+        field: hash
       assert_hash: true
 
 - name: log_no_commits

@@ -5,7 +5,7 @@ Feature: Team CI workflow (Phase 6)
     And a file "code.txt" with content "fn main() {}"
     When I run "morph add code.txt"
     Then the last command succeeded
-    When I run "morph commit -m initial-commit"
+    When I run "morph commit -m initial-commit --json"
     Then the last command succeeded
     When I capture the last output as "commit_hash"
     When I create a JSON file "metrics.json" with metrics "tests_passed=42,tests_total=42,pass_rate=1.0"
@@ -40,7 +40,7 @@ Feature: Team CI workflow (Phase 6)
     And a file "src/lib.rs" with content "pub fn add(a: i32, b: i32) -> i32 { a + b }"
     When I run "morph add src/lib.rs"
     Then the last command succeeded
-    When I run "morph commit -m main-baseline"
+    When I run "morph commit -m main-baseline --json"
     Then the last command succeeded
     When I capture the last output as "main_commit"
     When I run "morph branch feature-auth"
@@ -50,7 +50,7 @@ Feature: Team CI workflow (Phase 6)
     Given a file "src/auth.rs" with content "pub fn login() -> bool { true }"
     When I run "morph add src/auth.rs"
     Then the last command succeeded
-    When I run "morph commit -m add-auth-module"
+    When I run "morph commit -m add-auth-module --json"
     Then the last command succeeded
     When I capture the last output as "feature_commit"
     When I create a JSON file "ci-metrics.json" with metrics "tests_passed=10,tests_total=10"

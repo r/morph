@@ -5,7 +5,7 @@ Feature: Rollup squashes commits
     And a file "a.txt" with content "aaa"
     When I run "morph add a.txt"
     And the last command succeeded
-    When I run "morph commit -m first"
+    When I run "morph commit -m first --json"
     And the last command succeeded
     And I capture the last output as "base_hash"
     Given a file "b.txt" with content "bbb"

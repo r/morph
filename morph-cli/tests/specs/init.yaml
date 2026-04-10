@@ -29,14 +29,14 @@
   init: false
   steps:
     - morph: [init, "${repo}"]
-      stdout_contains: "Initialized Morph repository"
+      stdout_contains: "Initialized empty Morph repository"
 
 # After fresh init, CLI commands in repo root should behave sensibly (Cursor perspective).
 - name: init_then_cli_sane
   init: false
   steps:
     - morph: [init, "${repo}"]
-      stdout_contains: "Initialized Morph repository"
+      stdout_contains: "Initialized empty Morph repository"
     - morph: [status]
       stdout_contains: "No files"
     - morph: [log]
@@ -47,7 +47,13 @@
   init: false
   steps:
     - morph: [init, "${repo}"]
-      stdout_contains: "Initialized Morph repository"
+      stdout_contains: "Initialized empty Morph repository"
     - morph: [init, "${repo}"]
       expect_exit: 1
       stderr_contains: "already a morph repository"
+
+- name: init_shows_absolute_path
+  init: false
+  steps:
+    - morph: [init, "${repo}"]
+      stdout_contains: ".morph/"

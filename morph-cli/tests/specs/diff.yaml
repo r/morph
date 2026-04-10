@@ -4,14 +4,18 @@
     a.txt: "hello"
   steps:
     - morph: [add, .]
-    - morph: [commit, -m, first]
-      capture: c1
+    - morph: [commit, -m, first, --json]
+      capture_json_field:
+        var: c1
+        field: hash
     - write_file:
         path: b.txt
         content: "world"
     - morph: [add, b.txt]
-    - morph: [commit, -m, second]
-      capture: c2
+    - morph: [commit, -m, second, --json]
+      capture_json_field:
+        var: c2
+        field: hash
     - morph: [diff, "${c1}", "${c2}"]
       stdout_contains:
         - "A"
@@ -22,14 +26,18 @@
     a.txt: "version1"
   steps:
     - morph: [add, .]
-    - morph: [commit, -m, first]
-      capture: c1
+    - morph: [commit, -m, first, --json]
+      capture_json_field:
+        var: c1
+        field: hash
     - write_file:
         path: a.txt
         content: "version2"
     - morph: [add, a.txt]
-    - morph: [commit, -m, second]
-      capture: c2
+    - morph: [commit, -m, second, --json]
+      capture_json_field:
+        var: c2
+        field: hash
     - morph: [diff, "${c1}", "${c2}"]
       stdout_contains:
         - "M"
@@ -40,8 +48,10 @@
     a.txt: "same"
   steps:
     - morph: [add, .]
-    - morph: [commit, -m, first]
-      capture: c1
+    - morph: [commit, -m, first, --json]
+      capture_json_field:
+        var: c1
+        field: hash
     - morph: [diff, "${c1}", "${c1}"]
 
 - name: diff_head_shorthand
@@ -49,8 +59,10 @@
     a.txt: "v1"
   steps:
     - morph: [add, .]
-    - morph: [commit, -m, first]
-      capture: c1
+    - morph: [commit, -m, first, --json]
+      capture_json_field:
+        var: c1
+        field: hash
     - write_file:
         path: b.txt
         content: "new"

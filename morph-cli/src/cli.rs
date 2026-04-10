@@ -63,6 +63,9 @@ pub enum Command {
         author: Option<String>,
         #[arg(long)]
         from_run: Option<String>,
+        /// Output structured JSON instead of human-readable summary
+        #[arg(long)]
+        json: bool,
     },
     /// Show a stored Morph object (commit, run, trace, etc.) as pretty JSON
     Show {

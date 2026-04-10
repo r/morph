@@ -73,8 +73,10 @@
 
     - morph: [add, code.txt]
 
-    - morph: [commit, -m, pipeline commit, --pipeline, "${pipeline_hash}"]
-      capture: commit_hash
+    - morph: [commit, -m, pipeline commit, --pipeline, "${pipeline_hash}", --json]
+      capture_json_field:
+        var: commit_hash
+        field: hash
       assert_hash: true
 
     - morph: [show, "${commit_hash}"]

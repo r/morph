@@ -10,8 +10,10 @@
 
     - morph: [add, code.txt]
 
-    - morph: [commit, -m, evidence commit, --from-run, "${run_hash}"]
-      capture: commit_hash
+    - morph: [commit, -m, evidence commit, --from-run, "${run_hash}", --json]
+      capture_json_field:
+        var: commit_hash
+        field: hash
       assert_hash: true
 
     - morph: [show, "${commit_hash}"]
@@ -40,8 +42,10 @@
 
     - morph: [add, code.txt]
 
-    - morph: [commit, -m, multi-contributor commit, --from-run, "${run_hash}"]
-      capture: commit_hash
+    - morph: [commit, -m, multi-contributor commit, --from-run, "${run_hash}", --json]
+      capture_json_field:
+        var: commit_hash
+        field: hash
       assert_hash: true
 
     - morph: [show, "${commit_hash}"]
@@ -73,8 +77,10 @@
   steps:
     - morph: [add, code.txt]
 
-    - morph: [commit, -m, plain commit]
-      capture: commit_hash
+    - morph: [commit, -m, plain commit, --json]
+      capture_json_field:
+        var: commit_hash
+        field: hash
       assert_hash: true
 
     - morph: [show, "${commit_hash}"]

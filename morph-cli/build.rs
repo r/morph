@@ -39,6 +39,9 @@ struct Step {
     capture: Option<String>,
     #[serde(default)]
     capture_first_line: Option<String>,
+    /// Parse stdout as JSON and extract a field into a variable.
+    #[serde(default)]
+    capture_json_field: Option<CaptureJsonField>,
     #[serde(default)]
     assert_hash: Option<bool>,
     #[serde(default)]
@@ -57,6 +60,12 @@ struct Step {
 struct ComputeHash {
     var: String,
     json: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CaptureJsonField {
+    var: String,
+    field: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -208,6 +217,7 @@ fn emit_step(code: &mut String, step: &Step, idx: usize) {
     let args = step.morph.as_ref().expect("step must have morph, compute_hash, or write_file");
     let needs_output = step.capture.is_some()
         || step.capture_first_line.is_some()
+        || step.capture_json_field.is_some()
         || step.assert_line_count_gte.is_some();
     let var = format!("step_{}", idx);
 
@@ -326,12 +336,23 @@ fn emit_step(code: &mut String, step: &Step, idx: usize) {
         .unwrap();
     }
 
+    if let Some(cjf) = &step.capture_json_field {
+        let var_name = &cjf.var;
+        let field = &cjf.field;
+        writeln!(
+            code,
+            "    let {var_name} = {{ let __json: serde_json::Value = serde_json::from_str(String::from_utf8_lossy(&{var}.get_output().stdout).trim()).expect(\"stdout is not valid JSON\"); __json[{field:?}].as_str().expect(\"JSON field '{field}' missing or not a string\").to_string() }};"
+        )
+        .unwrap();
+    }
+
     // Post-step assertions on captured values
     if step.assert_hash == Some(true) {
         let cap = step
             .capture
             .as_ref()
             .or(step.capture_first_line.as_ref())
+            .or(step.capture_json_field.as_ref().map(|c| &c.var))
             .expect("assert_hash requires capture");
         writeln!(
             code,

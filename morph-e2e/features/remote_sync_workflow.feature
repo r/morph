@@ -6,7 +6,7 @@ Feature: Remote sync workflow (Phase 5)
     And a file "hello.txt" with content "hello world"
     When I run "morph add hello.txt"
     And the last command succeeded
-    When I run "morph commit -m first-commit"
+    When I run "morph commit -m first-commit --json"
     And the last command succeeded
     And I capture the last output as "commit_hash"
     When I run "morph remote add origin <remote>"

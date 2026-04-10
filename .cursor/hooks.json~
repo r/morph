@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeSubmitPrompt": [{"command": "../cursor/morph-record-prompt.sh"}],
+    "stop": [{"command": "../cursor/morph-record-stop.sh"}]
+  }
+}

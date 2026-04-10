@@ -16,7 +16,7 @@
     lib/b.txt: bbb
   steps:
     - morph: [add, "."]
-      capture: output
-      assert_line_count_gte:
-        var: output
-        min: 2
+    - morph: [status]
+      stdout_contains:
+        - "a.txt"
+        - "b.txt"

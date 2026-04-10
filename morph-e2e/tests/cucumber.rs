@@ -203,7 +203,14 @@ fn when_run_in_dir(w: &mut MorphWorld, cmd: String, subdir: String) {
 
 #[when(regex = r#"I capture the last output as "([^"]+)""#)]
 fn when_capture_last_output(w: &mut MorphWorld, name: String) {
-    let line = w.last_stdout.trim().lines().last().unwrap_or("").trim().to_string();
+    let text = w.last_stdout.trim();
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(text) {
+        if let Some(val) = json.get("hash").and_then(|v| v.as_str()) {
+            w.captures.insert(name, val.to_string());
+            return;
+        }
+    }
+    let line = text.lines().last().unwrap_or("").trim().to_string();
     w.captures.insert(name, line);
 }
 
@@ -272,7 +279,7 @@ fn when_commit_with_from_run(w: &mut MorphWorld, run_hash: String, message: Stri
     let run_hash = substitute_placeholders(&run_hash, &w.captures);
     let output = Command::cargo_bin("morph")
         .expect("morph binary")
-        .args(["commit", "-m", &message, "--from-run", &run_hash])
+        .args(["commit", "-m", &message, "--from-run", &run_hash, "--json"])
         .current_dir(root.path())
         .output()
         .expect("run morph");
@@ -298,6 +305,7 @@ fn when_run_commit_captured(w: &mut MorphWorld, message: String) {
             suite,
             "--metrics",
             "{}",
+            "--json",
         ])
         .current_dir(&root)
         .output()
@@ -390,7 +398,7 @@ fn when_commit_with_metrics(w: &mut MorphWorld, msg: String, pipeline: String, s
     let metrics_json = format!("{{{}}}", metrics_inner);
     let output = Command::cargo_bin("morph")
         .expect("morph binary")
-        .args(["commit", "-m", &msg, "--pipeline", &pipeline, "--eval-suite", &suite, "--metrics", &metrics_json])
+        .args(["commit", "-m", &msg, "--pipeline", &pipeline, "--eval-suite", &suite, "--metrics", &metrics_json, "--json"])
         .current_dir(root.path())
         .output()
         .expect("run morph");
