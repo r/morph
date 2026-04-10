@@ -131,8 +131,9 @@ fn resolve_morph_paths(repo_root: &Path) -> (std::path::PathBuf, std::path::Path
     (morph_dir, prompts, evals)
 }
 
-/// Compute status: scan the working directory and `.morph/prompts/`, `.morph/evals/`.
-/// Files inside `.morph/` internals (objects, refs, etc.) and paths matching `.morphignore` are excluded.
+/// Compute status: scan the working directory only.
+/// The entire `.morph/` tree (including prompts and evals) is excluded — those
+/// files are internal bookkeeping already stored as objects when recorded.
 pub fn status(store: &dyn Store, repo_root: &Path) -> Result<Vec<StatusEntry>, MorphError> {
     let mut entries = Vec::new();
     let canonical_root = repo_root.canonicalize().unwrap_or_else(|_| repo_root.to_path_buf());
@@ -169,40 +170,6 @@ pub fn status(store: &dyn Store, repo_root: &Path) -> Result<Vec<StatusEntry>, M
                 in_store,
                 hash: Some(hash),
             });
-        }
-    }
-
-    for dir_path in &[&morph_prompts, &morph_evals] {
-        if !dir_path.is_dir() {
-            continue;
-        }
-        for entry in walkdir::WalkDir::new(dir_path)
-            .min_depth(1)
-            .into_iter()
-            .filter_entry(|e| {
-                let canonical = e.path().canonicalize().unwrap_or(e.path().to_path_buf());
-                !is_ignored(morphignore.as_ref(), &canonical_root, &canonical, e.file_type().is_dir())
-            })
-            .filter_map(|e| e.ok())
-        {
-            if !entry.file_type().is_file() {
-                continue;
-            }
-            let path = entry.path();
-            let canonical = path.canonicalize().unwrap_or(path.to_path_buf());
-            if is_ignored(morphignore.as_ref(), &canonical_root, &canonical, false) {
-                continue;
-            }
-            let kind = classify_file(path, &morph_prompts, &morph_evals);
-            if let Some(obj) = object_from_file(path, kind).ok() {
-                let hash = store.hash_object(&obj)?;
-                let in_store = store.has(&hash)?;
-                entries.push(StatusEntry {
-                    path: path.to_path_buf(),
-                    in_store,
-                    hash: Some(hash),
-                });
-            }
         }
     }
 
@@ -245,22 +212,6 @@ pub fn add_paths(
                     &mut staged_entries,
                     true,
                 )?;
-                for md in &[&morph_prompts, &morph_evals] {
-                    if md.is_dir() {
-                        add_directory(
-                            md,
-                            &morph_dir,
-                            &morph_prompts,
-                            &morph_evals,
-                            morphignore.as_ref(),
-                            &canonical_root,
-                            store,
-                            &mut hashes,
-                            &mut staged_entries,
-                            false,
-                        )?;
-                    }
-                }
             } else if is_morph_internal(&full, &morph_dir, &morph_prompts, &morph_evals) {
                 continue;
             } else {
@@ -423,26 +374,26 @@ mod tests {
     }
 
     #[test]
-    fn status_shows_morph_prompts() {
+    fn status_excludes_morph_prompts() {
         let (dir, store) = setup_repo();
         let root = dir.path();
         std::fs::write(root.join(".morph/prompts/p.txt"), "a prompt").unwrap();
 
         let entries = status(&store, root).unwrap();
-        assert!(entries.iter().any(|e| e.path.to_string_lossy().contains("prompts/p.txt")),
-            "should see .morph/prompts/p.txt, got: {:?}", entries.iter().map(|e| &e.path).collect::<Vec<_>>());
+        assert!(!entries.iter().any(|e| e.path.to_string_lossy().contains("prompts/p.txt")),
+            "should NOT see .morph/prompts/ in status");
     }
 
     #[test]
-    fn status_shows_morph_evals() {
+    fn status_excludes_morph_evals() {
         let (dir, store) = setup_repo();
         let root = dir.path();
         let eval_json = r#"{"cases":[],"metrics":[{"name":"acc","aggregation":"mean","threshold":0.0}]}"#;
         std::fs::write(root.join(".morph/evals/e.json"), eval_json).unwrap();
 
         let entries = status(&store, root).unwrap();
-        assert!(entries.iter().any(|e| e.path.to_string_lossy().contains("evals/e.json")),
-            "should see .morph/evals/e.json, got: {:?}", entries.iter().map(|e| &e.path).collect::<Vec<_>>());
+        assert!(!entries.iter().any(|e| e.path.to_string_lossy().contains("evals/e.json")),
+            "should NOT see .morph/evals/ in status");
     }
 
     #[test]
@@ -563,7 +514,7 @@ mod tests {
     }
 
     #[test]
-    fn add_dot_stages_all_working_dir_and_morph_metadata() {
+    fn add_dot_stages_working_dir_only() {
         let (dir, store) = setup_repo();
         let root = dir.path();
         std::fs::write(root.join("app.py"), "print('hi')").unwrap();
@@ -572,7 +523,7 @@ mod tests {
         std::fs::write(root.join(".morph/prompts/p.txt"), "prompt text").unwrap();
 
         let hashes = add_paths(&store, root, &[std::path::PathBuf::from(".")]).unwrap();
-        assert!(hashes.len() >= 3, "should stage at least 3 files, got {}", hashes.len());
+        assert_eq!(hashes.len(), 2, "should stage app.py and lib/util.py only, got {}", hashes.len());
     }
 
     #[test]

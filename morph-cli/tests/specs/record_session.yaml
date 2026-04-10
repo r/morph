@@ -6,7 +6,6 @@
       capture: run_hash
       assert_hash: true
     - morph: [status]
-      stdout_contains: "prompts"
   assert:
     - kind: dir_not_empty
       path: .morph/prompts
