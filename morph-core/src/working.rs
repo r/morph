@@ -1,6 +1,6 @@
 //! Working-space operations: create blobs from files, materialize, status, add.
 
-use crate::morphignore::{is_ignored, load_morphignore};
+use crate::morphignore::{is_ignored, is_rel_path_ignored, load_ignore_rules};
 use crate::objects::{Blob, EvalSuite, MorphObject, Pipeline};
 use crate::Hash;
 use crate::store::{MorphError, Store};
@@ -137,7 +137,7 @@ pub fn status(store: &dyn Store, repo_root: &Path) -> Result<Vec<StatusEntry>, M
     let mut entries = Vec::new();
     let canonical_root = repo_root.canonicalize().unwrap_or_else(|_| repo_root.to_path_buf());
     let (morph_dir, morph_prompts, morph_evals) = resolve_morph_paths(repo_root);
-    let morphignore = load_morphignore(&canonical_root);
+    let morphignore = load_ignore_rules(&canonical_root);
 
     for entry in walkdir::WalkDir::new(repo_root)
         .min_depth(1)
@@ -221,7 +221,7 @@ pub fn add_paths(
 ) -> Result<Vec<Hash>, MorphError> {
     let (morph_dir, morph_prompts, morph_evals) = resolve_morph_paths(repo_root);
     let canonical_root = repo_root.canonicalize().unwrap_or_else(|_| repo_root.to_path_buf());
-    let morphignore = load_morphignore(&canonical_root);
+    let morphignore = load_ignore_rules(&canonical_root);
     let mut hashes = Vec::new();
     let mut staged_entries: Vec<(String, Hash)> = Vec::new();
 
@@ -299,6 +299,8 @@ pub fn add_paths(
         for (rel, hash) in &staged_entries {
             index.entries.insert(rel.clone(), hash.to_string());
         }
+        // Prune stale entries that now match ignore rules (self-healing for old repos).
+        index.entries.retain(|rel, _| !is_rel_path_ignored(morphignore.as_ref(), rel, false));
         crate::index::write_index(&morph_dir, &index)?;
     }
 
@@ -650,5 +652,100 @@ mod tests {
         let index = crate::index::read_index(&morph_dir).unwrap();
         assert!(index.entries.contains_key("a.txt"), "index should contain a.txt, got: {:?}", index.entries.keys().collect::<Vec<_>>());
         assert!(index.entries.contains_key("sub/b.txt"), "index should contain sub/b.txt, got: {:?}", index.entries.keys().collect::<Vec<_>>());
+    }
+
+    // ── built-in ignore tests ────────────────────────────────────────
+
+    #[test]
+    fn status_excludes_git_dir_by_default() {
+        let (dir, store) = setup_repo();
+        let root = dir.path();
+        std::fs::write(root.join("app.py"), "print('hi')").unwrap();
+        std::fs::create_dir_all(root.join(".git/objects")).unwrap();
+        std::fs::write(root.join(".git/config"), "[core]").unwrap();
+
+        let entries = status(&store, root).unwrap();
+        let paths: Vec<_> = entries.iter().map(|e| e.path.to_string_lossy().into_owned()).collect();
+        assert!(paths.iter().any(|p| p.ends_with("app.py")), "should see app.py");
+        assert!(!paths.iter().any(|p| p.contains(".git")), "should not see .git/, got: {:?}", paths);
+    }
+
+    #[test]
+    fn status_excludes_node_modules_by_default() {
+        let (dir, store) = setup_repo();
+        let root = dir.path();
+        std::fs::write(root.join("index.js"), "module.exports = {}").unwrap();
+        std::fs::create_dir_all(root.join("node_modules/foo")).unwrap();
+        std::fs::write(root.join("node_modules/foo/index.js"), "nope").unwrap();
+
+        let entries = status(&store, root).unwrap();
+        let paths: Vec<_> = entries.iter().map(|e| e.path.to_string_lossy().into_owned()).collect();
+        assert!(paths.iter().any(|p| p.ends_with("index.js") && !p.contains("node_modules")));
+        assert!(!paths.iter().any(|p| p.contains("node_modules")), "should not see node_modules/, got: {:?}", paths);
+    }
+
+    #[test]
+    fn status_excludes_venv_by_default() {
+        let (dir, store) = setup_repo();
+        let root = dir.path();
+        std::fs::write(root.join("app.py"), "pass").unwrap();
+        std::fs::create_dir_all(root.join(".venv/bin")).unwrap();
+        std::fs::write(root.join(".venv/bin/python"), "#!/bin/sh").unwrap();
+
+        let entries = status(&store, root).unwrap();
+        assert!(!entries.iter().any(|e| e.path.to_string_lossy().contains(".venv")),
+            "should not see .venv/");
+    }
+
+    #[test]
+    fn status_respects_gitignore() {
+        let (dir, store) = setup_repo();
+        let root = dir.path();
+        std::fs::write(root.join(".gitignore"), "secret.key\n").unwrap();
+        std::fs::write(root.join("app.py"), "pass").unwrap();
+        std::fs::write(root.join("secret.key"), "s3cr3t").unwrap();
+
+        let entries = status(&store, root).unwrap();
+        let paths: Vec<_> = entries.iter().map(|e| e.path.to_string_lossy().into_owned()).collect();
+        assert!(paths.iter().any(|p| p.ends_with("app.py")));
+        assert!(!paths.iter().any(|p| p.ends_with("secret.key")),
+            "should not see secret.key (gitignore), got: {:?}", paths);
+    }
+
+    #[test]
+    fn add_dot_excludes_git_dir() {
+        let (dir, store) = setup_repo();
+        let root = dir.path();
+        std::fs::write(root.join("code.rs"), "fn main(){}").unwrap();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::write(root.join(".git/config"), "[core]").unwrap();
+
+        let hashes = add_paths(&store, root, &[std::path::PathBuf::from(".")]).unwrap();
+        assert_eq!(hashes.len(), 1, "should only stage code.rs, not .git/config");
+    }
+
+    #[test]
+    fn add_dot_prunes_stale_ignored_index_entries() {
+        let (dir, store) = setup_repo();
+        let root = dir.path();
+        let morph_dir = root.join(".morph");
+
+        // Simulate stale index from an old binary that tracked .git/ and .venv/
+        let mut stale_index = crate::index::StagingIndex::new();
+        stale_index.entries.insert(".git/config".into(), "a".repeat(64));
+        stale_index.entries.insert(".venv/bin/python".into(), "b".repeat(64));
+        stale_index.entries.insert("app.py".into(), "c".repeat(64));
+        crate::index::write_index(&morph_dir, &stale_index).unwrap();
+
+        // Now stage with the new binary
+        std::fs::write(root.join("app.py"), "print('hello')").unwrap();
+        add_paths(&store, root, &[std::path::PathBuf::from(".")]).unwrap();
+
+        let index = crate::index::read_index(&morph_dir).unwrap();
+        assert!(index.entries.contains_key("app.py"), "app.py should remain");
+        assert!(!index.entries.contains_key(".git/config"),
+            "stale .git/config should be pruned, got: {:?}", index.entries.keys().collect::<Vec<_>>());
+        assert!(!index.entries.contains_key(".venv/bin/python"),
+            "stale .venv/bin/python should be pruned");
     }
 }

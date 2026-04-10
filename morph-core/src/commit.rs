@@ -185,7 +185,14 @@ pub fn create_tree_commit_with_provenance(
 ) -> Result<Hash, MorphError> {
     let morph_dir = repo_root.join(".morph");
     let index = crate::index::read_index(&morph_dir)?;
-    let tree_hash = crate::tree::build_tree(store, &index.entries)?;
+    let canonical_root = repo_root.canonicalize().unwrap_or_else(|_| repo_root.to_path_buf());
+    let ignore_rules = crate::morphignore::load_ignore_rules(&canonical_root);
+    let filtered: std::collections::BTreeMap<String, String> = index
+        .entries
+        .into_iter()
+        .filter(|(rel, _)| !crate::morphignore::is_rel_path_ignored(ignore_rules.as_ref(), rel, false))
+        .collect();
+    let tree_hash = crate::tree::build_tree(store, &filtered)?;
 
     let prog_hash = match pipeline_hash {
         Some(h) => h.to_string(),
@@ -296,6 +303,9 @@ pub fn checkout_tree(
         _ => return Err(MorphError::Serialization("not a commit".into())),
     };
 
+    let canonical_root = repo_root.canonicalize().unwrap_or_else(|_| repo_root.to_path_buf());
+    let ignore_rules = crate::morphignore::load_ignore_rules(&canonical_root);
+
     let tree_restored = if let Some(tree_hash_str) = &commit.tree {
         let tree_hash = Hash::from_hex(tree_hash_str)?;
 
@@ -304,6 +314,9 @@ pub fn checkout_tree(
                 if let Ok(old_files) = crate::tree::flatten_tree(store, &old_hash) {
                     let new_files = crate::tree::flatten_tree(store, &tree_hash)?;
                     for (path, _) in &old_files {
+                        if crate::morphignore::is_rel_path_ignored(ignore_rules.as_ref(), path, false) {
+                            continue;
+                        }
                         if !new_files.contains_key(path) {
                             let full = repo_root.join(path);
                             if full.exists() {
@@ -315,7 +328,7 @@ pub fn checkout_tree(
             }
         }
 
-        crate::tree::restore_tree(store, &tree_hash, repo_root)?;
+        crate::tree::restore_tree_filtered(store, &tree_hash, repo_root, ignore_rules.as_ref())?;
         true
     } else {
         false
@@ -437,7 +450,14 @@ pub fn create_merge_commit_with_retirement(
     let tree_hash = if let Some(root) = repo_root {
         let morph_dir = root.join(".morph");
         let index = crate::index::read_index(&morph_dir)?;
-        let h = crate::tree::build_tree(store, &index.entries)?;
+        let cr = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+        let ig = crate::morphignore::load_ignore_rules(&cr);
+        let filtered: std::collections::BTreeMap<String, String> = index
+            .entries
+            .into_iter()
+            .filter(|(rel, _)| !crate::morphignore::is_rel_path_ignored(ig.as_ref(), rel, false))
+            .collect();
+        let h = crate::tree::build_tree(store, &filtered)?;
         crate::index::clear_index(&morph_dir)?;
         Some(h.to_string())
     } else {

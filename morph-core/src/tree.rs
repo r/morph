@@ -124,8 +124,22 @@ pub fn restore_tree(
     root_hash: &Hash,
     dest_dir: &Path,
 ) -> Result<(), MorphError> {
+    restore_tree_filtered(store, root_hash, dest_dir, None)
+}
+
+/// Restore a tree, skipping entries that match the ignore rules.
+/// Protects against old commits that contain `.git/`, `.venv/`, etc.
+pub fn restore_tree_filtered(
+    store: &dyn Store,
+    root_hash: &Hash,
+    dest_dir: &Path,
+    ignore_matcher: Option<&ignore::gitignore::Gitignore>,
+) -> Result<(), MorphError> {
     let flat = flatten_tree(store, root_hash)?;
     for (rel_path, blob_hash) in &flat {
+        if crate::morphignore::is_rel_path_ignored(ignore_matcher, rel_path, false) {
+            continue;
+        }
         let hash = Hash::from_hex(blob_hash)?;
         let dest = dest_dir.join(rel_path);
         crate::working::materialize_blob(store, &hash, &dest)?;
@@ -291,5 +305,30 @@ mod tests {
         let flat = flatten_tree(&store, &root).unwrap();
         assert_eq!(flat.len(), 1);
         assert_eq!(flat["a/b/c/d/e.txt"], h.to_string());
+    }
+
+    #[test]
+    fn restore_tree_filtered_skips_ignored_entries() {
+        let (dir, store) = make_store();
+        let h_good = store_blob(&store, "good_content");
+        let h_git = store_blob(&store, "git_config");
+        let h_venv = store_blob(&store, "venv_python");
+
+        let mut entries = BTreeMap::new();
+        entries.insert("app.py".into(), h_good.to_string());
+        entries.insert(".git/config".into(), h_git.to_string());
+        entries.insert(".venv/bin/python".into(), h_venv.to_string());
+
+        let root_hash = build_tree(&store, &entries).unwrap();
+
+        let dest = dir.path().join("restored");
+        std::fs::create_dir_all(&dest).unwrap();
+
+        let matcher = crate::morphignore::load_ignore_rules(&dest).unwrap();
+        restore_tree_filtered(&store, &root_hash, &dest, Some(&matcher)).unwrap();
+
+        assert!(dest.join("app.py").exists(), "app.py should be restored");
+        assert!(!dest.join(".git/config").exists(), ".git/config should NOT be restored");
+        assert!(!dest.join(".venv/bin/python").exists(), ".venv/bin/python should NOT be restored");
     }
 }
