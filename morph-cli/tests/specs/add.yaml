@@ -5,7 +5,7 @@
     - morph: [add, code.py]
       capture: hash
       assert_hash: true
-    - morph: [status]
+    - morph: [files]
       stdout_contains: tracked
 
 - name: add_dot_stages_all_working_dir_files

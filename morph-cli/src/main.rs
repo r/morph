@@ -284,6 +284,39 @@ fn main() -> anyhow::Result<()> {
 
         Command::Status => {
             let (repo_root, store) = get_store(verbose)?;
+            let changes = morph_core::working_status(&store, &repo_root)?;
+            let summary = morph_core::activity_summary(&store, &repo_root)?;
+
+            if changes.is_empty() && summary.runs == 0 && summary.traces == 0 && summary.prompts == 0 {
+                println!("nothing to commit, working tree clean");
+                return Ok(());
+            }
+
+            if !changes.is_empty() {
+                println!("Changes not staged for commit:");
+                println!();
+                for entry in &changes {
+                    let tag = match entry.status {
+                        morph_core::DiffStatus::Added => "new file",
+                        morph_core::DiffStatus::Modified => "modified",
+                        morph_core::DiffStatus::Deleted => "deleted",
+                    };
+                    println!("\t{:>12}:   {}", tag, entry.path);
+                }
+                println!();
+            }
+
+            if summary.runs > 0 || summary.traces > 0 || summary.prompts > 0 {
+                let mut parts = Vec::new();
+                if summary.runs > 0 { parts.push(format!("{} run{}", summary.runs, if summary.runs == 1 { "" } else { "s" })); }
+                if summary.traces > 0 { parts.push(format!("{} trace{}", summary.traces, if summary.traces == 1 { "" } else { "s" })); }
+                if summary.prompts > 0 { parts.push(format!("{} prompt{}", summary.prompts, if summary.prompts == 1 { "" } else { "s" })); }
+                println!("Morph activity: {}", parts.join(", "));
+            }
+        }
+
+        Command::Files => {
+            let (repo_root, store) = get_store(verbose)?;
             let entries = morph_core::status(&store, &repo_root)?;
             if entries.is_empty() {
                 println!("No files to track");

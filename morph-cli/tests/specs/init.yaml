@@ -38,7 +38,7 @@
     - morph: [init, "${repo}"]
       stdout_contains: "Initialized empty Morph repository"
     - morph: [status]
-      stdout_contains: "No files"
+      stdout_contains: "nothing to commit"
     - morph: [log]
       # No commits yet; log is empty (success, no output)
 

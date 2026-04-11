@@ -176,17 +176,36 @@ impl MorphServer {
         Ok(CallToolResult::success(vec![Content::text(format!("{}{}", msg, tree_msg))]))
     }
 
-    #[tool(description = "Show working-space status")]
+    #[tool(description = "Show changes relative to last commit (git-style status) and accumulated Morph activity")]
     async fn morph_status(&self, params: Parameters<WorkspaceOnlyParams>) -> Result<CallToolResult, McpError> {
         let (repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
-        let entries = morph_core::status(&store, &repo_root).map_err(mcp_err)?;
+        let changes = morph_core::working_status(&store, &repo_root).map_err(mcp_err)?;
+        let summary = morph_core::activity_summary(&store, &repo_root).map_err(mcp_err)?;
         let mut out = String::new();
-        for e in &entries {
-            let status = if e.in_store { "tracked" } else { "new" };
-            let hash_str = e.hash.as_ref().map(|h| h.to_string()).unwrap_or_default();
-            out.push_str(&format!("{} {} {}\n", status, hash_str, e.path.display()));
+
+        if changes.is_empty() && summary.runs == 0 && summary.traces == 0 && summary.prompts == 0 {
+            out = "nothing to commit, working tree clean".into();
+        } else {
+            if !changes.is_empty() {
+                out.push_str("Changes not staged for commit:\n\n");
+                for entry in &changes {
+                    let tag = match entry.status {
+                        morph_core::DiffStatus::Added => "new file",
+                        morph_core::DiffStatus::Modified => "modified",
+                        morph_core::DiffStatus::Deleted => "deleted",
+                    };
+                    out.push_str(&format!("\t{:>12}:   {}\n", tag, entry.path));
+                }
+                out.push('\n');
+            }
+            if summary.runs > 0 || summary.traces > 0 || summary.prompts > 0 {
+                let mut parts = Vec::new();
+                if summary.runs > 0 { parts.push(format!("{} run{}", summary.runs, if summary.runs == 1 { "" } else { "s" })); }
+                if summary.traces > 0 { parts.push(format!("{} trace{}", summary.traces, if summary.traces == 1 { "" } else { "s" })); }
+                if summary.prompts > 0 { parts.push(format!("{} prompt{}", summary.prompts, if summary.prompts == 1 { "" } else { "s" })); }
+                out.push_str(&format!("Morph activity: {}\n", parts.join(", ")));
+            }
         }
-        if out.is_empty() { out = "clean (no changes)".into(); }
         Ok(CallToolResult::success(vec![Content::text(out)]))
     }
 

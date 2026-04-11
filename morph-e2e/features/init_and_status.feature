@@ -8,7 +8,7 @@ Feature: Morph init and status
     And a file "hello.txt" with content "world"
     When I run "morph status"
     Then stdout contains "hello.txt"
-    And stdout contains "new"
+    And stdout contains "new file"
     And the path ".morph" exists as a directory
     And the path ".morph/objects" exists as a directory
     And the path ".morph/refs/heads" exists as a directory
@@ -16,4 +16,4 @@ Feature: Morph init and status
   Scenario: Empty repo has no files to track
     Given a morph repo
     When I run "morph status"
-    Then stdout contains "No files"
+    Then stdout contains "nothing to commit"

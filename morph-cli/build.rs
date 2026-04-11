@@ -23,6 +23,11 @@ struct TestSpec {
 }
 
 #[derive(Debug, Deserialize)]
+struct DeleteFile {
+    path: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct Step {
     #[serde(default)]
     morph: Option<Vec<String>>,
@@ -30,6 +35,8 @@ struct Step {
     compute_hash: Option<ComputeHash>,
     #[serde(default)]
     write_file: Option<WriteFile>,
+    #[serde(default)]
+    delete_file: Option<DeleteFile>,
     /// Override working directory for this step (relative to temp dir).
     #[serde(default)]
     cwd: Option<String>,
@@ -214,7 +221,17 @@ fn emit_step(code: &mut String, step: &Step, idx: usize) {
         return;
     }
 
-    let args = step.morph.as_ref().expect("step must have morph, compute_hash, or write_file");
+    if let Some(df) = &step.delete_file {
+        writeln!(
+            code,
+            "    std::fs::remove_file(path.join({:?})).unwrap();",
+            df.path
+        )
+        .unwrap();
+        return;
+    }
+
+    let args = step.morph.as_ref().expect("step must have morph, compute_hash, write_file, or delete_file");
     let needs_output = step.capture.is_some()
         || step.capture_first_line.is_some()
         || step.capture_json_field.is_some()

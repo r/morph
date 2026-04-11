@@ -1,22 +1,50 @@
-- name: status_shows_working_dir_files
+# Git-style status: shows changes relative to the last commit
+- name: status_shows_new_files_before_first_commit
   files:
     hello.txt: world
   steps:
     - morph: [status]
       stdout_contains:
+        - "new file"
         - hello.txt
-        - new
 
-- name: status_shows_nested_working_dir_files
-  dirs:
-    - src
+- name: status_clean_after_commit
   files:
-    src/app.rs: "fn main() {}"
+    hello.txt: world
   steps:
+    - morph: [add, .]
+    - morph: [commit, -m, "initial"]
     - morph: [status]
-      stdout_contains: app.rs
+      stdout_contains: "nothing to commit"
+
+- name: status_shows_modified_after_edit
+  files:
+    hello.txt: world
+  steps:
+    - morph: [add, .]
+    - morph: [commit, -m, "initial"]
+    - write_file:
+        path: hello.txt
+        content: "changed"
+    - morph: [status]
+      stdout_contains:
+        - "modified"
+        - hello.txt
+
+- name: status_shows_deleted_after_remove
+  files:
+    hello.txt: world
+  steps:
+    - morph: [add, .]
+    - morph: [commit, -m, "initial"]
+    - delete_file:
+        path: hello.txt
+    - morph: [status]
+      stdout_contains:
+        - "deleted"
+        - hello.txt
 
 - name: status_empty_when_no_files
   steps:
     - morph: [status]
-      stdout_contains: "No files"
+      stdout_contains: "nothing to commit"

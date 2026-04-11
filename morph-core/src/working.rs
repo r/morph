@@ -1,10 +1,12 @@
 //! Working-space operations: create blobs from files, materialize, status, add.
 
+use crate::diff::{diff_file_maps, DiffEntry};
 use crate::morphignore::{is_ignored, is_rel_path_ignored, load_ignore_rules};
 use crate::objects::{Blob, EvalSuite, MorphObject, Pipeline};
 use crate::Hash;
 use crate::store::{MorphError, Store};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use std::collections::BTreeMap;
 use std::path::Path;
 
 /// Find repository root by walking up from `from` until we find a directory containing `.morph`.
@@ -176,9 +178,94 @@ pub fn status(store: &dyn Store, repo_root: &Path) -> Result<Vec<StatusEntry>, M
     Ok(entries)
 }
 
+/// Git-style status: diff the working directory against HEAD's committed tree.
+/// Returns a list of changes (added, modified, deleted) relative to the last commit.
+/// On a fresh repo with no commits, all working-dir files appear as Added.
+pub fn working_status(store: &dyn Store, repo_root: &Path) -> Result<Vec<DiffEntry>, MorphError> {
+    let canonical_root = repo_root.canonicalize().unwrap_or_else(|_| repo_root.to_path_buf());
+    let (morph_dir, morph_prompts, morph_evals) = resolve_morph_paths(repo_root);
+    let morphignore = load_ignore_rules(&canonical_root);
+
+    // Build working-dir file map: relative path -> content hash
+    let mut working_files: BTreeMap<String, String> = BTreeMap::new();
+    for entry in walkdir::WalkDir::new(repo_root)
+        .min_depth(1)
+        .into_iter()
+        .filter_entry(|e| {
+            let p = e.path();
+            let canonical = p.canonicalize().unwrap_or(p.to_path_buf());
+            if canonical == morph_dir {
+                return false;
+            }
+            !is_ignored(morphignore.as_ref(), &canonical_root, &canonical, e.file_type().is_dir())
+        })
+        .filter_map(|e| e.ok())
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        let canonical = path.canonicalize().unwrap_or(path.to_path_buf());
+        if is_ignored(morphignore.as_ref(), &canonical_root, &canonical, false) {
+            continue;
+        }
+        let kind = classify_file(path, &morph_prompts, &morph_evals);
+        if let Ok(obj) = object_from_file(path, kind) {
+            let hash = store.hash_object(&obj)?;
+            if let Some(rel) = relative_path(&canonical_root, &canonical) {
+                working_files.insert(rel, hash.to_string());
+            }
+        }
+    }
+
+    // Get HEAD's committed tree (empty if no commits yet)
+    let head_files: BTreeMap<String, String> = match crate::commit::resolve_head(store)? {
+        Some(head_hash) => {
+            let obj = store.get(&head_hash)?;
+            match obj {
+                MorphObject::Commit(c) => match c.tree {
+                    Some(ref tree_hash_str) => {
+                        let tree_hash = Hash::from_hex(tree_hash_str)?;
+                        crate::tree::flatten_tree(store, &tree_hash)?
+                    }
+                    None => BTreeMap::new(),
+                },
+                _ => BTreeMap::new(),
+            }
+        }
+        None => BTreeMap::new(),
+    };
+
+    Ok(diff_file_maps(&head_files, &working_files))
+}
+
+/// Summary of accumulated Morph activity (runs, traces, prompts) in the store.
+#[derive(Debug, Clone, Default)]
+pub struct ActivitySummary {
+    pub runs: usize,
+    pub traces: usize,
+    pub prompts: usize,
+}
+
+/// Count accumulated Morph objects by type.
+/// Counts from type-index directories under `.morph/` for speed.
+pub fn activity_summary(_store: &dyn Store, repo_root: &Path) -> Result<ActivitySummary, MorphError> {
+    let morph_dir = repo_root.join(".morph");
+    Ok(ActivitySummary {
+        runs: count_dir_entries(&morph_dir.join("runs")),
+        traces: count_dir_entries(&morph_dir.join("traces")),
+        prompts: count_dir_entries(&morph_dir.join("prompts")),
+    })
+}
+
+fn count_dir_entries(dir: &Path) -> usize {
+    std::fs::read_dir(dir)
+        .map(|rd| rd.filter_map(|e| e.ok()).filter(|e| e.path().is_file()).count())
+        .unwrap_or(0)
+}
+
 /// Add path(s) to the store and update the staging index. Works like `git add`:
-/// - `"."` stages all working-directory files (excluding `.morph/` internals)
-///   plus `.morph/prompts/*` and `.morph/evals/*`.
+/// - `"."` stages all working-directory files (excluding `.morph/` internals).
 /// - A specific file is staged according to its location (prompt, eval, or blob).
 /// - A directory is walked recursively, staging all files within.
 pub fn add_paths(
@@ -698,5 +785,84 @@ mod tests {
             "stale .git/config should be pruned, got: {:?}", index.entries.keys().collect::<Vec<_>>());
         assert!(!index.entries.contains_key(".venv/bin/python"),
             "stale .venv/bin/python should be pruned");
+    }
+
+    #[test]
+    fn working_status_shows_new_files_before_commit() {
+        let (dir, store) = setup_repo();
+        std::fs::write(dir.path().join("hello.txt"), "world").unwrap();
+        let changes = working_status(&store, dir.path()).unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].path, "hello.txt");
+        assert_eq!(changes[0].status, crate::diff::DiffStatus::Added);
+    }
+
+    fn commit_helper(store: &dyn Store, repo_root: &Path, msg: &str) -> Hash {
+        crate::commit::create_tree_commit(
+            store, repo_root, None, None,
+            std::collections::BTreeMap::new(), msg.to_string(), None, None,
+        ).unwrap()
+    }
+
+    #[test]
+    fn working_status_clean_after_commit() {
+        let (dir, store) = setup_repo();
+        std::fs::write(dir.path().join("hello.txt"), "world").unwrap();
+        add_paths(&store, dir.path(), &[std::path::PathBuf::from(".")]).unwrap();
+        commit_helper(&store, dir.path(), "initial");
+        let changes = working_status(&store, dir.path()).unwrap();
+        assert!(changes.is_empty(), "expected clean, got {:?}", changes);
+    }
+
+    #[test]
+    fn working_status_shows_modified() {
+        let (dir, store) = setup_repo();
+        std::fs::write(dir.path().join("hello.txt"), "world").unwrap();
+        add_paths(&store, dir.path(), &[std::path::PathBuf::from(".")]).unwrap();
+        commit_helper(&store, dir.path(), "initial");
+
+        std::fs::write(dir.path().join("hello.txt"), "changed").unwrap();
+        let changes = working_status(&store, dir.path()).unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].status, crate::diff::DiffStatus::Modified);
+    }
+
+    #[test]
+    fn working_status_shows_deleted() {
+        let (dir, store) = setup_repo();
+        std::fs::write(dir.path().join("hello.txt"), "world").unwrap();
+        add_paths(&store, dir.path(), &[std::path::PathBuf::from(".")]).unwrap();
+        commit_helper(&store, dir.path(), "initial");
+
+        std::fs::remove_file(dir.path().join("hello.txt")).unwrap();
+        let changes = working_status(&store, dir.path()).unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].status, crate::diff::DiffStatus::Deleted);
+    }
+
+    #[test]
+    fn activity_summary_counts_dirs() {
+        let (dir, store) = setup_repo();
+        let summary = activity_summary(&store, dir.path()).unwrap();
+        assert_eq!(summary.runs, 0);
+        assert_eq!(summary.traces, 0);
+        assert_eq!(summary.prompts, 0);
+
+        // Write some files into the type-index directories
+        let morph = dir.path().join(".morph");
+        std::fs::create_dir_all(morph.join("runs")).unwrap();
+        std::fs::write(morph.join("runs/abc.json"), "{}").unwrap();
+        std::fs::write(morph.join("runs/def.json"), "{}").unwrap();
+        std::fs::create_dir_all(morph.join("traces")).unwrap();
+        std::fs::write(morph.join("traces/t1.json"), "{}").unwrap();
+        std::fs::create_dir_all(morph.join("prompts")).unwrap();
+        std::fs::write(morph.join("prompts/p1.json"), "{}").unwrap();
+        std::fs::write(morph.join("prompts/p2.json"), "{}").unwrap();
+        std::fs::write(morph.join("prompts/p3.json"), "{}").unwrap();
+
+        let summary = activity_summary(&store, dir.path()).unwrap();
+        assert_eq!(summary.runs, 2);
+        assert_eq!(summary.traces, 1);
+        assert_eq!(summary.prompts, 3);
     }
 }

@@ -42,8 +42,10 @@ pub enum Command {
         #[command(subcommand)]
         sub: PipelineCmd,
     },
-    /// Show working space status
+    /// Show changes relative to last commit (git-style status)
     Status,
+    /// List all tracked and new files in the working directory
+    Files,
     /// Stage working-space changes into the object store
     Add {
         #[arg(default_value = ".")]

@@ -1,0 +1,23 @@
+# morph files: list all tracked and new files in the working directory
+- name: files_shows_working_dir_files
+  files:
+    hello.txt: world
+  steps:
+    - morph: [files]
+      stdout_contains:
+        - hello.txt
+        - new
+
+- name: files_shows_nested_working_dir_files
+  dirs:
+    - src
+  files:
+    src/app.rs: "fn main() {}"
+  steps:
+    - morph: [files]
+      stdout_contains: app.rs
+
+- name: files_empty_when_no_files
+  steps:
+    - morph: [files]
+      stdout_contains: "No files"
