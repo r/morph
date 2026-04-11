@@ -28,7 +28,7 @@
       stdout_contains:
         - "[main (root-commit)"
         - "my first commit"
-        - "1 file changed"
+        - "1 file committed"
 
 # Commit --json outputs structured JSON.
 - name: commit_json_output
@@ -45,7 +45,7 @@
         - "\"hash\""
         - "\"branch\""
         - "\"root_commit\""
-        - "\"files_changed\""
+        - "\"files_committed\""
 
 # Commit project files only (no prompt/response yet). Check filesystem and CLI.
 - name: commit_project_files_only

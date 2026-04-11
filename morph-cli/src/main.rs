@@ -381,7 +381,7 @@ fn main() -> anyhow::Result<()> {
                     "branch": branch,
                     "root_commit": is_root,
                     "message": message,
-                    "files_changed": file_count,
+                    "files_committed": file_count,
                 });
                 println!("{}", serde_json::to_string(&out).unwrap());
             } else {
@@ -390,7 +390,7 @@ fn main() -> anyhow::Result<()> {
                 let first_line = message.lines().next().unwrap_or("");
                 println!("[{}{} {}] {}", branch, root_tag, short, first_line);
                 if file_count > 0 {
-                    println!(" {} file{} changed", file_count, if file_count == 1 { "" } else { "s" });
+                    println!(" {} file{} committed", file_count, if file_count == 1 { "" } else { "s" });
                 }
             }
         }
