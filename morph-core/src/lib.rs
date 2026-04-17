@@ -15,6 +15,7 @@ pub mod annotate;
 pub mod index;
 pub mod tree;
 pub mod extract;
+pub mod tap;
 pub mod sync;
 pub mod policy;
 pub mod diff;
@@ -38,6 +39,13 @@ pub use metrics::{aggregate, check_thresholds, check_dominance, check_dominance_
 pub use merge::{MergePlan, DominanceResult, DominanceViolation, prepare_merge, execute_merge};
 pub use record::{record_run, record_eval_metrics, record_session, record_conversation, ConversationMessage};
 pub use extract::extract_pipeline_from_run;
+pub use tap::{
+    extract_task, diagnose_run, summarize_repo, export_eval_cases,
+    trace_stats, filter_runs, task_to_eval_cases,
+    TapTask, TapStep, TapEvent, TapToolCall, TapFileEvent,
+    TapDiagnostic, TapSummary, TapEvalCase, ExportMode,
+    TapTraceStats, TapFilter, TapTokenUsage,
+};
 pub use annotate::{create_annotation, list_annotations};
 pub use index::{read_index, write_index, clear_index, update_index, StagingIndex};
 pub use tree::{build_tree, flatten_tree, restore_tree, empty_tree_hash};

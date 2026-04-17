@@ -4,8 +4,8 @@
 
 - **Full docs:** [docs/README.md](docs/README.md) — problem, solution, theory, and spec  
 - **Paper:** [docs/morph-paper.tex](docs/morph-paper.tex) — formal foundations  
-- **Install & run:** [docs/INSTALLATION.md](docs/INSTALLATION.md) — binaries, init, IDE (Cursor / Claude Code)  
-- **Cursor from scratch:** [docs/CURSOR-SETUP.md](docs/CURSOR-SETUP.md) — MCP, hooks, rules, committing  
+- **Install & run:** [docs/INSTALLATION.md](docs/INSTALLATION.md) — binaries, init, IDE setup  
+- **IDE guides:** [Cursor](docs/CURSOR-SETUP.md) | [Claude Code](docs/CLAUDE-CODE-SETUP.md) | [OpenCode](docs/OPENCODE-SETUP.md)  
 
 ## Install and start in Cursor (quick)
 
@@ -56,6 +56,19 @@ morph serve --org-policy org-policy.json # apply org-level policy
 ```
 
 The service exposes a stable JSON API and browser UI for inspecting commits (with certification/gate status), runs, traces, pipelines, merge dominance, and policy. See [v0-spec.md § 15](docs/v0-spec.md#15-hosted-service-phase-7).
+
+## Trace extraction and evaluation (tap)
+
+```bash
+morph tap summary               # overview of all runs
+morph tap inspect <run-hash>    # show grouped steps for a run
+morph tap diagnose              # recording quality report
+morph tap export --mode agentic # export eval cases for promptfoo etc.
+morph tap trace-stats <hash>    # detailed event-level stats
+morph tap preview <run-hash>    # labeled prompt/context/response preview
+```
+
+Tap reads traces and runs from the store, groups events into steps, and produces structured output for evaluation frameworks. Cursor hooks now parse the full agent transcript (tool calls, file reads/edits, shell commands) into rich structured traces.
 
 ## Develop Morph (this repo)
 

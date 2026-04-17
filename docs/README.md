@@ -62,9 +62,10 @@ THEORY.md defines the algebra. v0-spec.md projects that algebra into a buildable
 
 | Document | Audience | What it covers |
 |---|---|---|
-| **[INSTALLATION.md](INSTALLATION.md)** | Users | Install Morph (binaries, init, IDE setup). Covers Cursor and Claude Code. |
+| **[INSTALLATION.md](INSTALLATION.md)** | Users | Install Morph (binaries, init, IDE setup). Covers Cursor, Claude Code, and OpenCode. |
 | **[CURSOR-SETUP.md](CURSOR-SETUP.md)** | Users | Full Cursor reference: MCP server, hooks for always-on recording, rules, committing. |
 | **[CLAUDE-CODE-SETUP.md](CLAUDE-CODE-SETUP.md)** | Users | Full Claude Code reference: MCP server, hooks, committing. |
+| **[OPENCODE-SETUP.md](OPENCODE-SETUP.md)** | Users | Full OpenCode reference: MCP server, AGENTS.md, recording plugin, committing. |
 | **[MORPH-AND-GIT.md](MORPH-AND-GIT.md)** | Users | Running Morph and Git side-by-side in the same repository. |
 | **[TESTING.md](TESTING.md)** | Contributors | Test architecture, running tests, coverage, known gaps. |
 
@@ -82,20 +83,22 @@ Historical design documents that guided implementation decisions. Kept for refer
 |---|---|
 | [plan-blob-store-sqlite.md](plans/plan-blob-store-sqlite.md) | Partially superseded by FsStore Git-format hashing |
 | [plan-gix-store-option-b.md](plans/plan-gix-store-option-b.md) | Implemented as `FsStore::new_git()` (store version 0.2+) |
-| [plan-morph-viz.md](plans/plan-morph-viz.md) | Implemented as `morph visualize` |
+| [plan-morph-viz.md](plans/plan-morph-viz.md) | Implemented as `morph serve` / `morph visualize` |
+| [E2E-TESTING-PLAN.md](E2E-TESTING-PLAN.md) | Implemented as `morph-e2e` crate (Cucumber/Gherkin) |
 
 ---
 
 ## Architecture
 
 ```
-morph-core/     Core library: object model, storage, hashing, commits, metrics, trees
-morph-cli/      CLI (read path + manual writes): morph init, add, commit, log, ...
-morph-mcp/      MCP server (primary write path from IDE): Cursor, Claude Code
-morph-serve/    Browser-based repo visualization (morph visualize)
+morph-core/     Core library: object model, storage, hashing, commits, metrics, trees, tap, sync, policy
+morph-cli/      CLI (read + write): morph init, add, commit, log, tap, serve, ...
+morph-mcp/      MCP server (primary write path from IDE): Cursor, Claude Code, OpenCode
+morph-serve/    Hosted service: morph serve (multi-repo JSON API + browser UI)
+morph-e2e/      End-to-end tests (Cucumber/Gherkin)
 ```
 
-**Storage backend**: Trait-based (`Store`). v0 ships a single filesystem backend (`FsStore`) with two hash modes, selected by `repo_version` in `.morph/config.json`: **`FsStore::new`** (0.0, legacy: SHA-256 of canonical JSON only) and **`FsStore::new_git`** (0.2+, Git-style `"blob "+len+"\0"+data` hashing; required for tree commits in 0.3). Use `morph upgrade` to migrate. SQLite and remote backends are anticipated by the trait interface.
+**Storage backend**: Trait-based (`Store`). v0 ships a filesystem backend (`FsStore`) with two hash modes, selected by `repo_version` in `.morph/config.json`: **`FsStore::new`** (0.0, legacy: SHA-256 of canonical JSON only) and **`FsStore::new_git`** (0.2+, Git-style `"blob "+len+"\0"+data` hashing; required for tree commits in 0.3). Use `morph upgrade` to migrate. SQLite and remote backends are anticipated by the trait interface.
 
-**Write path**: IDE (via MCP) → morph-mcp → morph-core → `.morph/objects/`.
+**Write path**: IDE hooks → `morph run record` → morph-core → `.morph/objects/`; or IDE (via MCP) → morph-mcp → morph-core → `.morph/objects/`.
 **Read path**: CLI → morph-core → `.morph/objects/`.

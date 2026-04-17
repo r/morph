@@ -240,8 +240,8 @@ async fn test_trace_detail() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["event_count"], 2);
     let events = json["events"].as_array().unwrap();
-    assert_eq!(events[0]["kind"], "prompt");
-    assert_eq!(events[1]["kind"], "response");
+    assert_eq!(events[0]["kind"], "user");
+    assert_eq!(events[1]["kind"], "assistant");
 }
 
 // ── Pipelines ───────────────────────────────────────────────────────

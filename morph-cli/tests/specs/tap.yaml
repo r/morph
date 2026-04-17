@@ -1,0 +1,178 @@
+# Tests for `morph tap` subcommands
+
+- name: tap_summary_empty_repo
+  steps:
+    - morph: [tap, summary]
+      stdout_contains:
+        - "Tap Repository Summary"
+        - "Runs:           0"
+
+- name: tap_summary_with_runs
+  steps:
+    - morph: [run, record-session, --prompt, "Fix the bug", --response, "Bug fixed", --model-name, gpt-4o, --agent-id, cursor]
+      capture: run_hash
+      assert_hash: true
+    - morph: [run, record-session, --prompt, "Add tests", --response, "Tests added", --model-name, claude-4, --agent-id, opencode]
+      capture: run_hash2
+      assert_hash: true
+    - morph: [tap, summary]
+      stdout_contains:
+        - "Runs:           2"
+        - "gpt-4o"
+        - "claude-4"
+
+- name: tap_inspect_single_run
+  steps:
+    - morph: [run, record-session, --prompt, "Explain recursion", --response, "Recursion is self-reference", --model-name, gpt-4o, --agent-id, test]
+      capture: run_hash
+      assert_hash: true
+    - morph: [tap, inspect, "${run_hash}"]
+      stdout_contains:
+        - "Explain recursion"
+        - "model: gpt-4o"
+
+- name: tap_inspect_all
+  steps:
+    - morph: [run, record-session, --prompt, "Task 1", --response, "Done 1", --model-name, gpt-4o, --agent-id, test]
+      capture: h1
+      assert_hash: true
+    - morph: [run, record-session, --prompt, "Task 2", --response, "Done 2", --model-name, claude-4, --agent-id, test]
+      capture: h2
+      assert_hash: true
+    - morph: [tap, inspect, all]
+      stdout_contains:
+        - "Task 1"
+        - "Task 2"
+
+- name: tap_diagnose_single_run
+  steps:
+    - morph: [run, record-session, --prompt, "Do stuff", --response, "Stuff done", --model-name, cursor, --agent-id, cursor]
+      capture: run_hash
+      assert_hash: true
+    - morph: [tap, diagnose, "${run_hash}"]
+      stdout_contains:
+        - "has_prompt"
+        - "has_response"
+        - "issues"
+        - "model name"
+
+- name: tap_diagnose_all
+  steps:
+    - morph: [run, record-session, --prompt, "A", --response, "B", --model-name, cursor, --agent-id, cursor]
+      capture: h1
+      assert_hash: true
+    - morph: [tap, diagnose, all]
+      stdout_contains:
+        - "Tap Diagnostic Summary"
+        - "Total issues"
+
+- name: tap_export_prompt_only
+  steps:
+    - morph: [run, record-session, --prompt, "Write a hello world", --response, "Here is hello world", --model-name, gpt-4o, --agent-id, test]
+      capture: run_hash
+      assert_hash: true
+    - morph: [tap, export, --mode, prompt-only]
+      stdout_contains:
+        - "Write a hello world"
+        - "Here is hello world"
+        - "prompt"
+
+- name: tap_export_with_context
+  steps:
+    - morph: [run, record-session, --prompt, "Build feature X", --response, "Feature X built", --model-name, claude-4, --agent-id, test]
+      capture: run_hash
+      assert_hash: true
+    - morph: [tap, export, --mode, with-context]
+      stdout_contains:
+        - "Build feature X"
+        - "expected_response"
+
+- name: tap_export_agentic
+  steps:
+    - morph: [run, record-session, --prompt, "Add caching layer", --response, "Caching implemented", --model-name, gpt-4o, --agent-id, cursor]
+      capture: run_hash
+      assert_hash: true
+    - morph: [tap, export, --mode, agentic]
+      stdout_contains:
+        - "Add caching layer"
+        - "run_hash"
+
+- name: tap_export_invalid_mode
+  steps:
+    - morph: [tap, export, --mode, invalid]
+      expect_exit: 1
+
+- name: tap_export_to_file
+  steps:
+    - morph: [run, record-session, --prompt, "Test export", --response, "Export works", --model-name, gpt-4o, --agent-id, test]
+      capture: run_hash
+      assert_hash: true
+    - morph: [tap, export, --mode, prompt-only, --output, eval_cases.json]
+      stdout_contains: "Exported"
+  assert:
+    - kind: file_exists
+      path: eval_cases.json
+
+- name: tap_export_multi_step_messages
+  steps:
+    - morph: [run, record-session, --messages, '[{"role":"user","content":"Step 1"},{"role":"assistant","content":"Reply 1"},{"role":"user","content":"Step 2"},{"role":"assistant","content":"Reply 2"}]', --model-name, gpt-4o, --agent-id, test]
+      capture: run_hash
+      assert_hash: true
+    - morph: [tap, export, --mode, agentic]
+      stdout_contains:
+        - "Step 1"
+        - "Step 2"
+        - "Reply 1"
+        - "Reply 2"
+
+- name: tap_export_filter_by_model
+  steps:
+    - morph: [run, record-session, --prompt, "GPT task", --response, "GPT done", --model-name, gpt-4o, --agent-id, test]
+      capture: h1
+      assert_hash: true
+    - morph: [run, record-session, --prompt, "Claude task", --response, "Claude done", --model-name, claude-4, --agent-id, test]
+      capture: h2
+      assert_hash: true
+    - morph: [tap, export, --mode, prompt-only, --model, gpt]
+      stdout_contains:
+        - "GPT task"
+      stdout_not_contains:
+        - "Claude task"
+
+- name: tap_export_filter_by_agent
+  steps:
+    - morph: [run, record-session, --prompt, "Cursor task", --response, "Done", --model-name, gpt-4o, --agent-id, cursor]
+      capture: h1
+      assert_hash: true
+    - morph: [run, record-session, --prompt, "OC task", --response, "Done", --model-name, gpt-4o, --agent-id, opencode]
+      capture: h2
+      assert_hash: true
+    - morph: [tap, export, --mode, prompt-only, --agent, cursor]
+      stdout_contains:
+        - "Cursor task"
+      stdout_not_contains:
+        - "OC task"
+
+- name: tap_preview_run
+  steps:
+    - morph: [run, record-session, --prompt, "Build a server", --response, "Server built with Express", --model-name, gpt-4o, --agent-id, cursor]
+      capture: run_hash
+      assert_hash: true
+    - morph: [tap, preview, "${run_hash}"]
+      stdout_contains:
+        - "Preview"
+        - "[PROMPT]"
+        - "[EXPECTED RESPONSE]"
+        - "Build a server"
+
+- name: tap_diagnose_shows_new_fields
+  steps:
+    - morph: [run, record-session, --prompt, "Fix a bug in the authentication module", --response, "I fixed the authentication bug by adding proper null checks", --model-name, gpt-4o, --agent-id, cursor]
+      capture: run_hash
+      assert_hash: true
+    - morph: [tap, diagnose, "${run_hash}"]
+      stdout_contains:
+        - "prompt_lengths"
+        - "response_lengths"
+        - "model"
+        - "agent"

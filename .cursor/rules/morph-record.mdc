@@ -11,7 +11,11 @@ When you complete a substantive task in this project and the project has a `.mor
 2. **Parameters:**
    - **prompt**: The user's exact request (the message that started this turn or task). Copy it verbatim.
    - **response**: Your **entire** reply to the user in this turn—from the first character to the last. Do not truncate, summarize, or omit any part. This is the exact text you are sending to the user.
-   Optionally set **workspace_path** to the full path of the project root (the directory containing `.morph/`) if the tool returns "not a morph repository". Optionally set model_name or agent_id.
+   - **model_name** *(required)*: The specific model you are running as — e.g. `claude-opus-4`, `claude-sonnet-4`, `gpt-5.4`, `gemini-2.5-pro`. Use your actual model identifier, not the IDE name. If you are uncertain, use your best knowledge of your own model name.
+   - **agent_id** *(required)*: The IDE or agent platform — one of `cursor`, `claude-code`, `opencode`, or the appropriate platform name.
+   Optionally set **workspace_path** to the full path of the project root (the directory containing `.morph/`) if the tool returns "not a morph repository".
+
+   **Advanced — structured messages (optional):** Instead of `prompt`/`response`, you may pass a **`messages`** array of `{role, content, metadata?, timestamp?}` objects for richer traces. Each message can carry a `metadata` object with keys like `name` (tool name), `path` (file path), or `input` (tool arguments). When `messages` is present, `prompt` and `response` are ignored.
 
 3. **Verification:** A successful call stores objects in `.morph/objects/`, `.morph/runs/`, `.morph/traces/`, and `.morph/prompts/`. If the tool returns an error, report it to the user and suggest setting MORPH_WORKSPACE in the project's `.cursor/mcp.json` or passing workspace_path.
 

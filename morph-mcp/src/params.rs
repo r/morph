@@ -86,6 +86,10 @@ pub struct RecordSessionParams {
 pub struct MessageParam {
     pub role: String,
     pub content: String,
+    #[serde(default)]
+    pub metadata: Option<std::collections::BTreeMap<String, serde_json::Value>>,
+    #[serde(default)]
+    pub timestamp: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

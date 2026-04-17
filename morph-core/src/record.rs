@@ -58,10 +58,18 @@ pub fn record_eval_metrics(path: &Path) -> Result<std::collections::BTreeMap<Str
 }
 
 /// A single message in a conversation (user prompt, assistant response, tool call, etc.).
+///
+/// The optional `metadata` map is merged into the trace event payload alongside
+/// `text`, allowing callers to attach structured data (tool names, file paths,
+/// etc.) without Morph needing to understand the semantics.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ConversationMessage {
     pub role: String,
     pub content: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub metadata: BTreeMap<String, serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<String>,
 }
 
 /// Record a single prompt/response session as a Run with a Trace (no files).
@@ -74,8 +82,8 @@ pub fn record_session(
     agent_id: Option<&str>,
 ) -> Result<Hash, MorphError> {
     let messages = vec![
-        ConversationMessage { role: "user".into(), content: prompt.to_string() },
-        ConversationMessage { role: "assistant".into(), content: response.to_string() },
+        ConversationMessage { role: "user".into(), content: prompt.to_string(), metadata: BTreeMap::new(), timestamp: None },
+        ConversationMessage { role: "assistant".into(), content: response.to_string(), metadata: BTreeMap::new(), timestamp: None },
     ];
     record_conversation(store, &messages, model_name, agent_id)
 }
@@ -95,12 +103,13 @@ pub fn record_conversation(
         .iter()
         .enumerate()
         .map(|(i, msg)| {
-            let mut payload = BTreeMap::new();
+            let mut payload = msg.metadata.clone();
             payload.insert("text".into(), serde_json::Value::String(msg.content.clone()));
+            let ts = msg.timestamp.as_deref().unwrap_or(&now).to_string();
             TraceEvent {
                 id: format!("evt_{}", i),
                 seq: i as u64,
-                ts: now.clone(),
+                ts,
                 kind: msg.role.clone(),
                 payload,
             }
@@ -113,7 +122,6 @@ pub fn record_conversation(
     let identity = identity_pipeline();
     let pipeline_hash = store.put(&identity)?;
 
-    // Extract first user message and last assistant message for the prompt blob summary
     let first_prompt = messages.iter().find(|m| m.role == "user").map(|m| m.content.as_str()).unwrap_or("");
     let last_response = messages.iter().rev().find(|m| m.role == "assistant").map(|m| m.content.as_str()).unwrap_or("");
 
@@ -128,11 +136,14 @@ pub fn record_conversation(
     });
     store.put(&prompt_blob)?;
 
+    // Link run to HEAD commit if one exists
+    let head_commit = crate::commit::resolve_head(store).ok().flatten().map(|h| h.to_string());
+
     let run = MorphObject::Run(Run {
         pipeline: pipeline_hash.to_string(),
-        commit: None,
+        commit: head_commit,
         environment: RunEnvironment {
-            model: model_name.unwrap_or("cursor").to_string(),
+            model: model_name.unwrap_or("unknown").to_string(),
             version: "1.0".to_string(),
             parameters: BTreeMap::new(),
             toolchain: BTreeMap::new(),
@@ -142,7 +153,7 @@ pub fn record_conversation(
         metrics: BTreeMap::new(),
         trace: trace_hash.to_string(),
         agent: AgentInfo {
-            id: agent_id.unwrap_or("cursor").to_string(),
+            id: agent_id.unwrap_or("unknown").to_string(),
             version: "1.0".to_string(),
             policy: None,
             instance_id: None,
@@ -439,11 +450,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = FsStore::new(dir.path().to_path_buf());
         let messages = vec![
-            ConversationMessage { role: "user".into(), content: "Build a web server".into() },
-            ConversationMessage { role: "assistant".into(), content: "I'll create the files".into() },
-            ConversationMessage { role: "tool_call".into(), content: "write_file(server.py)".into() },
-            ConversationMessage { role: "tool_result".into(), content: "file written".into() },
-            ConversationMessage { role: "assistant".into(), content: "Done! Server is ready.".into() },
+            ConversationMessage { role: "user".into(), content: "Build a web server".into(), metadata: BTreeMap::new(), timestamp: None },
+            ConversationMessage { role: "assistant".into(), content: "I'll create the files".into(), metadata: BTreeMap::new(), timestamp: None },
+            ConversationMessage { role: "tool_call".into(), content: "write_file(server.py)".into(), metadata: BTreeMap::new(), timestamp: None },
+            ConversationMessage { role: "tool_result".into(), content: "file written".into(), metadata: BTreeMap::new(), timestamp: None },
+            ConversationMessage { role: "assistant".into(), content: "Done! Server is ready.".into(), metadata: BTreeMap::new(), timestamp: None },
         ];
         let hash = record_conversation(&store, &messages, Some("qwen-3.5"), Some("opencode")).unwrap();
         let run_obj = store.get(&hash).unwrap();
@@ -479,11 +490,75 @@ mod tests {
         let hash = record_session(&store, "p", "r", None, None).unwrap();
         let obj = store.get(&hash).unwrap();
         if let MorphObject::Run(run) = obj {
-            assert_eq!(run.environment.model, "cursor");
-            assert_eq!(run.agent.id, "cursor");
+            assert_eq!(run.environment.model, "unknown");
+            assert_eq!(run.agent.id, "unknown");
         } else {
             panic!("expected Run");
         }
+    }
+
+    #[test]
+    fn record_conversation_metadata_merges_into_payload() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FsStore::new(dir.path().to_path_buf());
+        let mut meta = BTreeMap::new();
+        meta.insert("name".into(), serde_json::json!("read_file"));
+        meta.insert("path".into(), serde_json::json!("src/main.rs"));
+        let messages = vec![
+            ConversationMessage { role: "user".into(), content: "Read the file".into(), metadata: BTreeMap::new(), timestamp: None },
+            ConversationMessage { role: "file_read".into(), content: "fn main() {}".into(), metadata: meta, timestamp: None },
+        ];
+        let hash = record_conversation(&store, &messages, Some("test"), Some("test")).unwrap();
+        let run = match store.get(&hash).unwrap() { MorphObject::Run(r) => r, _ => panic!("expected Run") };
+        let trace_hash = Hash::from_hex(&run.trace).unwrap();
+        let trace = match store.get(&trace_hash).unwrap() { MorphObject::Trace(t) => t, _ => panic!("expected Trace") };
+
+        assert_eq!(trace.events[1].payload["text"].as_str().unwrap(), "fn main() {}");
+        assert_eq!(trace.events[1].payload["name"].as_str().unwrap(), "read_file");
+        assert_eq!(trace.events[1].payload["path"].as_str().unwrap(), "src/main.rs");
+    }
+
+    #[test]
+    fn record_conversation_per_message_timestamps() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FsStore::new(dir.path().to_path_buf());
+        let messages = vec![
+            ConversationMessage { role: "user".into(), content: "Hello".into(), metadata: BTreeMap::new(), timestamp: Some("2026-01-01T10:00:00Z".into()) },
+            ConversationMessage { role: "assistant".into(), content: "Hi".into(), metadata: BTreeMap::new(), timestamp: Some("2026-01-01T10:00:05Z".into()) },
+        ];
+        let hash = record_conversation(&store, &messages, Some("test"), Some("test")).unwrap();
+        let run = match store.get(&hash).unwrap() { MorphObject::Run(r) => r, _ => panic!("expected Run") };
+        let trace_hash = Hash::from_hex(&run.trace).unwrap();
+        let trace = match store.get(&trace_hash).unwrap() { MorphObject::Trace(t) => t, _ => panic!("expected Trace") };
+
+        assert_eq!(trace.events[0].ts, "2026-01-01T10:00:00Z");
+        assert_eq!(trace.events[1].ts, "2026-01-01T10:00:05Z");
+    }
+
+    #[test]
+    fn record_conversation_backward_compat_no_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FsStore::new(dir.path().to_path_buf());
+        let json = r#"[{"role":"user","content":"Hello"},{"role":"assistant","content":"Hi"}]"#;
+        let messages: Vec<ConversationMessage> = serde_json::from_str(json).unwrap();
+        assert!(messages[0].metadata.is_empty());
+        assert!(messages[0].timestamp.is_none());
+        let hash = record_conversation(&store, &messages, None, None).unwrap();
+        assert!(store.get(&hash).is_ok());
+    }
+
+    #[test]
+    fn record_conversation_links_to_head_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = crate::init_repo(dir.path()).unwrap();
+        let commit_hash = crate::create_tree_commit(
+            &store, dir.path(), None, None,
+            BTreeMap::new(), "initial".into(), None, None,
+        ).unwrap();
+
+        let hash = record_session(&store, "p", "r", None, None).unwrap();
+        let run = match store.get(&hash).unwrap() { MorphObject::Run(r) => r, _ => panic!("expected Run") };
+        assert_eq!(run.commit.as_deref(), Some(commit_hash.to_string().as_str()));
     }
 
     #[test]

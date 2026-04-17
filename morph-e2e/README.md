@@ -22,6 +22,16 @@ The workspace builds the `morph` binary from morph-cli when needed. To run from 
   - `prompt_create_materialize.feature` — prompt blob create and materialize
   - `run_record_session.feature` — single agent records a session
   - `concurrent_agents.feature` — two agents record sessions at the same time
+  - `branch_and_checkout.feature` — branching and checkout
+  - `merge_workflow.feature` — behavioral merge with dominance
+  - `behavioral_merge_workflow.feature` — advanced merge scenarios
+  - `evidence_backed_commit.feature` — commits with `--from-run` provenance
+  - `rollup_workflow.feature` — squash/rollup of commit sequences
+  - `run_to_pipeline_extraction.feature` — extract pipelines from runs
+  - `remote_sync_workflow.feature` — push/fetch/pull across repos
+  - `hook_scripts.feature` — Cursor hook script integration
+  - `hosted_inspection_workflow.feature` — `morph serve` API
+  - `team_ci_workflow.feature` — certification and gating
 - **tests/cucumber.rs** — step definitions (run morph, assert output and paths)
 
 ## Adding tests

@@ -54,11 +54,68 @@ function extractText(content: unknown): string {
 interface Message {
   role: string
   content: string
+  metadata?: Record<string, any>
+  timestamp?: string
 }
 
 interface FetchResult {
   messages: Message[]
   modelName: string
+}
+
+const MAX_CONTENT_LEN = 2000
+
+function truncate(s: string, limit = MAX_CONTENT_LEN): string {
+  if (s && s.length > limit) return s.slice(0, limit) + "... [truncated]"
+  return s
+}
+
+const FILE_READ_TOOLS = new Set(["Read", "Grep", "Glob", "SemanticSearch"])
+const FILE_EDIT_TOOLS = new Set(["StrReplace", "Write", "EditNotebook", "Delete"])
+
+function partToMessage(role: string, part: any): Message | null {
+  const ptype = part.type || "text"
+
+  if (ptype === "text") {
+    const text = part.text || part.content || ""
+    if (!text) return null
+    return { role, content: text }
+  }
+
+  if (ptype === "tool-invocation" || ptype === "tool_use" || ptype === "tool-call") {
+    const toolName = part.name || part.toolName || "unknown_tool"
+    const toolInput = part.input || part.args || {}
+    const metadata: Record<string, any> = { name: toolName }
+
+    let msgRole: string
+    if (FILE_READ_TOOLS.has(toolName)) {
+      msgRole = "file_read"
+      metadata.path = toolInput.path || toolInput.glob_pattern || toolInput.pattern || ""
+    } else if (FILE_EDIT_TOOLS.has(toolName)) {
+      msgRole = "file_edit"
+      metadata.path = toolInput.path || toolInput.target_notebook || ""
+    } else {
+      msgRole = "tool_call"
+      metadata.input = truncate(JSON.stringify(toolInput))
+    }
+
+    return { role: msgRole, content: truncate(JSON.stringify(toolInput)), metadata }
+  }
+
+  if (ptype === "tool-result" || ptype === "tool_result") {
+    const output = typeof part.output === "string"
+      ? part.output
+      : typeof part.content === "string"
+        ? part.content
+        : JSON.stringify(part.output || part.content || "")
+    return {
+      role: "tool_result",
+      content: truncate(output),
+      metadata: part.error ? { error: String(part.error) } : undefined,
+    }
+  }
+
+  return null
 }
 
 function extractAllMessages(rawMessages: any[]): FetchResult {
@@ -68,14 +125,28 @@ function extractAllMessages(rawMessages: any[]): FetchResult {
     const info = entry.info || entry
     const role = info.role || "unknown"
     const parts = entry.parts || info.parts || []
-    const text = extractPartsText(parts) || extractText(info.content)
     if (!modelName && info.modelID) {
       modelName = info.providerID
         ? `${info.providerID}/${info.modelID}`
         : info.modelID
     }
-    if (text) {
-      messages.push({ role, content: text })
+
+    let emittedFromParts = false
+    if (Array.isArray(parts)) {
+      for (const part of parts) {
+        const msg = partToMessage(role, part)
+        if (msg) {
+          messages.push(msg)
+          emittedFromParts = true
+        }
+      }
+    }
+
+    if (!emittedFromParts) {
+      const text = extractText(info.content)
+      if (text) {
+        messages.push({ role, content: text })
+      }
     }
   }
   return { messages, modelName }

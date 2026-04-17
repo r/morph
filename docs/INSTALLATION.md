@@ -2,7 +2,7 @@
 
 This guide gets you from zero to a working Morph setup: binaries installed, repo initialized, and your IDE (Cursor, Claude Code, or OpenCode) recording every prompt and response and able to commit the filesystem.
 
-**What you get:** Prompts and model replies stored as immutable **Runs** with **Traces** in the Morph object store. File tree snapshots via `morph commit` or MCP tools, independent of Git. Always-on recording via IDE hooks so you don't depend on the agent calling a tool.
+**What you get:** Rich structured traces of every agent interaction -- tool calls, file reads/edits, shell commands, prompts, and responses -- stored as immutable **Runs** with **Traces** in the Morph object store. File tree snapshots via `morph commit` or MCP tools, independent of Git. Always-on recording via IDE hooks so you don't depend on the agent calling a tool.
 
 ---
 

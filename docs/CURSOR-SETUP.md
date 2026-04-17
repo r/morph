@@ -2,22 +2,24 @@
 
 This page is the full reference for using Morph in Cursor. For a single canonical installation flow (binaries, init, then IDE), see **[Installation](INSTALLATION.md)**.
 
-**What you get:** Prompts and model replies stored as immutable **Runs** with **Traces** in the Morph object store. File tree commits via MCP tools or CLI, independent of Git. **Always-on recording** via hooks so every prompt and response is captured without relying on the agent.
+**What you get:** Rich structured traces of every agent interaction -- tool calls, file reads/edits, shell commands, prompts, and responses -- stored as immutable **Runs** with **Traces** in the Morph object store. File tree commits via MCP tools or CLI, independent of Git. **Always-on recording** via hooks so every turn is captured without relying on the agent.
 
 ---
 
 ## Quick start (installation order)
 
-1. **Install the Morph binaries** — see [Installation § Install the Morph binaries](INSTALLATION.md#1-install-the-morph-binaries).
+1. **Install the Morph binaries** -- see [Installation: Install the Morph binaries](INSTALLATION.md#1-install-the-morph-binaries).
 2. **Configure MCP** in Cursor so the morph server is connected (Section 1 below).
-3. **Initialize** a Morph repo: `morph init` — see [Installation § Initialize a Morph repo](INSTALLATION.md#2-initialize-a-morph-repo).
+3. **Initialize** a Morph repo: `morph init` -- see [Installation: Initialize a Morph repo](INSTALLATION.md#2-initialize-a-morph-repo).
 4. **Enable hooks** so Cursor records every prompt and response automatically (Section 3 below).
+
+Or run `morph setup cursor` after `morph init` to install MCP config, hooks, and rules in one step.
 
 ---
 
 ## 1. Configure the MCP Server in Cursor
 
-Open **Cursor Settings → MCP** and add the Morph server. If `morph-mcp` is on your PATH:
+Open **Cursor Settings > MCP** and add the Morph server. If `morph-mcp` is on your PATH:
 
 ```json
 {
@@ -50,19 +52,19 @@ Cursor may start the MCP server with a cwd that isn't your project root, causing
 }
 ```
 
-Resolution order: tool call `workspace_path` argument → `MORPH_WORKSPACE` env → `CURSOR_WORKSPACE_FOLDER` env → process cwd.
+Resolution order: tool call `workspace_path` argument > `MORPH_WORKSPACE` env > `CURSOR_WORKSPACE_FOLDER` env > process cwd.
 
 ---
 
 ## 2. Initialize a Morph repo (if needed)
 
-If you haven’t already, run `morph init` in your project root (see [Installation](INSTALLATION.md#2-initialize-a-morph-repo)). Then verify: Cursor Settings → MCP shows the morph server connected; you can ask the agent to call `morph_record_session` with test prompt/response and confirm files under `.morph/objects/`.
+If you haven't already, run `morph init` in your project root (see [Installation](INSTALLATION.md#2-initialize-a-morph-repo)). Then verify: Cursor Settings > MCP shows the morph server connected; you can ask the agent to call `morph_record_session` with test prompt/response and confirm files under `.morph/objects/`.
 
 ---
 
 ## 3. Recording sessions
 
-### Hook-based recording (recommended — always-on)
+### Hook-based recording (recommended -- always-on)
 
 Cursor hooks run on lifecycle events; the agent cannot skip them. Use **beforeSubmitPrompt**, **afterAgentResponse**, and **stop** so every prompt and full response is recorded without any agent cooperation.
 
@@ -79,11 +81,11 @@ Create or edit `.cursor/hooks.json` in your project (paths are relative to proje
 }
 ```
 
-- **beforeSubmitPrompt** — Saves the prompt to `.morph/hooks/pending-<conversation_id>.jsonl`.
-- **afterAgentResponse** — Receives the full agent response in the payload; builds a Run + Trace with prompt(s) and response, runs `morph run record`, then clears the pending file.
-- **stop** — Fallback: if a pending file still exists (e.g. `afterAgentResponse` didn’t fire), records a run with placeholder response text so no prompt is lost.
+- **beforeSubmitPrompt** -- Saves the prompt and composer mode to `.morph/hooks/pending-<conversation_id>.jsonl`.
+- **afterAgentResponse** -- Parses the agent's full transcript (from `transcript_path` in the payload) for structured events: tool calls (`Shell`, `Task`, `CallMcpTool`), file reads (`Read`, `Grep`, `Glob`), file edits (`StrReplace`, `Write`), and text. Builds a Run + Trace with these rich events, captures token usage (`input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`), runs `morph run record`, then clears the pending file. Falls back to pending prompts + response text if the transcript is unavailable.
+- **stop** -- Fallback: same structured transcript parsing as `afterAgentResponse`; fires if the response hook didn't.
 
-Hook scripts live under `.cursor/` (same as `hooks.json` and `mcp.json`), so the project root stays clean like a Git-style layout. Run `morph setup cursor` to install them, or copy the scripts from the Morph repo’s `.cursor/` into your project’s `.cursor/` and make them executable: `chmod +x .cursor/morph-record-*.sh`.
+Hook scripts live under `.cursor/` (same as `hooks.json` and `mcp.json`), so the project root stays clean. Run `morph setup cursor` to install them, or copy the scripts from the Morph repo's `.cursor/` into your project's `.cursor/` and make them executable: `chmod +x .cursor/morph-record-*.sh`.
 
 ### Agent-driven recording (optional)
 
@@ -104,7 +106,7 @@ When you complete a substantive task in this project and the project has a `.mor
 Do not skip this step when the user asked for code or changes and you have finished the work.
 ```
 
-Hooks and the rule can both be used; hooks guarantee recording even when the agent doesn’t call the tool.
+Hooks and the rule can both be used; hooks guarantee recording even when the agent doesn't call the tool.
 
 ### Debugging hooks
 
@@ -122,7 +124,7 @@ When hooks run, they write to `.morph/hooks/` for diagnostics:
 
 ## 4. Cursor Marketplace (plugin packaging)
 
-The [Cursor Marketplace](https://cursor.com/marketplace) supports **plugins** that bundle rules, MCP config, and **hooks** (including scripts). A Morph plugin can provide rules (e.g. `morph-record.mdc`), `hooks.json`, and the three hook scripts so that “add Morph to Cursor” is one click after the plugin is installed.
+The [Cursor Marketplace](https://cursor.com/marketplace) supports **plugins** that bundle rules, MCP config, and **hooks** (including scripts). A Morph plugin can provide rules (e.g. `morph-record.mdc`), `hooks.json`, and the three hook scripts so that "add Morph to Cursor" is one click after the plugin is installed.
 
 - **What the plugin ships:** Rules, hooks config, and hook scripts. Marketplace policy allows scripts but **no binaries**.
 - **What you still do:** Install the Morph binaries and run `morph init` (see [Installation](INSTALLATION.md)). The plugin only configures Cursor.
@@ -169,7 +171,7 @@ All tools accept optional `workspace_path`. To get a run's prompt from the CLI, 
 | Symptom | Fix |
 |---------|-----|
 | "not a morph repository" | Run `morph init` in the project root, or set `MORPH_WORKSPACE` in `.cursor/mcp.json` |
-| MCP tools not available | Check Cursor Settings -> MCP for server status. Fix `command` path. Restart Cursor. |
+| MCP tools not available | Check Cursor Settings > MCP for server status. Fix `command` path. Restart Cursor. |
 | `spawn ... ENOENT` | Path in `mcp.json` doesn't exist. Run `which morph-mcp` to find it. |
 | Sessions not recorded | Use hook-based recording (Section 3): add `.cursor/hooks.json` with `beforeSubmitPrompt`, `afterAgentResponse`, and `stop`. Or add `.cursor/rules/morph-record.mdc` with `alwaysApply: true` so the agent calls `morph_record_session`. |
 | Empty `.morph/prompts/` | A successful `morph_record_session` writes to `prompts/`, `runs/`, `traces/`, and `objects/`. If all empty, the tool isn't being called. |
@@ -177,7 +179,7 @@ All tools accept optional `workspace_path`. To get a run's prompt from the CLI, 
 
 ### Debugging Object not found
 
-When `morph prompt show` fails with **Object not found: &lt;hash&gt;** (a trace hash), the run file in `.morph/runs/` points to a trace that isn't in the store. That can happen if the run was recorded under an older store version and the trace lived under a different hash, or the run file was written without the trace ever being stored.
+When `morph prompt show` fails with **Object not found: \<hash\>** (a trace hash), the run file in `.morph/runs/` points to a trace that isn't in the store. That can happen if the run was recorded under an older store version and the trace lived under a different hash, or the run file was written without the trace ever being stored.
 
 **Steps:**
 

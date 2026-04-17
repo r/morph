@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Cursor hook: beforeSubmitPrompt. Appends prompt to .morph/hooks/pending-<conversation_id>.jsonl for each Morph repo in workspace_roots.
+# Also captures model name and composer_mode from the Cursor payload.
 # Logs: .morph/hooks/logs/cursor-invoke.log (Cursor called us), .morph/hooks/debug/last-beforeSubmitPrompt.json (payload for inspection).
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,8 +22,9 @@ conversation_id = payload.get("conversation_id") or "unknown"
 generation_id = payload.get("generation_id") or ""
 prompt = payload.get("prompt") or ""
 ts = payload.get("timestamp") or datetime.utcnow().isoformat() + "Z"
+model_name = payload.get("model") or ""
+composer_mode = payload.get("composer_mode") or ""
 
-# Debug: write last payload (prompt truncated) so you can verify what Cursor sent
 def write_debug(morph_dir, name, data):
     debug_dir = morph_dir / "hooks" / "debug"
     debug_dir.mkdir(parents=True, exist_ok=True)
@@ -47,12 +49,13 @@ for root in roots:
         continue
     hooks_dir = morph_dir / "hooks"
     hooks_dir.mkdir(parents=True, exist_ok=True)
-    # 1) Prove Cursor called us
     log_invoke(morph_dir, "beforeSubmitPrompt", conversation_id)
     write_debug(morph_dir, "beforeSubmitPrompt", payload)
-    # 2) Append prompt to pending
     pending = hooks_dir / f"pending-{conversation_id}.jsonl"
-    line = json.dumps({"ts": ts, "prompt": prompt, "generation_id": generation_id}) + "\n"
+    row = {"ts": ts, "prompt": prompt, "generation_id": generation_id, "model": model_name}
+    if composer_mode:
+        row["composer_mode"] = composer_mode
+    line = json.dumps(row) + "\n"
     with open(pending, "a") as f:
         f.write(line)
 PY

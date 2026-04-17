@@ -755,13 +755,74 @@ morph show <hash>
 morph hash-object <file>
 morph upgrade
 morph visualize [<path>] [--port <port>] [--interface <addr>]
+morph serve [--repo <name>=<path>] [--port <port>] [--interface <addr>] [--org-policy <file>]
 ```
 
 `morph hash-object` reads a Morph object from a JSON file, stores it, and prints its content hash. Used by hook scripts that need to construct and store objects outside the normal CLI workflow.
 
 `morph upgrade` migrates the repository store to the latest version (e.g. 0.0 → 0.2 → 0.3). Required before using MCP on older repos.
 
-`morph visualize` starts a local web server for browsing the repo in a browser: commit strip, detail panel (message, author, pipeline, eval contract, prompts), and an object browser. The web UI is embedded in the binary.
+`morph visualize` starts a local web server for browsing the repo in a browser: commit strip, detail panel (message, author, pipeline, eval contract, prompts), and an object browser. The web UI is embedded in the binary. `morph serve` is the full hosted service with multi-repo support, a stable JSON API, behavioral status derivation, and org-level policy (see §15).
+
+## 6.13 Tags
+
+```
+morph tag <name>           # tag the current HEAD commit
+morph tag --list           # list all tags
+morph tag --delete <name>  # delete a tag
+```
+
+Tags are named pointers to commits, stored under `.morph/refs/tags/`. Creating a tag on a non-existent branch or empty repo fails with a clear error.
+
+## 6.14 Stash
+
+```
+morph stash save [-m <message>]  # save staged changes
+morph stash pop                  # restore most recent stash (LIFO)
+morph stash list                 # list stashed entries
+```
+
+Stash saves the current staging index as a stash entry and clears the index. Pop restores the most recent entry. Stash entries are LIFO-ordered.
+
+## 6.15 Revert
+
+```
+morph revert <commit_hash>
+```
+
+Creates a new commit that restores the parent's file tree, effectively undoing the specified commit. Reverts the root commit to an empty tree. Fails if the hash does not reference a commit.
+
+## 6.16 Diff
+
+```
+morph diff <ref1> <ref2>   # compare two commits/branches
+morph diff HEAD <ref>      # compare HEAD against another ref
+```
+
+Compares the file trees of two commits and reports added, deleted, and modified files.
+
+## 6.17 Tap (Trace Analysis)
+
+```
+morph tap summary                          # overview of all runs in the repo
+morph tap inspect <run_hash>               # grouped steps for a single run
+morph tap inspect --all                    # grouped steps for all runs
+morph tap diagnose [<run_hash>]            # recording quality report
+morph tap export --mode <mode>             # export eval cases (prompt-only, with-context, agentic)
+morph tap trace-stats <run_hash>           # detailed event-level statistics
+morph tap preview <run_hash>               # labeled prompt/context/response preview
+```
+
+Tap reads traces and runs from the store, groups events into logical steps (prompt, response, tool calls, file operations), and produces structured output for evaluation frameworks. Supports filtering by model (`--model`) and minimum step count (`--min-steps`).
+
+## 6.18 IDE Setup
+
+```
+morph setup cursor     # install Cursor MCP config, hooks, and rules
+morph setup opencode   # install OpenCode MCP config, AGENTS.md, and plugin
+```
+
+Writes (or merges into) the IDE-specific configuration files in the project directory. Idempotent — safe to re-run.
 
 ---
 
@@ -1002,7 +1063,7 @@ The reference v0 implementation is in Rust.
 | `morph-core` | Library: object model, storage, hashing, commits, metrics, trees, migration |
 | `morph-cli` | CLI: read path + manual writes (`morph init`, `add`, `commit`, `log`, ...) |
 | `morph-mcp` | Cursor MCP server: primary write path from the IDE |
-| `morph-serve` | Hosted service: shared inspection and policy layer (`morph serve` and `morph visualize`) with stable JSON API, multi-repo support, behavioral status derivation, org-level policy |
+| `morph-serve` | Hosted service: `morph serve` (multi-repo JSON API + browser UI) and `morph visualize` (single-repo alias), with behavioral status derivation and org-level policy |
 
 ---
 

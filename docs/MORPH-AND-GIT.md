@@ -51,7 +51,7 @@ Both systems track the same working directory. Neither reads the other's metadat
 
 ### Daily workflow: do everything twice
 
-This sounds like overhead, but it's mostly automatic if you have the MCP server or hooks set up (see [CURSOR-SETUP.md](CURSOR-SETUP.md) or [CLAUDE-CODE-SETUP.md](CLAUDE-CODE-SETUP.md)). The manual version:
+This sounds like overhead, but it's mostly automatic if you have the MCP server or hooks set up (see [CURSOR-SETUP.md](CURSOR-SETUP.md), [CLAUDE-CODE-SETUP.md](CLAUDE-CODE-SETUP.md), or [OPENCODE-SETUP.md](OPENCODE-SETUP.md)). The manual version:
 
 ```bash
 # You write code (or an agent does), then:

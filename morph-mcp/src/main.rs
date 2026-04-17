@@ -90,7 +90,12 @@ impl MorphServer {
         let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
         if let Some(ref msgs) = params.0.messages {
             let conversation: Vec<morph_core::ConversationMessage> = msgs.iter()
-                .map(|m| morph_core::ConversationMessage { role: m.role.clone(), content: m.content.clone() })
+                .map(|m| morph_core::ConversationMessage {
+                    role: m.role.clone(),
+                    content: m.content.clone(),
+                    metadata: m.metadata.clone().unwrap_or_default(),
+                    timestamp: m.timestamp.clone(),
+                })
                 .collect();
             morph_core::record_conversation(
                 &store, &conversation,
@@ -351,11 +356,11 @@ mod tests {
             .morph_record_session(Parameters(RecordSessionParams {
                 prompt: None, response: None,
                 messages: Some(vec![
-                    params::MessageParam { role: "user".into(), content: "Build a server".into() },
-                    params::MessageParam { role: "assistant".into(), content: "Creating files".into() },
-                    params::MessageParam { role: "tool_call".into(), content: "write_file(app.py)".into() },
-                    params::MessageParam { role: "tool_result".into(), content: "done".into() },
-                    params::MessageParam { role: "assistant".into(), content: "Server is ready!".into() },
+                    params::MessageParam { role: "user".into(), content: "Build a server".into(), metadata: None, timestamp: None },
+                    params::MessageParam { role: "assistant".into(), content: "Creating files".into(), metadata: None, timestamp: None },
+                    params::MessageParam { role: "tool_call".into(), content: "write_file(app.py)".into(), metadata: None, timestamp: None },
+                    params::MessageParam { role: "tool_result".into(), content: "done".into(), metadata: None, timestamp: None },
+                    params::MessageParam { role: "assistant".into(), content: "Server is ready!".into(), metadata: None, timestamp: None },
                 ]),
                 workspace_path: Some(ws.clone()), model_name: Some("qwen-3.5".into()), agent_id: Some("opencode".into()),
             })).await.unwrap();

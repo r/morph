@@ -2,15 +2,15 @@
 
 This page is the full reference for using Morph in Claude Code. For a single canonical installation flow (binaries, init, then IDE), see **[Installation](INSTALLATION.md)**.
 
-**What you get:** Prompts and Claude’s replies stored as **Runs** with **Traces** in the Morph object store. Always-on recording via hooks (no need for the agent to call a tool). File tree commits via MCP tools or CLI, independent of Git.
+**What you get:** Rich structured traces of every agent interaction -- tool calls, file reads/edits, prompts, and responses -- stored as **Runs** with **Traces** in the Morph object store. Always-on recording via hooks (no need for the agent to call a tool). File tree commits via MCP tools or CLI, independent of Git.
 
 ---
 
 ## Quick start (installation order)
 
-1. **Install the Morph binaries** — see [Installation § Install the Morph binaries](INSTALLATION.md#1-install-the-morph-binaries).
+1. **Install the Morph binaries** -- see [Installation: Install the Morph binaries](INSTALLATION.md#1-install-the-morph-binaries).
 2. **Configure MCP** in Claude Code so the morph server is connected (Section 1 below).
-3. **Initialize** a Morph repo: `morph init` — see [Installation § Initialize a Morph repo](INSTALLATION.md#2-initialize-a-morph-repo).
+3. **Initialize** a Morph repo: `morph init` -- see [Installation: Initialize a Morph repo](INSTALLATION.md#2-initialize-a-morph-repo).
 4. **Enable hooks** so Claude Code records every prompt and response (Section 2 below).
 
 ---
@@ -34,11 +34,11 @@ If `morph-mcp` is on your PATH, add it in your MCP configuration (e.g. via `clau
 }
 ```
 
-If Claude Code can’t find the binary, use the full path (e.g. `"/usr/local/bin/morph-mcp"` or `"$HOME/.cargo/bin/morph-mcp"`). Restart or reload Claude Code after changing MCP config.
+If Claude Code can't find the binary, use the full path (e.g. `"/usr/local/bin/morph-mcp"` or `"$HOME/.cargo/bin/morph-mcp"`). Restart or reload Claude Code after changing MCP config.
 
 ### Workspace path
 
-If the MCP server’s working directory isn’t your project root, set `MORPH_WORKSPACE` in the server config so Morph finds the repo:
+If the MCP server's working directory isn't your project root, set `MORPH_WORKSPACE` in the server config so Morph finds the repo:
 
 ```json
 {
@@ -60,15 +60,24 @@ If the MCP server’s working directory isn’t your project root, set `MORPH_WO
 
 Claude Code hooks run on lifecycle events. Use **UserPromptSubmit** and **Stop** so every prompt and full response is recorded without the agent calling a tool.
 
-- **UserPromptSubmit** — Fires when you submit a prompt; payload includes `prompt` and `session_id`.
-- **Stop** — Fires when Claude finishes responding; payload includes **`last_assistant_message`** (the full response text).
+- **UserPromptSubmit** -- Fires when you submit a prompt; payload includes `prompt` and `session_id`.
+- **Stop** -- Fires when Claude finishes responding; payload includes structured data (transcript or conversation) and `last_assistant_message` as a fallback.
 
 ### Hook scripts
 
 Copy the Morph hook scripts into your project so Claude Code can run them:
 
-- From the Morph repo, copy the contents of `claude-code/hooks/` into your project’s **`.claude/hooks/`** directory (e.g. `morph-record-prompt.sh`, `morph-record-stop.sh`).
+- From the Morph repo, copy the contents of `claude-code/hooks/` into your project's **`.claude/hooks/`** directory (e.g. `morph-record-prompt.sh`, `morph-record-stop.sh`).
 - Make the scripts executable: `chmod +x .claude/hooks/morph-record-prompt.sh .claude/hooks/morph-record-stop.sh`.
+
+### What the hooks record
+
+The stop hook checks for structured data in the Claude Code payload:
+
+- **`transcript_path`** -- JSONL file containing the full conversation. Parsed for `tool_use` (file reads, file edits, shell commands) and `tool_result` items, producing rich structured trace events.
+- **`conversation`** -- Array of message objects with `tool_use` and `tool_result` content blocks; parsed similarly when `transcript_path` is unavailable.
+- **Token usage** (`input_tokens`, `output_tokens`, `total_tokens`) -- captured into `run.environment.parameters`.
+- **Fallback** -- If neither `transcript_path` nor `conversation` is available, the hook records `last_assistant_message` as a plain response.
 
 ### Hooks configuration
 
@@ -104,7 +113,7 @@ In **`.claude/settings.json`** (or `~/.claude/settings.json`), add a `hooks` sec
 If you already have other hooks, merge these entries into the existing `UserPromptSubmit` and `Stop` arrays.
 
 - **UserPromptSubmit** appends the prompt to `.morph/hooks/pending-<session_id>.jsonl`.
-- **Stop** reads that file, builds a Run + Trace using the prompts and `last_assistant_message`, runs `morph run record`, then deletes the pending file.
+- **Stop** reads that file, parses structured events from the payload, builds a Run + Trace, runs `morph run record`, then deletes the pending file.
 
 Hook output and logs go under `.morph/hooks/logs/` and `.morph/hooks/debug/` (see [Debugging](#debugging) below).
 
@@ -147,7 +156,7 @@ When hooks run, they write under `.morph/hooks/`:
 | `.morph/hooks/debug/last-UserPromptSubmit.json` | Last UserPromptSubmit payload (prompt may be truncated) |
 | `.morph/hooks/debug/last-Stop.json` | Last Stop payload (response may be truncated) |
 
-If recording doesn’t happen, ensure:
+If recording doesn't happen, ensure:
 
 - `morph` and `morph-mcp` are on PATH (or use full paths in config).
 - The project has been initialized with `morph init` (`.morph/` exists).
@@ -158,7 +167,8 @@ If recording doesn’t happen, ensure:
 
 ## Reference
 
-- [Hooks reference](https://code.claude.com/docs/en/hooks) — Event list, input schemas, and config.
-- [Connect Claude Code to tools via MCP](https://code.claude.com/docs/en/mcp) — MCP setup.
-- [Installation](INSTALLATION.md) — Canonical install flow for all IDEs.
-- [CURSOR-SETUP.md](CURSOR-SETUP.md) — Cursor-specific setup (same binaries and MCP server).
+- [Hooks reference](https://code.claude.com/docs/en/hooks) -- Event list, input schemas, and config.
+- [Connect Claude Code to tools via MCP](https://code.claude.com/docs/en/mcp) -- MCP setup.
+- [Installation](INSTALLATION.md) -- Canonical install flow for all IDEs.
+- [CURSOR-SETUP.md](CURSOR-SETUP.md) -- Cursor-specific setup (same binaries and MCP server).
+- [OPENCODE-SETUP.md](OPENCODE-SETUP.md) -- OpenCode-specific setup.

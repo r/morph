@@ -233,6 +233,11 @@ pub enum Command {
         #[command(subcommand)]
         sub: TraceCmd,
     },
+    /// Extract and analyze traces for evaluation
+    Tap {
+        #[command(subcommand)]
+        sub: TapCmd,
+    },
     /// Browse repo in browser
     #[cfg(feature = "visualize")]
     #[command(name = "visualize")]
@@ -261,6 +266,54 @@ pub enum Command {
 #[derive(clap::Subcommand)]
 pub enum TraceCmd {
     Show { hash: String },
+}
+
+#[derive(clap::Subcommand)]
+pub enum TapCmd {
+    /// Show summary statistics for all traces in the repo
+    Summary,
+    /// Inspect a single run/trace and show extracted steps
+    Inspect {
+        /// Run hash to inspect (or "all" for every run)
+        run_hash: String,
+    },
+    /// Diagnose recording quality for a run or all runs
+    Diagnose {
+        /// Run hash to diagnose (or "all" for every run)
+        #[arg(default_value = "all")]
+        run_hash: String,
+    },
+    /// Export traces as evaluation cases (JSON)
+    Export {
+        /// Export mode: prompt-only, with-context, agentic
+        #[arg(long, default_value = "with-context")]
+        mode: String,
+        /// Output file (default: stdout)
+        #[arg(short, long)]
+        output: Option<std::path::PathBuf>,
+        /// Filter by model name (substring match)
+        #[arg(long)]
+        model: Option<String>,
+        /// Filter by agent id (substring match)
+        #[arg(long)]
+        agent: Option<String>,
+        /// Only include runs with at least N steps
+        #[arg(long)]
+        min_steps: Option<usize>,
+    },
+    /// Show detailed statistics for a single trace
+    TraceStats {
+        /// Trace hash to inspect
+        trace_hash: String,
+    },
+    /// Preview how a run would be exported (labeled sections)
+    Preview {
+        /// Run hash to preview
+        run_hash: String,
+        /// Export mode to preview: prompt-only, with-context, agentic
+        #[arg(long, default_value = "agentic")]
+        mode: String,
+    },
 }
 
 #[derive(clap::Subcommand)]
