@@ -536,6 +536,73 @@ mod tests {
     }
 
     #[test]
+    fn record_conversation_opencode_style_tool_parts() {
+        // Simulates the JSON the OpenCode plugin emits on session.idle:
+        // a user prompt, an assistant text part, a tool_call + tool_result for
+        // a Read, a file_edit for Write, and a usage event. Asserts that every
+        // structured kind survives to the trace with the right metadata so tap
+        // can reconstruct the session.
+        let dir = tempfile::tempdir().unwrap();
+        let store = FsStore::new(dir.path().to_path_buf());
+        let json = r#"[
+          {"role":"user","content":"Fix the bug in auth.rs"},
+          {"role":"assistant","content":"Let me read the file first."},
+          {"role":"file_read","content":"src/auth.rs","metadata":{"name":"read","call_id":"c1","path":"src/auth.rs","status":"pending","input":"{\"filePath\":\"src/auth.rs\"}"},"timestamp":"2026-04-18T10:00:00Z"},
+          {"role":"tool_result","content":"fn login() { /* buggy */ }","metadata":{"name":"read","call_id":"c1","path":"src/auth.rs"},"timestamp":"2026-04-18T10:00:01Z"},
+          {"role":"assistant","content":"Applying fix."},
+          {"role":"file_edit","content":"fn login() { /* fixed */ }","metadata":{"name":"write","call_id":"c2","path":"src/auth.rs","status":"pending","new_content":"fn login() { /* fixed */ }","input":"{\"filePath\":\"src/auth.rs\"}"},"timestamp":"2026-04-18T10:00:02Z"},
+          {"role":"tool_result","content":"file written","metadata":{"name":"write","call_id":"c2","path":"src/auth.rs"},"timestamp":"2026-04-18T10:00:03Z"},
+          {"role":"tool_call","content":"{\"command\":\"cargo test\"}","metadata":{"name":"bash","call_id":"c3","status":"pending","input":"{\"command\":\"cargo test\"}"},"timestamp":"2026-04-18T10:00:04Z"},
+          {"role":"tool_result","content":"test result: ok. 1 passed","metadata":{"name":"bash","call_id":"c3"},"timestamp":"2026-04-18T10:00:05Z"},
+          {"role":"usage","content":"","metadata":{"input_tokens":120,"output_tokens":80,"reasoning_tokens":0}}
+        ]"#;
+        let messages: Vec<ConversationMessage> = serde_json::from_str(json).unwrap();
+        let hash = record_conversation(
+            &store, &messages, Some("anthropic/claude-opus-4"), Some("opencode"),
+        ).unwrap();
+
+        let run = match store.get(&hash).unwrap() { MorphObject::Run(r) => r, _ => panic!("expected Run") };
+        assert_eq!(run.environment.model, "anthropic/claude-opus-4");
+        assert_eq!(run.agent.id, "opencode");
+
+        let trace_hash = Hash::from_hex(&run.trace).unwrap();
+        let trace = match store.get(&trace_hash).unwrap() { MorphObject::Trace(t) => t, _ => panic!("expected Trace") };
+
+        // Count kinds — every structured role must be present.
+        let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+        for ev in &trace.events { *counts.entry(ev.kind.clone()).or_insert(0) += 1; }
+        assert_eq!(counts.get("user").copied().unwrap_or(0), 1);
+        assert_eq!(counts.get("assistant").copied().unwrap_or(0), 2);
+        assert_eq!(counts.get("file_read").copied().unwrap_or(0), 1);
+        assert_eq!(counts.get("file_edit").copied().unwrap_or(0), 1);
+        assert_eq!(counts.get("tool_call").copied().unwrap_or(0), 1);
+        assert_eq!(counts.get("tool_result").copied().unwrap_or(0), 3);
+        assert_eq!(counts.get("usage").copied().unwrap_or(0), 1);
+
+        // Path metadata should propagate so tap can surface file context.
+        let first_file_read = trace.events.iter().find(|e| e.kind == "file_read").unwrap();
+        assert_eq!(first_file_read.payload["path"].as_str().unwrap(), "src/auth.rs");
+        assert_eq!(first_file_read.payload["name"].as_str().unwrap(), "read");
+        assert_eq!(first_file_read.payload["call_id"].as_str().unwrap(), "c1");
+
+        // Per-message timestamps preserved.
+        assert_eq!(trace.events[2].ts, "2026-04-18T10:00:00Z");
+        assert_eq!(trace.events[3].ts, "2026-04-18T10:00:01Z");
+
+        // Usage event carries tokens in the payload.
+        let usage = trace.events.iter().find(|e| e.kind == "usage").unwrap();
+        assert_eq!(usage.payload["input_tokens"].as_i64().unwrap(), 120);
+        assert_eq!(usage.payload["output_tokens"].as_i64().unwrap(), 80);
+
+        // Tap must also see this as a non-shallow trace with tools+files.
+        let diag = crate::tap::diagnose_run(&store, &hash).unwrap();
+        assert!(diag.has_tool_calls, "diag should detect tool_call");
+        assert!(diag.has_file_reads, "diag should detect file_read");
+        assert!(diag.has_file_edits, "diag should detect file_edit");
+        assert!(diag.has_tool_output, "diag should detect tool_result");
+    }
+
+    #[test]
     fn record_conversation_backward_compat_no_metadata() {
         let dir = tempfile::tempdir().unwrap();
         let store = FsStore::new(dir.path().to_path_buf());

@@ -4,7 +4,19 @@ This project uses [Morph](https://github.com/morphcloud/morph) for behavioral ve
 
 ## Recording sessions
 
-Session recording is handled automatically by the Morph plugin. **Do NOT call `morph_record_session` yourself** — the plugin captures prompts and responses without any agent action.
+Session recording is handled automatically by the Morph plugin (`.opencode/plugins/morph-record.ts`).
+It runs on `session.idle` and fans each OpenCode message part out to a structured
+Morph trace event — `user`, `assistant`, `reasoning`, `file_read`, `file_edit`,
+`tool_call`, `tool_result`, `error`, plus a `usage` event with per-step tokens/cost.
+Tool inputs and outputs are preserved so the trace can be replayed.
+
+**Do NOT call `morph_record_session` yourself** — the plugin captures everything
+without any agent action. (The plugin actively blocks that tool so any attempt
+will fail.)
+
+If you ever need to verify recording, look at `.morph/hooks/logs/opencode-plugin.log`
+and `.morph/hooks/debug/last-record.json` — they show the event counts per role
+and a sample tool-part dump.
 
 ## Behavioral commits
 
