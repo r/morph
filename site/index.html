@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Morph — Version control when pipelines are probabilistic</title>
-  <meta name="description" content="Morph extends Git with pipelines, evaluation suites, and execution receipts for a world where code makes LLM calls and 'did it get better?' is a statistical question.">
+  <title>Morph — Git for AI-assisted development</title>
+  <meta name="description" content="Morph is a version control system that records every agent session, attaches evaluation scores to commits, and gates merges on behavioral dominance. Built for Cursor, Claude Code, and OpenCode.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -63,6 +63,14 @@
       text-decoration: none;
     }
 
+    nav .logo .version {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      font-weight: 500;
+      color: var(--fg-subtle);
+      margin-left: 0.4rem;
+    }
+
     nav .links {
       display: flex;
       gap: 2rem;
@@ -108,7 +116,7 @@
       line-height: 1.15;
       letter-spacing: -0.03em;
       margin-bottom: 1.5rem;
-      max-width: 800px;
+      max-width: 820px;
       margin-left: auto;
       margin-right: auto;
     }
@@ -121,7 +129,7 @@
     .hero .subtitle {
       font-size: 1.2rem;
       color: var(--fg-muted);
-      max-width: 640px;
+      max-width: 680px;
       margin: 0 auto 2.5rem;
       line-height: 1.7;
     }
@@ -192,7 +200,7 @@
     section .lead {
       font-size: 1.1rem;
       color: var(--fg-muted);
-      max-width: 640px;
+      max-width: 680px;
       margin-bottom: 3rem;
       line-height: 1.7;
     }
@@ -219,6 +227,8 @@
     .problem-card .icon {
       font-size: 1.5rem;
       margin-bottom: 1rem;
+      font-family: var(--font-mono);
+      color: var(--accent);
     }
 
     .problem-card h3 {
@@ -318,7 +328,6 @@
       line-height: 2;
       color: var(--code-fg);
       overflow-x: auto;
-      max-width: 640px;
     }
 
     .cli-block .prompt {
@@ -334,9 +343,67 @@
       color: var(--code-flag);
     }
 
+    .cli-block .str {
+      color: var(--code-string);
+    }
+
     .cli-block .comment {
       color: var(--code-comment);
     }
+
+    /* — IDE grid — */
+    .ide-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 1.5rem;
+    }
+
+    .ide-card {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 2rem;
+      transition: border-color 0.15s;
+    }
+
+    .ide-card:hover {
+      border-color: var(--accent-light);
+    }
+
+    .ide-card h3 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+      letter-spacing: -0.01em;
+    }
+
+    .ide-card p {
+      color: var(--fg-muted);
+      font-size: 0.92rem;
+      line-height: 1.65;
+      margin-bottom: 1rem;
+    }
+
+    .ide-card .cmd-inline {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      background: var(--bg-alt);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.3rem 0.55rem;
+      color: var(--fg);
+      display: inline-block;
+      margin-bottom: 0.75rem;
+    }
+
+    .ide-card a {
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    .ide-card a:hover { text-decoration: underline; }
 
     /* — Axioms — */
     .axiom-list {
@@ -434,12 +501,13 @@
 <body>
 
   <nav>
-    <a href="./" class="logo">morph</a>
+    <a href="./" class="logo">morph<span class="version">v0.7.1</span></a>
     <ul class="links">
       <li><a href="#problem">Problem</a></li>
       <li><a href="#solution">Solution</a></li>
-      <li><a href="#how-it-works">How It Works</a></li>
-      <li><a href="https://github.com/anthropics/morph">GitHub</a></li>
+      <li><a href="#ides">IDEs</a></li>
+      <li><a href="#install">Install</a></li>
+      <li><a href="https://github.com/r/morph">GitHub</a></li>
       <li><a href="#paper">Paper</a></li>
     </ul>
   </nav>
@@ -447,55 +515,61 @@
   <!-- Hero -->
   <div class="hero">
     <span class="badge">Research Project</span>
-    <h1>Version control when pipelines are <em>probabilistic</em></h1>
+    <h1>Git for <em>AI-assisted</em> development</h1>
     <p class="subtitle">
-      Git tracks files where identity is byte equality and merge is text reconciliation.
-      None of that holds when you're building with LLMs.
-      Morph records what your pipelines <em>did</em> and whether they got <em>better</em>.
+      Morph is a version control system that records every agent session as an immutable
+      <em>Run</em> with a full <em>Trace</em>, attaches evaluation scores to commits, and
+      gates merges on <em>behavioral dominance</em> &mdash; not just a clean text diff.
     </p>
     <div class="cta-group">
-      <a href="https://github.com/anthropics/morph" class="btn btn-primary">
+      <a href="https://github.com/r/morph" class="btn btn-primary">
         <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
         View on GitHub
       </a>
-      <a href="#paper" class="btn btn-secondary">Read the Paper</a>
+      <a href="#install" class="btn btn-secondary">Install</a>
     </div>
   </div>
 
   <!-- Problem -->
   <section id="problem">
     <p class="section-label">The Problem</p>
-    <h2>Git wasn't built for this</h2>
+    <h2>Git doesn't know how your code got here</h2>
     <p class="lead">
-      LLM applications aren't source code. They're stochastic, environment-dependent
-      transformation pipelines. Git's assumptions break in five specific ways.
+      When an agent writes your code in Cursor, Claude Code, or OpenCode, Git snapshots
+      the file tree and tracks line-level diffs. But it has no idea <em>how</em> those
+      files arrived &mdash; and it can't tell you whether the result still works.
     </p>
 
     <div class="problem-grid">
       <div class="problem-card">
-        <div class="icon">~</div>
-        <h3>Same code, different outputs</h3>
-        <p>Run the same prompt twice and you get different answers. That's not a bug — it's how LLMs work. Git's assumption that identity means byte equality doesn't hold.</p>
+        <div class="icon">?</div>
+        <h3>No link from code to prompt</h3>
+        <p>Which prompt produced this refactor? Which conversation led to this bug fix? Git has nowhere to store any of that.</p>
       </div>
       <div class="problem-card">
         <div class="icon">&middot;&middot;&middot;</div>
-        <h3>Behavior depends on the environment</h3>
-        <p>Model version, sampling settings, retrieval corpus, tool availability — all shape the output. None of it is in the file tree.</p>
+        <h3>Agent sessions disappear</h3>
+        <p>The agent may try three approaches before settling on one. Tool calls, file reads, shell commands, token usage &mdash; none of it survives the commit.</p>
       </div>
       <div class="problem-card">
         <div class="icon">&uarr;&darr;</div>
-        <h3>"Did it get better?" is a statistical question</h3>
-        <p>You can't read a diff and know whether the pipeline improved. You have to run it, score it, and compare.</p>
+        <h3>"Did it get better?" isn't in the diff</h3>
+        <p>You can't read a diff and know whether the tests still pass, the benchmarks improved, or the agent regressed an edge case. You have to run it.</p>
       </div>
       <div class="problem-card">
         <div class="icon">&gt;_</div>
-        <h3>Agents produce patches, not just humans</h3>
-        <p>Which agent, which model, which prompt generated a change — and whether it passed any checks — matters. Git has no place for any of that.</p>
+        <h3>Mixed authorship isn't tracked</h3>
+        <p>Which agent, which model, which prompt, under which environment &mdash; all of it matters for reviewing and reproducing AI-authored changes.</p>
       </div>
       <div class="problem-card">
         <div class="icon">&times;</div>
         <h3>Merge can silently regress behavior</h3>
-        <p>Two branches can merge cleanly at the text level while the resulting pipeline performs worse than either parent.</p>
+        <p>Two agent branches can merge cleanly at the text level while the resulting code fails tests that both parents passed.</p>
+      </div>
+      <div class="problem-card">
+        <div class="icon">&asymp;</div>
+        <h3>Probabilistic outputs break assumptions</h3>
+        <p>Git assumes identity is byte equality and reproducibility is identical output. Neither holds when an LLM is in the loop.</p>
       </div>
     </div>
   </section>
@@ -504,119 +578,194 @@
   <div class="solution-bg">
     <section id="solution">
       <p class="section-label">The Solution</p>
-      <h2>Morph extends Git with behavioral evidence</h2>
+      <h2>Morph versions the transformation process</h2>
       <p class="lead">
-        Same content-addressed Merkle DAG. Same hash-of-contents identity.
-        Three additions that make version control work for LLM pipelines.
+        Same content-addressed Merkle DAG as Git. Same hash-of-contents identity.
+        Three additions that make version control work for agent-authored code.
+        Morph runs alongside Git (separate <code>.morph/</code> and <code>.git/</code>) &mdash;
+        drop Git later if you want to.
       </p>
 
       <div class="solution-items">
         <div class="solution-item">
           <div class="text">
-            <h3>Pipelines as first-class objects</h3>
+            <h3>Runs and Traces &mdash; permanent agent receipts</h3>
             <p>
-              A pipeline is a DAG of typed steps — prompt calls, tool invocations, retrieval lookups,
-              deterministic transforms, review decisions. Each node records what ran, who ran it,
-              and in what environment. Morph versions the whole graph, not just the files.
+              Every agent session is recorded as an immutable <strong>Run</strong> with
+              a full <strong>Trace</strong>: every prompt, response, tool call, file read,
+              file edit, shell command, and token count. IDE hooks parse the agent's
+              complete transcript into structured events, so recording is always-on and
+              doesn't depend on the agent calling a tool.
+            </p>
+          </div>
+          <div class="commit-box">
+            <span class="label">What a Trace contains</span>
+            <span class="field">run</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="hash">c81f2a&hellip;</span><br>
+            <span class="field">actor</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="value">agent:cursor / model:claude-opus-4</span><br>
+            <span class="field">env</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="value">{os: darwin, rust: 1.82}</span><br>
+            <br>
+            <span class="dimmed">// Trace events</span><br>
+            <span class="new-field">prompt</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="value">"fix the retry loop"</span><br>
+            <span class="new-field">tool_call</span>&nbsp;&nbsp;<span class="value">read(src/retry.rs)</span><br>
+            <span class="new-field">tool_call</span>&nbsp;&nbsp;<span class="value">edit(src/retry.rs, +12/-4)</span><br>
+            <span class="new-field">shell</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="value">cargo test &mdash;&mdash; retry</span><br>
+            <span class="new-field">response</span>&nbsp;&nbsp;&nbsp;<span class="value">"fixed; tests pass."</span>
+          </div>
+        </div>
+
+        <div class="solution-item">
+          <div class="text">
+            <h3>Behavioral commits &mdash; evidence, not vibes</h3>
+            <p>
+              A Morph commit stores a file tree hash <em>and</em> an optional behavioral
+              contract: which pipeline was run, which evaluation suite, what scores were
+              observed, and in which environment. Plain <code>morph commit -m "&hellip;"</code>
+              still works exactly like Git when you don't need evaluation gating.
             </p>
           </div>
           <div class="commit-box">
             <span class="label">A Morph commit vs. a Git commit</span>
             <span class="dimmed">// Git commit</span><br>
-            <span class="field">tree</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="hash">a3f2c...</span><br>
-            <span class="field">parent</span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="hash">b71e0...</span><br>
-            <span class="field">message</span>&nbsp;&nbsp;&nbsp;<span class="value">"fix retrieval"</span><br>
+            <span class="field">tree</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="hash">a3f2c&hellip;</span><br>
+            <span class="field">parent</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="hash">b71e0&hellip;</span><br>
+            <span class="field">message</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="value">"fix retry"</span><br>
             <br>
             <span class="dimmed">// Morph commit</span><br>
-            <span class="field">tree</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="hash">a3f2c...</span><br>
-            <span class="field">parent</span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="hash">b71e0...</span><br>
-            <span class="field">message</span>&nbsp;&nbsp;&nbsp;<span class="value">"fix retrieval"</span><br>
-            <span class="new-field">pipeline</span>&nbsp;&nbsp;<span class="hash">d4e8a...</span><br>
-            <span class="new-field">eval</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="hash">f92b1...</span><br>
-            <span class="new-field">scores</span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="value">{accuracy: 0.94, latency_p95: 320ms}</span><br>
-            <span class="new-field">evidence</span>&nbsp;&nbsp;<span class="hash">[run:c81f, trace:e02a]</span>
+            <span class="field">tree</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="hash">a3f2c&hellip;</span><br>
+            <span class="field">parent</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="hash">b71e0&hellip;</span><br>
+            <span class="field">message</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="value">"fix retry"</span><br>
+            <span class="new-field">pipeline</span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="hash">d4e8a&hellip;</span><br>
+            <span class="new-field">eval_suite</span>&nbsp;&nbsp;<span class="hash">f92b1&hellip;</span><br>
+            <span class="new-field">metrics</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="value">{tests_passed: 545, pass_rate: 1.0}</span><br>
+            <span class="new-field">evidence</span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="hash">[run:c81f, trace:e02a]</span>
           </div>
         </div>
 
         <div class="solution-item">
           <div class="text">
-            <h3>Evaluation suites as versioned contracts</h3>
+            <h3>Merge by behavioral dominance</h3>
             <p>
-              "Better" is not implicit. Each evaluation suite declares its metrics,
-              directions, fixture sources, and aggregation methods — all versioned and hashed.
-              Scores are partially ordered: one pipeline dominates another only if it wins on every metric.
-            </p>
-          </div>
-          <div class="commit-box">
-            <span class="label">Improvement ordering</span>
-            <span class="dimmed">// Pipeline Q improves on P when:</span><br>
-            <br>
-            <span class="field">cert</span><span class="value">(Q) &ge; cert(P)&nbsp;&nbsp;on every metric</span><br>
-            <br>
-            <span class="dimmed">// Example:</span><br>
-            <span class="value">P: {accuracy: 0.91, latency: 340ms, cost: $0.03}</span><br>
-            <span class="new-field">Q: {accuracy: 0.94, latency: 320ms, cost: $0.02}</span><br>
-            <span class="dimmed">   ↑ Q dominates P</span><br>
-            <br>
-            <span class="value">R: {accuracy: 0.96, latency: 400ms, cost: $0.02}</span><br>
-            <span class="dimmed">   ↑ R vs P: incomparable (better accuracy, worse latency)</span>
-          </div>
-        </div>
-
-        <div class="solution-item">
-          <div class="text">
-            <h3>Runs and traces as permanent receipts</h3>
-            <p>
-              Every pipeline execution produces a Run — a permanent record of the pipeline hash,
-              full environment, input state, output artifacts, scores, and actor identity.
-              Inside each Run is a Trace: the sequence of every prompt call, tool invocation, and retry.
-              Runs never modify commits. They're evidence that accumulates over time.
+              Instead of three-way text merge alone, <code>morph merge</code> requires the
+              candidate to dominate both parents' certified metrics: at least as good on
+              <em>every</em> declared metric. If the merged code regresses on anything,
+              the merge fails. <code>morph merge-plan</code> previews the bar to beat
+              before you merge.
             </p>
           </div>
           <div class="commit-box">
             <span class="label">Merge with evidence</span>
             <span class="dimmed">// At merge time, Morph records:</span><br>
             <br>
-            <span class="field">parent_1_scores</span>&nbsp;&nbsp;<span class="value">{accuracy: 0.94, cost: $0.03}</span><br>
-            <span class="field">parent_2_scores</span>&nbsp;&nbsp;<span class="value">{accuracy: 0.91, cost: $0.02}</span><br>
-            <span class="field">reference_bar</span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="value">{accuracy: 0.94, cost: $0.02}</span><br>
-            <span class="new-field">merged_scores</span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="value">{accuracy: 0.95, cost: $0.02}</span><br>
+            <span class="field">parent_1_scores</span>&nbsp;&nbsp;<span class="value">{pass_rate: 0.94, p95_ms: 340}</span><br>
+            <span class="field">parent_2_scores</span>&nbsp;&nbsp;<span class="value">{pass_rate: 0.91, p95_ms: 280}</span><br>
+            <span class="field">bar_to_beat</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="value">{pass_rate: 0.94, p95_ms: 280}</span><br>
+            <span class="new-field">merged_scores</span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="value">{pass_rate: 0.95, p95_ms: 275}</span><br>
             <br>
-            <span class="dimmed">// The merge improved. The record proves it.</span>
+            <span class="dimmed">// Dominates on both. Merge accepted.</span>
           </div>
         </div>
       </div>
     </section>
   </div>
 
-  <!-- How It Works -->
+  <!-- IDE integrations -->
+  <section id="ides">
+    <p class="section-label">IDE Integrations</p>
+    <h2>One command to wire up your agent</h2>
+    <p class="lead">
+      Morph ships with an MCP server (<code>morph-mcp</code>) and setup commands that
+      install the right config, hooks, and rules for your IDE. Hooks parse the full
+      agent transcript into structured Trace events, so every prompt, tool call, and
+      file edit is recorded &mdash; you don't depend on the agent remembering to record.
+    </p>
+
+    <div class="ide-grid">
+      <div class="ide-card">
+        <h3>Cursor</h3>
+        <p>MCP server, hooks for always-on recording, and rules for behavioral commits. Writes into <code>.cursor/</code>.</p>
+        <div class="cmd-inline">morph setup cursor</div><br>
+        <a href="https://github.com/r/morph/blob/main/docs/CURSOR-SETUP.md">Cursor setup &rarr;</a>
+      </div>
+      <div class="ide-card">
+        <h3>Claude Code</h3>
+        <p>MCP server and hooks for Anthropic's coding agent. Records tool calls, file edits, and shell invocations.</p>
+        <div class="cmd-inline">morph setup claude-code</div><br>
+        <a href="https://github.com/r/morph/blob/main/docs/CLAUDE-CODE-SETUP.md">Claude Code setup &rarr;</a>
+      </div>
+      <div class="ide-card">
+        <h3>OpenCode</h3>
+        <p>MCP config, <code>AGENTS.md</code>, and a recording plugin &mdash; one command, fully-traced sessions.</p>
+        <div class="cmd-inline">morph setup opencode</div><br>
+        <a href="https://github.com/r/morph/blob/main/docs/OPENCODE-SETUP.md">OpenCode setup &rarr;</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Install / Quickstart -->
+  <div class="solution-bg">
+    <section id="install">
+      <p class="section-label">Install</p>
+      <h2>Zero to recording in three commands</h2>
+      <p class="lead">
+        Build the two binaries (<code>morph</code> and <code>morph-mcp</code>), initialize
+        a Morph repo in your project, and wire up your IDE. Morph runs side-by-side with
+        Git &mdash; commits in one are independent of commits in the other.
+      </p>
+
+      <div class="cli-block">
+        <span class="comment"># 1. Build and install the binaries</span><br>
+        <span class="prompt">$ </span><span class="cmd">git clone https://github.com/r/morph.git &amp;&amp; cd morph</span><br>
+        <span class="prompt">$ </span><span class="cmd">cargo install <span class="flag">--path</span> morph-cli &amp;&amp; cargo install <span class="flag">--path</span> morph-mcp</span><br>
+        <br>
+        <span class="comment"># 2. Initialize in your project</span><br>
+        <span class="prompt">$ </span><span class="cmd">cd /path/to/your/project</span><br>
+        <span class="prompt">$ </span><span class="cmd">morph init</span><br>
+        <br>
+        <span class="comment"># 3. Wire up your IDE (pick one)</span><br>
+        <span class="prompt">$ </span><span class="cmd">morph setup cursor</span><br>
+        <span class="prompt">$ </span><span class="cmd">morph setup claude-code</span><br>
+        <span class="prompt">$ </span><span class="cmd">morph setup opencode</span>
+      </div>
+    </section>
+  </div>
+
+  <!-- CLI / How It Works -->
   <section id="how-it-works">
     <p class="section-label">How It Works</p>
-    <h2>Git-style CLI, richer objects</h2>
+    <h2>Git-shaped CLI, richer objects</h2>
     <p class="lead">
-      Morph mirrors Git where possible. If you know Git, you know Morph.
-      The CLI adds commands for recording runs and evaluation results.
+      Morph mirrors Git where possible: if you know Git, you know Morph. The CLI adds
+      commands for recording agent sessions, certifying commits against policy, and
+      inspecting traces.
     </p>
 
     <div class="cli-block">
-      <span class="comment"># Initialize a Morph repository</span><br>
+      <span class="comment"># Standard Git-shaped workflow</span><br>
       <span class="prompt">$ </span><span class="cmd">morph init</span><br>
-      <br>
-      <span class="comment"># Stage and commit with eval scores</span><br>
       <span class="prompt">$ </span><span class="cmd">morph add .</span><br>
-      <span class="prompt">$ </span><span class="cmd">morph commit <span class="flag">-m</span> <span style="color: var(--code-string)">"improve retrieval prompt"</span></span><br>
+      <span class="prompt">$ </span><span class="cmd">morph commit <span class="flag">-m</span> <span class="str">"fix retry loop"</span> <span class="flag">--metrics</span> <span class="str">'{"pass_rate": 1.0}'</span></span><br>
+      <span class="prompt">$ </span><span class="cmd">morph log</span> <span class="comment"># history with metrics</span><br>
+      <span class="prompt">$ </span><span class="cmd">morph diff <span class="flag">main</span> <span class="flag">feature</span></span><br>
       <br>
-      <span class="comment"># Record an execution receipt</span><br>
-      <span class="prompt">$ </span><span class="cmd">morph run record <span class="flag">run-output.json</span></span><br>
+      <span class="comment"># Branching and behavioral merge</span><br>
+      <span class="prompt">$ </span><span class="cmd">morph branch feature</span><br>
+      <span class="prompt">$ </span><span class="cmd">morph checkout feature</span><br>
+      <span class="prompt">$ </span><span class="cmd">morph merge-plan main</span>&nbsp;&nbsp;<span class="comment"># preview bar to beat</span><br>
+      <span class="prompt">$ </span><span class="cmd">morph merge main</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="comment"># dominance required</span><br>
       <br>
-      <span class="comment"># Record evaluation results</span><br>
-      <span class="prompt">$ </span><span class="cmd">morph eval record <span class="flag">metrics.json</span></span><br>
+      <span class="comment"># Inspect recorded agent work</span><br>
+      <span class="prompt">$ </span><span class="cmd">morph tap summary</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="comment"># overview of recorded runs</span><br>
+      <span class="prompt">$ </span><span class="cmd">morph tap inspect <span class="flag">&lt;run&gt;</span></span>&nbsp;&nbsp;&nbsp;<span class="comment"># grouped steps (prompts, tools, files)</span><br>
+      <span class="prompt">$ </span><span class="cmd">morph traces target-context <span class="flag">&lt;ref&gt;</span></span>&nbsp;<span class="comment"># the code the agent was working on</span><br>
+      <span class="prompt">$ </span><span class="cmd">morph traces final-artifact <span class="flag">&lt;ref&gt;</span></span>&nbsp;<span class="comment"># what the agent produced</span><br>
       <br>
-      <span class="comment"># Merge with score recording</span><br>
-      <span class="prompt">$ </span><span class="cmd">morph merge <span class="flag">feature-branch</span></span><br>
+      <span class="comment"># Policy, certification, gating</span><br>
+      <span class="prompt">$ </span><span class="cmd">morph policy set <span class="flag">--require</span> pass_rate<span class="flag">=1.0</span></span><br>
+      <span class="prompt">$ </span><span class="cmd">morph certify <span class="flag">--metrics-file</span> metrics.json</span><br>
+      <span class="prompt">$ </span><span class="cmd">morph gate</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="comment"># exit 1 if HEAD fails policy</span><br>
       <br>
-      <span class="comment"># Inspect history</span><br>
-      <span class="prompt">$ </span><span class="cmd">morph log</span>
+      <span class="comment"># Team inspection (hosted browser UI + JSON API)</span><br>
+      <span class="prompt">$ </span><span class="cmd">morph serve</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="comment"># http://127.0.0.1:8765</span>
     </div>
   </section>
 
@@ -626,8 +775,7 @@
       <p class="section-label">Design Principles</p>
       <h2>What Morph assumes</h2>
       <p class="lead">
-        Morph is built on a small set of axioms. These are the design constraints
-        the system depends on — violate any of them and something breaks.
+        Morph is built on a small set of axioms. Violate any of them and something breaks.
       </p>
 
       <div class="axiom-list">
@@ -637,11 +785,11 @@
         </div>
         <div class="axiom">
           <span class="num">02</span>
-          <p><strong>Evidence does not rewrite history.</strong> Runs and evaluation results never mutate prior commits. New evidence produces new objects.</p>
+          <p><strong>Evidence does not rewrite history.</strong> Runs, traces, and evaluation results never mutate prior commits. New evidence produces new objects.</p>
         </div>
         <div class="axiom">
           <span class="num">03</span>
-          <p><strong>Pipeline steps compose cleanly.</strong> Sequential chaining and parallel execution are well-defined — like <code>Promise.then()</code> and <code>Promise.all()</code>.</p>
+          <p><strong>Pipeline steps compose cleanly.</strong> Sequential chaining and parallel execution are well-defined &mdash; like <code>Promise.then()</code> and <code>Promise.all()</code>.</p>
         </div>
         <div class="axiom">
           <span class="num">04</span>
@@ -653,11 +801,11 @@
         </div>
         <div class="axiom">
           <span class="num">06</span>
-          <p><strong>Merge records scores from both parents.</strong> Every merge commit records what both parents achieved and what the merged pipeline achieved.</p>
+          <p><strong>Merge records scores from both parents.</strong> Every merge commit records what both parents achieved and what the merged code achieved.</p>
         </div>
         <div class="axiom">
           <span class="num">07</span>
-          <p><strong>Environment is part of the record.</strong> Model version, sampling settings, toolchain — without this, scores from different environments aren't comparable.</p>
+          <p><strong>Environment is part of the record.</strong> Model version, sampling settings, toolchain &mdash; without this, scores from different environments aren't comparable.</p>
         </div>
         <div class="axiom">
           <span class="num">08</span>
@@ -669,31 +817,30 @@
 
   <!-- Paper CTA -->
   <div class="paper-cta" id="paper">
-    <h2>Read the paper</h2>
+    <h2>Read the theory and the spec</h2>
     <p>
-      The full formal model — pipeline composition, evaluation semantics,
-      merge properties, and system design.
+      The formal model &mdash; pipelines as monadic computations, certificate vectors,
+      the merge monotonicity theorem &mdash; plus a concrete v0 system design with
+      object schemas and CLI reference.
     </p>
     <p style="color: var(--fg); margin-bottom: 0.25rem; font-weight: 600;">
-      Morph: Version Control When Pipelines Are Probabilistic
+      Morph: Version Control for AI-Assisted Development
     </p>
     <p style="font-size: 0.9rem; margin-bottom: 2rem;">
       Raffi Krikorian &middot; Mozilla
     </p>
     <div class="cta-group">
-      <a href="https://github.com/anthropics/morph/blob/main/docs/morph-paper.tex" class="btn btn-primary">Paper (LaTeX source)</a>
-      <a href="https://github.com/anthropics/morph" class="btn btn-secondary">
-        <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-        View on GitHub
-      </a>
+      <a href="https://github.com/r/morph/blob/main/docs/THEORY.md" class="btn btn-primary">Theory</a>
+      <a href="https://github.com/r/morph/blob/main/docs/v0-spec.md" class="btn btn-secondary">v0 Spec</a>
+      <a href="https://github.com/r/morph/blob/main/docs/morph-paper.tex" class="btn btn-secondary">Paper (LaTeX)</a>
     </div>
   </div>
 
   <footer>
     <p>
-      Morph is an open research project by <a href="https://github.com/anthropics/morph">Raffi Krikorian</a> at Mozilla.
+      Morph is an open research project by <a href="https://github.com/r/morph">Raffi Krikorian</a> at Mozilla.
       <br>
-      Built for a world where code makes LLM calls and "did it get better?" is a statistical question.
+      Built for a world where agents write code and "did it get better?" is a question you have to run to answer.
     </p>
   </footer>
 
