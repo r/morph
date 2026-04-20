@@ -151,3 +151,21 @@ pub struct CheckoutParams {
     #[serde(default)]
     pub workspace_path: Option<String>,
 }
+
+#[derive(Debug, Deserialize, JsonSchema, Default)]
+pub struct RecentTracesParams {
+    /// Maximum number of traces to return (default 10).
+    #[serde(default)]
+    pub limit: Option<usize>,
+    #[serde(default)]
+    pub workspace_path: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TraceHashParams {
+    /// Run hash, or trace hash (will be resolved to the latest run
+    /// pointing to that trace).
+    pub hash: String,
+    #[serde(default)]
+    pub workspace_path: Option<String>,
+}

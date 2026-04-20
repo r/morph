@@ -238,6 +238,11 @@ pub enum Command {
         #[command(subcommand)]
         sub: TapCmd,
     },
+    /// Structured trace views for replay / eval generation
+    Traces {
+        #[command(subcommand)]
+        sub: TracesCmd,
+    },
     /// Browse repo in browser
     #[cfg(feature = "visualize")]
     #[command(name = "visualize")]
@@ -313,6 +318,40 @@ pub enum TapCmd {
         /// Export mode to preview: prompt-only, with-context, agentic
         #[arg(long, default_value = "agentic")]
         mode: String,
+    },
+}
+
+#[derive(clap::Subcommand)]
+pub enum TracesCmd {
+    /// Browse recent traces with structured summaries (newest first)
+    Summary {
+        /// Maximum number of traces to show
+        #[arg(long, default_value = "20")]
+        limit: usize,
+        /// Output JSON instead of human-readable
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show the task structure (phase, scope, target files/symbols, task_goal)
+    TaskStructure {
+        /// Run hash (or trace hash)
+        hash: String,
+    },
+    /// Show the target file/function context for replay or eval
+    TargetContext {
+        hash: String,
+    },
+    /// Show the final artifact produced by the agent
+    FinalArtifact {
+        hash: String,
+    },
+    /// Show change / preserved / restored semantic summaries
+    Semantics {
+        hash: String,
+    },
+    /// Show verification commands/tests/demo steps
+    Verification {
+        hash: String,
     },
 }
 

@@ -260,6 +260,101 @@ impl MorphServer {
         Ok(CallToolResult::success(vec![Content::text(out)]))
     }
 
+    fn resolve_run_hash(&self, store: &dyn Store, hash_str: &str) -> Result<Hash, McpError> {
+        let h = Hash::from_hex(hash_str).map_err(mcp_err)?;
+        match store.get(&h).map_err(mcp_err)? {
+            morph_core::MorphObject::Run(_) => Ok(h),
+            morph_core::MorphObject::Trace(_) => morph_core::find_run_by_trace(store, &h)
+                .map_err(mcp_err)?
+                .ok_or_else(|| mcp_err(format!("no run points to trace {}", hash_str))),
+            _ => Err(mcp_err(format!("hash {} is neither a Run nor a Trace", hash_str))),
+        }
+    }
+
+    #[tool(
+        description = "Use this when you need to browse recent Morph traces and find relevant coding sessions. Returns a compact JSON array of trace summaries (run hash, timestamp, prompt preview, task_phase, task_scope, target_files, target_symbols), newest first. Use the returned run hashes to drill in with morph_get_trace_task_structure / morph_get_trace_target_context / morph_get_trace_final_artifact."
+    )]
+    async fn morph_get_recent_trace_summaries(
+        &self,
+        params: Parameters<RecentTracesParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+        let limit = params.0.limit.unwrap_or(10);
+        let summaries = morph_core::recent_trace_summaries(store.as_ref(), limit).map_err(mcp_err)?;
+        let json = serde_json::to_string(&summaries).map_err(mcp_err)?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        description = "Use this when generating a replay prompt or eval case and you need to know what kind of coding task the trace contains. Returns the structured task: task_phase (create_code/modify_code/fix_bug/diagnose/verify/explain), task_scope (single_function/single_file/multi_file/broad), final_artifact_type, target_files, target_symbols, task_goal, and verification_actions. Accepts either a run hash or a trace hash."
+    )]
+    async fn morph_get_trace_task_structure(
+        &self,
+        params: Parameters<TraceHashParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+        let run_hash = self.resolve_run_hash(store.as_ref(), &params.0.hash)?;
+        let out = morph_core::task_structure(store.as_ref(), &run_hash).map_err(mcp_err)?;
+        let json = serde_json::to_string(&out).map_err(mcp_err)?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        description = "Use this when you need the relevant file/function context for replay or eval generation instead of guessing from raw events. Returns target_file, target_symbol, language, scope classification, and a scoped code snippet (the function body when task_scope == single_function, otherwise the file content). Accepts either a run hash or a trace hash."
+    )]
+    async fn morph_get_trace_target_context(
+        &self,
+        params: Parameters<TraceHashParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+        let run_hash = self.resolve_run_hash(store.as_ref(), &params.0.hash)?;
+        let out = morph_core::target_context(store.as_ref(), &run_hash).map_err(mcp_err)?;
+        let json = serde_json::to_string(&out).map_err(mcp_err)?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        description = "Use this when you need the final edited function, file snippet, or artifact produced for a trace. Returns artifact_type plus one of final_function_text (when artifact_type == function_only), final_file_snippet (full_file/tool_execution), or final_patch_summary (unified_diff), along with related file and symbol. Accepts either a run hash or a trace hash."
+    )]
+    async fn morph_get_trace_final_artifact(
+        &self,
+        params: Parameters<TraceHashParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+        let run_hash = self.resolve_run_hash(store.as_ref(), &params.0.hash)?;
+        let out = morph_core::final_artifact(store.as_ref(), &run_hash).map_err(mcp_err)?;
+        let json = serde_json::to_string(&out).map_err(mcp_err)?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        description = "Use this when you need to understand what changed, what should remain, and what behavior was restored or modified. Returns changed_construct_summary, preserved_construct_summary, restored_behavior_summary. Best-effort heuristic summaries derived from prompt + response. Accepts either a run hash or a trace hash."
+    )]
+    async fn morph_get_trace_change_semantics(
+        &self,
+        params: Parameters<TraceHashParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+        let run_hash = self.resolve_run_hash(store.as_ref(), &params.0.hash)?;
+        let out = morph_core::change_semantics(store.as_ref(), &run_hash).map_err(mcp_err)?;
+        let json = serde_json::to_string(&out).map_err(mcp_err)?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        description = "Use this when you need commands/tests/demo steps that were used to verify a coding change. Returns a list of verification_actions with { action, kind ('command'|'text'|'tool'), optional exit_status, optional summary_output }. Replay systems should preserve task_goal while optionally dropping these. Accepts either a run hash or a trace hash."
+    )]
+    async fn morph_get_trace_verification_steps(
+        &self,
+        params: Parameters<TraceHashParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+        let run_hash = self.resolve_run_hash(store.as_ref(), &params.0.hash)?;
+        let out = morph_core::verification_steps(store.as_ref(), &run_hash).map_err(mcp_err)?;
+        let json = serde_json::to_string(&out).map_err(mcp_err)?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
     #[tool(description = "Merge a branch into the current branch (requires behavioral dominance)")]
     async fn morph_merge(&self, params: Parameters<MergeParams>) -> Result<CallToolResult, McpError> {
         let (repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
@@ -533,6 +628,144 @@ mod tests {
         let result = server.morph_show(Parameters(ShowParams { hash: commit_hash, workspace_path: Some(ws) })).await.unwrap();
         assert!(extract_text(&result).contains("commit"));
         assert!(extract_text(&result).contains("initial"));
+    }
+
+    fn build_pocket_tasks_fix_trace(store: &dyn Store) -> Hash {
+        use morph_core::objects::*;
+        let mut events = Vec::new();
+        let mut add_event = |seq: u64, kind: &str, payload: std::collections::BTreeMap<String, serde_json::Value>| {
+            events.push(TraceEvent {
+                id: format!("evt_{}", seq),
+                seq,
+                ts: format!("2026-04-17T12:00:{:02}+00:00", seq),
+                kind: kind.into(),
+                payload,
+            });
+        };
+        let mut p0 = std::collections::BTreeMap::new();
+        p0.insert("text".into(), serde_json::json!("Fix the bug in `list_tasks` in `pocket_tasks/main.py` — it should not skip the first task."));
+        add_event(0, "user", p0);
+
+        let mut p1 = std::collections::BTreeMap::new();
+        p1.insert(
+            "text".into(),
+            serde_json::json!(
+                "Fixed. The function now returns all rows:\n\n```python\ndef list_tasks(db):\n    rows = db.fetch('tasks')\n    return [r.title for r in rows]\n```\n\nRun `pytest pocket_tasks/` to verify."
+            ),
+        );
+        add_event(1, "assistant", p1);
+
+        let mut p2 = std::collections::BTreeMap::new();
+        p2.insert("path".into(), serde_json::json!("pocket_tasks/main.py"));
+        p2.insert(
+            "content".into(),
+            serde_json::json!(
+                "def list_tasks(db):\n    rows = db.fetch('tasks')\n    return [r.title for r in rows[1:]]\n"
+            ),
+        );
+        add_event(2, "file_read", p2);
+
+        let mut p3 = std::collections::BTreeMap::new();
+        p3.insert("path".into(), serde_json::json!("pocket_tasks/main.py"));
+        p3.insert(
+            "content".into(),
+            serde_json::json!(
+                "def list_tasks(db):\n    rows = db.fetch('tasks')\n    return [r.title for r in rows]\n"
+            ),
+        );
+        add_event(3, "file_edit", p3);
+
+        let mut p4 = std::collections::BTreeMap::new();
+        p4.insert("name".into(), serde_json::json!("shell"));
+        p4.insert("input".into(), serde_json::json!("pytest pocket_tasks/"));
+        add_event(4, "tool_call", p4);
+
+        let mut p5 = std::collections::BTreeMap::new();
+        p5.insert("output".into(), serde_json::json!("3 passed"));
+        add_event(5, "tool_result", p5);
+
+        let trace = morph_core::MorphObject::Trace(Trace { events });
+        let trace_hash = store.put(&trace).unwrap();
+        let pipeline_hash = store.put(&morph_core::identity_pipeline()).unwrap();
+        let run = morph_core::MorphObject::Run(Run {
+            pipeline: pipeline_hash.to_string(),
+            commit: None,
+            environment: RunEnvironment {
+                model: "gpt-4".into(),
+                version: "1.0".into(),
+                parameters: std::collections::BTreeMap::new(),
+                toolchain: std::collections::BTreeMap::new(),
+            },
+            input_state_hash: "0".repeat(64),
+            output_artifacts: vec![],
+            metrics: std::collections::BTreeMap::new(),
+            trace: trace_hash.to_string(),
+            agent: AgentInfo { id: "cursor".into(), version: "1.0".into(), policy: None, instance_id: None },
+            contributors: None,
+            morph_version: None,
+        });
+        store.put(&run).unwrap()
+    }
+
+    #[tokio::test]
+    async fn structured_mcp_tools_end_to_end() {
+        let (dir, server) = setup_repo();
+        let ws = dir.path().to_str().unwrap().to_string();
+        let store = morph_core::open_store(&dir.path().join(".morph")).unwrap();
+        let run_hash = build_pocket_tasks_fix_trace(store.as_ref());
+        let run_hex = run_hash.to_string();
+
+        let summaries = server
+            .morph_get_recent_trace_summaries(Parameters(RecentTracesParams {
+                limit: Some(5),
+                workspace_path: Some(ws.clone()),
+            })).await.unwrap();
+        let text = extract_text(&summaries);
+        assert!(text.contains("list_tasks"), "summaries: {}", text);
+        assert!(text.contains("fix_bug"), "summaries should include task_phase fix_bug: {}", text);
+
+        let structure = server
+            .morph_get_trace_task_structure(Parameters(TraceHashParams {
+                hash: run_hex.clone(),
+                workspace_path: Some(ws.clone()),
+            })).await.unwrap();
+        let structure_text = extract_text(&structure);
+        assert!(structure_text.contains("\"task_phase\":\"fix_bug\""));
+        assert!(structure_text.contains("\"task_scope\":\"single_function\""));
+        assert!(structure_text.contains("pocket_tasks/main.py"));
+
+        let context = server
+            .morph_get_trace_target_context(Parameters(TraceHashParams {
+                hash: run_hex.clone(),
+                workspace_path: Some(ws.clone()),
+            })).await.unwrap();
+        let context_text = extract_text(&context);
+        assert!(context_text.contains("def list_tasks(db):"), "got {}", context_text);
+        assert!(context_text.contains("\"language\":\"python\""));
+
+        let artifact = server
+            .morph_get_trace_final_artifact(Parameters(TraceHashParams {
+                hash: run_hex.clone(),
+                workspace_path: Some(ws.clone()),
+            })).await.unwrap();
+        let artifact_text = extract_text(&artifact);
+        assert!(artifact_text.contains("\"artifact_type\":\"function_only\""));
+        assert!(artifact_text.contains("final_function_text"));
+
+        let semantics = server
+            .morph_get_trace_change_semantics(Parameters(TraceHashParams {
+                hash: run_hex.clone(),
+                workspace_path: Some(ws.clone()),
+            })).await.unwrap();
+        assert!(extract_text(&semantics).contains("changed_construct_summary"));
+
+        let verify = server
+            .morph_get_trace_verification_steps(Parameters(TraceHashParams {
+                hash: run_hex,
+                workspace_path: Some(ws),
+            })).await.unwrap();
+        let verify_text = extract_text(&verify);
+        assert!(verify_text.contains("pytest pocket_tasks/"), "got {}", verify_text);
     }
 
     #[tokio::test]

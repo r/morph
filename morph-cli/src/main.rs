@@ -787,6 +787,8 @@ fn main() -> anyhow::Result<()> {
             }
         },
 
+        Command::Traces { sub } => handle_traces_command(verbose, sub)?,
+
         Command::Eval { sub } => match sub {
             EvalCmd::Record { file } => {
                 let (repo_root, _store) = get_store(verbose)?;
@@ -1067,4 +1069,70 @@ fn cmd_prompt_show(verbose: bool, run_ref: &str, run_upgrade: bool) -> anyhow::R
             }
         }
     }
+}
+
+/// Resolve a user-supplied hash to a Run hash. Accepts either a Run hash
+/// directly or a Trace hash (in which case we locate the latest Run
+/// pointing at that trace).
+fn resolve_run_hash(store: &dyn Store, hash_str: &str) -> anyhow::Result<Hash> {
+    let h = parse_hash(hash_str)?;
+    match store.get(&h)? {
+        MorphObject::Run(_) => Ok(h),
+        MorphObject::Trace(_) => morph_core::find_run_by_trace(store, &h)?
+            .ok_or_else(|| anyhow::anyhow!("no run points to trace {}", hash_str)),
+        _ => anyhow::bail!("hash {} is neither a Run nor a Trace", hash_str),
+    }
+}
+
+fn handle_traces_command(verbose: bool, sub: TracesCmd) -> anyhow::Result<()> {
+    let (_repo_root, store) = get_store(verbose)?;
+    match sub {
+        TracesCmd::Summary { limit, json } => {
+            let summaries = morph_core::recent_trace_summaries(store.as_ref(), limit)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&summaries)?);
+            } else {
+                println!("=== Recent Traces ({} shown) ===\n", summaries.len());
+                for s in &summaries {
+                    let short = &s.run_hash[..12.min(s.run_hash.len())];
+                    let phase = serde_json::to_string(&s.task_phase).unwrap_or_default();
+                    let scope = serde_json::to_string(&s.task_scope).unwrap_or_default();
+                    println!("{} {}  phase={}  scope={}", short, s.timestamp, phase.trim_matches('"'), scope.trim_matches('"'));
+                    if !s.target_files.is_empty() {
+                        println!("  files:   {}", s.target_files.join(", "));
+                    }
+                    if !s.target_symbols.is_empty() {
+                        println!("  symbols: {}", s.target_symbols.join(", "));
+                    }
+                    println!("  prompt:  {}\n", s.prompt_preview);
+                }
+            }
+        }
+        TracesCmd::TaskStructure { hash } => {
+            let run_hash = resolve_run_hash(store.as_ref(), &hash)?;
+            let out = morph_core::task_structure(store.as_ref(), &run_hash)?;
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        }
+        TracesCmd::TargetContext { hash } => {
+            let run_hash = resolve_run_hash(store.as_ref(), &hash)?;
+            let out = morph_core::target_context(store.as_ref(), &run_hash)?;
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        }
+        TracesCmd::FinalArtifact { hash } => {
+            let run_hash = resolve_run_hash(store.as_ref(), &hash)?;
+            let out = morph_core::final_artifact(store.as_ref(), &run_hash)?;
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        }
+        TracesCmd::Semantics { hash } => {
+            let run_hash = resolve_run_hash(store.as_ref(), &hash)?;
+            let out = morph_core::change_semantics(store.as_ref(), &run_hash)?;
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        }
+        TracesCmd::Verification { hash } => {
+            let run_hash = resolve_run_hash(store.as_ref(), &hash)?;
+            let out = morph_core::verification_steps(store.as_ref(), &run_hash)?;
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        }
+    }
+    Ok(())
 }

@@ -16,6 +16,8 @@ pub mod index;
 pub mod tree;
 pub mod extract;
 pub mod tap;
+pub mod language;
+pub mod structured;
 pub mod sync;
 pub mod policy;
 pub mod diff;
@@ -45,6 +47,18 @@ pub use tap::{
     TapTask, TapStep, TapEvent, TapToolCall, TapFileEvent,
     TapDiagnostic, TapSummary, TapEvalCase, ExportMode,
     TapTraceStats, TapFilter, TapTokenUsage,
+};
+pub use language::{
+    LanguageAdapter, PythonLanguageAdapter, Symbol,
+    adapter_for_filename, builtin_adapters,
+};
+pub use structured::{
+    recent_trace_summaries, summarize_trace,
+    task_structure, target_context, final_artifact,
+    change_semantics, verification_steps, find_run_by_trace,
+    TaskPhase, TaskScope, ArtifactType,
+    TraceSummary, TaskStructure, TargetContext, FinalArtifact,
+    ChangeSemantics, VerificationSteps, VerificationAction,
 };
 pub use annotate::{create_annotation, list_annotations};
 pub use index::{read_index, write_index, clear_index, update_index, StagingIndex};
