@@ -45,6 +45,44 @@
       -webkit-font-smoothing: antialiased;
     }
 
+    /* — Alpha banner — */
+    .alpha-banner {
+      background: #78350f;
+      background-image: linear-gradient(90deg, #78350f 0%, #9a3412 100%);
+      color: #fef3c7;
+      font-size: 0.85rem;
+      text-align: center;
+      padding: 0.7rem 1.25rem;
+      border-bottom: 1px solid #451a03;
+      line-height: 1.5;
+    }
+
+    .alpha-banner strong {
+      color: #fef3c7;
+      background: rgba(254, 243, 199, 0.18);
+      padding: 0.1rem 0.55rem;
+      border-radius: 4px;
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      margin-right: 0.6rem;
+      vertical-align: 1px;
+    }
+
+    .alpha-banner a {
+      color: #fef3c7;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+      font-weight: 600;
+      margin-left: 0.4rem;
+      white-space: nowrap;
+    }
+
+    .alpha-banner a:hover {
+      color: #fff;
+    }
+
     /* — Nav — */
     nav {
       display: flex;
@@ -405,6 +443,134 @@
 
     .ide-card a:hover { text-decoration: underline; }
 
+    /* — Status section — */
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1.5rem;
+      margin-bottom: 3rem;
+    }
+
+    .status-card {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.75rem;
+    }
+
+    .status-card.works { border-top: 3px solid var(--accent); }
+    .status-card.rough { border-top: 3px solid #d97706; }
+    .status-card.help { border-top: 3px solid #7c3aed; }
+
+    .status-card h3 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+      letter-spacing: -0.01em;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .status-card h3 .tag {
+      font-family: var(--font-mono);
+      font-size: 0.65rem;
+      font-weight: 500;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+    }
+
+    .status-card.works h3 .tag {
+      color: var(--accent);
+      background: var(--accent-bg);
+      border: 1px solid #99f6e4;
+    }
+
+    .status-card.rough h3 .tag {
+      color: #92400e;
+      background: #fef3c7;
+      border: 1px solid #fde68a;
+    }
+
+    .status-card.help h3 .tag {
+      color: #5b21b6;
+      background: #ede9fe;
+      border: 1px solid #ddd6fe;
+    }
+
+    .status-card ul {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+    }
+
+    .status-card li {
+      color: var(--fg-muted);
+      font-size: 0.92rem;
+      line-height: 1.5;
+      padding-left: 1.25rem;
+      position: relative;
+    }
+
+    .status-card.works li::before {
+      content: "+";
+      position: absolute;
+      left: 0;
+      color: var(--accent);
+      font-weight: 600;
+      font-family: var(--font-mono);
+    }
+
+    .status-card.rough li::before {
+      content: "~";
+      position: absolute;
+      left: 0;
+      color: #d97706;
+      font-weight: 600;
+      font-family: var(--font-mono);
+    }
+
+    .status-card.help li::before {
+      content: ">";
+      position: absolute;
+      left: 0;
+      color: #7c3aed;
+      font-weight: 600;
+      font-family: var(--font-mono);
+    }
+
+    .status-cta {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 2rem;
+      text-align: center;
+    }
+
+    .status-cta h3 {
+      font-size: 1.2rem;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+      letter-spacing: -0.01em;
+    }
+
+    .status-cta p {
+      color: var(--fg-muted);
+      font-size: 0.95rem;
+      max-width: 560px;
+      margin: 0 auto 1.5rem;
+    }
+
+    .status-cta .cta-group {
+      display: flex;
+      gap: 0.75rem;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
     /* — Axioms — */
     .axiom-list {
       display: flex;
@@ -500,33 +666,42 @@
 </head>
 <body>
 
+  <div class="alpha-banner">
+    <strong>Alpha</strong>
+    Morph is an early research prototype. Expect bugs, rough edges, and breaking changes.
+    <a href="#help">Help us build it &rarr;</a>
+  </div>
+
   <nav>
-    <a href="./" class="logo">morph<span class="version">v0.7.1</span></a>
+    <a href="./" class="logo">morph<span class="version">v0.7.1 &middot; alpha</span></a>
     <ul class="links">
       <li><a href="#problem">Problem</a></li>
-      <li><a href="#solution">Solution</a></li>
+      <li><a href="#solution">Thesis</a></li>
       <li><a href="#ides">IDEs</a></li>
-      <li><a href="#install">Install</a></li>
+      <li><a href="#install">Try it</a></li>
+      <li><a href="#help">Help</a></li>
       <li><a href="https://github.com/r/morph">GitHub</a></li>
-      <li><a href="#paper">Paper</a></li>
     </ul>
   </nav>
 
   <!-- Hero -->
   <div class="hero">
-    <span class="badge">Research Project</span>
+    <span class="badge">Alpha &middot; v0.7.1 &middot; Research prototype</span>
     <h1>Git for <em>AI-assisted</em> development</h1>
     <p class="subtitle">
       Morph is a version control system that records every agent session as an immutable
       <em>Run</em> with a full <em>Trace</em>, attaches evaluation scores to commits, and
       gates merges on <em>behavioral dominance</em> &mdash; not just a clean text diff.
+      It's an open research prototype. <strong style="color: var(--fg);">We're building it in
+      the open and we want your help.</strong>
     </p>
     <div class="cta-group">
-      <a href="https://github.com/r/morph" class="btn btn-primary">
+      <a href="#install" class="btn btn-primary">Try the alpha</a>
+      <a href="#help" class="btn btn-secondary">Help build it</a>
+      <a href="https://github.com/r/morph" class="btn btn-secondary">
         <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-        View on GitHub
+        GitHub
       </a>
-      <a href="#install" class="btn btn-secondary">Install</a>
     </div>
   </div>
 
@@ -577,13 +752,14 @@
   <!-- Solution -->
   <div class="solution-bg">
     <section id="solution">
-      <p class="section-label">The Solution</p>
-      <h2>Morph versions the transformation process</h2>
+      <p class="section-label">Our Thesis</p>
+      <h2>Version the transformation, not just the output</h2>
       <p class="lead">
         Same content-addressed Merkle DAG as Git. Same hash-of-contents identity.
-        Three additions that make version control work for agent-authored code.
+        Three additions that we believe make version control work for agent-authored code.
         Morph runs alongside Git (separate <code>.morph/</code> and <code>.git/</code>) &mdash;
-        drop Git later if you want to.
+        drop Git later if you want to. <em>The ideas below are where we're heading; the
+        implementation is partial and actively being built.</em>
       </p>
 
       <div class="solution-items">
@@ -704,12 +880,16 @@
   <!-- Install / Quickstart -->
   <div class="solution-bg">
     <section id="install">
-      <p class="section-label">Install</p>
+      <p class="section-label">Try the Alpha</p>
       <h2>Zero to recording in three commands</h2>
       <p class="lead">
         Build the two binaries (<code>morph</code> and <code>morph-mcp</code>), initialize
         a Morph repo in your project, and wire up your IDE. Morph runs side-by-side with
         Git &mdash; commits in one are independent of commits in the other.
+        <strong style="color: var(--fg);">Heads-up:</strong> this is alpha software.
+        Some commands are half-built, the on-disk format may change (use
+        <code>morph upgrade</code> to migrate), and we'd love to hear what breaks &mdash;
+        <a href="https://github.com/r/morph/issues/new" style="color: var(--accent);">file an issue</a>.
       </p>
 
       <div class="cli-block">
@@ -815,6 +995,73 @@
     </section>
   </div>
 
+  <!-- Where we are / Help build this -->
+  <section id="help">
+    <p class="section-label">Where We Are</p>
+    <h2>An honest status report &mdash; and an invitation</h2>
+    <p class="lead">
+      We think the problem is real and the thesis is right. The implementation is
+      genuinely alpha: some of it works well, some of it is held together with
+      duct tape, and a lot of it needs your eyes, your bug reports, and your PRs.
+      Here's where things stand today.
+    </p>
+
+    <div class="status-grid">
+      <div class="status-card works">
+        <h3>What works today <span class="tag">Solid</span></h3>
+        <ul>
+          <li>IDE setup for Cursor, Claude Code, and OpenCode via one <code>morph setup</code> command</li>
+          <li>Recording prompts and responses as immutable Runs + Traces, always-on via hooks</li>
+          <li>Core Git-shaped workflow: <code>init</code>, <code>add</code>, <code>commit</code>, <code>log</code>, <code>diff</code>, <code>branch</code>, <code>checkout</code>, <code>merge</code>, <code>tag</code>, <code>stash</code>, <code>revert</code></li>
+          <li>Behavioral merge with dominance check and <code>merge-plan</code> preview</li>
+          <li>Policy, <code>certify</code>, and <code>gate</code> for pass/fail enforcement</li>
+          <li><code>morph serve</code>: local browser UI + JSON API for inspecting commits, runs, traces</li>
+          <li>545+ unit/CLI tests and 32 end-to-end Cucumber scenarios</li>
+        </ul>
+      </div>
+
+      <div class="status-card rough">
+        <h3>What's rough <span class="tag">WIP</span></h3>
+        <ul>
+          <li>Structured trace events (tool calls, file edits, shell invocations) are captured inconsistently across IDEs &mdash; coverage is improving but uneven</li>
+          <li>Evaluation-suite integration is minimal: metrics are honored, but the full "suite as versioned contract" story is still being built</li>
+          <li>Storage: filesystem only; SQLite and real remote backends are designed but not implemented</li>
+          <li>On-disk format has already changed twice; expect more <code>morph upgrade</code> migrations before v1.0</li>
+          <li>Remotes are local-path only; no hosted Morph forge yet</li>
+          <li>Windows support is untested &mdash; we develop on macOS and Linux</li>
+          <li>Docs and CLI help are catching up to the code; some commands are under-documented</li>
+        </ul>
+      </div>
+
+      <div class="status-card help">
+        <h3>Where you can help <span class="tag">Invitation</span></h3>
+        <ul>
+          <li>Try it in a real project, break it, and <a href="https://github.com/r/morph/issues/new" style="color: var(--accent);">file an issue</a> &mdash; especially if recording misses events</li>
+          <li>Add trace adapters for other agents (Aider, Cline, Zed, Codex CLI, &hellip;)</li>
+          <li>Build real evaluation suites and share what shape they want to take</li>
+          <li>Implement a real remote backend (HTTP, S3, or a hosted forge)</li>
+          <li>Sharpen the theory: read <a href="https://github.com/r/morph/blob/main/docs/THEORY.md" style="color: var(--accent);">THEORY.md</a> and push back on where it's wrong</li>
+          <li>Improve docs, write tutorials, record screencasts</li>
+          <li>Port to Windows &amp; test on uncommon setups</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="status-cta">
+      <h3>Ready to jump in?</h3>
+      <p>
+        We're a small research project and every issue, PR, and conversation moves
+        this forward. Star the repo to follow along, or grab an open issue and start
+        hacking.
+      </p>
+      <div class="cta-group">
+        <a href="https://github.com/r/morph/issues" class="btn btn-primary">Browse issues</a>
+        <a href="https://github.com/r/morph/blob/main/CONTRIBUTING.md" class="btn btn-secondary">How to contribute</a>
+        <a href="https://github.com/r/morph" class="btn btn-secondary">Star on GitHub</a>
+      </div>
+    </div>
+  </section>
+
   <!-- Paper CTA -->
   <div class="paper-cta" id="paper">
     <h2>Read the theory and the spec</h2>
@@ -839,8 +1086,11 @@
   <footer>
     <p>
       Morph is an open research project by <a href="https://github.com/r/morph">Raffi Krikorian</a> at Mozilla.
+      Alpha software &mdash; built in public, broken in public, improved in public.
       <br>
-      Built for a world where agents write code and "did it get better?" is a question you have to run to answer.
+      Found a bug? <a href="https://github.com/r/morph/issues/new">Open an issue.</a>
+      Have an idea? <a href="https://github.com/r/morph/discussions">Start a discussion.</a>
+      Want to contribute? <a href="https://github.com/r/morph/blob/main/CONTRIBUTING.md">See CONTRIBUTING.md.</a>
     </p>
   </footer>
 
