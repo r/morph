@@ -49,7 +49,7 @@ pub fn migrate_0_0_to_0_2(morph_dir: &Path) -> Result<(), MorphError> {
     let order = dependency_order();
     for type_ord in order {
         for (old_hash, obj) in &old_objects {
-            if object_type_ord(&obj) != type_ord {
+            if object_type_ord(obj) != type_ord {
                 continue;
             }
             let rewritten = rewrite_object(obj, &map)?;
@@ -66,13 +66,12 @@ pub fn migrate_0_0_to_0_2(morph_dir: &Path) -> Result<(), MorphError> {
             let name = entry.file_name().to_string_lossy().into_owned();
             let path = refs_heads.join(&name);
             let content = std::fs::read_to_string(&path)?.trim().to_string();
-            if content.len() == 64 {
-                if Hash::from_hex(&content).is_ok() {
+            if content.len() == 64
+                && Hash::from_hex(&content).is_ok() {
                     if let Some(&new_h) = map.get(&content) {
                         git_store.ref_write(&format!("heads/{}", name), &new_h)?;
                     }
                 }
-            }
         }
     }
 

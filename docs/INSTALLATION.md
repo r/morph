@@ -111,7 +111,7 @@ morph serve --port 9000        # custom port
 morph serve --repo team=/path  # named multi-repo
 ```
 
-The service exposes a stable JSON API for browsing commits (with behavioral status), runs, traces, pipelines, certifications, and policy. See [v0-spec.md § 15](v0-spec.md#15-hosted-service-phase-7) for the full API reference.
+The service exposes a stable JSON API for browsing commits (with behavioral status), runs, traces, pipelines, certifications, and policy. See [v0-spec.md § 16](v0-spec.md#16-hosted-service-phase-7) for the full API reference.
 
 ---
 
@@ -120,7 +120,7 @@ The service exposes a stable JSON API for browsing commits (with behavioral stat
 - **Commit the filesystem:** [CURSOR-SETUP.md § Committing](CURSOR-SETUP.md#5-committing-the-filesystem) / [CLAUDE-CODE-SETUP.md § Committing](CLAUDE-CODE-SETUP.md#4-committing-the-filesystem) / [OPENCODE-SETUP.md § Committing](OPENCODE-SETUP.md#5-committing-the-filesystem).
 - **Use Morph with Git:** [MORPH-AND-GIT.md](MORPH-AND-GIT.md).
 - **MCP tool reference:** [CURSOR-SETUP.md § MCP Tool Reference](CURSOR-SETUP.md#6-mcp-tool-reference) (same tools in all IDEs).
-- **Hosted service API:** [v0-spec.md § 15](v0-spec.md#15-hosted-service-phase-7).
+- **Hosted service API:** [v0-spec.md § 16](v0-spec.md#16-hosted-service-phase-7).
 
 ---
 

@@ -4,11 +4,13 @@
 
 | Crate | Tests | Location |
 |-------|-------|----------|
-| **morph-core** | 298 unit tests across 24 modules (23 with test blocks) | `#[cfg(test)]` blocks in each source file |
+| **morph-core** | 332 unit tests across 27 modules (26 with test blocks) | `#[cfg(test)]` blocks in each source file |
 | **morph-cli** | 140 integration tests + 18 unit tests | YAML specs in `morph-cli/tests/specs/*.yaml`, compiled by `build.rs`; unit tests in `setup.rs` |
-| **morph-e2e** | 35 Cucumber e2e scenarios (3 skipped in CI) | `morph-e2e/features/*.feature`, step defs in `morph-e2e/tests/cucumber.rs` |
-| **morph-mcp** | 17 integration tests | `#[cfg(test)]` in `morph-mcp/src/main.rs` |
+| **morph-e2e** | 32 passing + 3 skipped Cucumber scenarios (35 total) | `morph-e2e/features/*.feature`, step defs in `morph-e2e/tests/cucumber.rs` |
+| **morph-mcp** | 19 integration tests | `#[cfg(test)]` in `morph-mcp/src/main.rs` |
 | **morph-serve** | 36 unit/API tests (views, service, handlers, org policy, multi-repo) | `morph-serve/src/tests.rs` + `org_policy::tests` |
+
+Totals: **545 Rust tests** (332 + 140 + 18 + 19 + 36) plus the Cucumber suite, all green.
 
 ### morph-core unit test modules
 
@@ -20,7 +22,7 @@
 
 ### morph-mcp integration tests
 
-All 15 MCP tools tested (16 test functions): **init** (success + already-initialized error), **record_session** (hash return), **record_run**, **record_eval** (file-based metrics), **stage** (explicit paths + default `.`), **commit** (basic, with metrics, with `--from-run` provenance), **branch** (success + no-commit error), **checkout** (branch switch), **annotate** (annotation creation), **status** (file listing), **log** (commit history), **show** (object JSON), **diff** (between commits), **merge** (behavioral dominance), **repo_store** (not-found error message).
+All 15 MCP tools tested (17 test functions): **init** (success + already-initialized error), **record_session** (hash return), **record_run**, **record_eval** (file-based metrics), **stage** (explicit paths + default `.`), **commit** (basic, with metrics, with `--from-run` provenance), **branch** (success + no-commit error), **checkout** (branch switch), **annotate** (annotation creation), **status** (file listing), **log** (commit history), **show** (object JSON), **diff** (between commits), **merge** (behavioral dominance), **repo_store** (not-found error message, accepts upgraded store version 0.4).
 
 ---
 

@@ -1,6 +1,12 @@
 # Morph
 
-Morph is a version control system for AI-assisted development. It extends Git's content-addressed, Merkle DAG architecture with first-class support for execution evidence, behavioral contracts, and merge gating.
+Morph is a version control system for AI-assisted development. It extends Git's content-addressed Merkle DAG with three things Git cannot represent:
+
+1. **Execution evidence** — every agent session is recorded as an immutable Run with a full Trace (prompts, tool calls, file reads and edits, shell commands, token usage).
+2. **Behavioral contracts** — a commit can pin a pipeline, an evaluation suite, observed metric scores, and the environment those scores were captured in.
+3. **Merge by dominance** — merges succeed only when the candidate is at least as good as both parents on every declared metric, not just because the text diff is clean.
+
+Morph stores the same thing Git stores (a file tree snapshot) *and* the behavioral record on top of it. You can run it alongside Git today and drop Git later if you want to.
 
 ---
 
@@ -98,7 +104,7 @@ morph-serve/    Hosted service: morph serve (multi-repo JSON API + browser UI)
 morph-e2e/      End-to-end tests (Cucumber/Gherkin)
 ```
 
-**Storage backend**: Trait-based (`Store`). v0 ships a filesystem backend (`FsStore`) with two hash modes, selected by `repo_version` in `.morph/config.json`: **`FsStore::new`** (0.0, legacy: SHA-256 of canonical JSON only) and **`FsStore::new_git`** (0.2+, Git-style `"blob "+len+"\0"+data` hashing; required for tree commits in 0.3). Use `morph upgrade` to migrate. SQLite and remote backends are anticipated by the trait interface.
+**Storage backend**: Trait-based (`Store`). v0 ships a filesystem backend (`FsStore`) selected by `repo_version` in `.morph/config.json`: **`FsStore::new`** (0.0, legacy: SHA-256 of canonical JSON), **`FsStore::new_git`** (0.2/0.3, Git-style `"blob "+len+"\0"+data` hashing, flat `objects/` + tree commits), and **`FsStore::new_git_fanout`** (0.4, same hashing with Git-style fan-out `objects/<xx>/<rest>.json`). Use `morph upgrade` to migrate. SQLite and remote backends are anticipated by the trait interface.
 
 **Write path**: IDE hooks → `morph run record` → morph-core → `.morph/objects/`; or IDE (via MCP) → morph-mcp → morph-core → `.morph/objects/`.
 **Read path**: CLI → morph-core → `.morph/objects/`.

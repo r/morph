@@ -250,7 +250,7 @@ pub async fn api_org_policy_set(
 ) -> Result<Json<OrgPolicyView>, ApiError> {
     if let Some(ref path) = state.org_policy_path {
         org_policy::save_org_policy(path, &new_policy)
-            .map_err(|e| ApiError::Internal(e))?;
+            .map_err(ApiError::Internal)?;
     }
     let view = OrgPolicyView {
         required_metrics: new_policy.required_metrics.clone(),

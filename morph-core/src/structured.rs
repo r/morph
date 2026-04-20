@@ -673,7 +673,7 @@ fn first_sentence(text: &str) -> String {
         return String::new();
     }
     let end = t
-        .find(|c: char| matches!(c, '.' | '\n' | '?' | '!'))
+        .find(['.', '\n', '?', '!'])
         .map(|i| i + 1)
         .unwrap_or(t.len());
     t[..end.min(t.len())].trim().to_string()
@@ -769,7 +769,7 @@ pub fn summarize_trace(store: &dyn Store, run_hash: &Hash) -> Result<TraceSummar
 }
 
 fn preview_text(s: &str, max: usize) -> String {
-    let one_line = s.replace('\n', " ").replace('\r', " ");
+    let one_line = s.replace(['\n', '\r'], " ");
     let trimmed = one_line.trim();
     if trimmed.len() <= max {
         trimmed.to_string()
@@ -911,7 +911,7 @@ pub fn find_run_by_trace(store: &dyn Store, trace_hash: &Hash) -> Result<Option<
     for rh in &runs {
         if let MorphObject::Run(run) = store.get(rh)? {
             if run.trace == trace_hex {
-                return Ok(Some(rh.clone()));
+                return Ok(Some(*rh));
             }
         }
     }
@@ -923,7 +923,7 @@ pub fn find_run_by_trace(store: &dyn Store, trace_hash: &Hash) -> Result<Option<
 #[allow(dead_code)]
 fn resolve_run_hash(store: &dyn Store, hash: &Hash) -> Result<Hash, MorphError> {
     match store.get(hash) {
-        Ok(MorphObject::Run(_)) => Ok(hash.clone()),
+        Ok(MorphObject::Run(_)) => Ok(*hash),
         Ok(MorphObject::Trace(_)) => find_run_by_trace(store, hash)?
             .ok_or_else(|| MorphError::Serialization(format!("no run points to trace {}", hash))),
         Ok(_) => Err(MorphError::Serialization(format!(

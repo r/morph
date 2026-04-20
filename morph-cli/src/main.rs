@@ -1029,7 +1029,7 @@ fn cmd_prompt_show(verbose: bool, run_ref: &str, run_upgrade: bool) -> anyhow::R
 
         match store.get(&trace_hash) {
             Ok(MorphObject::Trace(t)) => {
-                let text = t.events.iter().filter(|e| e.kind == "prompt" || e.kind == "user").last()
+                let text = t.events.iter().rfind(|e| e.kind == "prompt" || e.kind == "user")
                     .and_then(|e| e.payload.get("text").and_then(|v| v.as_str())).unwrap_or("");
                 print!("{}", text);
                 return Ok(());
@@ -1040,7 +1040,7 @@ fn cmd_prompt_show(verbose: bool, run_ref: &str, run_upgrade: bool) -> anyhow::R
                 if trace_path.exists() {
                     let obj: MorphObject = serde_json::from_str(&std::fs::read_to_string(&trace_path)?)?;
                     if let MorphObject::Trace(t) = obj {
-                        let text = t.events.iter().filter(|e| e.kind == "prompt" || e.kind == "user").last()
+                        let text = t.events.iter().rfind(|e| e.kind == "prompt" || e.kind == "user")
                             .and_then(|e| e.payload.get("text").and_then(|v| v.as_str())).unwrap_or("");
                         print!("{}", text);
                         return Ok(());

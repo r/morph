@@ -75,7 +75,7 @@ pub fn check_dominance(
     merged: &BTreeMap<String, f64>,
     parent: &BTreeMap<String, f64>,
 ) -> bool {
-    parent.iter().all(|(k, v)| merged.get(k).map_or(false, |m| *m >= *v))
+    parent.iter().all(|(k, v)| merged.get(k).is_some_and(|m| *m >= *v))
 }
 
 /// Direction-aware dominance: merged must be "at least as good" as parent for every metric
@@ -92,7 +92,7 @@ pub fn check_dominance_with_suite(
         .map(|m| (m.name.as_str(), m.direction.as_str()))
         .collect();
     parent.iter().all(|(k, v)| {
-        merged.get(k).map_or(false, |m| {
+        merged.get(k).is_some_and(|m| {
             let dir = directions.get(k.as_str()).copied().unwrap_or("maximize");
             if dir == "minimize" {
                 *m <= *v

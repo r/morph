@@ -707,7 +707,7 @@ pub fn filter_runs(
                         continue;
                     }
                 }
-                matched.push(run_hash.clone());
+                matched.push(*run_hash);
             }
             Err(_) => continue,
         }

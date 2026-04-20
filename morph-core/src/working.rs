@@ -164,7 +164,7 @@ pub fn status(store: &dyn Store, repo_root: &Path) -> Result<Vec<StatusEntry>, M
             continue;
         }
         let kind = classify_file(path, &morph_prompts, &morph_evals);
-        if let Some(obj) = object_from_file(path, kind).ok() {
+        if let Ok(obj) = object_from_file(path, kind) {
             let hash = store.hash_object(&obj)?;
             let in_store = store.has(&hash)?;
             entries.push(StatusEntry {

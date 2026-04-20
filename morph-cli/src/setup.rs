@@ -232,15 +232,14 @@ fn merge_hooks_json(cursor_dir: &Path) -> anyhow::Result<bool> {
                 entry
                     .get("command")
                     .and_then(|c| c.as_str())
-                    .map_or(true, |c| !old_commands.contains(&c))
+                    .is_none_or(|c| !old_commands.contains(&c))
             })
             .collect();
 
         let already = arr.iter().any(|entry| {
             entry
                 .get("command")
-                .and_then(|c| c.as_str())
-                .map_or(false, |c| c == *command)
+                .and_then(|c| c.as_str()) == Some(*command)
         });
         if !already {
             let mut new_arr = arr;

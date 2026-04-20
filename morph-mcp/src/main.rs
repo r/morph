@@ -5,7 +5,7 @@ mod params;
 
 use morph_core::{
     find_repo, open_store, read_repo_version, require_store_version,
-    Hash, Store, STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_INIT,
+    Hash, Store, STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_0_4, STORE_VERSION_INIT,
 };
 use params::*;
 use rmcp::{
@@ -61,7 +61,7 @@ impl MorphServer {
             )
         })?;
         let morph_dir = repo_root.join(".morph");
-        require_store_version(&morph_dir, &[STORE_VERSION_INIT, STORE_VERSION_0_2, STORE_VERSION_0_3]).map_err(|e| e.to_string())?;
+        require_store_version(&morph_dir, &[STORE_VERSION_INIT, STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_0_4]).map_err(|e| e.to_string())?;
         let store = open_store(&morph_dir).map_err(|e| e.to_string())?;
         Ok((repo_root, store))
     }
@@ -584,6 +584,22 @@ mod tests {
         let result = server.repo_store(None);
         assert!(result.is_err());
         assert!(result.err().unwrap().contains("not a morph repository"));
+    }
+
+    #[tokio::test]
+    async fn repo_store_accepts_latest_store_version_after_upgrade() {
+        let dir = tempfile::tempdir().unwrap();
+        morph_core::init_repo(dir.path()).unwrap();
+        let morph_dir = dir.path().join(".morph");
+        morph_core::migrate_0_0_to_0_2(&morph_dir).unwrap();
+        morph_core::migrate_0_2_to_0_3(&morph_dir).unwrap();
+        morph_core::migrate_0_3_to_0_4(&morph_dir).unwrap();
+        let version = morph_core::read_repo_version(&morph_dir).unwrap();
+        assert_eq!(version, STORE_VERSION_0_4);
+
+        let server = MorphServer::new(Some(dir.path().to_path_buf()));
+        let result = server.repo_store(None);
+        assert!(result.is_ok(), "MCP should accept store version 0.4; got: {:?}", result.err());
     }
 
     #[tokio::test]

@@ -1,11 +1,27 @@
 # Morph
 
-**Version control when pipelines are probabilistic.** Morph extends Git's content-addressed Merkle DAG with pipelines (the sequences of prompt calls, tool invocations, retrieval steps, and transforms that make up an LLM application), evaluation suites (versioned definitions of what "good" means), and runs (permanent execution receipts recording exactly what ran, in what environment, and what it produced). A Morph commit bundles a pipeline with an evaluation suite and scores. At merge time, Morph records the scores from both parents and the scores the merged pipeline achieved.
+**Git for AI-assisted development.** Morph is a version control system that tracks not just *what the files are*, but *what produced them and whether it still works*. Every agent session is recorded as an immutable Run with a full Trace (prompts, tool calls, file reads and edits). Every commit can carry a behavioral contract — which evaluation suite was run, what scores were achieved, under which environment. Merge is gated on **behavioral dominance**: the merged code must be at least as good as both parents on every declared metric, not just a clean text diff.
 
-- **Full docs:** [docs/README.md](docs/README.md) — problem, solution, theory, and spec  
-- **Paper:** [docs/morph-paper.tex](docs/morph-paper.tex) — formal foundations  
-- **Install & run:** [docs/INSTALLATION.md](docs/INSTALLATION.md) — binaries, init, IDE setup  
-- **IDE guides:** [Cursor](docs/CURSOR-SETUP.md) | [Claude Code](docs/CLAUDE-CODE-SETUP.md) | [OpenCode](docs/OPENCODE-SETUP.md)  
+Morph sits alongside Git and uses the same Merkle-DAG foundations. Run both; drop Git later if you want to. See [docs/MORPH-AND-GIT.md](docs/MORPH-AND-GIT.md).
+
+## Why you might want this
+
+If your development loop involves an AI agent, your current tooling probably can't answer:
+
+- **What prompt produced this code?** — every file change links back to the Run that created it.
+- **Did the agent's approach actually work?** — commits carry evaluation scores under a declared environment, not just "it looks right."
+- **How did this code get to this state?** — Traces capture every prompt, tool call, file read, and edit.
+- **Can I safely merge this agent branch?** — merge succeeds only when behavioral dominance is preserved.
+- **Can I compare two approaches?** — Runs, Traces, and Pipelines are first-class content-addressed objects. Diff them, annotate them, build on them.
+
+Git assumes identity is byte equality, reproducibility is identical output, and merge is syntactic reconciliation. Those assumptions are fine for handwritten code and break down for probabilistic, effectful, partly-agent-authored code. Morph's answer: make behavior the thing you version.
+
+- **Full docs:** [docs/README.md](docs/README.md) — problem, solution, architecture
+- **Theory:** [docs/THEORY.md](docs/THEORY.md) — the algebra (pipelines, certificate vectors, dominance)
+- **Spec:** [docs/v0-spec.md](docs/v0-spec.md) — concrete system design, object schemas, CLI reference
+- **Paper:** [docs/morph-paper.tex](docs/morph-paper.tex) — formal foundations
+- **Install:** [docs/INSTALLATION.md](docs/INSTALLATION.md) · **IDE guides:** [Cursor](docs/CURSOR-SETUP.md) · [Claude Code](docs/CLAUDE-CODE-SETUP.md) · [OpenCode](docs/OPENCODE-SETUP.md)
+- **Morph + Git:** [docs/MORPH-AND-GIT.md](docs/MORPH-AND-GIT.md)
 
 ## Install and start in Cursor (quick)
 
@@ -22,32 +38,54 @@ morph init
 morph setup cursor   # writes .cursor/ (MCP, hooks, rules)
 ```
 
-Then open the project in Cursor. Ensure `morph` and `morph-mcp` are on your PATH. The MCP server and hooks will record prompts/responses and let the agent commit via Morph.
+Then open the project in Cursor. Ensure `morph` and `morph-mcp` are on your PATH. The MCP server and hooks will record every prompt/response and let the agent commit via Morph. For Claude Code and OpenCode, see the IDE guides above.
 
 ## Core commands
 
+Git-shaped workflow, plus behavioral gating and agent-session recording:
+
 ```bash
-morph init                  # initialize a morph repo
-morph add .                 # stage files
-morph commit -m "message"   # create a behavioral commit
-morph log                   # view commit history
-morph diff <ref1> <ref2>    # compare two commits/branches
-morph branch <name>         # create a branch
-morph checkout <name>       # switch branches
-morph merge <branch> ...    # behavioral merge (dominance required)
-morph tag <name>            # tag the current commit
-morph stash save            # save staged work for later
-morph stash pop             # restore most recent stash
-morph revert <hash>         # undo a commit
-morph status                # show working directory state
-morph run record-session    # record an agent prompt/response
-morph certify               # certify a commit against policy
-morph gate                  # check if a commit passes policy
+morph init                       # initialize a morph repo
+morph status                     # show working tree + accumulated runs/traces
+morph add .                      # stage files
+morph commit -m "message"        # create a commit (optional --pipeline/--eval-suite/--metrics)
+morph log                        # view commit history
+morph diff <ref1> <ref2>         # compare two commits/branches
+morph show <hash>                # inspect any stored object as pretty JSON
+morph branch <name>              # create a branch
+morph checkout <ref>             # switch branch or detach to a commit
+morph merge <branch> ...         # behavioral merge (dominance required)
+morph merge-plan <branch>        # preview merge: parents, union suite, bar to beat
+morph tag <name>                 # tag the current commit
+morph stash save | pop | list    # save/restore staged work
+morph revert <hash>              # undo a commit
+morph remote add | push | pull   # named local-path remotes
+morph certify --metrics-file f   # certify a commit against policy metrics
+morph gate                       # check if HEAD passes policy (exit 1 on fail)
+morph policy show | set          # view or update repository policy
+morph upgrade                    # migrate the store to the latest version
+morph gc                         # remove unreachable objects
 ```
 
-## Hosted service (team inspection)
+## Recording and inspecting agent work
 
-Run the Morph hosted service for shared, browser-based inspection of behavioral history:
+```bash
+morph run record-session --prompt "..." --response "..."   # one-shot record
+morph tap summary                 # repo-level overview of recorded runs
+morph tap inspect <run-hash>      # grouped steps (prompt, tool calls, files) for one run
+morph tap diagnose                # recording-quality report
+morph tap export --mode agentic   # export eval cases (for promptfoo, custom harnesses)
+morph tap trace-stats <hash>      # per-event payload / kind / length stats
+morph tap preview <run-hash>      # labeled prompt/context/response preview
+morph traces summary              # newest traces with task phase and target files
+morph traces task-structure <ref> # task phase, scope, target files/symbols, goal
+morph traces target-context <ref> # the scoped code snippet the agent was working on
+morph traces final-artifact <ref> # the final function/file/patch produced
+```
+
+IDE hooks parse the agent's full transcript (tool calls, file reads/edits, shell commands, token usage) into structured Trace events — so `tap` and `traces` see real agentic behavior, not just prompt/response pairs.
+
+## Hosted service (team inspection)
 
 ```bash
 morph serve                              # serve current repo at http://127.0.0.1:8765
@@ -55,26 +93,13 @@ morph serve --repo team=/path/to/repo    # named multi-repo mode
 morph serve --org-policy org-policy.json # apply org-level policy
 ```
 
-The service exposes a stable JSON API and browser UI for inspecting commits (with certification/gate status), runs, traces, pipelines, merge dominance, and policy. See [v0-spec.md § 15](docs/v0-spec.md#15-hosted-service-phase-7).
-
-## Trace extraction and evaluation (tap)
-
-```bash
-morph tap summary               # overview of all runs
-morph tap inspect <run-hash>    # show grouped steps for a run
-morph tap diagnose              # recording quality report
-morph tap export --mode agentic # export eval cases for promptfoo etc.
-morph tap trace-stats <hash>    # detailed event-level stats
-morph tap preview <run-hash>    # labeled prompt/context/response preview
-```
-
-Tap reads traces and runs from the store, groups events into steps, and produces structured output for evaluation frameworks. Cursor hooks now parse the full agent transcript (tool calls, file reads/edits, shell commands) into rich structured traces.
+Stable JSON API and browser UI for inspecting commits (with certification/gate status), runs, traces, pipelines, merge dominance, and policy. See [v0-spec.md § 16](docs/v0-spec.md#16-hosted-service-phase-7).
 
 ## Develop Morph (this repo)
 
 ```bash
-cargo test                    # unit + CLI integration tests
-cargo test -p morph-e2e --test cucumber   # e2e (Cucumber)
+cargo test                                # 545 unit + CLI integration tests
+cargo test -p morph-e2e --test cucumber   # 32 e2e scenarios (Cucumber)
 ```
 
 See [docs/TESTING.md](docs/TESTING.md) and [CONTRIBUTING.md](CONTRIBUTING.md).

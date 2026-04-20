@@ -171,17 +171,18 @@ Morph's core logic depends on an abstract storage interface, not on a specific b
 - **ref_read_raw(name) → string** — raw ref content (e.g. `"ref: heads/main"` for symbolic HEAD)
 - **ref_write_raw(name, value)** — write raw ref content (symbolic or hash)
 
-The v0 implementation provides two backends, selected by `repo_version` in `.morph/config.json`:
+The v0 implementation provides a single `FsStore` backend with several on-disk variants, selected by `repo_version` in `.morph/config.json`:
 
-| Store version | Backend | Hash function | Notes |
-|---|---|---|---|
-| `"0.0"` | **FsStore** — flat `objects/<hash>.json` | SHA-256 of canonical JSON | Created by `morph init`. Legacy. |
-| `"0.2"` | **FsStore (Git-format)** — same directory layout | SHA-256 of `"blob " + len + "\0" + canonical_json` (Git object format) | Created by `morph upgrade` from 0.0. |
-| `"0.3"` | **FsStore (Git-format)** + tree commits | Same as 0.2 | Adds file tree storage in commits. Current. |
+| Store version | Backend | Hash function | Object layout | Notes |
+|---|---|---|---|---|
+| `"0.0"` | **FsStore** | SHA-256 of canonical JSON | flat `objects/<hash>.json` | Created by `morph init`. Legacy. |
+| `"0.2"` | **FsStore (Git-format)** | SHA-256 of `"blob " + len + "\0" + canonical_json` | flat `objects/<hash>.json` | Created by `morph upgrade` from 0.0. |
+| `"0.3"` | **FsStore (Git-format)** + tree commits | Same as 0.2 | flat `objects/<hash>.json` | Adds file tree storage in commits. |
+| `"0.4"` | **FsStore (Git-format, fan-out)** | Same as 0.2 | `objects/<xx>/<hash[2..]>.json` (Git-style fan-out) | Current. Scales to large object stores. |
 
-Both backends use the same directory layout: `objects/<hash>.json` for objects, `refs/` for references, and type-index directories (`runs/`, `traces/`, `prompts/`, `evals/`) for fast type-filtered listing. The `list(type)` operation uses type-index directories when available, falling back to full object scan for types without indexes.
+All variants share the same directory layout outside of `objects/`: `refs/` for references and type-index directories (`runs/`, `traces/`, `prompts/`, `evals/`) for fast type-filtered listing. The `list(type)` operation uses type-index directories when available, falling back to full object scan for types without indexes.
 
-Migration between store versions is handled by `morph upgrade` (CLI only). Migration from 0.0 to 0.2 rewrites all objects with new hashes and updates all internal references.
+Migration between store versions is handled by `morph upgrade` (CLI only). Migration from 0.0 to 0.2 rewrites all objects with new hashes and updates all internal references. Migration from 0.3 to 0.4 rewrites the objects directory into the fan-out layout; hashes are preserved.
 
 Other backends are explicitly anticipated (SQLite, S3, database-backed). The filesystem layout is a projection of the storage backend, not the backend itself. CLI and IDE integrations talk to the backend interface.
 
@@ -600,12 +601,12 @@ morph log
 ```
 morph prompt create <file>
 morph prompt materialize <hash> [--output <path>]
-morph prompt latest [<ref>]
+morph prompt show [<ref>] [--run-upgrade]
 ```
 
 Prompts are canonical objects. Materialization writes them to the working directory (or `.morph/prompts/`) for review.
 
-`morph prompt latest` prints the prompt text from a Run. Ref follows a Git-like syntax: `latest` (default, most recent run), `latest~N` or `latest-N` (Nth run back), or a 64-char run hash.
+`morph prompt show` prints the prompt text from a Run. Ref follows a Git-like syntax: `latest` (default, most recent run), `latest~N` or `latest-N` (Nth run back), or a 64-char run hash. Pass `--run-upgrade` to attempt one store upgrade and retry when the trace referenced by the run is not found.
 
 ## 6.3 Pipeline Management
 
@@ -805,15 +806,27 @@ Compares the file trees of two commits and reports added, deleted, and modified 
 
 ```
 morph tap summary                          # overview of all runs in the repo
-morph tap inspect <run_hash>               # grouped steps for a single run
-morph tap inspect --all                    # grouped steps for all runs
-morph tap diagnose [<run_hash>]            # recording quality report
+morph tap inspect <run_hash>               # grouped steps for a single run (pass "all" for every run)
+morph tap diagnose [<run_hash>]            # recording quality report (default: all runs)
 morph tap export --mode <mode>             # export eval cases (prompt-only, with-context, agentic)
-morph tap trace-stats <run_hash>           # detailed event-level statistics
-morph tap preview <run_hash>               # labeled prompt/context/response preview
+morph tap trace-stats <trace_hash>         # detailed event-level statistics for a trace
+morph tap preview <run_hash> [--mode M]    # labeled prompt/context/response preview
 ```
 
-Tap reads traces and runs from the store, groups events into logical steps (prompt, response, tool calls, file operations), and produces structured output for evaluation frameworks. Supports filtering by model (`--model`) and minimum step count (`--min-steps`).
+Tap reads traces and runs from the store, groups events into logical steps (prompt, response, tool calls, file operations), and produces structured output for evaluation frameworks. `export` supports filtering by model (`--model`), agent (`--agent`), and minimum step count (`--min-steps`), and writes to a file with `--output`.
+
+### 6.17a Structured trace views
+
+```
+morph traces summary [--limit N] [--json]
+morph traces task-structure <run_or_trace_hash>
+morph traces target-context <run_or_trace_hash>
+morph traces final-artifact <run_or_trace_hash>
+morph traces semantics <run_or_trace_hash>
+morph traces verification <run_or_trace_hash>
+```
+
+Higher-level views over the same traces, for replay and eval-case construction: task classification (phase, scope, target files/symbols, goal), target file/function context, final artifact (function text / file snippet / patch summary), change semantics, and verification commands. These are also exposed as MCP tools (`morph_get_recent_trace_summaries`, `morph_get_trace_task_structure`, etc.).
 
 ## 6.18 IDE Setup
 
@@ -1017,7 +1030,7 @@ morph gate --commit <hash> --json       # gate check with JSON output
 
 ---
 
-# 12. v0 Success Criteria
+# 13. v0 Success Criteria
 
 Morph v0 is successful if:
 
@@ -1033,7 +1046,7 @@ Morph v0 is successful if:
 
 ---
 
-# 13. Guiding Constraint
+# 14. Guiding Constraint
 
 If something feels too clever, remove it.
 
@@ -1050,11 +1063,11 @@ Correct foundations cannot.
 
 ---
 
-# 14. Implementation: Rust (v0)
+# 15. Implementation: Rust (v0)
 
 The reference v0 implementation is in Rust.
 
-- **Storage:** Trait-based `Store` interface with a single filesystem backend (`FsStore`) supporting two hash modes: `FsStore::new` for legacy store version 0.0, `FsStore::new_git` for 0.2+. Both use flat JSON files in `.morph/objects/<hash>.json` with type-index directories for fast listing. `morph upgrade` migrates between versions. Future backends (SQLite, S3) plug into the same trait.
+- **Storage:** Trait-based `Store` interface with a single filesystem backend (`FsStore`). Three on-disk variants selected by `repo_version`: `FsStore::new` for legacy store version 0.0 (SHA-256 of canonical JSON), `FsStore::new_git` for 0.2/0.3 (Git-format hashing, flat `objects/`), and `FsStore::new_git_fanout` for 0.4 (Git-format hashing, fan-out `objects/<xx>/<rest>.json`). All variants share the same `refs/` and type-index directories for fast listing. `morph upgrade` migrates between versions. Future backends (SQLite, S3) plug into the same trait.
 - **Metrics validation:** Built-in aggregation (`mean`, `min`, `p95`, `lower_ci_bound`), direction-aware threshold checks (`maximize`/`minimize`), and componentwise dominance checks. Morph does not execute tests; it validates and compares reported metric vectors.
 - **Crates:**
 
@@ -1064,10 +1077,11 @@ The reference v0 implementation is in Rust.
 | `morph-cli` | CLI: read path + manual writes (`morph init`, `add`, `commit`, `log`, ...) |
 | `morph-mcp` | Cursor MCP server: primary write path from the IDE |
 | `morph-serve` | Hosted service: `morph serve` (multi-repo JSON API + browser UI) and `morph visualize` (single-repo alias), with behavioral status derivation and org-level policy |
+| `morph-e2e` | End-to-end Cucumber scenarios that drive the real `morph` CLI against a temp filesystem |
 
 ---
 
-# 15. Hosted Service (Phase 7)
+# 16. Hosted Service (Phase 7)
 
 The hosted service (`morph serve`) exposes the Morph object graph through a stable HTTP/JSON API for collaborative team inspection.
 

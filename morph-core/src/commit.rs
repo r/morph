@@ -313,7 +313,7 @@ pub fn checkout_tree(
             if let Ok(old_hash) = Hash::from_hex(old_hash_str) {
                 if let Ok(old_files) = crate::tree::flatten_tree(store, &old_hash) {
                     let new_files = crate::tree::flatten_tree(store, &tree_hash)?;
-                    for (path, _) in &old_files {
+                    for path in old_files.keys() {
                         if crate::morphignore::is_rel_path_ignored(ignore_rules.as_ref(), path, false) {
                             continue;
                         }
