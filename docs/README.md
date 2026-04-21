@@ -8,6 +8,8 @@ Morph is a version control system for AI-assisted development. It extends Git's 
 
 Morph stores the same thing Git stores (a file tree snapshot) *and* the behavioral record on top of it. You can run it alongside Git today and drop Git later if you want to.
 
+Project links: [github.com/r/morph](https://github.com/r/morph) and [r.github.io/morph](https://r.github.io/morph).
+
 ---
 
 ## The Problem

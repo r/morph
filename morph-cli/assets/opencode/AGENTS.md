@@ -1,6 +1,6 @@
 # Morph — Behavioral Version Control
 
-This project uses [Morph](https://github.com/morphcloud/morph) for behavioral version control. Morph tracks every prompt, response, and file-tree commit independently of Git.
+This project uses [Morph](https://github.com/r/morph) for behavioral version control. Morph tracks every prompt, response, and file-tree commit independently of Git. The project website is [r.github.io/morph](https://r.github.io/morph).
 
 ## Recording sessions
 
