@@ -8,6 +8,11 @@ use morph_core::{log_from, Hash};
 pub(crate) struct GraphResponse {
     nodes: Vec<GraphNode>,
     edges: Vec<GraphEdge>,
+    /// Hash of the HEAD commit, if any. Clients use this to focus the initial
+    /// viewport on the most recent commit instead of fitting the whole graph
+    /// (which for large histories makes every node too small to read).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    head: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -105,7 +110,11 @@ pub(crate) fn build_graph_response(
         );
     }
 
+    let mut head_hash: Option<String> = None;
     if let Ok(commit_hashes) = log_from(store, "HEAD") {
+        if let Some(first) = commit_hashes.first() {
+            head_hash = Some(first.to_string());
+        }
         for h in commit_hashes {
             let id = h.to_string();
             let obj = match store.get(&h) {
@@ -222,6 +231,7 @@ pub(crate) fn build_graph_response(
     let resp = GraphResponse {
         nodes: nodes_vec,
         edges,
+        head: head_hash,
     };
     serde_json::to_value(&resp).map_err(|e| MorphError::Serialization(e.to_string()))
 }

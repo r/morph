@@ -430,13 +430,19 @@ async fn test_compat_object() {
 #[tokio::test]
 async fn test_compat_graph() {
     let (dir, store) = setup_repo();
-    make_commit_with_metrics(store.as_ref(), &dir, BTreeMap::new(), "graph");
+    let head = make_commit_with_metrics(store.as_ref(), &dir, BTreeMap::new(), "graph");
 
     let app = build_router(&make_config(&dir));
     let (status, json) = get_json(app, "/api/graph").await;
     assert_eq!(status, StatusCode::OK);
     assert!(json["nodes"].is_array());
     assert!(json["edges"].is_array());
+    assert_eq!(
+        json["head"].as_str(),
+        Some(head.to_string().as_str()),
+        "/api/graph must report HEAD so the client can focus the viewport on \
+         the most recent commit instead of zooming out to fit everything"
+    );
 }
 
 #[tokio::test]
@@ -480,6 +486,48 @@ async fn test_compat_graph_empty() {
     assert_eq!(status, StatusCode::OK);
     let nodes = json["nodes"].as_array().unwrap();
     assert!(nodes.is_empty(), "empty repo should return no nodes");
+    assert!(
+        json.get("head").is_none() || json["head"].is_null(),
+        "empty repo must not report a HEAD"
+    );
+}
+
+/// The `/graph` page must use a viewport-fixed body height (not just min-height)
+/// and disable vis-network's `improvedLayout` so large graphs render correctly.
+/// Without these, the vis canvas expands the page past the viewport and the
+/// rendered nodes end up off-screen, producing a blank graph.
+#[tokio::test]
+async fn test_graph_page_has_layout_fixes() {
+    let (dir, _store) = setup_repo();
+    let app = build_router(&make_config(&dir));
+    let resp = app
+        .oneshot(Request::builder().uri("/graph").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let html = std::str::from_utf8(&bytes).unwrap();
+
+    assert!(
+        html.contains("height: 100vh") && html.contains("overflow: hidden"),
+        "graph body must pin height to viewport and clip overflow, or the vis \
+         canvas grows past the viewport and nodes render off-screen"
+    );
+    assert!(
+        html.contains("improvedLayout: false"),
+        "graph must disable vis-network's improvedLayout; it silently fails on \
+         networks with disconnected components and leaves the canvas blank"
+    );
+    assert!(
+        html.contains("network.focus(headId"),
+        "graph must focus on the HEAD commit after stabilization; fitting the \
+         whole graph makes every node too small to read on large histories"
+    );
+    assert!(
+        html.contains("id=\"fitAll\"") && html.contains("id=\"focusHead\""),
+        "graph must expose Fit all / Focus HEAD buttons so users can switch \
+         between the zoomed-in and zoomed-out views"
+    );
 }
 
 // ── Org policy endpoints ────────────────────────────────────────────

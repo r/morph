@@ -7,12 +7,14 @@
   <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
   <style>
     * { box-sizing: border-box; }
+    html, body { height: 100%; }
     body {
       margin: 0;
       font-family: ui-sans-serif, system-ui, sans-serif;
       background: #0f0f12;
       color: #e4e4e7;
-      min-height: 100vh;
+      height: 100vh;
+      overflow: hidden;
       display: flex;
       flex-direction: column;
     }
@@ -76,6 +78,8 @@
     .loading { color: #a1a1aa; }
     .btn { display: inline-block; margin-top: 0.5rem; padding: 0.4rem 0.75rem; border-radius: 6px; border: none; background: #3b82f6; color: #fff; cursor: pointer; font-size: 0.85rem; }
     .btn:hover { background: #2563eb; }
+    .toolbtn { padding: 0.25rem 0.6rem; border-radius: 4px; border: 1px solid #3f3f46; background: #18181b; color: #e4e4e7; cursor: pointer; font-size: 0.75rem; font-weight: normal; }
+    .toolbtn:hover { background: #27272a; border-color: #52525b; }
   </style>
 </head>
 <body>
@@ -86,6 +90,8 @@
     <label id="showPromptsWrap" style="display:flex;align-items:center;gap:0.35rem;font-size:0.8rem;font-weight:normal;color:#a1a1aa;cursor:pointer;margin-left:0.5rem;">
       <input type="checkbox" id="showPrompts"> Show prompts
     </label>
+    <button id="focusHead" class="toolbtn" title="Focus on the HEAD commit">Focus HEAD</button>
+    <button id="fitAll" class="toolbtn" title="Zoom out to show the entire graph">Fit all</button>
     <div id="legend"></div>
   </header>
   <div id="main">
@@ -115,6 +121,8 @@
     const container = document.getElementById('graph');
     const detailEl = document.getElementById('detail');
     const showPromptsEl = document.getElementById('showPrompts');
+    const fitAllBtn = document.getElementById('fitAll');
+    const focusHeadBtn = document.getElementById('focusHead');
     let network = null;
     let nodeTypes = {}; // id -> type for click handler
     let graphData = null; // raw { nodes, edges } from API
@@ -208,17 +216,27 @@
       const filteredEdges = showPrompts
         ? graphData.edges
         : graphData.edges.filter(e => !promptIds.has(e.from) && !promptIds.has(e.to));
+      const headId = graphData && graphData.head;
       const nodes = new vis.DataSet(
         filteredNodes.map(n => {
           const raw = n.label || n.id;
           const short = raw.slice(0, 14);
           const color = TYPE_COLORS[n.type] || TYPE_COLORS.object;
+          const isHead = n.id === headId;
           return {
             id: n.id,
-            label: short + (raw.length > 14 ? '…' : ''),
-            color: color,
-            title: n.id,
-            font: { color: '#fff', size: 13, face: 'ui-sans-serif, system-ui, sans-serif' },
+            label: isHead ? '★ ' + short + (raw.length > 14 ? '…' : '') : short + (raw.length > 14 ? '…' : ''),
+            color: isHead
+              ? { background: color.background, border: '#fbbf24', highlight: color }
+              : color,
+            borderWidth: isHead ? 3 : 2,
+            title: isHead ? 'HEAD — ' + n.id : n.id,
+            font: {
+              color: '#fff',
+              size: isHead ? 15 : 13,
+              face: 'ui-sans-serif, system-ui, sans-serif',
+              bold: isHead,
+            },
             margin: 12,
             shape: 'box',
             widthConstraint: { maximum: 180 },
@@ -256,6 +274,10 @@
         const options = {
           nodes: { borderWidth: 2 },
           edges: {},
+          layout: {
+            improvedLayout: false,
+            randomSeed: 2,
+          },
           physics: {
             enabled: true,
             stabilization: { iterations: 200, updateInterval: 25, fit: true },
@@ -278,19 +300,36 @@
             loadObject(id);
           }
         });
-        network.on('stabilizationIterationsDone', () => {
+        const focusHeadOrFit = () => {
+          if (!network) return;
           network.setOptions({ physics: false });
-          network.fit({ animation: { duration: 300, easingFunction: 'easeInOutQuad' } });
-        });
+          const headId = graphData && graphData.head;
+          const headInView = headId && network.body.nodes[headId];
+          if (headInView) {
+            network.focus(headId, {
+              scale: 1.0,
+              animation: { duration: 400, easingFunction: 'easeInOutQuad' },
+            });
+          } else {
+            network.fit({ animation: { duration: 300, easingFunction: 'easeInOutQuad' } });
+          }
+        };
+        network.once('stabilizationIterationsDone', focusHeadOrFit);
+        network.once('stabilized', focusHeadOrFit);
+        setTimeout(() => { try { focusHeadOrFit(); } catch (_) {} }, 6000);
         showPromptsEl.addEventListener('change', () => {
           const next = buildFilteredGraph(showPromptsEl.checked);
           if (next) {
             network.setData(next);
-            network.once('stabilizationIterationsDone', () => {
-              network.fit();
-            });
+            network.once('stabilizationIterationsDone', focusHeadOrFit);
           }
         });
+        fitAllBtn.addEventListener('click', () => {
+          if (!network) return;
+          network.setOptions({ physics: false });
+          network.fit({ animation: { duration: 300, easingFunction: 'easeInOutQuad' } });
+        });
+        focusHeadBtn.addEventListener('click', focusHeadOrFit);
       } catch (err) {
         container.innerHTML = '<p class="error">Graph failed to load: ' + escapeHtml(err.message) + '</p>';
       }
