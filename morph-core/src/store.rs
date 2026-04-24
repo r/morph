@@ -421,6 +421,64 @@ fn fs_put(
     Ok(hash)
 }
 
+// ── Hash-prefix resolution ───────────────────────────────────────────
+
+/// Resolve a user-supplied hex string to a full `Hash` by prefix match.
+///
+/// Mirrors Git's behavior:
+/// - If `s` is exactly 64 hex chars, parse it as a full hash (no prefix lookup).
+/// - If `s` is ≥4 hex chars, scan the store across every object type and
+///   return the unique match. Error on zero matches or ambiguous prefixes.
+/// - Anything shorter than 4 chars, containing non-hex, or empty is rejected.
+///
+/// This function is used by read-path CLI/MCP commands (`show`, `run show`,
+/// `trace show`, etc.) so users can refer to objects by short prefix.
+pub fn resolve_hash_prefix(store: &dyn Store, s: &str) -> Result<Hash, MorphError> {
+    let s = s.trim();
+    if s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Hash::from_hex(s).map_err(|e| MorphError::InvalidHash(format!("invalid hash: {}", e)));
+    }
+    if s.is_empty() || s.len() < 4 || !s.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(MorphError::InvalidHash(format!(
+            "invalid hash prefix '{}': must be 4–64 hex chars",
+            s
+        )));
+    }
+    let lower = s.to_ascii_lowercase();
+    let mut matches: Vec<Hash> = Vec::new();
+    // Scan every object type. The Store trait has no list_all, so we iterate.
+    for t in [
+        ObjectType::Blob,
+        ObjectType::Tree,
+        ObjectType::Pipeline,
+        ObjectType::EvalSuite,
+        ObjectType::Commit,
+        ObjectType::Run,
+        ObjectType::Artifact,
+        ObjectType::Trace,
+        ObjectType::TraceRollup,
+        ObjectType::Annotation,
+    ] {
+        for h in store.list(t)? {
+            if h.to_string().starts_with(&lower) && !matches.contains(&h) {
+                matches.push(h);
+                if matches.len() > 1 {
+                    // Early exit once we know the prefix is ambiguous; we still
+                    // want the final count, but two is enough to report.
+                }
+            }
+        }
+    }
+    match matches.len() {
+        0 => Err(MorphError::NotFound(format!("no object matches prefix '{}'", s))),
+        1 => Ok(matches.into_iter().next().unwrap()),
+        n => Err(MorphError::InvalidHash(format!(
+            "ambiguous hash prefix '{}': {} objects match",
+            s, n
+        ))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -691,5 +749,139 @@ mod tests {
         std::fs::write(morph_dir.join("config.json"), r#"{"repo_version":"0.4"}"#).unwrap();
         let store = FsStore::from_store_version(&morph_dir).unwrap();
         assert_eq!(store.layout(), ObjectLayout::Fanout);
+    }
+
+    // ── resolve_hash_prefix ──────────────────────────────────────────
+
+    #[test]
+    fn resolve_hash_prefix_full_hash_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FsStore::new(dir.path());
+        let blob = MorphObject::Blob(Blob { kind: "x".into(), content: serde_json::json!({"a": 1}) });
+        let hash = store.put(&blob).unwrap();
+        let full = hash.to_string();
+        let resolved = resolve_hash_prefix(&store, &full).unwrap();
+        assert_eq!(resolved, hash);
+    }
+
+    #[test]
+    fn resolve_hash_prefix_short_prefix_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FsStore::new(dir.path());
+        let blob = MorphObject::Blob(Blob { kind: "x".into(), content: serde_json::json!({"a": 1}) });
+        let hash = store.put(&blob).unwrap();
+        let full = hash.to_string();
+        for len in [4, 6, 8, 12, 40] {
+            let prefix = &full[..len];
+            let resolved = resolve_hash_prefix(&store, prefix).unwrap();
+            assert_eq!(resolved, hash, "prefix len {} should resolve", len);
+        }
+    }
+
+    #[test]
+    fn resolve_hash_prefix_accepts_uppercase() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FsStore::new(dir.path());
+        let blob = MorphObject::Blob(Blob { kind: "x".into(), content: serde_json::json!({"a": 1}) });
+        let hash = store.put(&blob).unwrap();
+        let prefix_upper = hash.to_string()[..10].to_ascii_uppercase();
+        let resolved = resolve_hash_prefix(&store, &prefix_upper).unwrap();
+        assert_eq!(resolved, hash);
+    }
+
+    #[test]
+    fn resolve_hash_prefix_trims_whitespace() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FsStore::new(dir.path());
+        let blob = MorphObject::Blob(Blob { kind: "x".into(), content: serde_json::json!({"a": 1}) });
+        let hash = store.put(&blob).unwrap();
+        let padded = format!("  {}  ", &hash.to_string()[..8]);
+        let resolved = resolve_hash_prefix(&store, &padded).unwrap();
+        assert_eq!(resolved, hash);
+    }
+
+    #[test]
+    fn resolve_hash_prefix_no_match_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FsStore::new(dir.path());
+        let blob = MorphObject::Blob(Blob { kind: "x".into(), content: serde_json::json!({"a": 1}) });
+        let _ = store.put(&blob).unwrap();
+        let err = resolve_hash_prefix(&store, "deadbeefcafe").unwrap_err();
+        assert!(matches!(err, MorphError::NotFound(_)), "got {:?}", err);
+    }
+
+    #[test]
+    fn resolve_hash_prefix_too_short_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FsStore::new(dir.path());
+        for bad in ["", "a", "ab", "abc"] {
+            let err = resolve_hash_prefix(&store, bad).unwrap_err();
+            assert!(matches!(err, MorphError::InvalidHash(_)), "input {:?} got {:?}", bad, err);
+        }
+    }
+
+    #[test]
+    fn resolve_hash_prefix_non_hex_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FsStore::new(dir.path());
+        let err = resolve_hash_prefix(&store, "not-a-hash-at-all").unwrap_err();
+        assert!(matches!(err, MorphError::InvalidHash(_)));
+        let err = resolve_hash_prefix(&store, "zzzzzzzz").unwrap_err();
+        assert!(matches!(err, MorphError::InvalidHash(_)));
+    }
+
+    #[test]
+    fn resolve_hash_prefix_ambiguous_errors() {
+        // Find a store where two object hashes happen to share a 4-char prefix.
+        // We populate many blobs until we hit a collision, then verify that
+        // resolving by the shared prefix returns an ambiguous error while the
+        // longer unique prefixes still resolve.
+        let dir = tempfile::tempdir().unwrap();
+        let store = FsStore::new(dir.path());
+        let mut hashes: Vec<Hash> = Vec::new();
+        let mut collision: Option<(Hash, Hash, usize)> = None;
+        for i in 0..10000u32 {
+            let obj = MorphObject::Blob(Blob {
+                kind: "x".into(),
+                content: serde_json::json!({"i": i}),
+            });
+            let h = store.put(&obj).unwrap();
+            let hs = h.to_string();
+            for existing in &hashes {
+                let es = existing.to_string();
+                // find longest common hex prefix
+                let common = hs.chars().zip(es.chars()).take_while(|(a, b)| a == b).count();
+                if common >= 4 {
+                    collision = Some((existing.clone(), h.clone(), common));
+                    break;
+                }
+            }
+            if collision.is_some() { break; }
+            hashes.push(h);
+        }
+        let (a, b, common_len) = collision.expect("expected a ≥4-char prefix collision within 10k blobs");
+        let shared = &a.to_string()[..common_len];
+        let err = resolve_hash_prefix(&store, shared).unwrap_err();
+        assert!(matches!(err, MorphError::InvalidHash(_)), "expected ambiguous, got {:?}", err);
+        // Longer prefixes should disambiguate (different next char).
+        let a_str = a.to_string();
+        let b_str = b.to_string();
+        let a_unique = &a_str[..common_len + 1];
+        let b_unique = &b_str[..common_len + 1];
+        assert_ne!(a_unique, b_unique);
+        assert_eq!(resolve_hash_prefix(&store, a_unique).unwrap(), a);
+        assert_eq!(resolve_hash_prefix(&store, b_unique).unwrap(), b);
+    }
+
+    #[test]
+    fn resolve_hash_prefix_matches_across_object_types() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FsStore::new(dir.path());
+        let blob = MorphObject::Blob(Blob { kind: "b".into(), content: serde_json::json!({}) });
+        let tree = MorphObject::Tree(Tree { entries: vec![TreeEntry { name: "f".into(), hash: "0".repeat(64), entry_type: "blob".into() }] });
+        let bh = store.put(&blob).unwrap();
+        let th = store.put(&tree).unwrap();
+        assert_eq!(resolve_hash_prefix(&store, &bh.to_string()[..8]).unwrap(), bh);
+        assert_eq!(resolve_hash_prefix(&store, &th.to_string()[..8]).unwrap(), th);
     }
 }

@@ -29,7 +29,7 @@ pub use hash::{canonical_json, content_hash, content_hash_git, Hash};
 pub use objects::MorphObject;
 #[allow(deprecated)]
 pub use store::GixStore;
-pub use store::{FsStore, MorphError, ObjectType, Store};
+pub use store::{resolve_hash_prefix, FsStore, MorphError, ObjectType, Store};
 pub use repo::{
     init_repo, open_store, read_repo_version, require_store_version,
     STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_0_4, STORE_VERSION_INIT,

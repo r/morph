@@ -8,8 +8,8 @@ use clap::Parser;
 use cli::*;
 use morph_core::{
     find_repo, migrate_0_0_to_0_2, migrate_0_2_to_0_3, migrate_0_3_to_0_4, open_store,
-    read_repo_version, require_store_version, Hash, MorphObject, ObjectType, Store,
-    STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_0_4, STORE_VERSION_INIT,
+    read_repo_version, require_store_version, resolve_hash_prefix, Hash, MorphObject, ObjectType,
+    Store, STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_0_4, STORE_VERSION_INIT,
 };
 use std::path::PathBuf;
 
@@ -27,6 +27,13 @@ fn get_store(verbose: bool) -> anyhow::Result<(PathBuf, Box<dyn Store>)> {
 
 fn parse_hash(s: &str) -> anyhow::Result<Hash> {
     Hash::from_hex(s).map_err(|e| anyhow::anyhow!("invalid hash: {}", e))
+}
+
+/// Resolve a user-supplied hash string against the store, accepting any
+/// unambiguous prefix of ≥4 hex chars (Git-style). Full 64-char hashes are
+/// parsed directly without scanning the store.
+fn resolve_obj_hash(store: &dyn Store, s: &str) -> anyhow::Result<Hash> {
+    resolve_hash_prefix(store, s).map_err(|e| anyhow::anyhow!("{}", e))
 }
 
 fn verbose_msg(on: bool, msg: &str) {
@@ -105,15 +112,24 @@ fn print_trace_events(trace: &morph_core::objects::Trace) {
 
 fn resolve_ref_name(store: &dyn Store, r: &str) -> anyhow::Result<Hash> {
     if r.len() == 64 && r.chars().all(|c| c.is_ascii_hexdigit()) {
-        Ok(Hash::from_hex(r)?)
-    } else if r == "HEAD" {
-        morph_core::resolve_head(store)?
-            .ok_or_else(|| anyhow::anyhow!("HEAD has no commits"))
-    } else {
-        store.ref_read(&format!("heads/{}", r))?
-            .or_else(|| store.ref_read(&format!("tags/{}", r)).ok().flatten())
-            .ok_or_else(|| anyhow::anyhow!("unknown ref: {}", r))
+        return Ok(Hash::from_hex(r)?);
     }
+    if r == "HEAD" {
+        return morph_core::resolve_head(store)?
+            .ok_or_else(|| anyhow::anyhow!("HEAD has no commits"));
+    }
+    if let Some(h) = store.ref_read(&format!("heads/{}", r))? {
+        return Ok(h);
+    }
+    if let Some(h) = store.ref_read(&format!("tags/{}", r)).ok().flatten() {
+        return Ok(h);
+    }
+    // Fall back to Git-style hash-prefix lookup (≥4 hex chars).
+    if r.len() >= 4 && r.chars().all(|c| c.is_ascii_hexdigit()) {
+        return resolve_hash_prefix(store, r)
+            .map_err(|e| anyhow::anyhow!("unknown ref '{}': {}", r, e));
+    }
+    anyhow::bail!("unknown ref: {}", r)
 }
 
 fn main() -> anyhow::Result<()> {
@@ -289,7 +305,7 @@ fn main() -> anyhow::Result<()> {
 
         Command::Revert { commit, author } => {
             let (_repo_root, store) = get_store(verbose)?;
-            let hash = parse_hash(&commit)?;
+            let hash = resolve_obj_hash(store.as_ref(), &commit)?;
             let revert_hash = morph_core::revert_commit(&store, &hash, author)?;
             println!("{}", revert_hash);
         }
@@ -304,9 +320,9 @@ fn main() -> anyhow::Result<()> {
             }
             PromptCmd::Materialize { hash, output } => {
                 let (repo_root, store) = get_store(verbose)?;
-                let h = parse_hash(&hash)?;
+                let h = resolve_obj_hash(store.as_ref(), &hash)?;
                 let dest = output.unwrap_or_else(|| {
-                    repo_root.join(".morph").join("prompts").join(format!("{}.prompt", hash))
+                    repo_root.join(".morph").join("prompts").join(format!("{}.prompt", h))
                 });
                 morph_core::materialize_blob(&store, &h, &dest)?;
                 println!("Materialized to {}", dest.display());
@@ -329,12 +345,12 @@ fn main() -> anyhow::Result<()> {
             }
             PipelineCmd::Show { hash } => {
                 let (_repo_root, store) = get_store(verbose)?;
-                let obj = store.get(&parse_hash(&hash)?)?;
+                let obj = store.get(&resolve_obj_hash(store.as_ref(), &hash)?)?;
                 println!("{}", serde_json::to_string_pretty(&obj)?);
             }
             PipelineCmd::Extract { from_run } => {
                 let (_repo_root, store) = get_store(verbose)?;
-                let run_hash = parse_hash(&from_run)?;
+                let run_hash = resolve_obj_hash(store.as_ref(), &from_run)?;
                 println!("{}", morph_core::extract_pipeline_from_run(&store, &run_hash)?);
             }
         },
@@ -407,8 +423,8 @@ fn main() -> anyhow::Result<()> {
             let (repo_root, store) = get_store(verbose)?;
             let morph_dir = repo_root.join(".morph");
             let version = read_repo_version(&morph_dir)?;
-            let prog_hash = pipeline.as_deref().map(parse_hash).transpose()?;
-            let suite_hash = eval_suite.as_deref().map(parse_hash).transpose()?;
+            let prog_hash = pipeline.as_deref().map(|s| resolve_obj_hash(store.as_ref(), s)).transpose()?;
+            let suite_hash = eval_suite.as_deref().map(|s| resolve_obj_hash(store.as_ref(), s)).transpose()?;
             let observed_metrics = metrics.as_deref()
                 .map(serde_json::from_str)
                 .transpose()
@@ -416,7 +432,7 @@ fn main() -> anyhow::Result<()> {
                 .unwrap_or_default();
             let provenance = match from_run {
                 Some(ref run_hash_str) => {
-                    let run_hash = parse_hash(run_hash_str)?;
+                    let run_hash = resolve_obj_hash(store.as_ref(), run_hash_str)?;
                     Some(morph_core::resolve_provenance_from_run(&store, &run_hash)?)
                 }
                 None => None,
@@ -454,7 +470,7 @@ fn main() -> anyhow::Result<()> {
 
         Command::Show { hash } => {
             let (_repo_root, store) = get_store(verbose)?;
-            let obj = store.get(&parse_hash(&hash)?)?;
+            let obj = store.get(&resolve_obj_hash(store.as_ref(), &hash)?)?;
             println!("{}", serde_json::to_string_pretty(&obj)?);
         }
 
@@ -511,7 +527,7 @@ fn main() -> anyhow::Result<()> {
             }
             RunCmd::Show { hash, json, with_trace } => {
                 let (_repo_root, store) = get_store(verbose)?;
-                let hash = parse_hash(&hash)?;
+                let hash = resolve_obj_hash(store.as_ref(), &hash)?;
                 let obj = store.get(&hash)?;
                 match &obj {
                     MorphObject::Run(run) => {
@@ -565,7 +581,8 @@ fn main() -> anyhow::Result<()> {
         Command::Trace { sub } => match sub {
             TraceCmd::Show { hash } => {
                 let (_repo_root, store) = get_store(verbose)?;
-                match store.get(&parse_hash(&hash)?)? {
+                let h = resolve_obj_hash(store.as_ref(), &hash)?;
+                match store.get(&h)? {
                     MorphObject::Trace(t) => print_trace_events(&t),
                     _ => anyhow::bail!("object {} is not a trace", hash),
                 }
@@ -613,7 +630,7 @@ fn main() -> anyhow::Result<()> {
                         }
                     }
                 } else {
-                    let h = parse_hash(&run_hash)?;
+                    let h = resolve_obj_hash(store.as_ref(), &run_hash)?;
                     let task = morph_core::extract_task(store.as_ref(), &h)?;
                     print_tap_task(&task);
                 }
@@ -642,7 +659,7 @@ fn main() -> anyhow::Result<()> {
                         println!("  [{:>3}x] {}", count, issue);
                     }
                 } else {
-                    let h = parse_hash(&run_hash)?;
+                    let h = resolve_obj_hash(store.as_ref(), &run_hash)?;
                     let diag = morph_core::diagnose_run(store.as_ref(), &h)?;
                     println!("{}", serde_json::to_string_pretty(&diag)?);
                 }
@@ -686,7 +703,7 @@ fn main() -> anyhow::Result<()> {
             }
             TapCmd::TraceStats { trace_hash } => {
                 let (_repo_root, store) = get_store(verbose)?;
-                let h = parse_hash(&trace_hash)?;
+                let h = resolve_obj_hash(store.as_ref(), &trace_hash)?;
                 let stats = morph_core::trace_stats(store.as_ref(), &h)?;
                 println!("=== Trace {} ===\n", &trace_hash[..12.min(trace_hash.len())]);
                 println!("Events:             {}", stats.event_count);
@@ -717,7 +734,7 @@ fn main() -> anyhow::Result<()> {
             }
             TapCmd::Preview { run_hash, mode } => {
                 let (_repo_root, store) = get_store(verbose)?;
-                let h = parse_hash(&run_hash)?;
+                let h = resolve_obj_hash(store.as_ref(), &run_hash)?;
                 let task = morph_core::extract_task(store.as_ref(), &h)?;
                 let export_mode = match mode.as_str() {
                     "prompt-only" => morph_core::ExportMode::PromptOnly,
@@ -809,8 +826,8 @@ fn main() -> anyhow::Result<()> {
             let (repo_root, store) = get_store(verbose)?;
             let morph_dir = repo_root.join(".morph");
             let version = read_repo_version(&morph_dir)?;
-            let prog_hash = parse_hash(&pipeline)?;
-            let suite_hash_opt = eval_suite.as_deref().map(parse_hash).transpose()?;
+            let prog_hash = resolve_obj_hash(store.as_ref(), &pipeline)?;
+            let suite_hash_opt = eval_suite.as_deref().map(|s| resolve_obj_hash(store.as_ref(), s)).transpose()?;
             let observed: std::collections::BTreeMap<String, f64> =
                 serde_json::from_str(&metrics).map_err(|e| anyhow::anyhow!("invalid --metrics JSON: {}", e))?;
             let retired: Option<Vec<String>> = retire.map(|s| s.split(',').map(|m| m.trim().to_string()).collect());
@@ -891,7 +908,7 @@ fn main() -> anyhow::Result<()> {
             let (repo_root, store) = get_store(verbose)?;
             let morph_dir = repo_root.join(".morph");
             let commit_hash = match commit {
-                Some(ref h) => parse_hash(h)?,
+                Some(ref h) => resolve_obj_hash(store.as_ref(), h)?,
                 None => morph_core::resolve_head(&store)?
                     .ok_or_else(|| anyhow::anyhow!("no HEAD commit; specify --commit"))?,
             };
@@ -918,7 +935,7 @@ fn main() -> anyhow::Result<()> {
             let (repo_root, store) = get_store(verbose)?;
             let morph_dir = repo_root.join(".morph");
             let commit_hash = match commit {
-                Some(ref h) => parse_hash(h)?,
+                Some(ref h) => resolve_obj_hash(store.as_ref(), h)?,
                 None => morph_core::resolve_head(&store)?
                     .ok_or_else(|| anyhow::anyhow!("no HEAD commit; specify --commit"))?,
             };
@@ -950,19 +967,19 @@ fn main() -> anyhow::Result<()> {
                 println!("Policy updated");
             }
             PolicyCmd::SetDefaultEval { hash } => {
-                let (repo_root, _store) = get_store(verbose)?;
+                let (repo_root, store) = get_store(verbose)?;
                 let morph_dir = repo_root.join(".morph");
-                let _ = parse_hash(&hash)?;
+                let resolved = resolve_obj_hash(store.as_ref(), &hash)?.to_string();
                 let mut policy = morph_core::read_policy(&morph_dir)?;
-                policy.default_eval_suite = Some(hash.clone());
+                policy.default_eval_suite = Some(resolved.clone());
                 morph_core::write_policy(&morph_dir, &policy)?;
-                println!("Default eval suite set to {}", hash);
+                println!("Default eval suite set to {}", resolved);
             }
         },
 
         Command::Annotate { target_hash, kind, data, sub, author } => {
             let (_repo_root, store) = get_store(verbose)?;
-            let target = parse_hash(&target_hash)?;
+            let target = resolve_obj_hash(store.as_ref(), &target_hash)?;
             let data_map: std::collections::BTreeMap<String, serde_json::Value> =
                 serde_json::from_str(&data).map_err(|e| anyhow::anyhow!("invalid --data JSON: {}", e))?;
             let ann = morph_core::create_annotation(&target, sub, kind, data_map, author);
@@ -971,7 +988,7 @@ fn main() -> anyhow::Result<()> {
 
         Command::Annotations { target_hash, sub } => {
             let (_repo_root, store) = get_store(verbose)?;
-            let target = parse_hash(&target_hash)?;
+            let target = resolve_obj_hash(store.as_ref(), &target_hash)?;
             for (h, a) in morph_core::list_annotations(&store, &target, sub.as_deref())? {
                 println!("{} {} {} {}", h, a.kind, a.author, serde_json::to_string(&a.data).unwrap_or_default());
             }
@@ -1075,7 +1092,7 @@ fn cmd_prompt_show(verbose: bool, run_ref: &str, run_upgrade: bool) -> anyhow::R
 /// directly or a Trace hash (in which case we locate the latest Run
 /// pointing at that trace).
 fn resolve_run_hash(store: &dyn Store, hash_str: &str) -> anyhow::Result<Hash> {
-    let h = parse_hash(hash_str)?;
+    let h = resolve_obj_hash(store, hash_str)?;
     match store.get(&h)? {
         MorphObject::Run(_) => Ok(h),
         MorphObject::Trace(_) => morph_core::find_run_by_trace(store, &h)?

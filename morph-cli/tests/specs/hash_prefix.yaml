@@ -1,0 +1,70 @@
+# Tests for Git-style hash-prefix resolution in read-path commands.
+# Any unambiguous prefix of ≥4 hex chars should resolve to the full hash.
+
+- name: run_show_accepts_8char_prefix
+  steps:
+    - morph: [run, record-session, --prompt, "hi", --response, "hello"]
+      capture: run_hash
+      assert_hash: true
+    - morph: [run, show, "${run_hash:.8}"]
+      stdout_contains:
+        - "run"
+        - "trace"
+    - morph: [run, show, "${run_hash:.12}"]
+      stdout_contains:
+        - "run"
+
+- name: run_show_accepts_40char_prefix
+  steps:
+    - morph: [run, record-session, --prompt, "a", --response, "b"]
+      capture: run_hash
+      assert_hash: true
+    - morph: [run, show, "${run_hash:.40}"]
+      stdout_contains:
+        - "run"
+        - "trace"
+
+- name: trace_show_accepts_prefix
+  steps:
+    - morph: [run, record-session, --prompt, "what?", --response, "answer"]
+      capture: run_hash
+      assert_hash: true
+    - morph: [run, show, "${run_hash}", --json]
+      capture_json_field:
+        var: trace_hash
+        field: trace
+    - morph: [trace, show, "${trace_hash:.8}"]
+      stdout_contains:
+        - "what?"
+        - "answer"
+
+- name: show_accepts_prefix
+  steps:
+    - morph: [run, record-session, --prompt, "show me", --response, "shown"]
+      capture: run_hash
+      assert_hash: true
+    - morph: [show, "${run_hash:.10}"]
+      stdout_contains:
+        - '"type": "run"'
+        - "pipeline"
+
+- name: prefix_too_short_errors
+  steps:
+    - morph: [run, record-session, --prompt, "x", --response, "y"]
+    - morph: [run, show, "abc"]
+      expect_exit: 1
+      stderr_contains: "invalid hash prefix"
+
+- name: prefix_no_match_errors
+  steps:
+    - morph: [run, record-session, --prompt, "x", --response, "y"]
+    - morph: [run, show, "deadbeef"]
+      expect_exit: 1
+      stderr_contains: "no object matches prefix"
+
+- name: prefix_nonhex_errors
+  steps:
+    - morph: [run, record-session, --prompt, "x", --response, "y"]
+    - morph: [run, show, "not-a-hash"]
+      expect_exit: 1
+      stderr_contains: "invalid hash prefix"
