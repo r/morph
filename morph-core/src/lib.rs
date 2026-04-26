@@ -19,6 +19,7 @@ pub mod tap;
 pub mod language;
 pub mod structured;
 pub mod sync;
+pub mod objmerge;
 pub mod policy;
 pub mod diff;
 pub mod tag;
@@ -39,6 +40,9 @@ pub use working::{find_repo, blob_from_prompt_file, blob_from_file, materialize_
 pub use commit::{create_commit, create_tree_commit, create_tree_commit_with_provenance, create_merge_commit, create_merge_commit_full, create_merge_commit_with_retirement, rollup, resolve_head, current_branch, set_head_branch, set_head_detached, checkout_tree, log_from, CommitProvenance, resolve_provenance_from_run};
 pub use metrics::{aggregate, check_thresholds, check_dominance, check_dominance_with_suite, aggregate_suite, union_suites, retire_metrics};
 pub use merge::{MergePlan, DominanceResult, DominanceViolation, prepare_merge, execute_merge};
+pub use objmerge::{
+    merge_base, merge_commits, MergeOutcome, ObjConflict, StructuralKind, TrivialOutcome,
+};
 pub use record::{record_run, record_eval_metrics, record_session, record_conversation, ConversationMessage};
 pub use extract::extract_pipeline_from_run;
 pub use tap::{
