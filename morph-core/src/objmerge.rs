@@ -536,6 +536,7 @@ mod tests {
             env_constraints: None,
             evidence_refs: None,
             morph_version: Some("0.3".to_string()),
+            morph_instance: None,
         };
         store.put(&MorphObject::Commit(commit)).unwrap()
     }

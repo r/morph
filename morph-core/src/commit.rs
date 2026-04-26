@@ -142,6 +142,7 @@ pub fn create_commit(
         env_constraints: None,
         evidence_refs: None,
         morph_version: None,
+        morph_instance: None,
     });
     let hash = store.put(&commit)?;
 
@@ -242,6 +243,7 @@ pub fn create_tree_commit_with_provenance(
         env_constraints,
         evidence_refs,
         morph_version: morph_version.map(String::from),
+        morph_instance: crate::agent::read_instance_id(&morph_dir)?,
     });
     let hash = store.put(&commit)?;
 
@@ -484,6 +486,8 @@ pub fn create_merge_commit_with_retirement(
         env_constraints: None,
         evidence_refs: None,
         morph_version: morph_version.map(String::from),
+        morph_instance: repo_root
+            .and_then(|r| crate::agent::read_instance_id(&r.join(".morph")).ok().flatten()),
     });
     let hash = store.put(&commit)?;
 
@@ -557,6 +561,7 @@ pub fn rollup(
         env_constraints: tip_commit.env_constraints.clone(),
         evidence_refs: tip_commit.evidence_refs.clone(),
         morph_version: tip_commit.morph_version.clone(),
+        morph_instance: tip_commit.morph_instance.clone(),
     });
     let hash = store.put(&commit)?;
 

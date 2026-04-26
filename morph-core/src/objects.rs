@@ -180,6 +180,14 @@ pub struct Commit {
     pub evidence_refs: Option<Vec<String>>,
     #[serde(default)]
     pub morph_version: Option<String>,
+    /// PR 6 stage B: stable per-machine `agent.instance_id` of the
+    /// repo that produced this commit. Used by `morph log` /
+    /// `morph show` to disambiguate two laptops driven by the same
+    /// human (`user.name`). Always optional — pre-PR-6 commits and
+    /// commits made via APIs that don't pass through `morph-cli`
+    /// stay `None`.
+    #[serde(default)]
+    pub morph_instance: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -308,5 +316,70 @@ pub enum MorphObject {
     Trace(Trace),
     TraceRollup(TraceRollup),
     Annotation(Annotation),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// PR 6 stage B cycle 7: legacy commit JSON (no `morph_instance`
+    /// field) must still deserialize, with the field defaulting to
+    /// `None`. This is the back-compat guarantee — older repos
+    /// pulled from across the wire keep working without any
+    /// migration on the receiving end.
+    #[test]
+    fn legacy_commit_without_morph_instance_deserializes() {
+        let json = r#"{
+            "type": "commit",
+            "tree": null,
+            "pipeline": "0000000000000000000000000000000000000000000000000000000000000000",
+            "parents": [],
+            "message": "legacy commit from a pre-PR-6 repo",
+            "timestamp": "2024-01-01T00:00:00Z",
+            "author": "morph",
+            "contributors": null,
+            "eval_contract": {
+                "suite": "0000000000000000000000000000000000000000000000000000000000000000",
+                "observed_metrics": {}
+            },
+            "env_constraints": null,
+            "evidence_refs": null,
+            "morph_version": null
+        }"#;
+        let obj: MorphObject =
+            serde_json::from_str(json).expect("legacy commit must deserialize cleanly");
+        match obj {
+            MorphObject::Commit(c) => {
+                assert_eq!(c.morph_instance, None);
+                assert_eq!(c.author, "morph");
+            }
+            _ => panic!("expected a Commit variant"),
+        }
+    }
+
+    #[test]
+    fn commit_with_morph_instance_round_trips() {
+        let original = MorphObject::Commit(Commit {
+            tree: None,
+            pipeline: "0".repeat(64),
+            parents: vec![],
+            message: "with instance".into(),
+            timestamp: "2026-04-26T00:00:00Z".into(),
+            author: "Raffi <r@e.com>".into(),
+            contributors: None,
+            eval_contract: EvalContract {
+                suite: "0".repeat(64),
+                observed_metrics: BTreeMap::new(),
+            },
+            env_constraints: None,
+            evidence_refs: None,
+            morph_version: Some("0.10.0".into()),
+            morph_instance: Some("morph-abc123".into()),
+        });
+        let s = serde_json::to_string(&original).unwrap();
+        assert!(s.contains("\"morph_instance\":\"morph-abc123\""));
+        let parsed: MorphObject = serde_json::from_str(&s).unwrap();
+        assert_eq!(parsed, original);
+    }
 }
 

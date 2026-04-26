@@ -10,6 +10,15 @@ This guide gets you from zero to a working Morph setup: binaries installed, repo
 
 You need two executables: **`morph`** (CLI) and **`morph-mcp`** (MCP server used by Cursor, Claude Code, and OpenCode).
 
+**With Homebrew (macOS):**
+
+```bash
+brew tap r/morph
+brew install morph
+```
+
+This installs both `morph` and `morph-mcp`.
+
 **From source (Rust):**
 
 ```bash
@@ -23,8 +32,6 @@ cargo install --path morph-mcp
 This installs to `~/.cargo/bin`. Ensure that directory is on your PATH.
 
 **Verify:** Run `morph --help` and `morph-mcp --version`. Running `morph-mcp` with no arguments will appear to hang — it's waiting for an IDE to connect over stdio; that's expected.
-
-*Other distribution channels (e.g. npm, Homebrew) may be added later; the CLI and MCP server are the same regardless.*
 
 ---
 

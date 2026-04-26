@@ -234,6 +234,7 @@ fn rewrite_object(obj: &MorphObject, map: &HashMap<String, Hash>) -> Result<Morp
             env_constraints: c.env_constraints.clone(),
             evidence_refs: c.evidence_refs.as_ref().map(|refs| refs.iter().map(|s| subst(map, s)).collect()),
             morph_version: c.morph_version.clone(),
+            morph_instance: c.morph_instance.clone(),
         }),
         MorphObject::Run(r) => MorphObject::Run(Run {
             pipeline: subst(map, &r.pipeline),
@@ -314,6 +315,7 @@ mod tests {
             env_constraints: None,
             evidence_refs: None,
             morph_version: None,
+            morph_instance: None,
         });
         let commit_hash = store.put(&commit).unwrap();
         store.ref_write_raw("HEAD", "ref: heads/main").unwrap();

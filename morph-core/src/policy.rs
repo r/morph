@@ -33,6 +33,13 @@ pub struct RepoPolicy {
     /// Default CI runner metadata.
     #[serde(default)]
     pub ci_defaults: BTreeMap<String, String>,
+    /// PR 6 stage F: server-side push gating. Each named branch
+    /// listed here must pass `gate_check` against the configured
+    /// `RepoPolicy` before the bare/working repo will accept a
+    /// `RefWrite` over SSH. Leave empty to gate nothing (default
+    /// behavior, matching pre-PR6 servers).
+    #[serde(default)]
+    pub push_gated_branches: Vec<String>,
 }
 
 fn default_merge_policy() -> String {
@@ -48,6 +55,7 @@ impl Default for RepoPolicy {
             default_eval_suite: None,
             merge_policy: default_merge_policy(),
             ci_defaults: BTreeMap::new(),
+            push_gated_branches: Vec::new(),
         }
     }
 }
@@ -334,6 +342,48 @@ fn has_passing_certification(
     Ok(false)
 }
 
+// ── Push gating (PR 6 stage F) ────────────────────────────────────────
+
+/// Extract the branch name from a ref name. Only `heads/<name>`
+/// participates in the push gate; tag and remote-tracking refs are
+/// untouched.
+fn branch_from_ref(ref_name: &str) -> Option<&str> {
+    ref_name.strip_prefix("heads/")
+}
+
+/// PR 6 stage F: server-side push gate enforcement.
+///
+/// On a `RefWrite` from the SSH helper, this checks whether the
+/// target branch is listed in `RepoPolicy.push_gated_branches`. If
+/// so, it runs `gate_check` against the new tip and refuses the
+/// write on failure with a clear, user-actionable message.
+///
+/// Non-head refs (tags, remote-tracking) and branches not listed
+/// in the policy pass through unchanged.
+pub fn enforce_push_gate(
+    store: &dyn Store,
+    morph_dir: &Path,
+    ref_name: &str,
+    tip: &Hash,
+) -> Result<(), MorphError> {
+    let Some(branch) = branch_from_ref(ref_name) else {
+        return Ok(());
+    };
+    let policy = read_policy(morph_dir)?;
+    if !policy.push_gated_branches.iter().any(|b| b == branch) {
+        return Ok(());
+    }
+    let result = gate_check(store, morph_dir, tip)?;
+    if !result.passed {
+        return Err(MorphError::Serialization(format!(
+            "push gate failed for branch '{}': {}",
+            branch,
+            result.reasons.join(", ")
+        )));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -377,6 +427,7 @@ mod tests {
                 m.insert("runner".into(), "ci-v1".into());
                 m
             },
+            push_gated_branches: vec![],
         };
 
         write_policy(&morph_dir, &policy).unwrap();
@@ -386,6 +437,151 @@ mod tests {
         assert_eq!(read_back.default_eval_suite, policy.default_eval_suite);
         assert_eq!(read_back.merge_policy, policy.merge_policy);
         assert_eq!(read_back.ci_defaults, policy.ci_defaults);
+    }
+
+    #[test]
+    fn push_gated_branches_round_trip() {
+        // PR 6 stage F cycle 26 RED→GREEN: protected/gated branches
+        // are part of `RepoPolicy` and survive a write/read cycle.
+        // The server's RefWrite handler consults this list to
+        // decide whether to enforce gate_check.
+        let (dir, _store) = setup_repo();
+        let morph_dir = dir.path().join(".morph");
+
+        let policy = RepoPolicy {
+            push_gated_branches: vec!["main".into(), "release/*".into()],
+            ..Default::default()
+        };
+        write_policy(&morph_dir, &policy).unwrap();
+        let read_back = read_policy(&morph_dir).unwrap();
+        assert_eq!(read_back.push_gated_branches, vec!["main", "release/*"]);
+    }
+
+    #[test]
+    fn enforce_push_gate_passes_for_unconfigured_branches() {
+        // PR 6 stage F cycle 27 RED→GREEN: with an empty
+        // `push_gated_branches`, every ref-write goes through
+        // unchanged (matches pre-PR6 behavior, no surprises for
+        // existing servers).
+        let (dir, store) = setup_repo();
+        let morph_dir = dir.path().join(".morph");
+        let metrics = BTreeMap::new();
+        let h = make_commit(store.as_ref(), &dir, metrics);
+        enforce_push_gate(store.as_ref(), &morph_dir, "heads/main", &h)
+            .expect("default policy should not gate anything");
+    }
+
+    #[test]
+    fn enforce_push_gate_passes_for_non_head_refs() {
+        // tags/, remotes/, etc. are unaffected. Only branch tips
+        // under heads/ go through the gate.
+        let (dir, store) = setup_repo();
+        let morph_dir = dir.path().join(".morph");
+
+        let policy = RepoPolicy {
+            required_metrics: vec!["acc".into()],
+            push_gated_branches: vec!["main".into()],
+            ..Default::default()
+        };
+        write_policy(&morph_dir, &policy).unwrap();
+
+        let h = make_commit(store.as_ref(), &dir, BTreeMap::new());
+        enforce_push_gate(store.as_ref(), &morph_dir, "tags/v1", &h)
+            .expect("tag refs are not gated");
+    }
+
+    #[test]
+    fn enforce_push_gate_passes_when_branch_not_listed() {
+        // Branch isn't in `push_gated_branches` → no gate, even if
+        // the commit would fail gate_check.
+        let (dir, store) = setup_repo();
+        let morph_dir = dir.path().join(".morph");
+        let policy = RepoPolicy {
+            required_metrics: vec!["acc".into()],
+            push_gated_branches: vec!["main".into()],
+            ..Default::default()
+        };
+        write_policy(&morph_dir, &policy).unwrap();
+
+        let h = make_commit(store.as_ref(), &dir, BTreeMap::new());
+        enforce_push_gate(store.as_ref(), &morph_dir, "heads/feature", &h)
+            .expect("non-listed branch is not gated");
+    }
+
+    #[test]
+    fn enforce_push_gate_rejects_failing_commit_on_gated_branch() {
+        // The headline case. `main` is gated, the commit lacks
+        // metric `acc`, gate_check fails, the server refuses the
+        // ref-write with a clear "push gate failed" message.
+        let (dir, store) = setup_repo();
+        let morph_dir = dir.path().join(".morph");
+        let policy = RepoPolicy {
+            required_metrics: vec!["acc".into()],
+            push_gated_branches: vec!["main".into()],
+            ..Default::default()
+        };
+        write_policy(&morph_dir, &policy).unwrap();
+
+        let h = make_commit(store.as_ref(), &dir, BTreeMap::new());
+        let err = enforce_push_gate(store.as_ref(), &morph_dir, "heads/main", &h)
+            .expect_err("gate must reject");
+        let msg = format!("{}", err);
+        assert!(
+            msg.contains("push gate"),
+            "expected push gate error, got: {}",
+            msg
+        );
+        assert!(msg.contains("main"), "should mention branch, got: {}", msg);
+    }
+
+    #[test]
+    fn enforce_push_gate_passes_when_metrics_meet_thresholds() {
+        // Same setup but the commit ships the required metrics
+        // *and* has a passing certification annotation. Both are
+        // required: gate_check verifies thresholds and that the
+        // commit was certified. This is the "happy path" that
+        // a healthy CI pipeline should always hit.
+        let (dir, store) = setup_repo();
+        let morph_dir = dir.path().join(".morph");
+        let policy = RepoPolicy {
+            required_metrics: vec!["acc".into()],
+            thresholds: {
+                let mut m = BTreeMap::new();
+                m.insert("acc".into(), 0.5);
+                m
+            },
+            push_gated_branches: vec!["main".into()],
+            ..Default::default()
+        };
+        write_policy(&morph_dir, &policy).unwrap();
+
+        let mut metrics = BTreeMap::new();
+        metrics.insert("acc".into(), 0.9);
+        let h = make_commit(store.as_ref(), &dir, metrics.clone());
+        // Certify the commit so gate_check sees a passing
+        // certification annotation.
+        let cert = certify_commit(
+            store.as_ref(),
+            &morph_dir,
+            &h,
+            &metrics,
+            Some("ci-v1"),
+            None,
+        )
+        .unwrap();
+        assert!(cert.passed);
+        enforce_push_gate(store.as_ref(), &morph_dir, "heads/main", &h)
+            .expect("certified commit with passing metric should be accepted");
+    }
+
+    #[test]
+    fn push_gated_branches_default_empty_for_legacy_configs() {
+        // Older policies don't include the field; deserializing
+        // them must default to an empty list rather than failing.
+        let json = r#"{"required_metrics":["acc"],"merge_policy":"dominance"}"#;
+        let p: RepoPolicy = serde_json::from_str(json).unwrap();
+        assert_eq!(p.required_metrics, vec!["acc"]);
+        assert!(p.push_gated_branches.is_empty());
     }
 
     #[test]

@@ -15,6 +15,12 @@ use crate::store::MorphError;
 use crate::Hash;
 use serde::{Deserialize, Serialize};
 
+/// PR 6 stage E: pinned wire protocol version. Increment whenever
+/// `Request` / `Response` shapes change in a way an older client
+/// cannot ignore. Pre-PR6 helpers don't advertise this field at
+/// all, which the client treats as protocol 0 (legacy).
+pub const MORPH_PROTOCOL_VERSION: u32 = 1;
+
 /// Client → server request.
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "op")]
@@ -59,6 +65,15 @@ pub struct OkResponse {
     pub ok: bool, // always true; serde forces us to keep it
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub morph_version: Option<String>,
+    /// PR 6 stage E: wire protocol version the helper speaks. None
+    /// means a legacy (pre-PR6) helper that doesn't advertise it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol_version: Option<u32>,
+    /// PR 6 stage E: repo schema version of the remote store.
+    /// Lets clients refuse to push to a repo on an incompatible
+    /// schema instead of writing incoherent objects into it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branches: Option<Vec<RefEntry>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -89,6 +104,15 @@ pub struct ErrResponse {
     pub local_tip: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote_tip: Option<String>,
+    /// PR 6 stage E: structured fields for `IncompatibleRemote`. Kept
+    /// flat so older clients can still read the `error` string and
+    /// older servers don't break the schema by emitting them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// Stable taxonomy of error kinds. Keep `snake_case` strings in sync
@@ -104,6 +128,8 @@ pub enum ErrorKind {
     Io,
     Serialization,
     UnknownOp,
+    /// PR 6 stage E: remote/local protocol or repo schema mismatch.
+    IncompatibleRemote,
     /// Reserved for non-classified failures so older clients can
     /// still pretty-print a message.
     Other,
@@ -118,6 +144,9 @@ pub fn from_morph_error(e: &MorphError) -> ErrResponse {
         branch: None,
         local_tip: None,
         remote_tip: None,
+        remote_version: None,
+        local_version: None,
+        reason: None,
     };
     match e {
         MorphError::NotFound(_) => r.error_kind = ErrorKind::NotFound,
@@ -130,6 +159,12 @@ pub fn from_morph_error(e: &MorphError) -> ErrResponse {
             r.branch = Some(branch.clone());
             r.local_tip = Some(local_tip.clone());
             r.remote_tip = Some(remote_tip.clone());
+        }
+        MorphError::IncompatibleRemote { remote, local, reason } => {
+            r.error_kind = ErrorKind::IncompatibleRemote;
+            r.remote_version = Some(remote.clone());
+            r.local_version = Some(local.clone());
+            r.reason = Some(reason.clone());
         }
         _ => r.error_kind = ErrorKind::Other,
     }
@@ -154,15 +189,27 @@ pub fn to_morph_error(r: &ErrResponse) -> MorphError {
             local_tip: r.local_tip.clone().unwrap_or_default(),
             remote_tip: r.remote_tip.clone().unwrap_or_default(),
         },
+        ErrorKind::IncompatibleRemote => MorphError::IncompatibleRemote {
+            remote: r.remote_version.clone().unwrap_or_default(),
+            local: r.local_version.clone().unwrap_or_default(),
+            reason: r.reason.clone().unwrap_or_default(),
+        },
         ErrorKind::Other => MorphError::Serialization(r.error.clone()),
     }
 }
 
 /// Build a successful "hello" response for the helper.
-pub fn hello_ok(version: &str) -> OkResponse {
+///
+/// PR 6 stage E: callers now also advertise the wire protocol
+/// version (so clients can refuse incompatible servers) and the
+/// repo schema version (so clients can refuse to push to a repo on
+/// an unknown schema).
+pub fn hello_ok(version: &str, protocol: u32, repo_version: &str) -> OkResponse {
     OkResponse {
         ok: true,
         morph_version: Some(version.to_string()),
+        protocol_version: Some(protocol),
+        repo_version: Some(repo_version.to_string()),
         ..default_ok()
     }
 }
@@ -226,6 +273,9 @@ pub fn unknown_op_err(op_text: &str) -> ErrResponse {
         branch: None,
         local_tip: None,
         remote_tip: None,
+        remote_version: None,
+        local_version: None,
+        reason: None,
     }
 }
 
@@ -233,6 +283,8 @@ fn default_ok() -> OkResponse {
     OkResponse {
         ok: true,
         morph_version: None,
+        protocol_version: None,
+        repo_version: None,
         branches: None,
         refs: None,
         hash: None,
@@ -325,13 +377,82 @@ mod tests {
     }
 
     #[test]
+    fn incompatible_remote_round_trips() {
+        // PR 6 stage E cycle 20 RED→GREEN: when the remote speaks a
+        // protocol version we don't understand, the client raises
+        // `IncompatibleRemote` and the CLI explains "your local
+        // morph is too old/new for that server". The wire form keeps
+        // the typed remote/local version pair so the message is
+        // actionable.
+        let original = MorphError::IncompatibleRemote {
+            remote: "2".into(),
+            local: "1".into(),
+            reason: "protocol_version".into(),
+        };
+        let wire = from_morph_error(&original);
+        assert_eq!(wire.error_kind, ErrorKind::IncompatibleRemote);
+        assert_eq!(wire.remote_version.as_deref(), Some("2"));
+        assert_eq!(wire.local_version.as_deref(), Some("1"));
+        assert_eq!(wire.reason.as_deref(), Some("protocol_version"));
+
+        let s = serde_json::to_string(&wire).unwrap();
+        let parsed: ErrResponse = serde_json::from_str(&s).unwrap();
+        let restored = to_morph_error(&parsed);
+        match restored {
+            MorphError::IncompatibleRemote { remote, local, reason } => {
+                assert_eq!(remote, "2");
+                assert_eq!(local, "1");
+                assert_eq!(reason, "protocol_version");
+            }
+            other => panic!("expected IncompatibleRemote, got: {:?}", other),
+        }
+    }
+
+    #[test]
     fn ok_response_skips_none_fields() {
         // We don't want list-branches responses to contain `"has":
         // null, "object": null, ...` — the wire stays clean.
-        let ok = hello_ok("0.9.0");
+        let ok = hello_ok("0.9.0", MORPH_PROTOCOL_VERSION, "0.5");
         let s = serde_json::to_string(&ok).unwrap();
         assert!(!s.contains("\"has\""), "got: {}", s);
         assert!(!s.contains("\"object\""), "got: {}", s);
         assert!(s.contains("\"morph_version\":\"0.9.0\""), "got: {}", s);
+    }
+
+    #[test]
+    fn hello_response_advertises_protocol_and_repo_version() {
+        // PR 6 stage E cycle 21 RED→GREEN: Hello tells the client
+        // both what wire protocol the helper speaks and what
+        // repo schema the bare/working repo is on. The client
+        // uses these to derive `IncompatibleRemote`.
+        let ok = hello_ok("0.11.0", 1, "0.5");
+        assert_eq!(ok.protocol_version, Some(1));
+        assert_eq!(ok.repo_version.as_deref(), Some("0.5"));
+
+        let s = serde_json::to_string(&ok).unwrap();
+        let parsed: OkResponse = serde_json::from_str(&s).unwrap();
+        assert_eq!(parsed.protocol_version, Some(1));
+        assert_eq!(parsed.repo_version.as_deref(), Some("0.5"));
+        assert_eq!(parsed.morph_version.as_deref(), Some("0.11.0"));
+    }
+
+    #[test]
+    fn hello_response_omits_protocol_fields_for_legacy_servers() {
+        // A pre-PR6 helper doesn't emit `protocol_version` or
+        // `repo_version`. We must still parse such a hello so
+        // forwards and backwards compat hold for one release cycle.
+        let legacy = "{\"ok\":true,\"morph_version\":\"0.10.0\"}";
+        let parsed: OkResponse = serde_json::from_str(legacy).unwrap();
+        assert!(parsed.ok);
+        assert_eq!(parsed.morph_version.as_deref(), Some("0.10.0"));
+        assert_eq!(parsed.protocol_version, None);
+        assert_eq!(parsed.repo_version, None);
+    }
+
+    #[test]
+    fn protocol_version_constant_is_one_in_pr6() {
+        // Pin the protocol version. Bump this constant deliberately
+        // when the wire format changes.
+        assert_eq!(MORPH_PROTOCOL_VERSION, 1);
     }
 }

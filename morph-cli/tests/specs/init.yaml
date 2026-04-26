@@ -57,3 +57,32 @@
   steps:
     - morph: [init, "${repo}"]
       stdout_contains: ".morph/"
+
+# PR 6 stage D cycle 16: `morph init --bare` lays out the repo at
+# `path` itself with no `.morph/` wrapper and `bare = true` in
+# config.json.
+- name: init_bare_at_root
+  init: false
+  steps:
+    - morph: [init, --bare, "${repo}"]
+      stdout_contains: "Initialized bare Morph repository"
+  assert:
+    - kind: dir_exists
+      path: objects
+    - kind: dir_exists
+      path: refs/heads
+    - kind: dir_not_exists
+      path: .morph
+    - kind: file_not_exists
+      path: .gitignore
+    - kind: file_contains
+      path: config.json
+      contents: '"bare": true'
+
+- name: init_bare_already_initialized
+  init: false
+  steps:
+    - morph: [init, --bare, "${repo}"]
+    - morph: [init, --bare, "${repo}"]
+      expect_exit: 1
+      stderr_contains: "already a morph repository"

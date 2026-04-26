@@ -31,6 +31,11 @@ pub enum Command {
     Init {
         #[arg(default_value = ".")]
         path: PathBuf,
+        /// Create a bare repository at `path` (no working tree, no
+        /// `.morph/` wrapper). Use this on a server you intend to
+        /// `morph push` to via SSH.
+        #[arg(long)]
+        bare: bool,
     },
     /// Prompt object operations
     Prompt {
@@ -160,6 +165,24 @@ pub enum Command {
     Sync {
         /// Optional branch name; defaults to the current branch.
         branch: Option<String>,
+    },
+    /// Read or write a configuration value in `.morph/config.json`.
+    ///
+    /// Supported keys (PR 6 stage A): `user.name`, `user.email`.
+    /// Future PRs will add policy / agent / branch keys here.
+    ///
+    /// Forms:
+    ///   morph config <key> <value>     # set
+    ///   morph config <key>             # get (prints value, empty + exit 1 if unset)
+    ///   morph config --get <key>       # explicit get (same as positional get)
+    Config {
+        /// Dotted key, e.g. `user.name`.
+        key: String,
+        /// New value. If absent, prints the current value.
+        value: Option<String>,
+        /// Explicit "get" form for parity with `git config --get`.
+        #[arg(long)]
+        get: bool,
     },
     /// List all refs (local branches and remote-tracking refs)
     Refs,

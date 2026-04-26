@@ -174,6 +174,28 @@ pub fn collect_reachable_objects(
     Ok(result)
 }
 
+/// PR 6 stage F: verify that the entire reachable closure of `tip`
+/// is present in `store`. Returns `Err(MorphError::NotFound(_))` on
+/// the first missing object.
+///
+/// The server side of `push` calls this on `RefWrite` so it never
+/// records a ref that points at an object the client hasn't fully
+/// uploaded — a bare repo with such a ref would silently corrupt
+/// every subsequent fetch.
+pub fn verify_closure(store: &dyn Store, tip: &Hash) -> Result<(), MorphError> {
+    let mut visited = HashSet::new();
+    let mut queue = VecDeque::new();
+    queue.push_back(*tip);
+    while let Some(h) = queue.pop_front() {
+        if !visited.insert(h) {
+            continue;
+        }
+        let obj = store.get(&h)?;
+        collect_refs(&obj, &mut queue);
+    }
+    Ok(())
+}
+
 /// Extract outgoing object references from any MorphObject.
 fn collect_refs(obj: &MorphObject, queue: &mut VecDeque<Hash>) {
     match obj {
@@ -603,6 +625,66 @@ mod tests {
 
         assert!(!missing.contains(&c1));
         assert!(missing.contains(&c2));
+    }
+
+    // ── Closure verification (PR 6 stage F, cycle 24) ────────────────
+
+    #[test]
+    fn verify_closure_passes_when_all_objects_present() {
+        // PR 6 stage F cycle 24 RED→GREEN: the happy path. After a
+        // successful sync, every reachable object is in the
+        // destination store, and verify_closure returns Ok.
+        let (dir, store) = setup_repo();
+        let hash = make_commit(store.as_ref(), dir.path(), "first");
+        verify_closure(store.as_ref(), &hash).expect("closure should be present");
+    }
+
+    #[test]
+    fn verify_closure_fails_when_tip_missing() {
+        // The simplest case: the tip itself isn't in the store.
+        // Critical for the server side of `push`: we must refuse a
+        // ref-write that points at an object we never received.
+        let (_dir, store) = setup_repo();
+        let bogus = Hash::from_hex(&"a".repeat(64)).unwrap();
+        let err = verify_closure(store.as_ref(), &bogus)
+            .expect_err("bogus tip must fail closure check");
+        assert!(matches!(err, MorphError::NotFound(_)));
+    }
+
+    #[test]
+    fn verify_closure_fails_when_dependency_missing() {
+        // Source has the full closure, destination only has the
+        // commit and tree but not the blob — verify_closure must
+        // catch that. Mimics a partial upload that crashed
+        // mid-flight.
+        let (src_dir, src_store) = setup_repo();
+        let tip = make_commit(src_store.as_ref(), src_dir.path(), "first");
+
+        let dest_dir = tempfile::tempdir().unwrap();
+        let _ = crate::repo::init_repo(dest_dir.path()).unwrap();
+        let dest_store = crate::repo::open_store(&dest_dir.path().join(".morph")).unwrap();
+
+        // Copy only the commit (and its tree+pipeline+suite) but
+        // intentionally omit the blob the tree points at.
+        let commit_obj = src_store.get(&tip).unwrap();
+        let _ = dest_store.put(&commit_obj).unwrap();
+        if let crate::objects::MorphObject::Commit(c) = &commit_obj {
+            if let Some(t) = &c.tree {
+                let tree_h = Hash::from_hex(t).unwrap();
+                let tree_obj = src_store.get(&tree_h).unwrap();
+                let _ = dest_store.put(&tree_obj).unwrap();
+            }
+            let pipe_h = Hash::from_hex(&c.pipeline).unwrap();
+            let pipe_obj = src_store.get(&pipe_h).unwrap();
+            let _ = dest_store.put(&pipe_obj).unwrap();
+            let suite_h = Hash::from_hex(&c.eval_contract.suite).unwrap();
+            let suite_obj = src_store.get(&suite_h).unwrap();
+            let _ = dest_store.put(&suite_obj).unwrap();
+        }
+
+        let err = verify_closure(dest_store.as_ref(), &tip)
+            .expect_err("missing blob should be detected");
+        assert!(matches!(err, MorphError::NotFound(_)));
     }
 
     // ── Ancestry ─────────────────────────────────────────────────────

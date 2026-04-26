@@ -33,23 +33,33 @@ const PROMPTS_DIR: &str = "prompts";
 const EVALS_DIR: &str = "evals";
 const REPO_VERSION_KEY: &str = "repo_version";
 
-/// Initialize a Morph repository at `root`. Creates only `.morph/` — the
-/// working directory itself is the user's project and is not modified.
-pub fn init_repo(root: impl AsRef<Path>) -> Result<FsStore, MorphError> {
-    let root = root.as_ref();
-    let morph_dir = root.join(".morph");
-
+/// Internal: create the on-disk layout at `morph_dir`. Used by both
+/// the working-repo `init_repo` (which calls us with
+/// `<root>/.morph`) and the bare-repo `init_bare` (which calls us
+/// with `<root>` directly). The only difference between the two
+/// shapes:
+///   - `bare = true` → no `.gitignore`, `bare: true` in config.
+///   - `bare = false` → `.gitignore` ignoring `objects/`, no
+///     `bare` flag (treated as false on read).
+fn init_morph_dir_at(morph_dir: &Path, bare: bool) -> Result<FsStore, MorphError> {
     if morph_dir.exists() {
-        let meta = std::fs::metadata(&morph_dir).map_err(MorphError::Io)?;
+        let meta = std::fs::metadata(morph_dir).map_err(MorphError::Io)?;
         if !meta.is_dir() {
             return Err(MorphError::Io(std::io::Error::new(
                 std::io::ErrorKind::AlreadyExists,
-                ".morph exists and is not a directory",
+                "target path exists and is not a directory",
             )));
         }
-        return Err(MorphError::AlreadyExists(
-            "already a morph repository (directory .morph exists)".into(),
-        ));
+        // Refuse if it already looks like a Morph repo. We use the
+        // presence of `objects/` + `config.json` as the signature
+        // since `<root>/.morph` (working) and `<root>` (bare) are
+        // both legal but neither should already be a repo when we
+        // run `init`.
+        if morph_dir.join(OBJECTS_DIR).exists() || morph_dir.join(CONFIG_FILE).exists() {
+            return Err(MorphError::AlreadyExists(
+                "already a morph repository".into(),
+            ));
+        }
     }
 
     std::fs::create_dir_all(morph_dir.join(OBJECTS_DIR))?;
@@ -59,14 +69,84 @@ pub fn init_repo(root: impl AsRef<Path>) -> Result<FsStore, MorphError> {
     std::fs::create_dir_all(morph_dir.join(PROMPTS_DIR))?;
     std::fs::create_dir_all(morph_dir.join(EVALS_DIR))?;
 
-    let config = serde_json::json!({ REPO_VERSION_KEY: STORE_VERSION_INIT });
+    let mut config = serde_json::json!({ REPO_VERSION_KEY: STORE_VERSION_INIT });
+    if bare {
+        config["bare"] = serde_json::Value::Bool(true);
+    }
     std::fs::write(morph_dir.join(CONFIG_FILE), serde_json::to_string_pretty(&config).unwrap())?;
+
+    // Every fresh repo (bare or working) gets a stable
+    // `agent.instance_id` (PR 6 stage B). Bare repos get one too —
+    // even though they don't author commits today, future PRs may
+    // (eg. CI bots running on the server) and we want a single
+    // place that owns ID generation.
+    crate::agent::ensure_instance_id(morph_dir)?;
 
     std::fs::write(morph_dir.join("refs").join("HEAD"), "ref: heads/main\n")?;
 
-    std::fs::write(morph_dir.join(".gitignore"), "/objects/\n")?;
+    if !bare {
+        std::fs::write(morph_dir.join(".gitignore"), "/objects/\n")?;
+    }
 
-    Ok(FsStore::new(morph_dir))
+    Ok(FsStore::new(morph_dir.to_path_buf()))
+}
+
+/// Initialize a Morph repository at `root`. Creates only `.morph/` — the
+/// working directory itself is the user's project and is not modified.
+pub fn init_repo(root: impl AsRef<Path>) -> Result<FsStore, MorphError> {
+    let morph_dir = root.as_ref().join(".morph");
+    match init_morph_dir_at(&morph_dir, false) {
+        Ok(store) => Ok(store),
+        // Preserve the legacy phrasing for working-repo errors so
+        // existing UI tests that grep for ".morph exists" still pass.
+        Err(MorphError::AlreadyExists(_)) => Err(MorphError::AlreadyExists(
+            "already a morph repository (directory .morph exists)".into(),
+        )),
+        Err(e) => Err(e),
+    }
+}
+
+/// PR 6 stage D: initialize a *bare* Morph repository at `root`.
+/// The repo lives directly at `root` (not under `<root>/.morph`)
+/// and carries `bare = true` in `config.json`. Bare repos are
+/// intended for hosting on a server and have no working tree, no
+/// staging index, and no `.gitignore` shim.
+pub fn init_bare(root: impl AsRef<Path>) -> Result<FsStore, MorphError> {
+    let root = root.as_ref();
+    init_morph_dir_at(root, true)
+}
+
+/// PR 6 stage D cycle 17: given a path that's either a working
+/// project root (`<path>/.morph` is the repo) or a bare repo
+/// (`<path>` itself is the repo), return the path that
+/// `open_store` should be called with. Errors when neither layout
+/// is present so callers get a clear "not a morph repository"
+/// message.
+pub fn resolve_morph_dir(path: &Path) -> Result<std::path::PathBuf, MorphError> {
+    let working = path.join(".morph");
+    let working_repo = working.join(OBJECTS_DIR).is_dir() && working.join(CONFIG_FILE).is_file();
+    let bare_repo = path.join(OBJECTS_DIR).is_dir() && path.join(CONFIG_FILE).is_file();
+    match (working_repo, bare_repo) {
+        (true, _) => Ok(working),
+        (false, true) => Ok(path.to_path_buf()),
+        (false, false) => Err(MorphError::NotFound(format!(
+            "not a morph repository: {}",
+            path.display()
+        ))),
+    }
+}
+
+/// Read the `bare` flag from `<morph_dir>/config.json`. Defaults to
+/// `false` (working repo) when the key or file is missing.
+pub fn is_bare(morph_dir: &Path) -> Result<bool, MorphError> {
+    let config_path = morph_dir.join(CONFIG_FILE);
+    if !config_path.exists() {
+        return Ok(false);
+    }
+    let data = std::fs::read_to_string(&config_path)?;
+    let config: serde_json::Value =
+        serde_json::from_str(&data).map_err(|e| MorphError::Serialization(e.to_string()))?;
+    Ok(config.get("bare").and_then(|v| v.as_bool()).unwrap_or(false))
 }
 
 /// Read the store version from `.morph/config.json`. Returns `"0.0"` if the file or key is missing (legacy repos).
@@ -180,6 +260,151 @@ mod tests {
         let _ = init_repo(dir.path()).unwrap();
         assert!(dir.path().join(".morph/prompts").is_dir());
         assert!(dir.path().join(".morph/evals").is_dir());
+    }
+
+    /// PR 6 stage D cycle 14: bare repos live at `root` directly,
+    /// have `bare: true` in config, and no `.gitignore` shim.
+    #[test]
+    fn init_bare_layout_at_root_no_gitignore() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("project.morph");
+        let _ = init_bare(&root).unwrap();
+        assert!(root.join(OBJECTS_DIR).is_dir(), "objects/ must exist at root");
+        assert!(root.join(REFS_HEADS_DIR).is_dir(), "refs/heads/ must exist");
+        assert!(root.join(PROMPTS_DIR).is_dir());
+        assert!(root.join(EVALS_DIR).is_dir());
+        assert!(root.join(CONFIG_FILE).exists());
+        // No working-repo shim: no enclosing .morph and no
+        // `.gitignore` (a bare repo isn't checked in to git).
+        assert!(!root.join(".morph").exists());
+        assert!(!root.join(".gitignore").exists());
+        // Seeded HEAD so the first push has a default branch to
+        // fast-forward.
+        assert!(root.join("refs/HEAD").exists());
+
+        // Config marks the repo as bare and carries the version.
+        let raw = std::fs::read_to_string(root.join(CONFIG_FILE)).unwrap();
+        let cfg: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(cfg["bare"], true);
+        assert_eq!(cfg[REPO_VERSION_KEY], STORE_VERSION_INIT);
+    }
+
+    #[test]
+    fn init_bare_seeds_agent_instance_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("server.morph");
+        let _ = init_bare(&root).unwrap();
+        let id = crate::agent::read_instance_id(&root).unwrap();
+        assert!(id.is_some(), "bare repo should still get an instance_id");
+    }
+
+    #[test]
+    fn init_bare_refuses_existing_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("server.morph");
+        let _ = init_bare(&root).unwrap();
+        match init_bare(&root) {
+            Err(MorphError::AlreadyExists(_)) => {}
+            Ok(_) => panic!("expected AlreadyExists"),
+            Err(e) => panic!("expected AlreadyExists, got: {:?}", e),
+        }
+    }
+
+    /// PR 6 stage D cycle 15: `is_bare` reads the config flag.
+    #[test]
+    fn is_bare_true_for_bare_repos() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("server.morph");
+        let _ = init_bare(&root).unwrap();
+        assert!(is_bare(&root).unwrap());
+    }
+
+    #[test]
+    fn is_bare_false_for_working_repos() {
+        let dir = tempfile::tempdir().unwrap();
+        let _ = init_repo(dir.path()).unwrap();
+        let morph_dir = dir.path().join(".morph");
+        assert!(!is_bare(&morph_dir).unwrap());
+    }
+
+    #[test]
+    fn is_bare_defaults_to_false_when_config_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        // No config.json at all → not bare.
+        assert!(!is_bare(dir.path()).unwrap());
+    }
+
+    /// PR 6 stage D cycle 17: resolve_morph_dir auto-detects both
+    /// layouts so callers don't need to know whether a server-side
+    /// path is bare or working.
+    #[test]
+    fn resolve_morph_dir_finds_working_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let _ = init_repo(dir.path()).unwrap();
+        let resolved = resolve_morph_dir(dir.path()).unwrap();
+        assert_eq!(resolved, dir.path().join(".morph"));
+    }
+
+    #[test]
+    fn resolve_morph_dir_finds_bare_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let bare_root = dir.path().join("server.morph");
+        let _ = init_bare(&bare_root).unwrap();
+        let resolved = resolve_morph_dir(&bare_root).unwrap();
+        assert_eq!(resolved, bare_root);
+    }
+
+    #[test]
+    fn resolve_morph_dir_prefers_working_when_both_exist() {
+        // Edge case: a directory with a `.morph/` *and* a top-level
+        // `objects/`. The working layout wins because that's
+        // unambiguously the user's checkout.
+        let dir = tempfile::tempdir().unwrap();
+        let _ = init_repo(dir.path()).unwrap();
+        // Manually plant a fake bare layout at the same level.
+        std::fs::create_dir_all(dir.path().join(OBJECTS_DIR)).unwrap();
+        std::fs::write(
+            dir.path().join(CONFIG_FILE),
+            r#"{"repo_version":"0.5","bare":true}"#,
+        )
+        .unwrap();
+        let resolved = resolve_morph_dir(dir.path()).unwrap();
+        assert_eq!(resolved, dir.path().join(".morph"));
+    }
+
+    #[test]
+    fn resolve_morph_dir_errors_on_unrelated_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = resolve_morph_dir(dir.path()).unwrap_err();
+        match err {
+            MorphError::NotFound(msg) => assert!(msg.contains("not a morph repository")),
+            e => panic!("expected NotFound, got {:?}", e),
+        }
+    }
+
+    #[test]
+    fn init_seeds_agent_instance_id() {
+        // PR 6 stage B cycle 6: every fresh repo gets a stable
+        // agent.instance_id auto-generated at init time. Two
+        // separate inits get distinct IDs so cross-machine merges
+        // can tell them apart in commit metadata.
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        let _ = init_repo(a.path()).unwrap();
+        let _ = init_repo(b.path()).unwrap();
+        let id_a = crate::agent::read_instance_id(&a.path().join(".morph"))
+            .unwrap()
+            .expect("repo a should have an instance_id");
+        let id_b = crate::agent::read_instance_id(&b.path().join(".morph"))
+            .unwrap()
+            .expect("repo b should have an instance_id");
+        assert!(id_a.starts_with("morph-"));
+        assert!(id_b.starts_with("morph-"));
+        // We can't *guarantee* uniqueness from a 6-hex-char space
+        // in a tight loop on the same machine, but the time-mixed
+        // generator should still differ. If this ever flakes we'll
+        // widen the suffix in `generate_instance_id`.
+        assert_ne!(id_a, id_b, "two fresh inits should not collide");
     }
 
     #[test]
@@ -391,6 +616,7 @@ mod tests {
             env_constraints: None,
             evidence_refs: None,
             morph_version: None,
+            morph_instance: None,
         });
         let commit_hash = fs.put(&commit).unwrap();
         fs.ref_write_raw("HEAD", "ref: heads/main").unwrap();

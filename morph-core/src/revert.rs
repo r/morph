@@ -58,6 +58,7 @@ pub fn revert_commit(
         env_constraints: None,
         evidence_refs: None,
         morph_version: None,
+        morph_instance: None,
     });
 
     let revert_hash = store.put(&revert)?;
@@ -109,6 +110,7 @@ mod tests {
             env_constraints: None,
             evidence_refs: None,
             morph_version: None,
+            morph_instance: None,
         });
         let hash = store.put(&commit).unwrap();
         store.ref_write("heads/main", &hash).unwrap();

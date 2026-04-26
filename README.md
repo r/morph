@@ -25,6 +25,17 @@ Git assumes identity is byte equality, reproducibility is identical output, and 
 
 ## Install and start in Cursor (quick)
 
+Install with Homebrew (recommended for macOS):
+
+```bash
+brew tap r/morph
+brew install morph
+```
+
+This installs both `morph` and `morph-mcp`.
+
+Or build from source:
+
 ```bash
 git clone <morph-repo-url> && cd morph
 cargo install --path morph-cli && cargo install --path morph-mcp

@@ -588,9 +588,20 @@ pub fn continue_merge(
         None => crate::merge_state::read_merge_msg(&morph_dir)?
             .unwrap_or_else(|| "Merge".into()),
     };
-    let author = opts.author.unwrap_or_else(|| "morph".to_string());
+    let author = crate::author::resolve_author_for_repo(
+        &morph_dir,
+        opts.author.as_deref(),
+    )?;
     let timestamp = chrono::Utc::now().to_rfc3339();
     let contributors = crate::commit::merge_contributors(&head_commit, &other_commit);
+
+    // PR 6 stage C cycle 13: union evidence_refs from both parents
+    // so a merge commit that finalizes via `morph merge --continue`
+    // preserves the runs/traces both branches carried.
+    let evidence_refs = crate::merge::union_evidence_refs(
+        head_commit.evidence_refs.as_deref(),
+        other_commit.evidence_refs.as_deref(),
+    );
 
     let merge_commit = MorphObject::Commit(Commit {
         tree: Some(tree_hash.to_string()),
@@ -605,11 +616,12 @@ pub fn continue_merge(
             observed_metrics: merged_metrics,
         },
         env_constraints: None,
-        evidence_refs: None,
+        evidence_refs,
         morph_version: head_commit
             .morph_version
             .clone()
             .or_else(|| other_commit.morph_version.clone()),
+        morph_instance: crate::agent::read_instance_id(&morph_dir)?,
     });
     let merge_hash = store.put(&merge_commit)?;
 
@@ -1174,6 +1186,7 @@ mod tests {
                 env_constraints: None,
                 evidence_refs: None,
                 morph_version: Some("0.5".to_string()),
+                morph_instance: None,
             };
             store.put(&MorphObject::Commit(commit)).unwrap()
         };
@@ -1491,6 +1504,7 @@ mod tests {
                 env_constraints: None,
                 evidence_refs: None,
                 morph_version: Some("0.5".to_string()),
+                morph_instance: None,
             };
             store.put(&MorphObject::Commit(commit)).unwrap()
         };
@@ -1604,6 +1618,90 @@ mod tests {
         assert!(flat.contains_key("shared.txt"));
         assert!(flat.contains_key("main_only.txt"));
         assert!(flat.contains_key("feature_only.txt"));
+    }
+
+    /// PR 6 stage C cycle 13: end-to-end through the user-facing
+    /// merge flow. Each parent carries different `evidence_refs`;
+    /// after `continue_merge` finalizes the merge, the resulting
+    /// commit's `evidence_refs` is the deduped sorted union.
+    #[test]
+    fn continue_merge_writes_evidence_union_from_parents() {
+        let (dir, store) = setup_repo();
+        let (_base, main_tip, feature_tip) =
+            divergent_branches_clean(store.as_ref(), dir.path());
+
+        // Stamp evidence onto each parent before merging. We're
+        // simulating "main was certified by run-A, feature by run-B,
+        // both shared run-C from earlier" — exactly the case where
+        // dropping the union would lose half the certificates.
+        let stamp = |branch_ref: &str, refs: Vec<String>| {
+            let h = store.ref_read(branch_ref).unwrap().unwrap();
+            let mut c = match store.get(&h).unwrap() {
+                MorphObject::Commit(c) => c,
+                _ => panic!("not a commit"),
+            };
+            c.evidence_refs = Some(refs);
+            let new_hash = store.put(&MorphObject::Commit(c)).unwrap();
+            store.ref_write(branch_ref, &new_hash).unwrap();
+            new_hash
+        };
+        let main_with_ev = stamp(
+            "heads/main",
+            vec!["run-A".into(), "run-shared".into()],
+        );
+        let feature_with_ev = stamp(
+            "heads/feature",
+            vec!["run-B".into(), "run-shared".into()],
+        );
+        // Sanity: the original tip hashes should still be valid
+        // commits in the store (we never overwrite blobs by content).
+        assert!(matches!(
+            store.get(&main_tip).unwrap(),
+            MorphObject::Commit(_)
+        ));
+        assert!(matches!(
+            store.get(&feature_tip).unwrap(),
+            MorphObject::Commit(_)
+        ));
+
+        // The branches now point at the re-stamped commits.
+        assert_eq!(store.ref_read("heads/main").unwrap(), Some(main_with_ev));
+        assert_eq!(
+            store.ref_read("heads/feature").unwrap(),
+            Some(feature_with_ev)
+        );
+
+        let started = start_merge(
+            store.as_ref(),
+            dir.path(),
+            StartMergeOpts::new("feature"),
+        )
+        .unwrap();
+        assert!(!started.needs_resolution);
+
+        let cont = continue_merge(
+            store.as_ref(),
+            dir.path(),
+            ContinueMergeOpts::default(),
+        )
+        .expect("continue_merge should succeed");
+
+        let commit = match store.get(&cont.merge_commit).unwrap() {
+            MorphObject::Commit(c) => c,
+            _ => panic!("expected commit"),
+        };
+        assert_eq!(
+            commit.evidence_refs.as_deref(),
+            Some(
+                ["run-A", "run-B", "run-shared"]
+                    .as_slice()
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<_>>()
+                    .as_slice()
+            ),
+            "merge commit should carry deduped sorted union of parent evidence"
+        );
     }
 
     #[test]

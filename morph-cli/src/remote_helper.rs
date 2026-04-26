@@ -8,6 +8,7 @@ use anyhow::Result;
 use morph_core::objects::MorphObject;
 use morph_core::ssh_proto::{
     self, ErrResponse, ListRefsKind, OkResponse, Request, Response,
+    MORPH_PROTOCOL_VERSION,
 };
 use morph_core::store::Store;
 use morph_core::Hash;
@@ -18,14 +19,28 @@ use std::path::Path;
 /// on graceful EOF; any setup error is bubbled up to main and
 /// surfaced as a non-zero exit.
 pub fn run(repo_root: &Path) -> Result<()> {
-    let morph_dir = repo_root.join(".morph");
-    if !morph_dir.exists() {
-        anyhow::bail!(
-            "not a morph repository: {} (no .morph directory)",
-            repo_root.display()
-        );
-    }
+    // PR 6 stage D cycle 18: the helper accepts both shapes —
+    // working repos at `<root>/.morph` and bare repos directly at
+    // `<root>`. `resolve_morph_dir` does the auto-detect and
+    // surfaces a `not a morph repository` error if neither is
+    // present.
+    let morph_dir = morph_core::resolve_morph_dir(repo_root)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
     let store = morph_core::open_store(&morph_dir)?;
+    // PR 6 stage E: read the repo schema version once at startup so
+    // every Hello can advertise it without reopening config.json on
+    // each request.
+    let repo_version = morph_core::read_repo_version(&morph_dir)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    // PR 6 stage E cycle 23: testing hook. When set, override the
+    // protocol version we advertise. Used only by integration tests
+    // to exercise the `IncompatibleRemote` path; production helpers
+    // always emit `MORPH_PROTOCOL_VERSION`.
+    let protocol_version = std::env::var("MORPH_TEST_PROTOCOL_VERSION_OVERRIDE")
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(MORPH_PROTOCOL_VERSION);
 
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
@@ -40,7 +55,13 @@ pub fn run(repo_root: &Path) -> Result<()> {
         if line.is_empty() {
             continue;
         }
-        let resp = handle_line(line, store.as_ref());
+        let resp = handle_line(
+            line,
+            store.as_ref(),
+            &morph_dir,
+            &repo_version,
+            protocol_version,
+        );
         let s = match resp {
             Response::Ok(o) => serde_json::to_string(&o)?,
             Response::Err(e) => serde_json::to_string(&e)?,
@@ -51,7 +72,13 @@ pub fn run(repo_root: &Path) -> Result<()> {
     Ok(())
 }
 
-fn handle_line(line: &str, store: &dyn Store) -> Response {
+fn handle_line(
+    line: &str,
+    store: &dyn Store,
+    morph_dir: &Path,
+    repo_version: &str,
+    protocol_version: u32,
+) -> Response {
     let req: Request = match serde_json::from_str(line) {
         Ok(r) => r,
         Err(e) => {
@@ -61,15 +88,25 @@ fn handle_line(line: &str, store: &dyn Store) -> Response {
             )));
         }
     };
-    match dispatch(req, store) {
+    match dispatch(req, store, morph_dir, repo_version, protocol_version) {
         Ok(ok) => Response::Ok(ok),
         Err(err) => Response::Err(err),
     }
 }
 
-fn dispatch(req: Request, store: &dyn Store) -> std::result::Result<OkResponse, ErrResponse> {
+fn dispatch(
+    req: Request,
+    store: &dyn Store,
+    morph_dir: &Path,
+    repo_version: &str,
+    protocol_version: u32,
+) -> std::result::Result<OkResponse, ErrResponse> {
     match req {
-        Request::Hello => Ok(ssh_proto::hello_ok(env!("CARGO_PKG_VERSION"))),
+        Request::Hello => Ok(ssh_proto::hello_ok(
+            env!("CARGO_PKG_VERSION"),
+            protocol_version,
+            repo_version,
+        )),
         Request::ListBranches => {
             let branches = store
                 .list_branches()
@@ -94,6 +131,19 @@ fn dispatch(req: Request, store: &dyn Store) -> std::result::Result<OkResponse, 
                     &morph_core::store::MorphError::InvalidHash(e.to_string()),
                 )
             })?;
+            // PR 6 stage F cycle 25: refuse a ref-write whose
+            // closure isn't fully present on the server. Without
+            // this, a crashed `morph push` could leave a bare repo
+            // pointing at objects no client has and break every
+            // subsequent fetch.
+            morph_core::verify_closure(store, &h)
+                .map_err(|e| ssh_proto::from_morph_error(&e))?;
+            // PR 6 stage F cycle 28: server-side push gate. If the
+            // target branch is listed in `RepoPolicy
+            // .push_gated_branches`, run `gate_check` and refuse
+            // the write on failure with a clear typed error.
+            morph_core::enforce_push_gate(store, morph_dir, &name, &h)
+                .map_err(|e| ssh_proto::from_morph_error(&e))?;
             store
                 .ref_write(&name, &h)
                 .map_err(|e| ssh_proto::from_morph_error(&e))?;

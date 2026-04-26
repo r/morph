@@ -71,6 +71,10 @@ pub struct MergePlan {
     /// The strictest bar from either parent that the merged candidate must meet.
     pub reference_bar: BTreeMap<String, f64>,
     pub retired_metrics: Vec<String>,
+    /// PR 6 stage C: deduped union of both parents' `evidence_refs`.
+    /// `None` when neither parent had any (don't churn hashes by
+    /// emitting an empty array on legacy / suite-free histories).
+    pub evidence_refs: Option<Vec<String>>,
     head_commit: Commit,
     other_commit: Commit,
 }
@@ -285,6 +289,18 @@ pub fn prepare_merge(
 
     let head_branch = current_branch(store)?;
 
+    // PR 6 stage C cycles 10/12: union of both parents' evidence_refs.
+    // Stable order (sorted) so the resulting commit hash doesn't
+    // depend on which parent we read first; deduped so a Run that
+    // both parents reference shows up exactly once. Stays `None` if
+    // neither parent has any evidence — emitting `Some(vec![])`
+    // would change canonical hashes for histories that never had
+    // evidence in the first place.
+    let evidence_refs = union_evidence_refs(
+        head_commit.evidence_refs.as_deref(),
+        other_commit.evidence_refs.as_deref(),
+    );
+
     Ok(MergePlan {
         head_hash,
         other_hash,
@@ -297,9 +313,32 @@ pub fn prepare_merge(
         union_suite: union,
         reference_bar,
         retired_metrics: retired.to_vec(),
+        evidence_refs,
         head_commit,
         other_commit,
     })
+}
+
+/// Pure helper: deduped sorted union of two optional evidence_ref
+/// lists. Returns `None` when both inputs are absent or empty so
+/// merges of legacy histories don't grow new fields.
+pub(crate) fn union_evidence_refs(
+    a: Option<&[String]>,
+    b: Option<&[String]>,
+) -> Option<Vec<String>> {
+    use std::collections::BTreeSet;
+    let mut set: BTreeSet<String> = BTreeSet::new();
+    if let Some(refs) = a {
+        set.extend(refs.iter().cloned());
+    }
+    if let Some(refs) = b {
+        set.extend(refs.iter().cloned());
+    }
+    if set.is_empty() {
+        None
+    } else {
+        Some(set.into_iter().collect())
+    }
 }
 
 /// Execute a merge: check dominance and create the merge commit.
@@ -354,8 +393,10 @@ pub fn execute_merge(
             observed_metrics: merged_observed_metrics,
         },
         env_constraints: None,
-        evidence_refs: None,
+        evidence_refs: plan.evidence_refs.clone(),
         morph_version: morph_version.map(String::from),
+        morph_instance: repo_root
+            .and_then(|r| crate::agent::read_instance_id(&r.join(".morph")).ok().flatten()),
     });
     let hash = store.put(&commit)?;
 
@@ -423,6 +464,33 @@ mod tests {
         store.ref_write("heads/feature", &feature_hash).unwrap();
         store.ref_write("heads/main", &main_hash).unwrap();
         crate::set_head_branch(store, "main").unwrap();
+    }
+
+    // PR 6 stage C cycle 10: pure helper round-trip.
+    #[test]
+    fn union_evidence_refs_dedupes_and_sorts() {
+        let a: Vec<String> = vec!["zzz".into(), "aaa".into(), "mmm".into()];
+        let b: Vec<String> = vec!["aaa".into(), "bbb".into()];
+        let out = union_evidence_refs(Some(&a), Some(&b)).unwrap();
+        assert_eq!(out, vec!["aaa".to_string(), "bbb".into(), "mmm".into(), "zzz".into()]);
+    }
+
+    #[test]
+    fn union_evidence_refs_returns_none_when_both_empty() {
+        // Both `None` → None, both `Some(empty)` → None, mixed → None.
+        assert_eq!(union_evidence_refs(None, None), None);
+        let empty: Vec<String> = vec![];
+        assert_eq!(union_evidence_refs(Some(&empty), Some(&empty)), None);
+        assert_eq!(union_evidence_refs(None, Some(&empty)), None);
+    }
+
+    #[test]
+    fn union_evidence_refs_handles_one_sided() {
+        let a: Vec<String> = vec!["x".into(), "y".into()];
+        let out = union_evidence_refs(Some(&a), None).unwrap();
+        assert_eq!(out, vec!["x".to_string(), "y".into()]);
+        let out = union_evidence_refs(None, Some(&a)).unwrap();
+        assert_eq!(out, vec!["x".to_string(), "y".into()]);
     }
 
     #[test]
@@ -627,6 +695,106 @@ mod tests {
         assert!(msg.contains("merge rejected"), "should say 'merge rejected': {}", msg);
         assert!(msg.contains("acc"), "should name the blocking metric: {}", msg);
         assert!(msg.contains("current"), "should identify the parent: {}", msg);
+    }
+
+    /// Helper: rewrite the commit at `branch_ref` to set its
+    /// `evidence_refs` to `refs`. Used by the cycle 11/12 tests
+    /// below to construct parent commits with deterministic
+    /// evidence without going through the full `record` pipeline.
+    fn set_branch_evidence(store: &dyn Store, branch_ref: &str, refs: Option<Vec<String>>) {
+        let h = store.ref_read(branch_ref).unwrap().unwrap();
+        let mut c = match store.get(&h).unwrap() {
+            MorphObject::Commit(c) => c,
+            _ => panic!("not a commit"),
+        };
+        c.evidence_refs = refs;
+        let new = MorphObject::Commit(c);
+        let new_hash = store.put(&new).unwrap();
+        store.ref_write(branch_ref, &new_hash).unwrap();
+    }
+
+    /// PR 6 stage C cycle 11: when both parents carry evidence,
+    /// the resulting merge commit's `evidence_refs` is the deduped
+    /// sorted union.
+    #[test]
+    fn execute_merge_writes_evidence_union_to_commit() {
+        let (dir, store) = setup_repo();
+        let suite = make_suite(vec![EvalMetric::new("acc", "mean", 0.0)]);
+        let mut m1 = BTreeMap::new();
+        m1.insert("acc".into(), 0.9);
+        let mut m2 = BTreeMap::new();
+        m2.insert("acc".into(), 0.85);
+        setup_two_branches(store.as_ref(), dir.path(), &suite, &suite, m1, m2);
+
+        // Inject evidence onto each parent before merging.
+        set_branch_evidence(
+            store.as_ref(),
+            "heads/main",
+            Some(vec!["run-A".into(), "shared".into()]),
+        );
+        set_branch_evidence(
+            store.as_ref(),
+            "heads/feature",
+            Some(vec!["run-B".into(), "shared".into()]),
+        );
+
+        let plan = prepare_merge(store.as_ref(), "feature", None, None).unwrap();
+        // Sanity: plan reflects the union before we call execute_merge.
+        assert_eq!(
+            plan.evidence_refs.as_deref(),
+            Some(["run-A", "run-B", "shared"].as_slice().iter().map(|s| s.to_string()).collect::<Vec<_>>().as_slice())
+        );
+
+        let prog = MorphObject::Blob(Blob { kind: "p".into(), content: serde_json::json!({}) });
+        let prog_hash = store.put(&prog).unwrap();
+        let mut merged = BTreeMap::new();
+        merged.insert("acc".into(), 0.92);
+        let h = execute_merge(
+            store.as_ref(), &plan, &prog_hash, merged,
+            "merge".into(), None, None, Some("0.5"),
+        ).unwrap();
+        let commit = match store.get(&h).unwrap() {
+            MorphObject::Commit(c) => c,
+            _ => panic!("expected commit"),
+        };
+        assert_eq!(
+            commit.evidence_refs.as_deref(),
+            Some(["run-A", "run-B", "shared"].as_slice().iter().map(|s| s.to_string()).collect::<Vec<_>>().as_slice()),
+            "merge commit should carry the deduped sorted union of parent evidence"
+        );
+    }
+
+    /// PR 6 stage C cycle 12: when neither parent has evidence_refs,
+    /// the merge commit must keep `evidence_refs = None` rather than
+    /// emitting an empty array — that would change canonical hashes
+    /// for legacy histories that never recorded evidence.
+    #[test]
+    fn execute_merge_keeps_none_when_neither_parent_has_evidence() {
+        let (dir, store) = setup_repo();
+        let suite = make_suite(vec![EvalMetric::new("acc", "mean", 0.0)]);
+        let mut m1 = BTreeMap::new();
+        m1.insert("acc".into(), 0.9);
+        let mut m2 = BTreeMap::new();
+        m2.insert("acc".into(), 0.85);
+        setup_two_branches(store.as_ref(), dir.path(), &suite, &suite, m1, m2);
+        // Both parents start with evidence_refs = None (default).
+
+        let plan = prepare_merge(store.as_ref(), "feature", None, None).unwrap();
+        assert_eq!(plan.evidence_refs, None);
+
+        let prog = MorphObject::Blob(Blob { kind: "p".into(), content: serde_json::json!({}) });
+        let prog_hash = store.put(&prog).unwrap();
+        let mut merged = BTreeMap::new();
+        merged.insert("acc".into(), 0.92);
+        let h = execute_merge(
+            store.as_ref(), &plan, &prog_hash, merged,
+            "merge".into(), None, None, Some("0.5"),
+        ).unwrap();
+        let commit = match store.get(&h).unwrap() {
+            MorphObject::Commit(c) => c,
+            _ => panic!("expected commit"),
+        };
+        assert_eq!(commit.evidence_refs, None);
     }
 
     #[test]

@@ -308,13 +308,35 @@ pub struct SshStore {
     inner: Mutex<Connection>,
 }
 
+/// PR 6 stage E: client side of the schema handshake.
+///
+/// Map a `hello` `OkResponse` to either Ok (compatible) or
+/// `MorphError::IncompatibleRemote`. Pre-PR6 helpers don't
+/// advertise `protocol_version`; we accept those silently for one
+/// release of overlap. Bump `MORPH_PROTOCOL_VERSION` to tighten.
+fn validate_hello(ok: &OkResponse, local_protocol: u32) -> Result<(), MorphError> {
+    if let Some(remote_protocol) = ok.protocol_version {
+        if remote_protocol != local_protocol {
+            return Err(MorphError::IncompatibleRemote {
+                remote: remote_protocol.to_string(),
+                local: local_protocol.to_string(),
+                reason: "protocol_version".into(),
+            });
+        }
+    }
+    Ok(())
+}
+
 impl SshStore {
     /// Open a new connection by spawning a helper. Sends an initial
     /// `hello` to verify the remote understands the protocol.
     pub fn connect(spawn: &dyn Spawn) -> Result<Self, MorphError> {
         let mut conn = spawn.spawn()?;
         match conn.round_trip(&Request::Hello)? {
-            RawResponse::Ok(_) => Ok(Self { inner: Mutex::new(conn) }),
+            RawResponse::Ok(ok) => {
+                validate_hello(&ok, ssh_proto::MORPH_PROTOCOL_VERSION)?;
+                Ok(Self { inner: Mutex::new(conn) })
+            }
             RawResponse::Err(e) => Err(ssh_proto::to_morph_error(&e)),
         }
     }
@@ -529,6 +551,55 @@ mod tests {
         assert!(SshUrl::parse("path/with:colon").is_none());
     }
 
+    // ── Schema handshake (PR 6 stage E, cycle 22) ────────────────
+
+    #[test]
+    fn validate_hello_accepts_matching_protocol() {
+        // PR 6 stage E cycle 22 RED→GREEN: matching protocol passes
+        // through unchanged.
+        let ok = ssh_proto::hello_ok("0.11.0", ssh_proto::MORPH_PROTOCOL_VERSION, "0.5");
+        validate_hello(&ok, ssh_proto::MORPH_PROTOCOL_VERSION)
+            .expect("matching protocol should pass");
+    }
+
+    #[test]
+    fn validate_hello_rejects_newer_protocol_with_typed_error() {
+        // The remote speaks protocol 2; we still understand only 1.
+        // This must surface as IncompatibleRemote so the CLI can
+        // suggest a local upgrade.
+        let ok = ssh_proto::hello_ok("99.0.0", 2, "0.5");
+        let err = validate_hello(&ok, 1).expect_err("expected IncompatibleRemote");
+        match err {
+            MorphError::IncompatibleRemote { remote, local, reason } => {
+                assert_eq!(remote, "2");
+                assert_eq!(local, "1");
+                assert_eq!(reason, "protocol_version");
+            }
+            other => panic!("expected IncompatibleRemote, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn validate_hello_rejects_older_protocol_too() {
+        // Symmetric case: a server from the future ran into us and
+        // we (newer client) refuse rather than silently send wrong
+        // shapes. Either side getting `IncompatibleRemote` is the
+        // right outcome.
+        let ok = ssh_proto::hello_ok("0.11.0", 1, "0.5");
+        let err = validate_hello(&ok, 2).expect_err("expected IncompatibleRemote");
+        assert!(matches!(err, MorphError::IncompatibleRemote { .. }));
+    }
+
+    #[test]
+    fn validate_hello_accepts_legacy_helpers_silently() {
+        // Pre-PR6 helpers don't advertise a protocol_version. We
+        // still accept them to give the ecosystem a release of
+        // overlap. Bump MORPH_PROTOCOL_VERSION from 1→2 to tighten.
+        let mut ok = ssh_proto::hello_ok("0.10.0", 1, "0.5");
+        ok.protocol_version = None;
+        validate_hello(&ok, 1).expect("legacy hello should pass");
+    }
+
     // ── Spawn-driven tests (need built binary) ───────────────────
 
     #[test]
@@ -550,6 +621,171 @@ mod tests {
         let store = SshStore::connect(&spawn).unwrap();
         let zeros = Hash::from_hex(&"0".repeat(64)).unwrap();
         assert!(!store.has(&zeros).unwrap());
+    }
+
+    #[test]
+    fn ssh_ref_write_rejects_missing_closure() {
+        // PR 6 stage F cycle 25 RED→GREEN: the server side of `push`
+        // must refuse to record a ref pointing at an object the
+        // helper doesn't have. Without this, a bare repo could end
+        // up with a `heads/main` whose closure was never uploaded.
+        let Some((_dir, spawn)) = setup_remote_repo() else { return };
+        let store = SshStore::connect(&spawn).unwrap();
+        let bogus = Hash::from_hex(&"a".repeat(64)).unwrap();
+        let err = store
+            .ref_write("heads/main", &bogus)
+            .expect_err("ref_write to missing object should fail");
+        assert!(
+            matches!(err, MorphError::NotFound(_)),
+            "expected NotFound, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn ssh_ref_write_rejects_partial_closure() {
+        // The mid-flight crash case: client uploaded the commit but
+        // not all of its dependencies, then issued ref-write. Server
+        // walks the closure and refuses.
+        let Some(bin) = morph_bin() else { return };
+        let dir = tempfile::tempdir().unwrap();
+        crate::repo::init_repo(dir.path()).unwrap();
+        let local_store =
+            crate::repo::open_store(&dir.path().join(".morph")).unwrap();
+
+        // Build a commit locally — its closure includes a tree, a
+        // pipeline, an eval suite, and one blob.
+        let blob = MorphObject::Blob(crate::objects::Blob {
+            kind: "data".into(),
+            content: serde_json::json!({"v": 1}),
+        });
+        let blob_h = local_store.put(&blob).unwrap();
+
+        let tree = MorphObject::Tree(crate::objects::Tree {
+            entries: vec![crate::objects::TreeEntry {
+                name: "x".into(),
+                hash: blob_h.to_string(),
+                entry_type: "blob".into(),
+            }],
+        });
+        let tree_h = local_store.put(&tree).unwrap();
+
+        let suite = MorphObject::EvalSuite(crate::objects::EvalSuite {
+            cases: vec![],
+            metrics: vec![],
+        });
+        let suite_h = local_store.put(&suite).unwrap();
+
+        let pipe = MorphObject::Pipeline(crate::objects::Pipeline {
+            graph: crate::objects::PipelineGraph {
+                nodes: vec![],
+                edges: vec![],
+            },
+            prompts: vec![],
+            eval_suite: Some(suite_h.to_string()),
+            attribution: None,
+            provenance: None,
+        });
+        let pipe_h = local_store.put(&pipe).unwrap();
+
+        let commit = MorphObject::Commit(crate::objects::Commit {
+            parents: vec![],
+            tree: Some(tree_h.to_string()),
+            pipeline: pipe_h.to_string(),
+            eval_contract: crate::objects::EvalContract {
+                suite: suite_h.to_string(),
+                observed_metrics: Default::default(),
+            },
+            message: "hello".into(),
+            timestamp: "2026-04-26T00:00:00Z".into(),
+            author: "morph".into(),
+            contributors: None,
+            env_constraints: None,
+            evidence_refs: None,
+            morph_version: None,
+            morph_instance: None,
+        });
+        let commit_h = local_store.put(&commit).unwrap();
+
+        // Spin up a fresh remote bare repo and connect.
+        let remote_dir = tempfile::tempdir().unwrap();
+        crate::repo::init_repo(remote_dir.path()).unwrap();
+        let spawn = LocalSpawn::new(bin, remote_dir.path());
+        let remote = SshStore::connect(&spawn).unwrap();
+
+        // Upload only the commit, intentionally leaving the tree
+        // (and therefore the blob) absent on the remote.
+        let _ = remote.put(&commit).unwrap();
+
+        // The ref-write must be rejected because the tree is
+        // missing on the server side.
+        let err = remote
+            .ref_write("heads/main", &commit_h)
+            .expect_err("partial closure must be rejected");
+        assert!(
+            matches!(err, MorphError::NotFound(_)),
+            "expected NotFound, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn ssh_ref_write_rejects_failed_push_gate() {
+        // PR 6 stage F cycle 28 RED→GREEN: when the bare/working
+        // repo configures `push_gated_branches: ["main"]` with a
+        // required metric, a ref-write of an uncertified commit
+        // must be refused by the helper before reaching the ref
+        // store. The error should travel back to the client as a
+        // clear "push gate failed" message.
+        let Some(bin) = morph_bin() else { return };
+        let dir = tempfile::tempdir().unwrap();
+        crate::repo::init_repo(dir.path()).unwrap();
+        let morph_dir = dir.path().join(".morph");
+
+        // Configure the gate before connecting so the running
+        // helper sees it on every RefWrite.
+        let policy = crate::policy::RepoPolicy {
+            required_metrics: vec!["acc".into()],
+            push_gated_branches: vec!["main".into()],
+            ..Default::default()
+        };
+        crate::policy::write_policy(&morph_dir, &policy).unwrap();
+
+        // Build a commit locally that lacks the required metric
+        // and is not certified — this is what gate_check will
+        // refuse.
+        let local_store = crate::repo::open_store(&morph_dir).unwrap();
+        std::fs::write(dir.path().join("f.txt"), "data").unwrap();
+        crate::add_paths(local_store.as_ref(), dir.path(), &[std::path::PathBuf::from(".")])
+            .unwrap();
+        let commit_h = crate::create_tree_commit(
+            local_store.as_ref(),
+            dir.path(),
+            None,
+            None,
+            std::collections::BTreeMap::new(),
+            "no metrics".into(),
+            None,
+            Some("0.3"),
+        )
+        .unwrap();
+        drop(local_store);
+
+        let spawn = LocalSpawn::new(bin, dir.path());
+        let store = SshStore::connect(&spawn).unwrap();
+
+        let err = store
+            .ref_write("heads/main", &commit_h)
+            .expect_err("push gate should reject");
+        let msg = format!("{}", err);
+        assert!(msg.contains("push gate"), "got: {}", msg);
+        assert!(msg.contains("main"), "got: {}", msg);
+
+        // Pushing to a non-gated branch must still succeed,
+        // proving the gate is scoped correctly.
+        store
+            .ref_write("heads/feature", &commit_h)
+            .expect("non-gated branch should accept the same commit");
     }
 
     #[test]

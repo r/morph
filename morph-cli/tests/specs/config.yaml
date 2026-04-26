@@ -1,0 +1,137 @@
+# PR 6 stage A: `morph config user.name|user.email` round-trip
+# through `.morph/config.json`. Other keys are rejected with a
+# helpful error so we don't accidentally accept typos.
+
+- name: config_set_and_get_user_name
+  files: {}
+  steps:
+    - morph: [config, "user.name", "Raffi"]
+    - morph: [config, "user.name"]
+      stdout_contains: "Raffi"
+  assert:
+    - kind: file_contains
+      path: .morph/config.json
+      contents: "Raffi"
+
+- name: config_set_and_get_user_email
+  files: {}
+  steps:
+    - morph: [config, "user.email", "r@example.com"]
+    - morph: [config, "user.email"]
+      stdout_contains: "r@example.com"
+  assert:
+    - kind: file_contains
+      path: .morph/config.json
+      contents: "r@example.com"
+
+- name: config_explicit_get_form
+  files: {}
+  steps:
+    - morph: [config, "user.name", "Carol"]
+    - morph: [config, --get, "user.name"]
+      stdout_contains: "Carol"
+
+- name: config_get_unset_key_exits_one
+  files: {}
+  steps:
+    - morph: [config, "user.name"]
+      expect_exit: 1
+
+- name: config_unsupported_key_errors
+  files: {}
+  steps:
+    - morph: [config, "remote.origin.url", "ssh://x"]
+      expect_exit: 1
+      stderr_contains:
+        - "unsupported config key"
+        - "user.name"
+
+- name: config_set_overwrites_previous_value
+  files: {}
+  steps:
+    - morph: [config, "user.name", "First"]
+    - morph: [config, "user.name", "Second"]
+    - morph: [config, "user.name"]
+      stdout_contains: "Second"
+
+# PR 6 stage A cycle 3: name-only config is reflected on commits.
+- name: commit_uses_user_name_from_config
+  files:
+    a.txt: "x"
+  steps:
+    - morph: [config, "user.name", "Raffi"]
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "init", --json]
+      capture_json_field:
+        var: commit_hash
+        field: hash
+      assert_hash: true
+    - morph: [show, "${commit_hash}"]
+      stdout_contains: '"author": "Raffi"'
+
+# Cycle 4: name + email combined.
+- name: commit_uses_user_name_and_email_from_config
+  files:
+    a.txt: "x"
+  steps:
+    - morph: [config, "user.name", "Raffi"]
+    - morph: [config, "user.email", "r@example.com"]
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "init", --json]
+      capture_json_field:
+        var: commit_hash
+        field: hash
+      assert_hash: true
+    - morph: [show, "${commit_hash}"]
+      stdout_contains: '"author": "Raffi <r@example.com>"'
+
+# Cycle 5: explicit --author wins over env, env wins over config.
+- name: commit_explicit_author_overrides_config
+  files:
+    a.txt: "x"
+  steps:
+    - morph: [config, "user.name", "FromConfig"]
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "init", --author, "Override", --json]
+      capture_json_field:
+        var: commit_hash
+        field: hash
+      assert_hash: true
+    - morph: [show, "${commit_hash}"]
+      stdout_contains: '"author": "Override"'
+
+# PR 6 stage B cycle 8: every commit carries the repo's
+# auto-generated `agent.instance_id` so cross-machine merges can
+# identify which laptop / agent produced each parent.
+- name: commit_carries_agent_instance_id
+  files:
+    a.txt: "x"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "init", --json]
+      capture_json_field:
+        var: commit_hash
+        field: hash
+      assert_hash: true
+    - morph: [show, "${commit_hash}"]
+      stdout_contains: '"morph_instance": "morph-'
+
+- name: config_user_keys_coexist_with_remotes_block
+  files:
+    a.txt: "x"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "init"]
+    - morph: [remote, add, origin, /tmp/some-remote]
+    - morph: [config, "user.name", "Raffi"]
+    - morph: [config, "user.email", "r@example.com"]
+  assert:
+    - kind: file_contains
+      path: .morph/config.json
+      contents: "Raffi"
+    - kind: file_contains
+      path: .morph/config.json
+      contents: "r@example.com"
+    - kind: file_contains
+      path: .morph/config.json
+      contents: "origin"

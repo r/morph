@@ -43,6 +43,15 @@ pub enum MorphError {
         local_tip: String,
         remote_tip: String,
     },
+    /// Remote speaks a protocol or repo schema version this binary does not
+    /// support. The CLI surfaces this with a clear hint to upgrade either
+    /// the local `morph` or the remote helper. Introduced in PR 6 stage E.
+    #[error("Incompatible remote: remote {reason}={remote}, local {reason}={local}")]
+    IncompatibleRemote {
+        remote: String,
+        local: String,
+        reason: String,
+    },
 }
 
 /// Object type filter for list operations.

@@ -1,0 +1,164 @@
+name: release-homebrew
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    outputs:
+      workspace_version: ${{ steps.meta.outputs.workspace_version }}
+      timestamp: ${{ steps.meta.outputs.timestamp }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        shell: bash
+        run: |
+          workspace_version="$(python - <<'PY'
+          import tomllib
+          with open("Cargo.toml", "rb") as f:
+              data = tomllib.load(f)
+          print(data["workspace"]["package"]["version"])
+          PY
+          )"
+          timestamp="$(date -u +%Y%m%d%H%M%S)"
+          echo "workspace_version=${workspace_version}" >> "$GITHUB_OUTPUT"
+          echo "timestamp=${timestamp}" >> "$GITHUB_OUTPUT"
+
+  build-artifacts:
+    needs: metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-13
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build morph binaries
+        shell: bash
+        run: cargo build --release -p morph-cli -p morph-mcp
+      - name: Package binaries
+        shell: bash
+        run: |
+          archive_name="morph-${{ matrix.target }}.tar.gz"
+          package_dir="package/${{ matrix.target }}"
+          mkdir -p "${package_dir}"
+          cp target/release/morph "${package_dir}/morph"
+          cp target/release/morph-mcp "${package_dir}/morph-mcp"
+          tar -C "${package_dir}" -czf "${archive_name}" morph morph-mcp
+          shasum -a 256 "${archive_name}" > "${archive_name}.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            morph-${{ matrix.target }}.tar.gz
+            morph-${{ matrix.target }}.tar.gz.sha256
+
+  publish-and-update-tap:
+    needs:
+      - metadata
+      - build-artifacts
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      HOMEBREW_TAP_REPO: ${{ vars.HOMEBREW_TAP_REPO }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+      - name: Publish commit release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="commit-${GITHUB_SHA::12}"
+          publish_version="${{ needs.metadata.outputs.workspace_version }}.${{ needs.metadata.outputs.timestamp }}"
+
+          if gh release view "${tag}" > /dev/null 2>&1; then
+            gh release upload "${tag}" dist/*.tar.gz dist/*.sha256 --clobber
+          else
+            gh release create "${tag}" dist/*.tar.gz dist/*.sha256 \
+              --title "Morph commit ${GITHUB_SHA::12}" \
+              --notes "Automated build for ${GITHUB_SHA} (version ${publish_version})."
+          fi
+
+          echo "TAG=${tag}" >> "$GITHUB_ENV"
+          echo "PUBLISH_VERSION=${publish_version}" >> "$GITHUB_ENV"
+      - name: Update Homebrew tap formula
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "${HOMEBREW_TAP_TOKEN:-}" ]; then
+            echo "HOMEBREW_TAP_TOKEN secret is required to push formula updates."
+            exit 1
+          fi
+
+          tap_repo="${HOMEBREW_TAP_REPO:-r/homebrew-morph}"
+          arm_file="morph-aarch64-apple-darwin.tar.gz"
+          intel_file="morph-x86_64-apple-darwin.tar.gz"
+          arm_sha="$(cut -d' ' -f1 < "dist/${arm_file}.sha256")"
+          intel_sha="$(cut -d' ' -f1 < "dist/${intel_file}.sha256")"
+
+          release_base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          tap_remote="https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${tap_repo}.git"
+
+          rm -rf tap-repo
+          git clone "${tap_remote}" tap-repo
+          mkdir -p tap-repo/Formula
+
+          cat > tap-repo/Formula/morph.rb <<EOF
+          class Morph < Formula
+            desc "Git for AI-assisted development"
+            homepage "https://github.com/${GITHUB_REPOSITORY}"
+            version "${PUBLISH_VERSION}"
+            license "MIT"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "${release_base}/${arm_file}"
+                sha256 "${arm_sha}"
+              else
+                url "${release_base}/${intel_file}"
+                sha256 "${intel_sha}"
+              end
+            end
+
+            head "https://github.com/${GITHUB_REPOSITORY}.git", branch: "main"
+
+            def install
+              bin.install "morph", "morph-mcp"
+            end
+
+            test do
+              assert_match "morph", shell_output("#{bin}/morph --version")
+              assert_match "morph-mcp", shell_output("#{bin}/morph-mcp --version")
+            end
+          end
+          EOF
+
+          git -C tap-repo add Formula/morph.rb
+          if git -C tap-repo diff --cached --quiet; then
+            echo "No tap changes to commit."
+            exit 0
+          fi
+
+          git -C tap-repo config user.name "github-actions[bot]"
+          git -C tap-repo config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C tap-repo commit -m "Update morph formula for ${TAG}"
+          git -C tap-repo push

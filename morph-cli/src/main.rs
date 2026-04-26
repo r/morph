@@ -139,13 +139,29 @@ fn main() -> anyhow::Result<()> {
     let verbose = cli.verbose;
 
     match cli.command {
-        Command::Init { path } => {
-            verbose_msg(verbose, &format!("initializing repo at {}", path.display()));
-            morph_core::init_repo(&path)?;
-            let abs_morph = path.canonicalize()
-                .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(&path))
-                .join(".morph");
-            println!("Initialized empty Morph repository in {}/", abs_morph.display());
+        Command::Init { path, bare } => {
+            verbose_msg(
+                verbose,
+                &format!(
+                    "initializing {} repo at {}",
+                    if bare { "bare" } else { "working" },
+                    path.display()
+                ),
+            );
+            if bare {
+                morph_core::init_bare(&path)?;
+                let abs = path
+                    .canonicalize()
+                    .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(&path));
+                println!("Initialized bare Morph repository in {}/", abs.display());
+            } else {
+                morph_core::init_repo(&path)?;
+                let abs_morph = path
+                    .canonicalize()
+                    .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(&path))
+                    .join(".morph");
+                println!("Initialized empty Morph repository in {}/", abs_morph.display());
+            }
         }
 
         #[cfg(feature = "cursor-setup")]
@@ -486,9 +502,14 @@ fn main() -> anyhow::Result<()> {
             let index = morph_core::read_index(&morph_dir)?;
             let file_count = index.entries.len();
 
+            let resolved_author = morph_core::resolve_author_for_repo(
+                &morph_dir,
+                author.as_deref(),
+            )?;
             let hash = morph_core::create_tree_commit_with_provenance(
                 &store, &repo_root, prog_hash.as_ref(), suite_hash.as_ref(),
-                observed_metrics, message.clone(), author, Some(&version), provenance.as_ref(),
+                observed_metrics, message.clone(), Some(resolved_author),
+                Some(&version), provenance.as_ref(),
             )?;
 
             if json {
@@ -905,7 +926,11 @@ fn main() -> anyhow::Result<()> {
                 serde_json::from_str(&metrics).map_err(|e| anyhow::anyhow!("invalid --metrics JSON: {}", e))?;
             let retired: Option<Vec<String>> = retire.map(|s| s.split(',').map(|m| m.trim().to_string()).collect());
             let plan = morph_core::prepare_merge(&store, &branch, suite_hash_opt.as_ref(), retired.as_deref())?;
-            let hash = morph_core::execute_merge(&store, &plan, &prog_hash, observed, message, author, Some(&repo_root), Some(&version))?;
+            let resolved_author = morph_core::resolve_author_for_repo(
+                &morph_dir,
+                author.as_deref(),
+            )?;
+            let hash = morph_core::execute_merge(&store, &plan, &prog_hash, observed, message, Some(resolved_author), Some(&repo_root), Some(&version))?;
             println!("{}", hash);
         }
 
@@ -1102,6 +1127,53 @@ fn main() -> anyhow::Result<()> {
             let (_repo_root, store) = get_store(verbose)?;
             for (name, hash) in morph_core::list_refs(store.as_ref())? {
                 println!("{}\t{}", hash, name);
+            }
+        }
+
+        Command::Config { key, value, get } => {
+            // PR 6 stage A: a minimal `morph config` subcommand.
+            // Today only `user.name` and `user.email` are first-class;
+            // unknown keys produce a helpful error rather than
+            // silently writing to a generic JSON tree.
+            let (repo_root, _) = get_store(verbose)?;
+            let morph_dir = repo_root.join(".morph");
+            let getting = get || value.is_none();
+            let (cfg_name, cfg_email) = morph_core::read_identity_config(&morph_dir)?;
+            match key.as_str() {
+                "user.name" => {
+                    if getting {
+                        match cfg_name {
+                            Some(v) => println!("{}", v),
+                            None => std::process::exit(1),
+                        }
+                    } else {
+                        morph_core::write_identity_config(
+                            &morph_dir,
+                            value.as_deref(),
+                            None,
+                        )?;
+                    }
+                }
+                "user.email" => {
+                    if getting {
+                        match cfg_email {
+                            Some(v) => println!("{}", v),
+                            None => std::process::exit(1),
+                        }
+                    } else {
+                        morph_core::write_identity_config(
+                            &morph_dir,
+                            None,
+                            value.as_deref(),
+                        )?;
+                    }
+                }
+                other => {
+                    return Err(anyhow::anyhow!(
+                        "unsupported config key '{}'. Supported keys: user.name, user.email",
+                        other
+                    ));
+                }
             }
         }
 
