@@ -44,6 +44,26 @@ fn verbose_msg(on: bool, msg: &str) {
     }
 }
 
+/// Default destination directory for `morph clone`. Mirrors git:
+/// the basename of the URL, minus a trailing `.morph` if present.
+/// e.g. `you@host:repos/myproject.morph` → `myproject`.
+fn default_clone_dest(url: &str) -> String {
+    let trimmed = url.trim_end_matches('/');
+    let after_colon = trimmed.rsplit_once(':').map(|(_, p)| p).unwrap_or(trimmed);
+    let after_slash = after_colon.rsplit('/').next().unwrap_or(after_colon);
+    let base = after_slash.trim_end_matches(".morph");
+    if base.is_empty() {
+        "morph-clone".to_string()
+    } else {
+        base.to_string()
+    }
+}
+
+/// Truncate a hex hash to its 8-character prefix for display.
+fn short_hash(h: &str) -> String {
+    h.chars().take(8).collect()
+}
+
 fn print_tap_task(task: &morph_core::TapTask) {
     println!("=== Run {} ===", &task.run_hash[..12]);
     println!("  model: {}  agent: {}  events: {}  steps: {}",
@@ -162,6 +182,42 @@ fn main() -> anyhow::Result<()> {
                     .join(".morph");
                 println!("Initialized empty Morph repository in {}/", abs_morph.display());
             }
+        }
+
+        Command::Clone { url, destination, branch, bare } => {
+            let dest = destination.unwrap_or_else(|| std::path::PathBuf::from(default_clone_dest(&url)));
+            verbose_msg(
+                verbose,
+                &format!(
+                    "cloning {} -> {} ({} clone)",
+                    url,
+                    dest.display(),
+                    if bare { "bare" } else { "working" }
+                ),
+            );
+            let outcome = morph_core::clone_repo(
+                &url,
+                &dest,
+                morph_core::CloneOpts { branch, bare },
+            )?;
+            let abs = dest
+                .canonicalize()
+                .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(&dest));
+            println!(
+                "Cloned {} into {}",
+                url,
+                if bare {
+                    format!("{}/ (bare)", abs.display())
+                } else {
+                    abs.display().to_string()
+                }
+            );
+            println!(
+                "  branch:  {} ({})",
+                outcome.branch,
+                short_hash(&outcome.tip.to_string())
+            );
+            println!("  fetched: {} branch(es)", outcome.fetched.len());
         }
 
         #[cfg(feature = "cursor-setup")]
@@ -1425,4 +1481,29 @@ fn handle_traces_command(verbose: bool, sub: TracesCmd) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// PR 8: `default_clone_dest` mirrors `git clone`'s
+    /// directory-naming heuristic: take the last URL segment, strip
+    /// a trailing `.morph` if present.
+    #[test]
+    fn default_clone_dest_strips_morph_suffix() {
+        assert_eq!(default_clone_dest("you@host:repos/myproject.morph"), "myproject");
+        assert_eq!(default_clone_dest("ssh://you@host/srv/proj.morph"), "proj");
+        assert_eq!(default_clone_dest("/tmp/foo.morph"), "foo");
+        assert_eq!(default_clone_dest("/tmp/bar/"), "bar");
+        assert_eq!(default_clone_dest("plain"), "plain");
+        assert_eq!(default_clone_dest(""), "morph-clone");
+    }
+
+    #[test]
+    fn short_hash_truncates_to_eight_chars() {
+        assert_eq!(short_hash("abcdef0123456789abcdef0123456789"), "abcdef01");
+        assert_eq!(short_hash("abc"), "abc");
+        assert_eq!(short_hash(""), "");
+    }
 }

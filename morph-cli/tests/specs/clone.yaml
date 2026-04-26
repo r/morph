@@ -1,0 +1,148 @@
+# PR 8: `morph clone` end-to-end specs.
+#
+# Composes init + remote add + fetch + checkout + branch
+# --set-upstream into a single command users expect from Git.
+
+- name: clone_into_empty_directory_creates_working_repo
+  init: false
+  dirs:
+    - source
+  steps:
+    - morph: [init, "${repo}/source"]
+    - write_file:
+        path: source/hello.txt
+        content: "world"
+    - morph: [add, hello.txt]
+      cwd: source
+    - morph: [commit, -m, "first commit"]
+      cwd: source
+
+    # Clone into a sibling directory.
+    - morph: [clone, "${repo}/source", "${repo}/dest"]
+      stdout_contains:
+        - "Cloned"
+        - "branch:  main"
+        - "fetched: 1 branch"
+  assert:
+    - kind: file_exists
+      path: dest/.morph/refs/heads/main
+    - kind: file_exists
+      path: dest/.morph/refs/remotes/origin/main
+    - kind: file_exists
+      path: dest/hello.txt
+
+- name: clone_with_explicit_branch_checks_out_that_branch
+  init: false
+  dirs:
+    - source
+  steps:
+    - morph: [init, "${repo}/source"]
+    - write_file:
+        path: source/main.txt
+        content: "on main"
+    - morph: [add, main.txt]
+      cwd: source
+    - morph: [commit, -m, "main commit"]
+      cwd: source
+    - morph: [branch, feature]
+      cwd: source
+    - morph: [checkout, feature]
+      cwd: source
+    - write_file:
+        path: source/feature.txt
+        content: "on feature"
+    - morph: [add, feature.txt]
+      cwd: source
+    - morph: [commit, -m, "feature commit"]
+      cwd: source
+    - morph: [checkout, main]
+      cwd: source
+
+    - morph: [clone, "${repo}/source", "${repo}/dest", --branch, feature]
+      stdout_contains:
+        - "branch:  feature"
+  assert:
+    - kind: file_exists
+      path: dest/feature.txt
+    - kind: file_exists
+      path: dest/.morph/refs/heads/feature
+
+- name: clone_bare_creates_server_layout_without_working_tree
+  init: false
+  dirs:
+    - source
+  steps:
+    - morph: [init, "${repo}/source"]
+    - write_file:
+        path: source/data.txt
+        content: "data"
+    - morph: [add, data.txt]
+      cwd: source
+    - morph: [commit, -m, "init"]
+      cwd: source
+
+    - morph: [clone, "${repo}/source", "${repo}/server.morph", --bare]
+      stdout_contains:
+        - "(bare)"
+  assert:
+    # Bare layout: refs at repo root, no .morph/ wrapper, no working tree.
+    - kind: file_exists
+      path: server.morph/refs/heads/main
+    - kind: dir_exists
+      path: server.morph/objects
+    - kind: dir_not_exists
+      path: server.morph/.morph
+    - kind: file_not_exists
+      path: server.morph/data.txt
+
+- name: clone_refuses_existing_non_empty_destination
+  init: false
+  dirs:
+    - source
+    - dest
+  steps:
+    - morph: [init, "${repo}/source"]
+    - write_file:
+        path: source/x.txt
+        content: "x"
+    - morph: [add, x.txt]
+      cwd: source
+    - morph: [commit, -m, "init"]
+      cwd: source
+
+    - write_file:
+        path: dest/keep_me.txt
+        content: "preexisting"
+
+    - morph: [clone, "${repo}/source", "${repo}/dest"]
+      expect_exit: 1
+      stderr_contains:
+        - "not empty"
+  assert:
+    - kind: file_exists
+      path: dest/keep_me.txt
+    - kind: dir_not_exists
+      path: dest/.morph
+
+- name: clone_configures_default_branch_upstream
+  init: false
+  dirs:
+    - source
+  steps:
+    - morph: [init, "${repo}/source"]
+    - write_file:
+        path: source/r.txt
+        content: "r"
+    - morph: [add, r.txt]
+      cwd: source
+    - morph: [commit, -m, "init"]
+      cwd: source
+
+    - morph: [clone, "${repo}/source", "${repo}/dest"]
+
+    # `morph sync` works without an explicit `--set-upstream` because
+    # `morph clone` configures it for us.
+    - morph: [sync]
+      cwd: dest
+      stdout_contains:
+        - "main"

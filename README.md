@@ -76,6 +76,7 @@ morph fetch <remote>             # update remote-tracking refs without merging
 morph branch --set-upstream origin/main   # configure per-branch upstream
 morph sync [branch]              # fetch + pull --merge against the configured upstream
 morph init --bare /srv/repo      # create a bare server repo (for `morph push`)
+morph clone <url> [dest]         # one-shot init + remote add + fetch + checkout
 morph certify --metrics-file f   # certify a commit against policy metrics
 morph gate                       # check if HEAD passes policy (exit 1 on fail)
 morph policy show | set          # view or update repository policy

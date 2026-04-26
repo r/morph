@@ -1233,7 +1233,7 @@ Every SSH session begins with a `Hello` exchange. The server's `Hello` response 
 
 ```json
 {
-  "version": "0.13.0",
+  "version": "0.14.0",
   "protocol_version": 1,
   "repo_version": "0.5"
 }
@@ -1259,7 +1259,31 @@ Every SSH session begins with a `Hello` exchange. The server's `Hello` response 
 
 Empty `push_gated_branches` (the default) reproduces pre-PR6 behavior — no server-side enforcement.
 
-## 17.10 Error Variants
+## 17.10 `morph clone` (PR 8)
+
+`morph_core::clone_repo(remote_url, destination, opts) -> CloneOutcome` packages the multi-machine onboarding flow into a single command. Behavior:
+
+1. Refuse to clone into a non-empty `destination` (preserves any user-authored files).
+2. `init_repo` (or `init_bare` when `opts.bare`).
+3. Configure `origin = remote_url`.
+4. `fetch_remote(local, remote, "origin")` — pulls every branch into `refs/remotes/origin/*`.
+5. Choose a default branch:
+   - explicit `opts.branch`, then
+   - the remote's `HEAD` (filesystem remotes via `ref_read_raw("HEAD")`; SSH remotes don't expose HEAD on the v0 wire), then
+   - `"main"`.
+6. Write `refs/heads/<branch>` and set HEAD to point at it.
+7. `set_branch_upstream("<branch>", { remote: "origin", branch: "<branch>" })` so `morph sync` works immediately.
+8. For working clones, `restore_tree` into the destination; bare clones skip this.
+
+CLI:
+
+```
+morph clone <url-or-path> [destination] [--branch <name>] [--bare]
+```
+
+Default destination is the basename of `url` with any trailing `.morph` stripped (matches `git clone`'s heuristic).
+
+## 17.11 Error Variants
 
 | Variant | Where it comes from |
 |---|---|
@@ -1269,7 +1293,7 @@ Empty `push_gated_branches` (the default) reproduces pre-PR6 behavior — no ser
 | `Serialization("push gate failed for branch '...': ...")` | `enforce_push_gate` rejected a push |
 | `RepoTooOld(...)` / `RepoTooNew(...)` / `UpgradeRequired(...)` | Store-version compatibility checks (Phase 5+) |
 
-## 17.11 Module Map
+## 17.12 Module Map
 
 | File | Phase 8 role |
 |---|---|
@@ -1283,7 +1307,7 @@ Empty `push_gated_branches` (the default) reproduces pre-PR6 behavior — no ser
 | `morph-core/src/repo.rs` | `init_repo`, `init_bare`, `is_bare`, `resolve_morph_dir` |
 | `morph-core/src/agent.rs` | `agent.instance_id` generation/read/write |
 | `morph-core/src/author.rs` | `user.name` / `user.email` resolution |
-| `morph-core/src/sync.rs` | `RemoteSpec`, `read_remotes`, `open_remote_store`, `verify_closure`, branch upstream config |
+| `morph-core/src/sync.rs` | `RemoteSpec`, `read_remotes`, `open_remote_store`, `verify_closure`, branch upstream config, `clone_repo` |
 | `morph-core/src/ssh_proto.rs` | wire types, `MORPH_PROTOCOL_VERSION`, error mapping |
 | `morph-core/src/ssh_store.rs` | `SshStore`, `SshUrl`, `RemoteSpawn`/`LocalSpawn`, `validate_hello` |
 | `morph-core/src/policy.rs` | `RepoPolicy.push_gated_branches`, `enforce_push_gate`, `branch_from_ref` |

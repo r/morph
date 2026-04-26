@@ -37,6 +37,15 @@ morph push origin main
 **On laptop B** (a fresh checkout):
 
 ```bash
+morph clone you@homelab:repos/myproject.morph myproject
+cd myproject
+```
+
+`morph clone` is one-shot: it `init`s the destination, configures `origin`, fetches every branch, checks out the default branch, and wires up the upstream so `morph sync` works immediately. Pass `--branch <name>` to start on a topic branch, or `--bare` to seed a second server from an existing one.
+
+If you'd rather assemble it by hand (e.g. you're scripting a migration) you can run the equivalent steps explicitly:
+
+```bash
 mkdir myproject && cd myproject
 morph init
 morph remote add origin you@homelab:repos/myproject.morph
@@ -126,7 +135,7 @@ morph push origin main
 Every SSH session starts with a `Hello` exchange. Server replies with:
 
 ```
-{"version": "0.13.0", "protocol_version": 1, "repo_version": "0.5"}
+{"version": "0.14.0", "protocol_version": 1, "repo_version": "0.5"}
 ```
 
 The client compares `protocol_version` against its own. On mismatch you get:

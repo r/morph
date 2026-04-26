@@ -585,3 +585,92 @@ fn fetched_commit_preserves_morph_instance_across_ssh() {
         "local and remote instance_ids should be distinct"
     );
 }
+
+/// PR 8 cycle 7: end-to-end `morph clone ssh://…` against a bare
+/// server. Mirrors the laptop-onboarding flow from
+/// MULTI-MACHINE.md: server-side `morph init --bare`, push from
+/// laptop A, then a fresh laptop B `morph clone`s and gets a
+/// fully-wired working repo (origin, remote-tracking ref, local
+/// branch, working tree, configured upstream).
+#[test]
+fn morph_clone_works_against_bare_ssh_server() {
+    let tmp = tempfile::tempdir().unwrap();
+    let server = tmp.path().join("server.morph");
+    let alice = tmp.path().join("alice");
+    fs::create_dir_all(&alice).unwrap();
+
+    init_bare_repo(&server);
+    init_repo(&alice);
+
+    fs::write(alice.join("greeting.txt"), "hello bob").unwrap();
+    let _ = run_morph(&alice, &["add", "greeting.txt"], &[]);
+    let out = run_morph(&alice, &["commit", "-m", "from alice", "--json"], &[]);
+    assert!(out.status.success(), "alice commit failed: {:?}", out);
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let alpha_hash = json["hash"].as_str().unwrap().to_string();
+
+    let url = format!("ssh://fake.host{}", server.display());
+    let _ = run_morph(&alice, &["remote", "add", "origin", &url], &[]);
+    let fake_ssh = write_fake_ssh(tmp.path());
+    let bin = morph_bin();
+    let env = [
+        ("MORPH_SSH", fake_ssh.to_str().unwrap()),
+        ("MORPH_REMOTE_BIN", bin.to_str().unwrap()),
+    ];
+    let out = run_morph(&alice, &["push", "origin", "main"], &env);
+    assert!(
+        out.status.success(),
+        "alice push failed: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // Bob clones the bare server fresh — no `morph init` first,
+    // no manual remote add. The clone should do all of that.
+    let bob = tmp.path().join("bob");
+    let out = Command::new(morph_bin())
+        .arg("clone")
+        .arg(&url)
+        .arg(&bob)
+        .envs(env.iter().copied())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "morph clone over ssh failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Cloned"), "expected `Cloned` line, got: {}", stdout);
+    assert!(stdout.contains("branch:  main"), "expected branch line, got: {}", stdout);
+
+    // Layout sanity: working repo with origin, remote-tracking ref,
+    // local branch, and Alice's file in the working tree.
+    assert!(bob.join(".morph").is_dir(), "bob should have .morph/");
+    assert!(
+        bob.join(".morph/refs/remotes/origin/main").exists(),
+        "bob should have origin/main tracking ref"
+    );
+    let local_main = fs::read_to_string(bob.join(".morph/refs/heads/main")).unwrap();
+    assert_eq!(local_main.trim(), alpha_hash, "bob's main should match alice's tip");
+    assert!(
+        bob.join("greeting.txt").exists(),
+        "bob's working tree should contain alice's file"
+    );
+
+    // The clone configured an upstream so `morph sync` works.
+    let cfg = fs::read_to_string(bob.join(".morph/config.json")).unwrap();
+    let cfg_v: serde_json::Value = serde_json::from_str(&cfg).unwrap();
+    assert_eq!(cfg_v["branches"]["main"]["remote"], "origin");
+    assert_eq!(cfg_v["branches"]["main"]["branch"], "main");
+
+    // And running sync over SSH against the bare server should
+    // succeed cleanly (no work to do, but the upstream wiring is
+    // exercised end-to-end).
+    let out = run_morph(&bob, &["sync"], &env);
+    assert!(
+        out.status.success(),
+        "bob sync after clone failed: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}

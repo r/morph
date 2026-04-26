@@ -37,6 +37,31 @@ pub enum Command {
         #[arg(long)]
         bare: bool,
     },
+    /// Clone a Morph repository from a local path or SSH URL.
+    ///
+    /// Initializes a fresh repo at `destination`, configures the
+    /// source as `origin`, fetches every branch, and checks out
+    /// the default branch. Equivalent to `morph init` +
+    /// `morph remote add origin <url>` + `morph fetch origin` +
+    /// `morph branch --set-upstream origin/<branch>` +
+    /// `morph checkout <branch>` in one step.
+    Clone {
+        /// Source URL or path: `ssh://user@host/path`,
+        /// `user@host:path`, or a local filesystem path.
+        url: String,
+        /// Destination directory. Defaults to the basename of `url`
+        /// with any trailing `.morph` stripped.
+        destination: Option<PathBuf>,
+        /// Branch to check out. Defaults to the remote's HEAD when
+        /// readable (filesystem remotes) or `main` otherwise.
+        #[arg(long)]
+        branch: Option<String>,
+        /// Create a bare clone (no working tree, no `.morph/`
+        /// wrapper). Useful for setting up a new server from an
+        /// existing repo.
+        #[arg(long)]
+        bare: bool,
+    },
     /// Prompt object operations
     Prompt {
         #[command(subcommand)]

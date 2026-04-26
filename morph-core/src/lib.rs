@@ -98,6 +98,7 @@ pub use sync::{
     BranchUpstream, read_branch_upstreams, get_branch_upstream, set_branch_upstream,
     collect_reachable_objects, is_ancestor, verify_closure,
     push_branch, fetch_remote, pull_branch,
+    clone_repo, CloneOpts, CloneOutcome,
     open_remote_store, list_refs,
 };
 pub use policy::{

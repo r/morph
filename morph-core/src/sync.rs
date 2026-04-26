@@ -437,6 +437,149 @@ pub fn open_remote_store(remote_path: &str) -> Result<Box<dyn Store>, MorphError
     crate::repo::open_store(&morph_dir)
 }
 
+// ── Clone (PR 8) ─────────────────────────────────────────────────────
+
+/// Options for [`clone_repo`].
+#[derive(Clone, Debug, Default)]
+pub struct CloneOpts {
+    /// Branch to check out. When `None`, `clone_repo` picks the
+    /// remote's HEAD branch if it can read it (filesystem remotes
+    /// always can; SSH remotes don't expose HEAD on the v0 wire so
+    /// the fallback is `"main"`).
+    pub branch: Option<String>,
+    /// Create a bare destination (no `.morph/` wrapper, no working
+    /// tree restored). Used when cloning to set up a server.
+    pub bare: bool,
+}
+
+/// Result of a successful [`clone_repo`].
+#[derive(Clone, Debug)]
+pub struct CloneOutcome {
+    /// Branch checked out locally.
+    pub branch: String,
+    /// Tip of the checked-out branch.
+    pub tip: Hash,
+    /// Every (branch, tip) fetched from the remote.
+    pub fetched: Vec<(String, Hash)>,
+}
+
+/// PR 8: clone a remote Morph repository to a fresh local
+/// destination. Composes `init_repo` / `init_bare`, `add_remote`,
+/// `fetch_remote`, and the local checkout into a single onboarding
+/// command — the `morph clone` users expect from Git.
+///
+/// Behavior:
+/// - Refuses to clone into a non-empty directory (preserves any
+///   user-authored files just like `git clone` does).
+/// - Configures the new repo with `origin = <remote_url>`.
+/// - Fetches every branch into `refs/remotes/origin/*`.
+/// - Picks the default branch from `opts.branch` → remote HEAD →
+///   `"main"` and writes it to `refs/heads/<branch>`.
+/// - Sets the per-branch upstream to `origin/<branch>` so
+///   `morph sync` works out of the box.
+/// - For working clones (`opts.bare = false`), restores the tree
+///   into the working directory; for bare clones, leaves the
+///   working tree alone.
+pub fn clone_repo(
+    remote_url: &str,
+    destination: &Path,
+    opts: CloneOpts,
+) -> Result<CloneOutcome, MorphError> {
+    if destination.exists() {
+        let mut iter = std::fs::read_dir(destination).map_err(MorphError::Io)?;
+        if iter.next().is_some() {
+            return Err(MorphError::AlreadyExists(format!(
+                "destination '{}' is not empty; refusing to clone over existing files",
+                destination.display()
+            )));
+        }
+    } else {
+        std::fs::create_dir_all(destination).map_err(MorphError::Io)?;
+    }
+
+    let local_store: Box<dyn Store> = if opts.bare {
+        Box::new(crate::repo::init_bare(destination)?)
+    } else {
+        Box::new(crate::repo::init_repo(destination)?)
+    };
+    let morph_dir = if opts.bare {
+        destination.to_path_buf()
+    } else {
+        destination.join(".morph")
+    };
+
+    add_remote(&morph_dir, "origin", remote_url)?;
+
+    let remote_store = open_remote_store(remote_url)?;
+    let fetched = fetch_remote(local_store.as_ref(), remote_store.as_ref(), "origin")?;
+
+    let branch = match &opts.branch {
+        Some(b) => b.clone(),
+        None => detect_default_branch(remote_store.as_ref()),
+    };
+
+    let tracking = format!("remotes/{}/{}", "origin", branch);
+    let tip = local_store.ref_read(&tracking)?.ok_or_else(|| {
+        let available: Vec<String> = fetched.iter().map(|(b, _)| b.clone()).collect();
+        MorphError::NotFound(format!(
+            "branch '{}' not found on remote '{}' (available: {})",
+            branch,
+            remote_url,
+            if available.is_empty() {
+                "none".to_string()
+            } else {
+                available.join(", ")
+            }
+        ))
+    })?;
+
+    let local_ref = format!("heads/{}", branch);
+    local_store.ref_write(&local_ref, &tip)?;
+    crate::commit::set_head_branch(local_store.as_ref(), &branch)?;
+
+    set_branch_upstream(
+        &morph_dir,
+        &branch,
+        BranchUpstream {
+            remote: "origin".into(),
+            branch: branch.clone(),
+        },
+    )?;
+
+    if !opts.bare {
+        if let MorphObject::Commit(commit) = local_store.get(&tip)? {
+            if let Some(tree_hash_str) = &commit.tree {
+                let tree_hash = Hash::from_hex(tree_hash_str)?;
+                crate::tree::restore_tree(local_store.as_ref(), &tree_hash, destination)?;
+            }
+        }
+    }
+
+    Ok(CloneOutcome {
+        branch,
+        tip,
+        fetched,
+    })
+}
+
+/// Best-effort detection of a remote's default branch via `HEAD`.
+/// Filesystem stores expose this directly; SSH stores currently
+/// return an error from `ref_read_raw`, in which case we fall back
+/// to the conventional `"main"`. Either way the user can always
+/// override with `CloneOpts::branch`.
+fn detect_default_branch(remote: &dyn Store) -> String {
+    if let Ok(Some(raw)) = remote.ref_read_raw("HEAD") {
+        let trimmed = raw.trim();
+        if let Some(rest) = trimmed.strip_prefix("ref:") {
+            let path = rest.trim();
+            if let Some(branch) = path.strip_prefix("heads/") {
+                return branch.to_string();
+            }
+        }
+    }
+    "main".to_string()
+}
+
 /// List all refs in the store (heads and remote-tracking).
 /// Returns (ref_name, hash) pairs sorted by name.
 pub fn list_refs(store: &dyn Store) -> Result<Vec<(String, Hash)>, MorphError> {
@@ -1189,6 +1332,200 @@ mod tests {
         assert!(
             names.contains(&"remotes/origin/main"),
             "should list remote-tracking ref"
+        );
+    }
+
+    // ── PR 8: clone_repo ─────────────────────────────────────────────
+
+    /// PR 8 cycle 1: cloning a working repo into an empty destination
+    /// produces a `.morph/` layout, configures `origin`, fetches every
+    /// branch, and checks out the default branch's tree.
+    #[test]
+    fn clone_repo_into_empty_destination_creates_working_repo() {
+        let (remote_dir, remote_store) = setup_repo();
+        let tip = make_commit(remote_store.as_ref(), remote_dir.path(), "from_remote");
+
+        let dest = tempfile::tempdir().unwrap();
+        let dest_path = dest.path().join("clone");
+
+        let outcome = clone_repo(
+            &remote_dir.path().to_string_lossy(),
+            &dest_path,
+            CloneOpts::default(),
+        )
+        .unwrap();
+
+        assert_eq!(outcome.branch, "main");
+        assert_eq!(outcome.tip, tip);
+        assert!(dest_path.join(".morph").is_dir(), ".morph/ should exist");
+        assert!(dest_path.join(".morph/objects").is_dir());
+
+        // origin remote configured.
+        let remotes = read_remotes(&dest_path.join(".morph")).unwrap();
+        assert_eq!(remotes["origin"].path, remote_dir.path().to_string_lossy());
+
+        // local heads/main matches remote tip.
+        let local_store = crate::repo::open_store(&dest_path.join(".morph")).unwrap();
+        let local_main = local_store.ref_read("heads/main").unwrap().unwrap();
+        assert_eq!(local_main, tip);
+
+        // remote-tracking ref also written.
+        let tracking = local_store.ref_read("remotes/origin/main").unwrap().unwrap();
+        assert_eq!(tracking, tip);
+
+        // working tree restored.
+        assert!(
+            dest_path.join("from_remote.txt").exists(),
+            "checked-out file should exist in working tree"
+        );
+    }
+
+    /// PR 8 cycle 2: refuse to clone into a non-empty directory so we
+    /// never silently scribble inside a half-populated workspace.
+    #[test]
+    fn clone_repo_refuses_existing_non_empty_destination() {
+        let (remote_dir, remote_store) = setup_repo();
+        make_commit(remote_store.as_ref(), remote_dir.path(), "remote");
+
+        let dest = tempfile::tempdir().unwrap();
+        let dest_path = dest.path().join("clone");
+        std::fs::create_dir_all(&dest_path).unwrap();
+        std::fs::write(dest_path.join("preexisting.txt"), "do not destroy").unwrap();
+
+        let result = clone_repo(
+            &remote_dir.path().to_string_lossy(),
+            &dest_path,
+            CloneOpts::default(),
+        );
+        assert!(matches!(result, Err(MorphError::AlreadyExists(_))));
+        assert!(
+            dest_path.join("preexisting.txt").exists(),
+            "preexisting file must be untouched on refusal"
+        );
+    }
+
+    /// PR 8 cycle 3: explicit `--branch` overrides the remote's HEAD
+    /// for users who want to clone a topic branch directly.
+    #[test]
+    fn clone_repo_with_explicit_branch_checks_out_that_branch() {
+        let (remote_dir, remote_store) = setup_repo();
+        let _main_tip = make_commit(remote_store.as_ref(), remote_dir.path(), "main_commit");
+        // Create a `feature` branch pointing at a different commit.
+        let feature_tip = {
+            let r = remote_store.as_ref();
+            crate::commit::set_head_branch(r, "feature").unwrap();
+            make_commit(r, remote_dir.path(), "feature_commit")
+        };
+        // Reset HEAD back to main on the remote so our default would
+        // pick `main` if we didn't pass an explicit branch.
+        crate::commit::set_head_branch(remote_store.as_ref(), "main").unwrap();
+
+        let dest = tempfile::tempdir().unwrap();
+        let dest_path = dest.path().join("clone");
+
+        let outcome = clone_repo(
+            &remote_dir.path().to_string_lossy(),
+            &dest_path,
+            CloneOpts {
+                branch: Some("feature".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(outcome.branch, "feature");
+        assert_eq!(outcome.tip, feature_tip);
+        let local_store = crate::repo::open_store(&dest_path.join(".morph")).unwrap();
+        assert_eq!(
+            local_store.ref_read("heads/feature").unwrap().unwrap(),
+            feature_tip
+        );
+        // working tree reflects the feature commit.
+        assert!(dest_path.join("feature_commit.txt").exists());
+    }
+
+    /// PR 8 cycle 4: `--bare` produces a server-shaped layout with no
+    /// working tree restored.
+    #[test]
+    fn clone_repo_into_bare_creates_bare_layout_without_working_tree() {
+        let (remote_dir, remote_store) = setup_repo();
+        let tip = make_commit(remote_store.as_ref(), remote_dir.path(), "remote");
+
+        let dest = tempfile::tempdir().unwrap();
+        let dest_path = dest.path().join("server.morph");
+
+        let outcome = clone_repo(
+            &remote_dir.path().to_string_lossy(),
+            &dest_path,
+            CloneOpts {
+                bare: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(outcome.tip, tip);
+        // Bare layout: objects/ and refs/ at the root, no .morph/ wrapper.
+        assert!(dest_path.join("objects").is_dir());
+        assert!(dest_path.join("refs/heads").is_dir());
+        assert!(!dest_path.join(".morph").exists(), "bare repo has no .morph/ wrapper");
+        // No working tree.
+        assert!(
+            !dest_path.join("remote.txt").exists(),
+            "bare clone must not restore working tree"
+        );
+        // is_bare reads true.
+        assert!(crate::repo::is_bare(&dest_path).unwrap());
+    }
+
+    /// PR 8 cycle 5: a working clone configures the default branch's
+    /// upstream so `morph sync` works out of the box.
+    #[test]
+    fn clone_repo_sets_upstream_for_default_branch() {
+        let (remote_dir, remote_store) = setup_repo();
+        make_commit(remote_store.as_ref(), remote_dir.path(), "remote");
+
+        let dest = tempfile::tempdir().unwrap();
+        let dest_path = dest.path().join("clone");
+
+        clone_repo(
+            &remote_dir.path().to_string_lossy(),
+            &dest_path,
+            CloneOpts::default(),
+        )
+        .unwrap();
+
+        let upstream = get_branch_upstream(&dest_path.join(".morph"), "main")
+            .unwrap()
+            .expect("upstream should be configured by clone");
+        assert_eq!(upstream.remote, "origin");
+        assert_eq!(upstream.branch, "main");
+    }
+
+    /// PR 8 cycle 6: cloning when the requested branch doesn't exist
+    /// on the remote must fail with a clear NotFound.
+    #[test]
+    fn clone_repo_errors_when_requested_branch_missing() {
+        let (remote_dir, remote_store) = setup_repo();
+        make_commit(remote_store.as_ref(), remote_dir.path(), "remote");
+
+        let dest = tempfile::tempdir().unwrap();
+        let dest_path = dest.path().join("clone");
+
+        let err = clone_repo(
+            &remote_dir.path().to_string_lossy(),
+            &dest_path,
+            CloneOpts {
+                branch: Some("does-not-exist".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(&err, MorphError::NotFound(msg) if msg.contains("does-not-exist")),
+            "expected NotFound mentioning the missing branch, got: {:?}",
+            err
         );
     }
 }

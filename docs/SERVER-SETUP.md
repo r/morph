@@ -17,7 +17,7 @@ Verify on the server:
 
 ```bash
 morph --version
-# morph 0.13.0 (built ...)
+# morph 0.14.0 (built ...)
 ```
 
 The server doesn't need any of the IDE integrations (`morph-mcp`, hooks). It only needs the CLI.
@@ -143,7 +143,7 @@ Every connection starts with a `Hello` exchange:
 
 ```
 client → {"op": "Hello"}
-server → {"version": "0.13.0", "protocol_version": 1, "repo_version": "0.5"}
+server → {"version": "0.14.0", "protocol_version": 1, "repo_version": "0.5"}
 ```
 
 - `protocol_version` is a single integer (`MORPH_PROTOCOL_VERSION` in `morph_core::ssh_proto`). Clients that speak a different version reject the session with `IncompatibleRemote`.
