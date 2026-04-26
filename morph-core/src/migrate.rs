@@ -125,6 +125,16 @@ pub fn migrate_0_3_to_0_4(morph_dir: &Path) -> Result<(), MorphError> {
     set_repo_version(morph_dir, "0.4")
 }
 
+/// Migrate a 0.4 repo to 0.5. Config-only bump — `0.5` introduces merge
+/// state files (`.morph/MERGE_*`) and an `unmerged_entries` field on the
+/// staging index, but those changes are additive and don't require any
+/// object rewriting. The bump exists so an old morph binary opening a
+/// fresh-from-PR-3 repo gets a clear `RepoTooNew` error rather than
+/// silently mis-handling an in-progress merge.
+pub fn migrate_0_4_to_0_5(morph_dir: &Path) -> Result<(), MorphError> {
+    set_repo_version(morph_dir, "0.5")
+}
+
 fn set_repo_version(morph_dir: &Path, version: &str) -> Result<(), MorphError> {
     let config_path = morph_dir.join("config.json");
     let config = if config_path.exists() {
@@ -433,5 +443,21 @@ mod tests {
 
         migrate_0_3_to_0_4(&morph_dir).unwrap();
         assert_eq!(crate::repo::read_repo_version(&morph_dir).unwrap(), "0.4");
+    }
+
+    #[test]
+    fn migrate_0_4_to_0_5_writes_correct_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let _ = init_repo(dir.path()).unwrap();
+        let morph_dir = dir.path().join(".morph");
+        set_repo_version(&morph_dir, "0.4").unwrap();
+        assert_eq!(crate::repo::read_repo_version(&morph_dir).unwrap(), "0.4");
+
+        migrate_0_4_to_0_5(&morph_dir).unwrap();
+        assert_eq!(crate::repo::read_repo_version(&morph_dir).unwrap(), "0.5");
+
+        // Idempotent re-runs.
+        migrate_0_4_to_0_5(&morph_dir).unwrap();
+        assert_eq!(crate::repo::read_repo_version(&morph_dir).unwrap(), "0.5");
     }
 }

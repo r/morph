@@ -24,6 +24,14 @@ pub enum MorphError {
     NotRepo,
     #[error("Upgrade required: {0}")]
     UpgradeRequired(String),
+    /// Repo's store version is older than this binary supports. The user
+    /// should run `morph upgrade` in the project directory.
+    #[error("Repo too old: {0}")]
+    RepoTooOld(String),
+    /// Repo's store version is newer than this binary supports. The user
+    /// should update their `morph` binary.
+    #[error("Repo too new: {0}")]
+    RepoTooNew(String),
     #[error("already exists: {0}")]
     AlreadyExists(String),
 }

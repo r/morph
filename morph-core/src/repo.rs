@@ -19,6 +19,10 @@ pub const STORE_VERSION_0_3: &str = "0.3";
 /// Store version with fan-out object layout. "0.4" = Git-format hashing + fan-out objects dir.
 pub const STORE_VERSION_0_4: &str = "0.4";
 
+/// Store version with merge state files and `unmerged_entries` index.
+/// "0.5" = same FsStore layout as 0.4 + multi-machine merge primitives (PR 3).
+pub const STORE_VERSION_0_5: &str = "0.5";
+
 /// Directory names under .morph/
 const OBJECTS_DIR: &str = "objects";
 const REFS_HEADS_DIR: &str = "refs/heads";
@@ -81,18 +85,68 @@ pub fn read_repo_version(morph_dir: &Path) -> Result<String, MorphError> {
     Ok(v.to_string())
 }
 
-/// Ensure the repo's store version is one of `allowed`. If not, returns [MorphError::UpgradeRequired]
-/// with a message that the user must run `morph upgrade` in the project directory (CLI only; MCP cannot upgrade).
+/// Ensure the repo's store version is one of `allowed`. Returns
+/// [`MorphError::RepoTooOld`] when the repo is at a known earlier
+/// version (user should run `morph upgrade`) and [`MorphError::RepoTooNew`]
+/// when the repo is at a version this binary doesn't recognize as a
+/// prior format (user should update their `morph` binary).
 pub fn require_store_version(morph_dir: &Path, allowed: &[&str]) -> Result<(), MorphError> {
     let current = read_repo_version(morph_dir)?;
     if allowed.contains(&current.as_str()) {
         return Ok(());
     }
-    Err(MorphError::UpgradeRequired(format!(
-        "Repo store version is {}; this tool requires one of [{}]. Run `morph upgrade` in the project directory (morph-cli only), then retry.",
-        current,
-        allowed.join(", ")
-    )))
+    if is_known_prior_version(&current, allowed) {
+        Err(MorphError::RepoTooOld(format!(
+            "Repo store version is {}; this tool requires one of [{}]. Run `morph upgrade` in the project directory (morph-cli only), then retry.",
+            current,
+            allowed.join(", ")
+        )))
+    } else {
+        Err(MorphError::RepoTooNew(format!(
+            "Repo store version is {}; this tool only knows up to [{}]. Update your `morph` binary, then retry.",
+            current,
+            allowed.join(", ")
+        )))
+    }
+}
+
+/// True if `current` is one of the well-known prior versions, OR if it
+/// numerically compares less than every version in `allowed`. Mostly the
+/// former is sufficient since we maintain the full list of prior versions
+/// here, but the numeric check guards against unknown intermediate
+/// versions (e.g. a 0.4.1 hot-fix repo) being misclassified as too new.
+fn is_known_prior_version(current: &str, allowed: &[&str]) -> bool {
+    const KNOWN_PRIOR: &[&str] = &[
+        STORE_VERSION_INIT,
+        STORE_VERSION_0_2,
+        STORE_VERSION_0_3,
+        STORE_VERSION_0_4,
+    ];
+    if KNOWN_PRIOR.contains(&current) {
+        return true;
+    }
+    let cur = parse_version(current);
+    if let Some(cur) = cur {
+        let max_allowed = allowed.iter().filter_map(|a| parse_version(a)).fold(None, |acc, v| {
+            Some(match acc {
+                None => v,
+                Some(prev) if v > prev => v,
+                Some(prev) => prev,
+            })
+        });
+        if let Some(max) = max_allowed {
+            return cur < max;
+        }
+    }
+    false
+}
+
+fn parse_version(s: &str) -> Option<(u32, u32, u32)> {
+    let mut parts = s.split('.').map(|p| p.parse::<u32>().ok());
+    let major = parts.next().flatten()?;
+    let minor = parts.next().flatten().unwrap_or(0);
+    let patch = parts.next().flatten().unwrap_or(0);
+    Some((major, minor, patch))
 }
 
 /// Open the store for an existing repo at `morph_dir`. Returns the backend appropriate for
@@ -100,7 +154,7 @@ pub fn require_store_version(morph_dir: &Path, allowed: &[&str]) -> Result<(), M
 pub fn open_store(morph_dir: &Path) -> Result<Box<dyn Store>, MorphError> {
     let version = read_repo_version(morph_dir)?;
     Ok(match version.as_str() {
-        STORE_VERSION_0_4 => Box::new(FsStore::new_git_fanout(morph_dir)),
+        STORE_VERSION_0_5 | STORE_VERSION_0_4 => Box::new(FsStore::new_git_fanout(morph_dir)),
         STORE_VERSION_0_2 | STORE_VERSION_0_3 => Box::new(FsStore::new_git(morph_dir)),
         _ => Box::new(FsStore::new(morph_dir)),
     })
@@ -206,11 +260,90 @@ mod tests {
 
     #[test]
     fn require_store_version_err_when_not_allowed() {
+        // Repo is at 0.0 (legacy), allowed is 0.1. 0.0 is a known prior
+        // version → RepoTooOld.
         let dir = tempfile::tempdir().unwrap();
         let _ = init_repo(dir.path()).unwrap();
         let morph_dir = dir.path().join(".morph");
         let err = require_store_version(&morph_dir, &["0.1"]).unwrap_err();
-        assert!(matches!(err, MorphError::UpgradeRequired(_)));
+        assert!(
+            matches!(err, MorphError::RepoTooOld(_)),
+            "expected RepoTooOld for legacy repo, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn require_store_version_returns_repo_too_old_for_known_lower_version() {
+        // Repo is at 0.3 (known prior), allowed is 0.5 → RepoTooOld with
+        // message that points users at `morph upgrade`.
+        let dir = tempfile::tempdir().unwrap();
+        let _ = init_repo(dir.path()).unwrap();
+        let morph_dir = dir.path().join(".morph");
+        std::fs::write(
+            morph_dir.join("config.json"),
+            r#"{"repo_version":"0.3"}"#,
+        )
+        .unwrap();
+        let err = require_store_version(&morph_dir, &[STORE_VERSION_0_5]).unwrap_err();
+        match err {
+            MorphError::RepoTooOld(msg) => {
+                assert!(
+                    msg.contains("morph upgrade"),
+                    "RepoTooOld message must direct user to `morph upgrade`, got: {}",
+                    msg
+                );
+            }
+            other => panic!("expected RepoTooOld, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn require_store_version_returns_repo_too_new_for_unknown_higher_version() {
+        // Repo claims 0.99 (a future, unknown version) and allowed is 0.5
+        // → RepoTooNew with message that directs user to update binary.
+        let dir = tempfile::tempdir().unwrap();
+        let _ = init_repo(dir.path()).unwrap();
+        let morph_dir = dir.path().join(".morph");
+        std::fs::write(
+            morph_dir.join("config.json"),
+            r#"{"repo_version":"0.99"}"#,
+        )
+        .unwrap();
+        let err = require_store_version(&morph_dir, &[STORE_VERSION_0_5]).unwrap_err();
+        match err {
+            MorphError::RepoTooNew(msg) => {
+                assert!(
+                    msg.contains("Update your") || msg.contains("update your"),
+                    "RepoTooNew message must direct user to update binary, got: {}",
+                    msg
+                );
+            }
+            other => panic!("expected RepoTooNew, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn open_store_handles_0_5() {
+        // 0.5 uses the same fan-out backend as 0.4. Round-trip a blob
+        // through `open_store` to confirm it works.
+        let dir = tempfile::tempdir().unwrap();
+        let _ = init_repo(dir.path()).unwrap();
+        let morph_dir = dir.path().join(".morph");
+        std::fs::write(
+            morph_dir.join("config.json"),
+            r#"{"repo_version":"0.5"}"#,
+        )
+        .unwrap();
+        // Create an objects/.gitignore safety file the way the migration
+        // would have done. Not strictly needed to satisfy the test below.
+        let store = open_store(&morph_dir).unwrap();
+        let blob = crate::objects::MorphObject::Blob(crate::objects::Blob {
+            kind: "x".into(),
+            content: serde_json::json!({}),
+        });
+        let hash = store.put(&blob).unwrap();
+        assert!(store.has(&hash).unwrap());
     }
 
     #[test]

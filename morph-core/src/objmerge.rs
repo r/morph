@@ -93,6 +93,14 @@ pub struct MergeOutcome {
     /// `None` for trivial outcomes, when pipelines are identical, or
     /// when pipemerge surfaced node-level conflicts.
     pub union_pipeline: Option<crate::objects::Pipeline>,
+    /// Effective merged tree hash when 3-way tree merge produced a result.
+    /// May be set even when conflicts exist (treemerge always returns a
+    /// best-effort preview); the CLI must check `conflicts` before using
+    /// it as the merge commit's tree.
+    pub union_tree: Option<Hash>,
+    /// Working-tree operations planned by the tree merger. Applied by
+    /// the CLI after dominance gating in PR 4.
+    pub working_writes: Vec<crate::treemerge::WorkdirOp>,
     /// Conflicts that must be resolved before `morph merge --continue`.
     pub conflicts: Vec<ObjConflict>,
     pub trivial: TrivialOutcome,
@@ -168,6 +176,8 @@ pub fn merge_commits(
             base: Some(*head),
             union_suite: None,
             union_pipeline: None,
+            union_tree: None,
+            working_writes: vec![],
             conflicts: vec![],
             trivial: TrivialOutcome::AlreadyMerged,
         });
@@ -182,6 +192,8 @@ pub fn merge_commits(
     let mut conflicts: Vec<ObjConflict> = Vec::new();
     let mut union_suite: Option<crate::objects::EvalSuite> = None;
     let mut union_pipeline: Option<crate::objects::Pipeline> = None;
+    let mut union_tree: Option<Hash> = None;
+    let mut working_writes: Vec<crate::treemerge::WorkdirOp> = Vec::new();
 
     // Suite / pipeline / tree stages — only run when the merge is non-trivial.
     if matches!(trivial, TrivialOutcome::Diverged) {
@@ -220,12 +232,27 @@ pub fn merge_commits(
             }
         }
 
-        // Tree stub (PR 3 replaces this with real 3-way tree merge).
+        // Tree stage: 3-way structural merge via treemerge. If trees are
+        // identical there is nothing to do. If either side's tree hash
+        // can't be resolved (e.g. placeholder hashes in legacy tests) we
+        // fall back to the legacy stub conflict so prior tests keep
+        // passing.
         if head_commit.tree != other_commit.tree {
-            conflicts.push(ObjConflict::Structural {
-                kind: StructuralKind::TreeDivergent,
-                message: "tree merge not yet implemented (PR 3)".to_string(),
-            });
+            match resolve_tree_merge(store, &head_commit, &other_commit, base.as_ref()) {
+                Ok(out) => {
+                    union_tree = out.merged_tree;
+                    working_writes = out.working_writes;
+                    for c in out.conflicts {
+                        conflicts.push(c);
+                    }
+                }
+                Err(_) => {
+                    conflicts.push(ObjConflict::Structural {
+                        kind: StructuralKind::TreeDivergent,
+                        message: "tree objects unavailable for structural merge".to_string(),
+                    });
+                }
+            }
         }
     }
 
@@ -235,9 +262,40 @@ pub fn merge_commits(
         base,
         union_suite,
         union_pipeline,
+        union_tree,
+        working_writes,
         conflicts,
         trivial,
     })
+}
+
+/// Load the Tree hashes for `head`, `other`, and (optionally) the base
+/// commit, then run the 3-way `treemerge::merge_trees`. Returns `Err`
+/// when any tree hash fails to resolve, so the caller can fall back to
+/// a stub conflict.
+fn resolve_tree_merge(
+    store: &dyn Store,
+    head_commit: &crate::objects::Commit,
+    other_commit: &crate::objects::Commit,
+    base_hash: Option<&Hash>,
+) -> Result<crate::treemerge::TreeMergeOutcome, MorphError> {
+    let head_tree = parse_tree_hash(&head_commit.tree)?;
+    let other_tree = parse_tree_hash(&other_commit.tree)?;
+    let base_tree = match base_hash {
+        Some(b) => {
+            let bc = load_commit(store, b)?;
+            parse_tree_hash(&bc.tree).ok()
+        }
+        None => None,
+    };
+    crate::treemerge::merge_trees(store, base_tree.as_ref(), &head_tree, &other_tree)
+}
+
+fn parse_tree_hash(opt_tree: &Option<String>) -> Result<Hash, MorphError> {
+    let s = opt_tree
+        .as_ref()
+        .ok_or_else(|| MorphError::NotFound("commit has no tree".into()))?;
+    Hash::from_hex(s).map_err(|_| MorphError::InvalidHash(s.clone()))
 }
 
 /// Load the Pipeline objects for `head`, `other`, and (optionally) the base
@@ -920,5 +978,137 @@ mod tests {
         let b = raw_commit(store.as_ref(), &[r], "b");
         let m = raw_commit(store.as_ref(), &[a, b], "m");
         assert_eq!(merge_base(store.as_ref(), &m, &b).unwrap(), Some(b));
+    }
+
+    // ── Stage F: tree merge integration (PR 3) ───────────────────────
+
+    /// Build a real tree from a list of (path, content) pairs, storing
+    /// each blob and the resulting Tree object.
+    fn put_real_tree(store: &dyn Store, files: &[(&str, &str)]) -> Hash {
+        use crate::objects::{Blob, MorphObject};
+        let mut entries: BTreeMap<String, String> = BTreeMap::new();
+        for (path, content) in files {
+            let blob = MorphObject::Blob(Blob {
+                kind: "blob".into(),
+                content: serde_json::json!({ "body": content }),
+            });
+            let h = store.put(&blob).unwrap();
+            entries.insert((*path).to_string(), h.to_string());
+        }
+        crate::tree::build_tree(store, &entries).unwrap()
+    }
+
+    #[test]
+    fn merge_commits_resolves_tree_when_clean() {
+        // base has a.txt and b.txt; ours edits a.txt; theirs edits b.txt.
+        // The tree merger must resolve cleanly with no Textual conflicts,
+        // populate union_tree, and plan working writes for both files.
+        let (_dir, store) = setup_repo();
+        let s = put_suite(store.as_ref(), vec![metric("acc", 0.8)]);
+        let base_tree = put_real_tree(&store, &[("a.txt", "old\n"), ("b.txt", "old\n")]);
+        let ours_tree = put_real_tree(&store, &[("a.txt", "OURS\n"), ("b.txt", "old\n")]);
+        let theirs_tree = put_real_tree(&store, &[("a.txt", "old\n"), ("b.txt", "THEIRS\n")]);
+
+        let r = raw_commit_full(store.as_ref(), &[], "r", Some(&s), None, Some(&base_tree));
+        let a = raw_commit_full(store.as_ref(), &[r], "a", Some(&s), None, Some(&ours_tree));
+        let b = raw_commit_full(store.as_ref(), &[r], "b", Some(&s), None, Some(&theirs_tree));
+
+        let outcome = merge_commits(store.as_ref(), &a, &b, None).unwrap();
+        assert!(
+            !outcome.conflicts.iter().any(|c| matches!(c, ObjConflict::Structural { .. })),
+            "no structural conflicts expected, got: {:?}",
+            outcome.conflicts
+        );
+        assert!(
+            !outcome.conflicts.iter().any(|c| matches!(c, ObjConflict::Textual { .. })),
+            "no textual conflicts expected, got: {:?}",
+            outcome.conflicts
+        );
+        let union = outcome
+            .union_tree
+            .expect("union_tree must be set for clean tree merge");
+        let flat = crate::tree::flatten_tree(store.as_ref(), &union).unwrap();
+        assert_eq!(flat.len(), 2);
+        // The working tree is assumed to start at `head` (== ours), so the
+        // walker plans writes only for paths whose merged content differs
+        // from ours. a.txt was modified only on our side and matches ours
+        // in the merged tree, so no working write is needed for it.
+        // b.txt was modified by theirs, so a write IS planned.
+        assert!(
+            outcome.working_writes.iter().any(|op| matches!(
+                op,
+                crate::treemerge::WorkdirOp::Write { path, bytes }
+                    if path.to_string_lossy() == "b.txt" && bytes == b"THEIRS\n"
+            )),
+            "expected a working write for b.txt with theirs's content, got: {:?}",
+            outcome.working_writes
+        );
+    }
+
+    #[test]
+    fn merge_commits_emits_textual_for_overlapping_edits() {
+        // Both ours and theirs edit the same line of a.txt.
+        let (_dir, store) = setup_repo();
+        let s = put_suite(store.as_ref(), vec![metric("acc", 0.8)]);
+        let base_tree = put_real_tree(&store, &[("a.txt", "line1\nline2\nline3\n")]);
+        let ours_tree = put_real_tree(&store, &[("a.txt", "line1\nOURS\nline3\n")]);
+        let theirs_tree = put_real_tree(&store, &[("a.txt", "line1\nTHEIRS\nline3\n")]);
+
+        let r = raw_commit_full(store.as_ref(), &[], "r", Some(&s), None, Some(&base_tree));
+        let a = raw_commit_full(store.as_ref(), &[r], "a", Some(&s), None, Some(&ours_tree));
+        let b = raw_commit_full(store.as_ref(), &[r], "b", Some(&s), None, Some(&theirs_tree));
+
+        let outcome = merge_commits(store.as_ref(), &a, &b, None).unwrap();
+        let textual_count = outcome
+            .conflicts
+            .iter()
+            .filter(|c| matches!(c, ObjConflict::Textual { path, .. } if path.to_string_lossy() == "a.txt"))
+            .count();
+        assert_eq!(
+            textual_count, 1,
+            "expected one Textual conflict on a.txt, got: {:?}",
+            outcome.conflicts
+        );
+        // Working writes must include a.txt with conflict markers so the
+        // user can resolve.
+        let bytes = outcome
+            .working_writes
+            .iter()
+            .find_map(|op| match op {
+                crate::treemerge::WorkdirOp::Write { path, bytes } if path.to_string_lossy() == "a.txt" => {
+                    Some(bytes.as_slice())
+                }
+                _ => None,
+            })
+            .expect("conflict must plan a working write for a.txt");
+        let s = String::from_utf8_lossy(bytes);
+        assert!(s.contains("<<<<<<<"), "expected conflict markers, got:\n{}", s);
+    }
+
+    #[test]
+    fn merge_commits_modify_delete_emits_tree_divergent() {
+        // Ours modifies a.txt; theirs deletes it. → TreeDivergent (no
+        // longer the legacy stub message).
+        let (_dir, store) = setup_repo();
+        let s = put_suite(store.as_ref(), vec![metric("acc", 0.8)]);
+        let base_tree = put_real_tree(&store, &[("a.txt", "x\n")]);
+        let ours_tree = put_real_tree(&store, &[("a.txt", "MODIFIED\n")]);
+        let theirs_tree = put_real_tree(&store, &[]);
+
+        let r = raw_commit_full(store.as_ref(), &[], "r", Some(&s), None, Some(&base_tree));
+        let a = raw_commit_full(store.as_ref(), &[r], "a", Some(&s), None, Some(&ours_tree));
+        let b = raw_commit_full(store.as_ref(), &[r], "b", Some(&s), None, Some(&theirs_tree));
+
+        let outcome = merge_commits(store.as_ref(), &a, &b, None).unwrap();
+        let modify_delete = outcome.conflicts.iter().any(|c| matches!(
+            c,
+            ObjConflict::Structural { kind: StructuralKind::TreeDivergent, message }
+                if message.contains("modify/delete: a.txt")
+        ));
+        assert!(
+            modify_delete,
+            "expected TreeDivergent modify/delete conflict, got: {:?}",
+            outcome.conflicts
+        );
     }
 }

@@ -21,6 +21,10 @@ pub mod structured;
 pub mod sync;
 pub mod objmerge;
 pub mod pipemerge;
+pub mod text3way;
+pub mod treemerge;
+pub mod merge_state;
+pub mod workdir;
 pub mod policy;
 pub mod diff;
 pub mod tag;
@@ -34,7 +38,7 @@ pub use store::GixStore;
 pub use store::{resolve_hash_prefix, FsStore, MorphError, ObjectType, Store};
 pub use repo::{
     init_repo, open_store, read_repo_version, require_store_version,
-    STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_0_4, STORE_VERSION_INIT,
+    STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_0_4, STORE_VERSION_0_5, STORE_VERSION_INIT,
 };
 pub use identity::identity_pipeline;
 pub use working::{find_repo, blob_from_prompt_file, blob_from_file, materialize_blob, pipeline_from_file, eval_suite_from_file, status, add_paths, StatusEntry, working_status, activity_summary, ActivitySummary};
@@ -47,6 +51,8 @@ pub use objmerge::{
 pub use pipemerge::{
     merge_pipelines, ConflictAxis, NodeConflict, PipelineMergeOutcome,
 };
+pub use text3way::{merge_text, TextMergeLabels, TextMergeResult};
+pub use treemerge::{merge_trees, TreeMergeOutcome, WorkdirOp};
 pub use record::{record_run, record_eval_metrics, record_session, record_conversation, ConversationMessage};
 pub use extract::extract_pipeline_from_run;
 pub use tap::{
@@ -71,7 +77,7 @@ pub use structured::{
 pub use annotate::{create_annotation, list_annotations};
 pub use index::{read_index, write_index, clear_index, update_index, StagingIndex};
 pub use tree::{build_tree, flatten_tree, restore_tree, empty_tree_hash};
-pub use migrate::{migrate_0_0_to_0_2, migrate_0_2_to_0_3, migrate_0_3_to_0_4};
+pub use migrate::{migrate_0_0_to_0_2, migrate_0_2_to_0_3, migrate_0_3_to_0_4, migrate_0_4_to_0_5};
 pub use sync::{
     RemoteSpec, read_remotes, write_remotes, add_remote,
     collect_reachable_objects, is_ancestor,
