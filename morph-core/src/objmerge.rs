@@ -89,6 +89,10 @@ pub struct MergeOutcome {
     /// Effective union eval suite (post-retirement) when reconciliation
     /// succeeded. `None` for trivial outcomes or when suites conflict.
     pub union_suite: Option<crate::objects::EvalSuite>,
+    /// Effective merged pipeline when 3-way pipeline merge succeeded.
+    /// `None` for trivial outcomes, when pipelines are identical, or
+    /// when pipemerge surfaced node-level conflicts.
+    pub union_pipeline: Option<crate::objects::Pipeline>,
     /// Conflicts that must be resolved before `morph merge --continue`.
     pub conflicts: Vec<ObjConflict>,
     pub trivial: TrivialOutcome,
@@ -163,6 +167,7 @@ pub fn merge_commits(
             other: *other,
             base: Some(*head),
             union_suite: None,
+            union_pipeline: None,
             conflicts: vec![],
             trivial: TrivialOutcome::AlreadyMerged,
         });
@@ -176,6 +181,7 @@ pub fn merge_commits(
 
     let mut conflicts: Vec<ObjConflict> = Vec::new();
     let mut union_suite: Option<crate::objects::EvalSuite> = None;
+    let mut union_pipeline: Option<crate::objects::Pipeline> = None;
 
     // Suite / pipeline / tree stages — only run when the merge is non-trivial.
     if matches!(trivial, TrivialOutcome::Diverged) {
@@ -184,14 +190,34 @@ pub fn merge_commits(
             Err(c) => conflicts.push(c),
         }
 
-        // Pipeline stub (PR 2 replaces this with real per-node merge).
         let head_commit = load_commit(store, head)?;
         let other_commit = load_commit(store, other)?;
+
+        // Pipeline stage: 3-way structural merge via pipemerge. If pipelines
+        // are identical there's nothing to do. If either side's pipeline
+        // hash doesn't resolve to a stored Pipeline (e.g. placeholder hash
+        // in tests) we fall back to the legacy stub conflict.
         if head_commit.pipeline != other_commit.pipeline {
-            conflicts.push(ObjConflict::Structural {
-                kind: StructuralKind::PipelineDivergent,
-                message: "pipeline merge not yet implemented (PR 2)".to_string(),
-            });
+            match resolve_pipeline_merge(store, &head_commit, &other_commit, base.as_ref()) {
+                Ok(out) => {
+                    if out.conflicts.is_empty() {
+                        union_pipeline = Some(out.merged);
+                    } else {
+                        for nc in &out.conflicts {
+                            conflicts.push(ObjConflict::Structural {
+                                kind: StructuralKind::PipelineDivergent,
+                                message: format!("node '{}': {}", nc.id, nc.axis),
+                            });
+                        }
+                    }
+                }
+                Err(_) => {
+                    conflicts.push(ObjConflict::Structural {
+                        kind: StructuralKind::PipelineDivergent,
+                        message: "pipeline objects unavailable for structural merge".to_string(),
+                    });
+                }
+            }
         }
 
         // Tree stub (PR 3 replaces this with real 3-way tree merge).
@@ -208,9 +234,44 @@ pub fn merge_commits(
         other: *other,
         base,
         union_suite,
+        union_pipeline,
         conflicts,
         trivial,
     })
+}
+
+/// Load the Pipeline objects for `head`, `other`, and (optionally) the base
+/// commit, then run the 3-way `pipemerge::merge_pipelines`. Returns `Err`
+/// when any pipeline hash fails to resolve, so the caller can fall back to
+/// a stub conflict.
+fn resolve_pipeline_merge(
+    store: &dyn Store,
+    head_commit: &crate::objects::Commit,
+    other_commit: &crate::objects::Commit,
+    base_hash: Option<&Hash>,
+) -> Result<crate::pipemerge::PipelineMergeOutcome, MorphError> {
+    let head_pipe = load_pipeline_by_hex(store, &head_commit.pipeline)?;
+    let other_pipe = load_pipeline_by_hex(store, &other_commit.pipeline)?;
+    let base_pipe = match base_hash {
+        Some(b) => {
+            let bc = load_commit(store, b)?;
+            load_pipeline_by_hex(store, &bc.pipeline).ok()
+        }
+        None => None,
+    };
+    Ok(crate::pipemerge::merge_pipelines(
+        base_pipe.as_ref(),
+        &head_pipe,
+        &other_pipe,
+    ))
+}
+
+fn load_pipeline_by_hex(store: &dyn Store, hex: &str) -> Result<crate::objects::Pipeline, MorphError> {
+    let hash = Hash::from_hex(hex).map_err(|_| MorphError::InvalidHash(hex.to_string()))?;
+    match store.get(&hash)? {
+        MorphObject::Pipeline(p) => Ok(p),
+        _ => Err(MorphError::Serialization(format!("expected Pipeline at {}", hash))),
+    }
 }
 
 /// Suite-stage reconciliation. Loads each commit's `eval_contract.suite`,
@@ -417,6 +478,45 @@ mod tests {
         store
             .put(&MorphObject::EvalSuite(EvalSuite { cases: vec![], metrics }))
             .unwrap()
+    }
+
+    /// Store a Pipeline object and return its hash.
+    fn put_pipeline(
+        store: &dyn Store,
+        nodes: Vec<crate::objects::PipelineNode>,
+        edges: Vec<crate::objects::PipelineEdge>,
+    ) -> Hash {
+        use crate::objects::{MorphObject, Pipeline, PipelineGraph};
+        let p = Pipeline {
+            graph: PipelineGraph { nodes, edges },
+            prompts: vec![],
+            eval_suite: None,
+            attribution: None,
+            provenance: None,
+        };
+        store.put(&MorphObject::Pipeline(p)).unwrap()
+    }
+
+    fn pnode(id: &str, kind: &str) -> crate::objects::PipelineNode {
+        crate::objects::PipelineNode {
+            id: id.to_string(),
+            kind: kind.to_string(),
+            ref_: None,
+            params: BTreeMap::new(),
+            env: None,
+        }
+    }
+
+    fn pnode_param(id: &str, kind: &str, key: &str, val: &str) -> crate::objects::PipelineNode {
+        let mut params = BTreeMap::new();
+        params.insert(key.to_string(), serde_json::json!(val));
+        crate::objects::PipelineNode {
+            id: id.to_string(),
+            kind: kind.to_string(),
+            ref_: None,
+            params,
+            env: None,
+        }
     }
 
     fn metric(name: &str, threshold: f64) -> crate::objects::EvalMetric {
@@ -635,6 +735,99 @@ mod tests {
         let suite = outcome.union_suite.expect("union_suite must be populated");
         assert_eq!(suite.metrics.len(), 1);
         assert_eq!(suite.metrics[0].name, "acc");
+    }
+
+    // ── merge_commits: pipeline 3-way merge integration (PR 2) ───────
+
+    #[test]
+    fn merge_commits_resolves_pipeline_when_pipemerge_clean() {
+        // Both branches add a disjoint node on top of the base pipeline.
+        // pipemerge unions cleanly → no PipelineDivergent conflict and
+        // outcome.union_pipeline is populated.
+        let (_dir, store) = setup_repo();
+        let s = put_suite(store.as_ref(), vec![metric("acc", 0.8)]);
+        let p_base = put_pipeline(store.as_ref(), vec![pnode("a", "prompt_call")], vec![]);
+        let p_ours = put_pipeline(
+            store.as_ref(),
+            vec![pnode("a", "prompt_call"), pnode("b", "tool_call")],
+            vec![],
+        );
+        let p_theirs = put_pipeline(
+            store.as_ref(),
+            vec![pnode("a", "prompt_call"), pnode("c", "transform")],
+            vec![],
+        );
+
+        let r = raw_commit_full(store.as_ref(), &[], "r", Some(&s), Some(&p_base), None);
+        let a = raw_commit_full(store.as_ref(), &[r], "a", Some(&s), Some(&p_ours), None);
+        let b = raw_commit_full(store.as_ref(), &[r], "b", Some(&s), Some(&p_theirs), None);
+
+        let outcome = merge_commits(store.as_ref(), &a, &b, None).unwrap();
+        let pipeline_conflicts: Vec<_> = outcome
+            .conflicts
+            .iter()
+            .filter(|c| matches!(c, ObjConflict::Structural { kind: StructuralKind::PipelineDivergent, .. }))
+            .collect();
+        assert!(
+            pipeline_conflicts.is_empty(),
+            "expected no PipelineDivergent conflicts, got: {:?}",
+            pipeline_conflicts
+        );
+        let merged = outcome
+            .union_pipeline
+            .as_ref()
+            .expect("union_pipeline must be populated when pipemerge is clean");
+        let ids: Vec<_> = merged.graph.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert!(ids.contains(&"a") && ids.contains(&"b") && ids.contains(&"c"));
+    }
+
+    #[test]
+    fn merge_commits_surfaces_node_conflicts_as_structural() {
+        // Both branches modify the same node 'a' differently → pipemerge
+        // produces a ModifyModify NodeConflict, which the dispatcher must
+        // surface as one ObjConflict::Structural { kind: PipelineDivergent }.
+        let (_dir, store) = setup_repo();
+        let s = put_suite(store.as_ref(), vec![metric("acc", 0.8)]);
+        let p_base = put_pipeline(
+            store.as_ref(),
+            vec![pnode_param("a", "prompt_call", "k", "old")],
+            vec![],
+        );
+        let p_ours = put_pipeline(
+            store.as_ref(),
+            vec![pnode_param("a", "prompt_call", "k", "v1")],
+            vec![],
+        );
+        let p_theirs = put_pipeline(
+            store.as_ref(),
+            vec![pnode_param("a", "prompt_call", "k", "v2")],
+            vec![],
+        );
+
+        let r = raw_commit_full(store.as_ref(), &[], "r", Some(&s), Some(&p_base), None);
+        let a = raw_commit_full(store.as_ref(), &[r], "a", Some(&s), Some(&p_ours), None);
+        let b = raw_commit_full(store.as_ref(), &[r], "b", Some(&s), Some(&p_theirs), None);
+
+        let outcome = merge_commits(store.as_ref(), &a, &b, None).unwrap();
+        let pipeline_conflicts: Vec<_> = outcome
+            .conflicts
+            .iter()
+            .filter(|c| matches!(c, ObjConflict::Structural { kind: StructuralKind::PipelineDivergent, .. }))
+            .collect();
+        assert_eq!(
+            pipeline_conflicts.len(),
+            1,
+            "expected one PipelineDivergent per NodeConflict, got: {:?}",
+            outcome.conflicts
+        );
+        // Conflict message must mention the node id so callers can render it.
+        let msg = match pipeline_conflicts[0] {
+            ObjConflict::Structural { message, .. } => message,
+            _ => unreachable!(),
+        };
+        assert!(msg.contains("'a'") || msg.contains("\"a\"") || msg.contains(": a "),
+            "expected message to mention node 'a', got: {}", msg);
+        assert!(outcome.union_pipeline.is_none(), "union_pipeline must be None on conflict");
     }
 
     // ── merge_commits: pipeline / tree stage stubs ───────────────────

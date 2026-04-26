@@ -20,6 +20,7 @@ pub mod language;
 pub mod structured;
 pub mod sync;
 pub mod objmerge;
+pub mod pipemerge;
 pub mod policy;
 pub mod diff;
 pub mod tag;
@@ -42,6 +43,9 @@ pub use metrics::{aggregate, check_thresholds, check_dominance, check_dominance_
 pub use merge::{MergePlan, DominanceResult, DominanceViolation, prepare_merge, execute_merge};
 pub use objmerge::{
     merge_base, merge_commits, MergeOutcome, ObjConflict, StructuralKind, TrivialOutcome,
+};
+pub use pipemerge::{
+    merge_pipelines, ConflictAxis, NodeConflict, PipelineMergeOutcome,
 };
 pub use record::{record_run, record_eval_metrics, record_session, record_conversation, ConversationMessage};
 pub use extract::extract_pipeline_from_run;
