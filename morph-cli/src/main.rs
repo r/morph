@@ -1,6 +1,7 @@
 //! Morph CLI: read path and manual write operations.
 
 mod cli;
+mod remote_helper;
 #[cfg(feature = "cursor-setup")]
 mod setup;
 
@@ -200,6 +201,14 @@ fn main() -> anyhow::Result<()> {
             } else {
                 println!("Store version is {}. No upgrade path.", version);
             }
+        }
+
+        Command::RemoteHelper { repo_root } => {
+            // The helper intentionally bypasses `get_store` so it
+            // can produce a clear "not a morph repository" message
+            // for the SSH client instead of inheriting the CLI's
+            // discover-via-cwd behavior.
+            remote_helper::run(&repo_root)?;
         }
 
         Command::Gc => {
@@ -519,22 +528,52 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        Command::Branch { name } => {
-            let (_repo_root, store) = get_store(verbose)?;
+        Command::Branch { name, set_upstream } => {
+            let (repo_root, store) = get_store(verbose)?;
+            // `branch --set-upstream <remote>/<branch>` works on
+            // the named branch (or current if unspecified).
+            if let Some(spec) = set_upstream {
+                let target = match name.as_ref() {
+                    Some(n) => n.clone(),
+                    None => morph_core::current_branch(&store)?
+                        .ok_or_else(|| anyhow::anyhow!(
+                            "no current branch (detached HEAD?); name a branch explicitly"
+                        ))?,
+                };
+                let (remote, upstream_branch) = spec
+                    .split_once('/')
+                    .ok_or_else(|| anyhow::anyhow!(
+                        "expected <remote>/<branch>, got: {}", spec
+                    ))?;
+                morph_core::set_branch_upstream(
+                    &repo_root.join(".morph"),
+                    &target,
+                    morph_core::BranchUpstream {
+                        remote: remote.to_string(),
+                        branch: upstream_branch.to_string(),
+                    },
+                )?;
+                println!(
+                    "Branch '{}' set up to track '{}/{}'",
+                    target, remote, upstream_branch
+                );
+                return Ok(());
+            }
             if let Some(branch_name) = name {
                 let head = morph_core::resolve_head(&store)?
                     .ok_or_else(|| anyhow::anyhow!("no commit yet; make a commit first"))?;
                 store.ref_write(&format!("heads/{}", branch_name), &head)?;
                 println!("Created branch {}", branch_name);
             } else {
-                let refs_dir = store.refs_dir().join("heads");
-                if refs_dir.exists() {
-                    let current = morph_core::current_branch(&store)?;
-                    for e in std::fs::read_dir(&refs_dir)? {
-                        let n = e?.file_name().to_string_lossy().into_owned();
-                        let mark = if current.as_deref() == Some(&n) { "* " } else { "  " };
-                        println!("{}{}", mark, n);
-                    }
+                // Use the transport-neutral `list_branches` so the
+                // same listing works against an SSH-backed remote
+                // store (PR5 Stage D) without any code change here.
+                let current = morph_core::current_branch(&store)?;
+                let mut branches = store.list_branches()?;
+                branches.sort_by(|a, b| a.0.cmp(&b.0));
+                for (name, _hash) in branches {
+                    let mark = if current.as_deref() == Some(&name) { "* " } else { "  " };
+                    println!("{}{}", mark, name);
                 }
             }
         }
@@ -879,13 +918,20 @@ fn main() -> anyhow::Result<()> {
             RemoteCmd::Add { name, path } => {
                 let (repo_root, _store) = get_store(verbose)?;
                 let morph_dir = repo_root.join(".morph");
-                let abs_path = if path.is_absolute() {
-                    path.to_string_lossy().to_string()
+                // PR5 Stage F: URL-shaped remotes (`ssh://...`,
+                // `user@host:path`) are stored verbatim. Plain paths
+                // are still resolved to absolute so the remote
+                // works from any cwd.
+                let raw = path.to_string_lossy().to_string();
+                let stored = if morph_core::ssh_store::SshUrl::parse(&raw).is_some() {
+                    raw
+                } else if path.is_absolute() {
+                    raw
                 } else {
                     std::env::current_dir()?.join(&path).to_string_lossy().to_string()
                 };
-                morph_core::add_remote(&morph_dir, &name, &abs_path)?;
-                println!("Remote '{}' added: {}", name, abs_path);
+                morph_core::add_remote(&morph_dir, &name, &stored)?;
+                println!("Remote '{}' added: {}", name, stored);
             }
             RemoteCmd::List => {
                 let (repo_root, _store) = get_store(verbose)?;
@@ -968,6 +1014,83 @@ fn main() -> anyhow::Result<()> {
                         println!(
                             "Merged {} -> {} ({})",
                             b, cont.merge_commit, remote
+                        );
+                    }
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+
+        Command::Sync { branch } => {
+            // PR5 Stage G: bring the configured upstream into the
+            // current branch in one step. Equivalent to
+            // `morph pull --merge <remote> <branch>` except the
+            // remote/branch comes from the per-branch config.
+            let (repo_root, local_store) = get_store(verbose)?;
+            let morph_dir = repo_root.join(".morph");
+            let target = match branch {
+                Some(n) => n,
+                None => morph_core::current_branch(&local_store)?
+                    .ok_or_else(|| anyhow::anyhow!(
+                        "no current branch (detached HEAD?); name a branch explicitly"
+                    ))?,
+            };
+            let upstream = morph_core::get_branch_upstream(&morph_dir, &target)?
+                .ok_or_else(|| anyhow::anyhow!(
+                    "no upstream configured for '{}'; run `morph branch --set-upstream <remote>/<branch>`",
+                    target
+                ))?;
+            let remotes = morph_core::read_remotes(&morph_dir)?;
+            let spec = remotes.get(&upstream.remote).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "upstream remote '{}' not found in remotes config",
+                    upstream.remote
+                )
+            })?;
+            let remote_store = morph_core::open_remote_store(&spec.path)?;
+            match morph_core::pull_branch(
+                local_store.as_ref(),
+                remote_store.as_ref(),
+                &upstream.remote,
+                &upstream.branch,
+            ) {
+                Ok(tip) => {
+                    println!(
+                        "Synced {} -> {} ({}/{})",
+                        target, tip, upstream.remote, upstream.branch
+                    );
+                }
+                Err(morph_core::MorphError::Diverged { branch: b, local_tip, remote_tip }) => {
+                    eprintln!(
+                        "fast-forward not possible (local {} vs remote {}); starting merge",
+                        local_tip, remote_tip
+                    );
+                    let other_ref = format!("remotes/{}/{}", upstream.remote, b);
+                    let outcome = morph_core::start_merge(
+                        local_store.as_ref(),
+                        &repo_root,
+                        morph_core::StartMergeOpts::new(&other_ref),
+                    )?;
+                    if outcome.needs_resolution {
+                        println!(
+                            "Merge needs resolution. Run `morph status` for details, then `morph merge --continue`."
+                        );
+                        std::process::exit(1);
+                    } else {
+                        let cont = morph_core::continue_merge(
+                            local_store.as_ref(),
+                            &repo_root,
+                            morph_core::ContinueMergeOpts {
+                                message: Some(format!(
+                                    "Merge remote-tracking branch '{}/{}'",
+                                    upstream.remote, b
+                                )),
+                                author: None,
+                            },
+                        )?;
+                        println!(
+                            "Merged {} -> {} ({}/{})",
+                            b, cont.merge_commit, upstream.remote, upstream.branch
                         );
                     }
                 }

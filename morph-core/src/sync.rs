@@ -77,6 +77,66 @@ pub fn add_remote(morph_dir: &Path, name: &str, path: &str) -> Result<(), MorphE
     write_remotes(morph_dir, &remotes)
 }
 
+// ── Branch upstream config ───────────────────────────────────────────
+
+/// Per-branch upstream tracking. Mirrors git's `branch.<name>.remote`
+/// + `branch.<name>.merge`. Drives `morph sync` and the
+/// "Already up to date" / "Diverged" hint in status.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct BranchUpstream {
+    pub remote: String,
+    pub branch: String,
+}
+
+/// Read all configured branch upstreams from config.json.
+pub fn read_branch_upstreams(
+    morph_dir: &Path,
+) -> Result<BTreeMap<String, BranchUpstream>, MorphError> {
+    let config_path = morph_dir.join("config.json");
+    if !config_path.exists() {
+        return Ok(BTreeMap::new());
+    }
+    let data = std::fs::read_to_string(&config_path)?;
+    let config: serde_json::Value =
+        serde_json::from_str(&data).map_err(|e| MorphError::Serialization(e.to_string()))?;
+    match config.get("branches") {
+        Some(b) => serde_json::from_value(b.clone())
+            .map_err(|e| MorphError::Serialization(e.to_string())),
+        None => Ok(BTreeMap::new()),
+    }
+}
+
+/// Persist the upstream for a single branch, preserving other keys
+/// in config.json.
+pub fn set_branch_upstream(
+    morph_dir: &Path,
+    branch: &str,
+    upstream: BranchUpstream,
+) -> Result<(), MorphError> {
+    let config_path = morph_dir.join("config.json");
+    let mut config: serde_json::Value = if config_path.exists() {
+        let data = std::fs::read_to_string(&config_path)?;
+        serde_json::from_str(&data).map_err(|e| MorphError::Serialization(e.to_string()))?
+    } else {
+        serde_json::json!({})
+    };
+    let mut branches = read_branch_upstreams(morph_dir)?;
+    branches.insert(branch.to_string(), upstream);
+    config["branches"] = serde_json::to_value(branches)
+        .map_err(|e| MorphError::Serialization(e.to_string()))?;
+    let pretty = serde_json::to_string_pretty(&config)
+        .map_err(|e| MorphError::Serialization(e.to_string()))?;
+    std::fs::write(&config_path, pretty)?;
+    Ok(())
+}
+
+pub fn get_branch_upstream(
+    morph_dir: &Path,
+    branch: &str,
+) -> Result<Option<BranchUpstream>, MorphError> {
+    Ok(read_branch_upstreams(morph_dir)?.remove(branch))
+}
+
 // ── Object graph traversal ───────────────────────────────────────────
 
 /// Collect all object hashes reachable from `tip` that the destination lacks.
@@ -251,33 +311,17 @@ pub fn fetch_remote(
     remote_store: &dyn Store,
     remote_name: &str,
 ) -> Result<Vec<(String, Hash)>, MorphError> {
-    let remote_heads = remote_store.refs_dir().join("heads");
+    // Transport-neutral enumeration. Filesystem stores walk
+    // `refs/heads`; SSH stores will issue a single `list-branches`
+    // RPC. Either way `fetch_remote` no longer touches the
+    // filesystem of the remote directly.
     let mut updated = Vec::new();
-
-    if !remote_heads.exists() {
-        return Ok(updated);
-    }
-
-    for entry in std::fs::read_dir(&remote_heads)? {
-        let entry = entry?;
-        if !entry.file_type()?.is_file() {
-            continue;
-        }
-        let branch = entry.file_name().to_string_lossy().into_owned();
-        let ref_path = format!("heads/{}", branch);
-
-        let tip = match remote_store.ref_read(&ref_path)? {
-            Some(h) => h,
-            None => continue,
-        };
-
+    for (branch, tip) in remote_store.list_branches()? {
         transfer_objects(remote_store, local_store, &tip)?;
-
         let tracking = format!("remotes/{}/{}", remote_name, branch);
         local_store.ref_write(&tracking, &tip)?;
         updated.push((branch, tip));
     }
-
     Ok(updated)
 }
 
@@ -348,6 +392,15 @@ fn transfer_objects(
 /// Open a Store for a remote Morph repository at the given path.
 /// The path should point to the repo root (the directory containing `.morph/`).
 pub fn open_remote_store(remote_path: &str) -> Result<Box<dyn Store>, MorphError> {
+    // SSH transport: anything that looks like a URL or scp-style
+    // host:path. `SshUrl::parse` returns `None` for a plain
+    // filesystem path so we fall through.
+    if let Some(url) = crate::ssh_store::SshUrl::parse(remote_path) {
+        let spawn = crate::ssh_store::RemoteSpawn::new(url);
+        let store = crate::ssh_store::SshStore::connect(&spawn)?;
+        return Ok(Box::new(store));
+    }
+
     let p = Path::new(remote_path);
     let morph_dir = if p.join(".morph").exists() {
         p.join(".morph")
@@ -463,6 +516,51 @@ mod tests {
 
         let version = crate::repo::read_repo_version(&morph_dir).unwrap();
         assert_eq!(version, "0.0");
+    }
+
+    #[test]
+    fn branch_upstream_round_trip() {
+        // PR5 cycle 30 RED→GREEN.
+        let (dir, _) = setup_repo();
+        let morph_dir = dir.path().join(".morph");
+        assert!(get_branch_upstream(&morph_dir, "main").unwrap().is_none());
+
+        set_branch_upstream(
+            &morph_dir,
+            "main",
+            BranchUpstream {
+                remote: "origin".into(),
+                branch: "main".into(),
+            },
+        )
+        .unwrap();
+
+        let got = get_branch_upstream(&morph_dir, "main").unwrap().unwrap();
+        assert_eq!(got.remote, "origin");
+        assert_eq!(got.branch, "main");
+    }
+
+    #[test]
+    fn set_branch_upstream_preserves_remotes() {
+        // PR5 cycle 30 RED→GREEN: config.json must keep
+        // pre-existing keys (here `remotes`) when we add the
+        // branches section.
+        let (dir, _) = setup_repo();
+        let morph_dir = dir.path().join(".morph");
+        add_remote(&morph_dir, "origin", "/some/path").unwrap();
+
+        set_branch_upstream(
+            &morph_dir,
+            "main",
+            BranchUpstream {
+                remote: "origin".into(),
+                branch: "main".into(),
+            },
+        )
+        .unwrap();
+
+        let remotes = read_remotes(&morph_dir).unwrap();
+        assert_eq!(remotes["origin"].path, "/some/path");
     }
 
     #[test]
@@ -583,6 +681,84 @@ mod tests {
     }
 
     // ── Fetch ────────────────────────────────────────────────────────
+
+    /// Wraps an FsStore and hides `refs_dir()` (returns a dangling
+    /// path) while delegating `list_branches` / `list_refs` to the
+    /// inner store. Used to assert `fetch_remote` only reaches into
+    /// the trait method, not into the filesystem — i.e. the same
+    /// fetch logic will work for an SSH-backed Store in PR5 Stage D.
+    struct OpaqueRefsStore {
+        inner: Box<dyn Store>,
+        fake_refs: PathBuf,
+    }
+
+    impl Store for OpaqueRefsStore {
+        fn put(&self, o: &MorphObject) -> Result<Hash, MorphError> {
+            self.inner.put(o)
+        }
+        fn get(&self, h: &Hash) -> Result<MorphObject, MorphError> {
+            self.inner.get(h)
+        }
+        fn has(&self, h: &Hash) -> Result<bool, MorphError> {
+            self.inner.has(h)
+        }
+        fn list(&self, t: crate::ObjectType) -> Result<Vec<Hash>, MorphError> {
+            self.inner.list(t)
+        }
+        fn ref_read(&self, name: &str) -> Result<Option<Hash>, MorphError> {
+            self.inner.ref_read(name)
+        }
+        fn ref_write(&self, name: &str, h: &Hash) -> Result<(), MorphError> {
+            self.inner.ref_write(name, h)
+        }
+        fn ref_read_raw(&self, name: &str) -> Result<Option<String>, MorphError> {
+            self.inner.ref_read_raw(name)
+        }
+        fn ref_write_raw(&self, name: &str, value: &str) -> Result<(), MorphError> {
+            self.inner.ref_write_raw(name, value)
+        }
+        fn ref_delete(&self, name: &str) -> Result<(), MorphError> {
+            self.inner.ref_delete(name)
+        }
+        fn refs_dir(&self) -> PathBuf {
+            self.fake_refs.clone()
+        }
+        fn hash_object(&self, o: &MorphObject) -> Result<Hash, MorphError> {
+            self.inner.hash_object(o)
+        }
+        fn list_refs(&self, prefix: &str) -> Result<Vec<(String, Hash)>, MorphError> {
+            self.inner.list_refs(prefix)
+        }
+        fn list_branches(&self) -> Result<Vec<(String, Hash)>, MorphError> {
+            self.inner.list_branches()
+        }
+    }
+
+    #[test]
+    fn fetch_remote_uses_list_branches_not_refs_dir() {
+        // PR5 cycle 2: fetch_remote must work over a Store impl that
+        // does not expose a real refs_dir on the local filesystem,
+        // i.e. it must drive enumeration through `list_branches()`.
+        let (_, local_store) = setup_repo();
+        let (remote_dir, remote_store) = setup_repo();
+        let commit =
+            make_commit(remote_store.as_ref(), remote_dir.path(), "remote-only");
+
+        let opaque = OpaqueRefsStore {
+            inner: remote_store,
+            fake_refs: PathBuf::from("/var/empty/no-such-refs-dir-xyz"),
+        };
+
+        let updated =
+            fetch_remote(local_store.as_ref(), &opaque, "origin").unwrap();
+        assert_eq!(updated.len(), 1);
+        assert_eq!(updated[0].0, "main");
+        assert_eq!(updated[0].1, commit);
+        assert_eq!(
+            local_store.ref_read("remotes/origin/main").unwrap(),
+            Some(commit)
+        );
+    }
 
     #[test]
     fn fetch_creates_remote_tracking_refs() {
@@ -882,6 +1058,35 @@ mod tests {
         let path = dir.path().to_string_lossy().to_string();
         let store = open_remote_store(&path).unwrap();
         assert!(store.refs_dir().exists());
+    }
+
+    #[test]
+    fn open_remote_store_dispatches_ssh_urls() {
+        // PR5 cycle 25 RED→GREEN: an `ssh://...` URL must take the
+        // SshStore branch, not the FS one. We stub MORPH_SSH to a
+        // command that fails fast so the test is deterministic; the
+        // important assertion is that the failure message blames
+        // the spawn (i.e. we reached the SSH branch) rather than
+        // "not a morph repository" (the filesystem branch).
+        let key = "MORPH_SSH";
+        let prev = std::env::var(key).ok();
+        std::env::set_var(key, "/bin/false");
+        let result = open_remote_store("ssh://nobody@unreachable.invalid/repo");
+        if let Some(p) = prev {
+            std::env::set_var(key, p);
+        } else {
+            std::env::remove_var(key);
+        }
+        let err = match result {
+            Ok(_) => panic!("ssh dial should fail in test"),
+            Err(e) => e,
+        };
+        let msg = err.to_string().to_lowercase();
+        assert!(
+            !msg.contains("not a morph repository"),
+            "should not have hit the FS branch: {}",
+            err
+        );
     }
 
     // ── list_refs ────────────────────────────────────────────────────

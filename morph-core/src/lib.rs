@@ -31,6 +31,8 @@ pub mod diff;
 pub mod tag;
 pub mod stash;
 pub mod revert;
+pub mod ssh_proto;
+pub mod ssh_store;
 
 pub use hash::{canonical_json, content_hash, content_hash_git, Hash};
 pub use objects::MorphObject;
@@ -86,6 +88,7 @@ pub use tree::{build_tree, flatten_tree, restore_tree, empty_tree_hash};
 pub use migrate::{migrate_0_0_to_0_2, migrate_0_2_to_0_3, migrate_0_3_to_0_4, migrate_0_4_to_0_5};
 pub use sync::{
     RemoteSpec, read_remotes, write_remotes, add_remote,
+    BranchUpstream, read_branch_upstreams, get_branch_upstream, set_branch_upstream,
     collect_reachable_objects, is_ancestor,
     push_branch, fetch_remote, pull_branch,
     open_remote_store, list_refs,

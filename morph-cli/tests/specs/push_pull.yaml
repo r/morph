@@ -296,6 +296,57 @@
     - kind: file_exists
       path: repo_b/.morph/MERGE_HEAD
 
+# PR5 cycle 32: `morph sync` uses the configured upstream (saved by
+# `morph branch --set-upstream`) and is equivalent to fetching +
+# pulling --merge in one step.
+- name: sync_fast_forwards_via_configured_upstream
+  init: false
+  dirs:
+    - repo_a
+    - repo_b
+  steps:
+    - morph: [init, "${repo}/repo_a"]
+    - morph: [init, "${repo}/repo_b"]
+
+    - write_file:
+        path: repo_a/data.txt
+        content: "v1"
+    - morph: [add, data.txt]
+      cwd: repo_a
+    - morph: [commit, -m, "v1"]
+      cwd: repo_a
+
+    - morph: [remote, add, origin, "${repo}/repo_a"]
+      cwd: repo_b
+    - morph: [branch, --set-upstream, "origin/main"]
+      cwd: repo_b
+    - morph: [sync]
+      cwd: repo_b
+      stdout_contains: "Synced main"
+  assert:
+    - kind: file_exists
+      path: repo_b/.morph/refs/heads/main
+
+- name: sync_errors_when_no_upstream_configured
+  init: false
+  dirs:
+    - repo
+  steps:
+    - morph: [init, "${repo}/repo"]
+    - write_file:
+        path: repo/a.txt
+        content: "x"
+    - morph: [add, a.txt]
+      cwd: repo
+    - morph: [commit, -m, "init"]
+      cwd: repo
+    - morph: [sync]
+      cwd: repo
+      expect_exit: 1
+      stderr_contains:
+        - "no upstream configured"
+        - "morph branch --set-upstream"
+
 - name: refs_shows_remote_tracking_after_fetch
   init: false
   dirs:

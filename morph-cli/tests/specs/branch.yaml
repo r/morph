@@ -45,3 +45,52 @@
   assert:
     - kind: file_exists
       path: .morph/refs/heads/feature
+
+# PR5 cycle 3: branch listing must traverse nested ref directories
+# (e.g. `heads/feature/xyz`). Earlier impl only read top-level
+# `read_dir` and silently dropped any branch whose name contained a
+# slash. SSH stores will return these via `list_branches()` too.
+# PR5 cycle 31: --set-upstream persists per-branch tracking ref to
+# config.json so `morph sync` knows where to fetch from.
+- name: branch_set_upstream_persists_in_config
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "initial"]
+    - morph: [remote, add, origin, /tmp/some-remote]
+    - morph: [branch, --set-upstream, "origin/main"]
+      stdout_contains: "set up to track"
+  assert:
+    - kind: file_contains
+      path: .morph/config.json
+      contents: "branches"
+    - kind: file_contains
+      path: .morph/config.json
+      contents: "origin"
+
+- name: branch_set_upstream_errors_without_slash
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "initial"]
+    - morph: [branch, --set-upstream, "origin"]
+      expect_exit: 1
+      stderr_contains: "expected"
+
+- name: branch_list_includes_slash_separated_names
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "initial"]
+    - morph: [branch, feature/xyz]
+      stdout_contains: "Created branch feature/xyz"
+    - morph: [branch]
+      stdout_contains:
+        - main
+        - feature/xyz
+  assert:
+    - kind: file_exists
+      path: .morph/refs/heads/feature/xyz

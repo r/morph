@@ -95,6 +95,62 @@ pub trait Store {
     fn refs_dir(&self) -> PathBuf;
     /// Compute the content hash for an object without storing it.
     fn hash_object(&self, object: &MorphObject) -> Result<Hash, MorphError>;
+
+    /// Enumerate all refs under `prefix` (e.g. `"heads"` or
+    /// `"remotes/origin"`). Returns `(name_relative_to_prefix, hash)`
+    /// pairs, recursive into subdirectories. Transport-neutral
+    /// replacement for `refs_dir()` walks — non-filesystem backends
+    /// (SSH, etc.) override this with a single RPC. The default impl
+    /// walks `refs_dir()`, so existing in-process stores keep working
+    /// with no extra code.
+    fn list_refs(&self, prefix: &str) -> Result<Vec<(String, Hash)>, MorphError> {
+        let root = self.refs_dir().join(prefix);
+        if !root.is_dir() {
+            return Ok(Vec::new());
+        }
+        let mut out = Vec::new();
+        list_refs_recursive(&root, "", &mut out)?;
+        Ok(out)
+    }
+
+    /// Convenience wrapper for `list_refs("heads")`. SSH overrides
+    /// only this method when it has a cheaper one-shot RPC for the
+    /// common case.
+    fn list_branches(&self) -> Result<Vec<(String, Hash)>, MorphError> {
+        self.list_refs("heads")
+    }
+}
+
+fn list_refs_recursive(
+    dir: &Path,
+    rel_prefix: &str,
+    out: &mut Vec<(String, Hash)>,
+) -> Result<(), MorphError> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let ft = entry.file_type()?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let next_rel = if rel_prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{}/{}", rel_prefix, name)
+        };
+        if ft.is_dir() {
+            list_refs_recursive(&entry.path(), &next_rel, out)?;
+        } else if ft.is_file() {
+            let s = std::fs::read_to_string(entry.path())?.trim().to_string();
+            if s.is_empty() {
+                continue;
+            }
+            // Skip non-hash refs (e.g. HEAD pointing at a symbolic
+            // ref). list_refs is for resolving leaf refs; a symbolic
+            // ref isn't enumerable as a (name, hash) pair.
+            if let Ok(h) = Hash::from_hex(&s) {
+                out.push((next_rel, h));
+            }
+        }
+    }
+    Ok(())
 }
 
 impl Store for Box<dyn Store + '_> {
@@ -529,6 +585,72 @@ mod tests {
         assert!(prompts_dir.is_dir(), "put() should create prompts/ when missing");
         let index_file = prompts_dir.join(format!("{}.json", hash));
         assert!(index_file.is_file(), "prompts/<hash>.json should exist");
+    }
+
+    #[test]
+    fn list_refs_returns_all_refs_under_prefix() {
+        // PR5 cycle 1: transport-neutral ref enumeration. Up to PR4
+        // `fetch_remote` reaches into `remote_store.refs_dir()` and
+        // walks the filesystem directly — that breaks any non-fs
+        // backend (SSH, future). The trait now exposes
+        // `list_refs(prefix)` returning `(name, hash)` pairs for
+        // every leaf under `refs/<prefix>/`, recursive.
+        let dir = tempfile::tempdir().unwrap();
+        let store = FsStore::new(dir.path());
+        std::fs::create_dir_all(store.refs_dir().join("heads")).unwrap();
+        std::fs::create_dir_all(store.refs_dir().join("heads/feature")).unwrap();
+        std::fs::create_dir_all(store.refs_dir().join("tags")).unwrap();
+
+        let blob = MorphObject::Blob(Blob {
+            kind: "x".into(),
+            content: serde_json::json!({}),
+        });
+        let hash = store.put(&blob).unwrap();
+
+        store.ref_write("heads/main", &hash).unwrap();
+        store.ref_write("heads/feature/xyz", &hash).unwrap();
+        store.ref_write("tags/v1", &hash).unwrap();
+
+        let mut heads = store.list_refs("heads").unwrap();
+        heads.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            heads,
+            vec![
+                ("feature/xyz".to_string(), hash),
+                ("main".to_string(), hash),
+            ]
+        );
+
+        let tags = store.list_refs("tags").unwrap();
+        assert_eq!(tags, vec![("v1".to_string(), hash)]);
+
+        // Empty prefix yields nothing useful here but must not error.
+        let unknown = store.list_refs("nope").unwrap();
+        assert!(unknown.is_empty());
+    }
+
+    #[test]
+    fn list_branches_returns_heads_only() {
+        // PR5 cycle 1 (companion): convenience wrapper for
+        // `list_refs("heads")` — used by `fetch_remote` so SSH
+        // implementations only need to override one method.
+        let dir = tempfile::tempdir().unwrap();
+        let store = FsStore::new(dir.path());
+        std::fs::create_dir_all(store.refs_dir().join("heads")).unwrap();
+
+        let blob = MorphObject::Blob(Blob {
+            kind: "x".into(),
+            content: serde_json::json!({}),
+        });
+        let hash = store.put(&blob).unwrap();
+        store.ref_write("heads/main", &hash).unwrap();
+        store.ref_write("heads/feature", &hash).unwrap();
+
+        let mut got = store.list_branches().unwrap();
+        got.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].0, "feature");
+        assert_eq!(got[1].0, "main");
     }
 
     #[test]

@@ -81,6 +81,10 @@ pub enum Command {
     /// Create or list branches
     Branch {
         name: Option<String>,
+        /// Configure the branch's upstream tracking ref, e.g.
+        /// `--set-upstream origin/main`. Used by `morph sync`.
+        #[arg(long, value_name = "REMOTE/BRANCH")]
+        set_upstream: Option<String>,
     },
     /// Switch branch or detach to a commit
     Checkout {
@@ -148,6 +152,14 @@ pub enum Command {
         /// conflicts and run `morph merge --continue`.
         #[arg(long)]
         merge: bool,
+    },
+    /// Fetch + pull --merge (or fast-forward) the current branch's
+    /// configured upstream. Configure the upstream once with
+    /// `morph branch --set-upstream origin/main`, then run
+    /// `morph sync` from any session to bring the branch up to date.
+    Sync {
+        /// Optional branch name; defaults to the current branch.
+        branch: Option<String>,
     },
     /// List all refs (local branches and remote-tracking refs)
     Refs,
@@ -231,6 +243,16 @@ pub enum Command {
     },
     /// Upgrade the repo store to the latest version
     Upgrade,
+    /// Hidden JSON-RPC server for SSH-driven sync. Spawned by
+    /// `SshStore` over `ssh user@host morph remote-helper
+    /// --repo-root <path>`. Reads one JSON request per line from
+    /// stdin, writes one JSON response per line to stdout. Exits 0
+    /// on EOF.
+    #[command(name = "remote-helper", hide = true)]
+    RemoteHelper {
+        #[arg(long)]
+        repo_root: PathBuf,
+    },
     /// Remove unreachable objects from the store
     Gc,
     /// Inspect traces

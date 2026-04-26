@@ -118,6 +118,10 @@ enum Assertion {
     FileNotExists { path: String },
     #[serde(rename = "file_eq")]
     FileEq { path: String, content: String },
+    /// Substring assertion — useful for config files where we don't
+    /// want to pin exact serialization formatting.
+    #[serde(rename = "file_contains")]
+    FileContains { path: String, contents: String },
 }
 
 // ── codegen ──────────────────────────────────────────────────────────
@@ -445,6 +449,15 @@ fn emit_assertion(code: &mut String, a: &Assertion) {
                 code,
                 "    assert_eq!(std::fs::read_to_string(path.join({:?})).unwrap(), {:?});",
                 path, content
+            )
+            .unwrap();
+        }
+        Assertion::FileContains { path, contents } => {
+            writeln!(
+                code,
+                "    {{ let __got = std::fs::read_to_string(path.join({:?})).unwrap(); \
+                 assert!(__got.contains({:?}), \"expected file to contain substring; got: {{}}\", __got); }}",
+                path, contents
             )
             .unwrap();
         }
