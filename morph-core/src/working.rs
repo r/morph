@@ -336,6 +336,11 @@ pub fn add_paths(
         let mut index = crate::index::read_index(&morph_dir)?;
         for (rel, hash) in &staged_entries {
             index.entries.insert(rel.clone(), hash.to_string());
+            // Resolving a path during a merge: drop any unmerged-entry
+            // record so `morph merge --continue` can finalize. Mirrors
+            // git's behavior where `git add file` removes the conflict
+            // markers from the index.
+            index.unmerged_entries.remove(rel);
         }
         // Prune stale entries that now match ignore rules (self-healing for old repos).
         index.entries.retain(|rel, _| !is_rel_path_ignored(morphignore.as_ref(), rel, false));

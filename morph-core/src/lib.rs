@@ -25,6 +25,7 @@ pub mod text3way;
 pub mod treemerge;
 pub mod merge_state;
 pub mod workdir;
+pub mod merge_flow;
 pub mod policy;
 pub mod diff;
 pub mod tag;
@@ -52,7 +53,12 @@ pub use pipemerge::{
     merge_pipelines, ConflictAxis, NodeConflict, PipelineMergeOutcome,
 };
 pub use text3way::{merge_text, TextMergeLabels, TextMergeResult};
-pub use treemerge::{merge_trees, TreeMergeOutcome, WorkdirOp};
+pub use treemerge::{apply_workdir_ops, merge_trees, TreeMergeOutcome, WorkdirOp};
+pub use merge_flow::{
+    abort_merge, continue_merge, merge_progress_summary, resolve_node,
+    start_merge, ContinueMergeOpts, ContinueMergeOutcome, MergeProgress,
+    StartMergeOpts, StartMergeOutcome,
+};
 pub use record::{record_run, record_eval_metrics, record_session, record_conversation, ConversationMessage};
 pub use extract::extract_pipeline_from_run;
 pub use tap::{

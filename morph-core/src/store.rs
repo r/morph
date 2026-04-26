@@ -34,6 +34,15 @@ pub enum MorphError {
     RepoTooNew(String),
     #[error("already exists: {0}")]
     AlreadyExists(String),
+    /// Branch has diverged from its remote tracking ref; fast-forward not
+    /// possible. The CLI surfaces this with a hint to run
+    /// `morph pull --merge` (PR 4) or `morph merge` manually.
+    #[error("Diverged: branch '{branch}' at {local_tip} has diverged from remote tip {remote_tip}")]
+    Diverged {
+        branch: String,
+        local_tip: String,
+        remote_tip: String,
+    },
 }
 
 /// Object type filter for list operations.

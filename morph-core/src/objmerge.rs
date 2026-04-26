@@ -101,6 +101,12 @@ pub struct MergeOutcome {
     /// Working-tree operations planned by the tree merger. Applied by
     /// the CLI after dominance gating in PR 4.
     pub working_writes: Vec<crate::treemerge::WorkdirOp>,
+    /// Pipeline-node conflicts surfaced by the structural pipeline
+    /// merger. Each entry is mirrored as an `ObjConflict::Structural {
+    /// kind: PipelineDivergent }` in `conflicts`, but kept here in
+    /// typed form so the CLI can drive `morph merge resolve-node`
+    /// without parsing a string.
+    pub pipeline_node_conflicts: Vec<crate::pipemerge::NodeConflict>,
     /// Conflicts that must be resolved before `morph merge --continue`.
     pub conflicts: Vec<ObjConflict>,
     pub trivial: TrivialOutcome,
@@ -178,6 +184,7 @@ pub fn merge_commits(
             union_pipeline: None,
             union_tree: None,
             working_writes: vec![],
+            pipeline_node_conflicts: vec![],
             conflicts: vec![],
             trivial: TrivialOutcome::AlreadyMerged,
         });
@@ -194,6 +201,7 @@ pub fn merge_commits(
     let mut union_pipeline: Option<crate::objects::Pipeline> = None;
     let mut union_tree: Option<Hash> = None;
     let mut working_writes: Vec<crate::treemerge::WorkdirOp> = Vec::new();
+    let mut pipeline_node_conflicts: Vec<crate::pipemerge::NodeConflict> = Vec::new();
 
     // Suite / pipeline / tree stages — only run when the merge is non-trivial.
     if matches!(trivial, TrivialOutcome::Diverged) {
@@ -221,6 +229,7 @@ pub fn merge_commits(
                                 message: format!("node '{}': {}", nc.id, nc.axis),
                             });
                         }
+                        pipeline_node_conflicts.extend(out.conflicts.into_iter());
                     }
                 }
                 Err(_) => {
@@ -264,6 +273,7 @@ pub fn merge_commits(
         union_pipeline,
         union_tree,
         working_writes,
+        pipeline_node_conflicts,
         conflicts,
         trivial,
     })

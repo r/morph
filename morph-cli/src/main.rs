@@ -7,9 +7,10 @@ mod setup;
 use clap::Parser;
 use cli::*;
 use morph_core::{
-    find_repo, migrate_0_0_to_0_2, migrate_0_2_to_0_3, migrate_0_3_to_0_4, open_store,
+    find_repo, migrate_0_0_to_0_2, migrate_0_2_to_0_3, migrate_0_3_to_0_4,
+    migrate_0_4_to_0_5, open_store,
     read_repo_version, require_store_version, resolve_hash_prefix, Hash, MorphObject, ObjectType,
-    Store, STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_0_4, STORE_VERSION_INIT,
+    Store, STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_0_4, STORE_VERSION_0_5, STORE_VERSION_INIT,
 };
 use std::path::PathBuf;
 
@@ -20,7 +21,7 @@ fn get_store(verbose: bool) -> anyhow::Result<(PathBuf, Box<dyn Store>)> {
     let morph_dir = repo_root.join(".morph");
     let version = read_repo_version(&morph_dir)?;
     verbose_msg(verbose, &format!("repo {} (store version {})", repo_root.display(), version));
-    require_store_version(&morph_dir, &[STORE_VERSION_INIT, STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_0_4])?;
+    require_store_version(&morph_dir, &[STORE_VERSION_INIT, STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_0_4, STORE_VERSION_0_5])?;
     let store = open_store(&morph_dir)?;
     Ok((repo_root, store))
 }
@@ -176,20 +177,26 @@ fn main() -> anyhow::Result<()> {
             let morph_dir = repo_root.join(".morph");
             let version = read_repo_version(&morph_dir)?;
             verbose_msg(verbose, &format!("store version {}", version));
-            if version == STORE_VERSION_0_4 {
+            if version == STORE_VERSION_0_5 {
                 println!("Store version is {} (latest). No upgrade needed.", version);
+            } else if version == STORE_VERSION_0_4 {
+                migrate_0_4_to_0_5(&morph_dir)?;
+                println!("Migrated store from {} to {} (merge state).", STORE_VERSION_0_4, STORE_VERSION_0_5);
             } else if version == STORE_VERSION_0_3 {
                 migrate_0_3_to_0_4(&morph_dir)?;
-                println!("Migrated store from {} to {} (fan-out object layout).", STORE_VERSION_0_3, STORE_VERSION_0_4);
+                migrate_0_4_to_0_5(&morph_dir)?;
+                println!("Migrated store from {} to {}.", STORE_VERSION_0_3, STORE_VERSION_0_5);
             } else if version == STORE_VERSION_0_2 {
                 migrate_0_2_to_0_3(&morph_dir)?;
                 migrate_0_3_to_0_4(&morph_dir)?;
-                println!("Migrated store from {} to {}.", STORE_VERSION_0_2, STORE_VERSION_0_4);
+                migrate_0_4_to_0_5(&morph_dir)?;
+                println!("Migrated store from {} to {}.", STORE_VERSION_0_2, STORE_VERSION_0_5);
             } else if version == STORE_VERSION_INIT {
                 migrate_0_0_to_0_2(&morph_dir)?;
                 migrate_0_2_to_0_3(&morph_dir)?;
                 migrate_0_3_to_0_4(&morph_dir)?;
-                println!("Migrated store from {} to {}.", STORE_VERSION_INIT, STORE_VERSION_0_4);
+                migrate_0_4_to_0_5(&morph_dir)?;
+                println!("Migrated store from {} to {}.", STORE_VERSION_INIT, STORE_VERSION_0_5);
             } else {
                 println!("Store version is {}. No upgrade path.", version);
             }
@@ -359,8 +366,35 @@ fn main() -> anyhow::Result<()> {
             let (repo_root, store) = get_store(verbose)?;
             let changes = morph_core::working_status(&store, &repo_root)?;
             let summary = morph_core::activity_summary(&store, &repo_root)?;
+            let merge_progress = morph_core::merge_progress_summary(&*store, &repo_root)?;
 
-            if changes.is_empty() && summary.runs == 0 && summary.traces == 0 && summary.prompts == 0 {
+            if let Some(progress) = &merge_progress {
+                if let Some(branch) = &progress.on_branch {
+                    println!("On branch {}", branch);
+                }
+                println!("You have unmerged paths.");
+                println!("  (fix conflicts and run \"morph merge --continue\")");
+                println!("  (use \"morph merge --abort\" to abort the merge)");
+                println!();
+                if !progress.unmerged_paths.is_empty() {
+                    println!("Unmerged paths:");
+                    println!("  (use \"morph add <file>...\" to mark resolution)");
+                    for p in &progress.unmerged_paths {
+                        println!("\tboth modified:   {}", p);
+                    }
+                    println!();
+                }
+                if !progress.pipeline_node_conflicts.is_empty() {
+                    println!("Pipeline nodes needing resolution:");
+                    println!("  (use \"morph merge resolve-node <id> --pick ours|theirs\")");
+                    for id in &progress.pipeline_node_conflicts {
+                        println!("\tnode:   {}", id);
+                    }
+                    println!();
+                }
+            }
+
+            if changes.is_empty() && summary.runs == 0 && summary.traces == 0 && summary.prompts == 0 && merge_progress.is_none() {
                 println!("nothing to commit, working tree clean");
                 return Ok(());
             }
@@ -887,14 +921,58 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        Command::Pull { remote, branch } => {
+        Command::Pull { remote, branch, merge } => {
             let (repo_root, local_store) = get_store(verbose)?;
             let remotes = morph_core::read_remotes(&repo_root.join(".morph"))?;
             let spec = remotes.get(&remote)
                 .ok_or_else(|| anyhow::anyhow!("remote '{}' not found", remote))?;
             let remote_store = morph_core::open_remote_store(&spec.path)?;
-            let tip = morph_core::pull_branch(local_store.as_ref(), remote_store.as_ref(), &remote, &branch)?;
-            println!("Updated {} -> {} ({})", branch, tip, remote);
+            match morph_core::pull_branch(local_store.as_ref(), remote_store.as_ref(), &remote, &branch) {
+                Ok(tip) => {
+                    println!("Updated {} -> {} ({})", branch, tip, remote);
+                }
+                Err(morph_core::MorphError::Diverged { branch: b, local_tip, remote_tip })
+                    if merge =>
+                {
+                    // Fast-forward not possible. Kick off a structural
+                    // merge against the remote-tracking ref so the user
+                    // can resolve conflicts locally.
+                    eprintln!(
+                        "fast-forward not possible (local {} vs remote {}); starting merge",
+                        local_tip, remote_tip
+                    );
+                    let other_ref = format!("remotes/{}/{}", remote, b);
+                    let outcome = morph_core::start_merge(
+                        local_store.as_ref(),
+                        &repo_root,
+                        morph_core::StartMergeOpts::new(&other_ref),
+                    )?;
+                    if outcome.needs_resolution {
+                        println!(
+                            "Merge needs resolution. Run `morph status` for details, then `morph merge --continue`."
+                        );
+                        std::process::exit(1);
+                    } else {
+                        // Auto-finalize the clean three-way merge.
+                        let cont = morph_core::continue_merge(
+                            local_store.as_ref(),
+                            &repo_root,
+                            morph_core::ContinueMergeOpts {
+                                message: Some(format!(
+                                    "Merge remote-tracking branch '{}/{}'",
+                                    remote, b
+                                )),
+                                author: None,
+                            },
+                        )?;
+                        println!(
+                            "Merged {} -> {} ({})",
+                            b, cont.merge_commit, remote
+                        );
+                    }
+                }
+                Err(e) => return Err(e.into()),
+            }
         }
 
         Command::Refs => {

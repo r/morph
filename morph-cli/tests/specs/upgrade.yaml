@@ -8,3 +8,38 @@
 - name: upgrade_from_repo_root
   steps:
     - morph: [upgrade]
+
+- name: upgrade_bumps_to_0_5
+  # Cycle 32: a fresh `morph init` writes 0.0; a single `morph upgrade`
+  # must walk the chain all the way to 0.5 (the new latest).
+  steps:
+    - morph: [upgrade]
+      stdout_contains:
+        - "Migrated"
+        - "0.5"
+    - morph: [upgrade]
+      stdout_contains:
+        - "0.5"
+        - "No upgrade needed"
+
+- name: upgrade_from_0_4_runs_only_final_step
+  # Cycle 33: a repo at 0.4 (post-PR3 binary) bumps directly to 0.5
+  # with the descriptive "merge state" message.
+  files:
+    .morph/config.json: '{"repo_version":"0.4"}'
+  steps:
+    - morph: [upgrade]
+      stdout_contains:
+        - "0.4"
+        - "0.5"
+        - "merge state"
+
+- name: upgrade_idempotent_at_0_5
+  # Cycle 34: re-running upgrade on a 0.5 repo is a no-op message.
+  files:
+    .morph/config.json: '{"repo_version":"0.5"}'
+  steps:
+    - morph: [upgrade]
+      stdout_contains:
+        - "0.5"
+        - "No upgrade needed"

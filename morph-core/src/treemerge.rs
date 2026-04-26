@@ -47,6 +47,34 @@ pub enum WorkdirOp {
     Delete { path: PathBuf },
 }
 
+/// Apply a sequence of [`WorkdirOp`]s to the working tree rooted at
+/// `repo_root`. Each path in the op is interpreted relative to
+/// `repo_root` and parent directories are created as needed for writes.
+/// Deletes silently no-op when the file is already absent.
+pub fn apply_workdir_ops(
+    repo_root: &std::path::Path,
+    ops: &[WorkdirOp],
+) -> Result<(), MorphError> {
+    for op in ops {
+        match op {
+            WorkdirOp::Write { path, bytes } => {
+                let full = repo_root.join(path);
+                if let Some(parent) = full.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(&full, bytes)?;
+            }
+            WorkdirOp::Delete { path } => {
+                let full = repo_root.join(path);
+                if full.exists() {
+                    std::fs::remove_file(&full)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Outcome of a 3-way tree merge.
 ///
 /// `merged_tree` is set when the merge produced a clean result. With

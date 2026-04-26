@@ -143,6 +143,11 @@ pub enum Command {
     Pull {
         remote: String,
         branch: String,
+        /// On divergence, start a merge instead of erroring out.
+        /// Mirrors `git pull --no-ff` ergonomics — you'll resolve any
+        /// conflicts and run `morph merge --continue`.
+        #[arg(long)]
+        merge: bool,
     },
     /// List all refs (local branches and remote-tracking refs)
     Refs,

@@ -139,6 +139,163 @@
         - "evidence_refs"
         - "${run_hash}"
 
+- name: pull_diverged_without_merge_flag_errors_clearly
+  # Cycle 29: when local and remote have diverged, plain `morph pull`
+  # surfaces the typed Diverged error. Stays a hard failure so the
+  # user sees the suggestion and chooses how to proceed.
+  init: false
+  dirs:
+    - repo_a
+    - repo_b
+  steps:
+    - morph: [init, "${repo}/repo_a"]
+    - morph: [init, "${repo}/repo_b"]
+
+    - write_file:
+        path: repo_a/shared.txt
+        content: "base"
+    - morph: [add, shared.txt]
+      cwd: repo_a
+    - morph: [commit, -m, "base"]
+      cwd: repo_a
+
+    - morph: [remote, add, origin, "${repo}/repo_a"]
+      cwd: repo_b
+    - morph: [pull, origin, main]
+      cwd: repo_b
+
+    # Diverge: each side adds a different file on `main`.
+    - write_file:
+        path: repo_a/remote_only.txt
+        content: "R"
+    - morph: [add, remote_only.txt]
+      cwd: repo_a
+    - morph: [commit, -m, "remote only"]
+      cwd: repo_a
+
+    - write_file:
+        path: repo_b/local_only.txt
+        content: "L"
+    - morph: [add, local_only.txt]
+      cwd: repo_b
+    - morph: [commit, -m, "local only"]
+      cwd: repo_b
+
+    # Without --merge: clear divergence error.
+    - morph: [pull, origin, main]
+      cwd: repo_b
+      expect_exit: 1
+      stderr_contains:
+        - "Diverged"
+        - "main"
+
+- name: pull_merge_flag_finalizes_clean_three_way
+  # Cycle 30: with --merge, a divergence with no path-level overlap
+  # finalizes a clean 3-way merge automatically (no needs_resolution).
+  init: false
+  dirs:
+    - repo_a
+    - repo_b
+  steps:
+    - morph: [init, "${repo}/repo_a"]
+    - morph: [init, "${repo}/repo_b"]
+
+    - write_file:
+        path: repo_a/shared.txt
+        content: "base"
+    - morph: [add, shared.txt]
+      cwd: repo_a
+    - morph: [commit, -m, "base"]
+      cwd: repo_a
+
+    - morph: [remote, add, origin, "${repo}/repo_a"]
+      cwd: repo_b
+    - morph: [pull, origin, main]
+      cwd: repo_b
+
+    - write_file:
+        path: repo_a/remote_only.txt
+        content: "R"
+    - morph: [add, remote_only.txt]
+      cwd: repo_a
+    - morph: [commit, -m, "remote only"]
+      cwd: repo_a
+
+    - write_file:
+        path: repo_b/local_only.txt
+        content: "L"
+    - morph: [add, local_only.txt]
+      cwd: repo_b
+    - morph: [commit, -m, "local only"]
+      cwd: repo_b
+
+    - morph: [pull, origin, main, --merge]
+      cwd: repo_b
+      stdout_contains:
+        - "Merged"
+
+    # Both files end up in the local working tree post-merge.
+    - morph: [log]
+      cwd: repo_b
+      stdout_contains:
+        - "Merge remote-tracking branch"
+  assert:
+    - kind: file_exists
+      path: repo_b/local_only.txt
+    - kind: file_exists
+      path: repo_b/remote_only.txt
+
+- name: pull_merge_flag_with_textual_conflicts_leaves_state_for_user
+  # Cycle 31: textual conflicts ⇒ pull --merge exits non-zero with a
+  # message pointing the user to `morph status` and `--continue`.
+  # MERGE_HEAD must be present afterwards.
+  init: false
+  dirs:
+    - repo_a
+    - repo_b
+  steps:
+    - morph: [init, "${repo}/repo_a"]
+    - morph: [init, "${repo}/repo_b"]
+
+    - write_file:
+        path: repo_a/shared.txt
+        content: "line1\nbase\nline3\n"
+    - morph: [add, shared.txt]
+      cwd: repo_a
+    - morph: [commit, -m, "base"]
+      cwd: repo_a
+
+    - morph: [remote, add, origin, "${repo}/repo_a"]
+      cwd: repo_b
+    - morph: [pull, origin, main]
+      cwd: repo_b
+
+    - write_file:
+        path: repo_a/shared.txt
+        content: "line1\nREMOTE\nline3\n"
+    - morph: [add, shared.txt]
+      cwd: repo_a
+    - morph: [commit, -m, "remote edit"]
+      cwd: repo_a
+
+    - write_file:
+        path: repo_b/shared.txt
+        content: "line1\nLOCAL\nline3\n"
+    - morph: [add, shared.txt]
+      cwd: repo_b
+    - morph: [commit, -m, "local edit"]
+      cwd: repo_b
+
+    - morph: [pull, origin, main, --merge]
+      cwd: repo_b
+      expect_exit: 1
+      stdout_contains:
+        - "Merge needs resolution"
+        - "morph merge --continue"
+  assert:
+    - kind: file_exists
+      path: repo_b/.morph/MERGE_HEAD
+
 - name: refs_shows_remote_tracking_after_fetch
   init: false
   dirs:

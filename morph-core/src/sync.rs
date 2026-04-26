@@ -306,11 +306,11 @@ pub fn pull_branch(
         Some(local_tip) if local_tip == remote_tip => Ok(local_tip),
         Some(local_tip) => {
             if !is_ancestor(local_store, &local_tip, &remote_tip)? {
-                return Err(MorphError::Serialization(format!(
-                    "cannot fast-forward: local branch '{}' at {} has diverged from remote tip {}. \
-                     Merge manually.",
-                    branch, local_tip, remote_tip
-                )));
+                return Err(MorphError::Diverged {
+                    branch: branch.to_string(),
+                    local_tip: local_tip.to_string(),
+                    remote_tip: remote_tip.to_string(),
+                });
             }
             local_store.ref_write(&local_ref, &remote_tip)?;
             Ok(remote_tip)
@@ -699,10 +699,91 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
-            err.contains("fast-forward") || err.contains("diverged"),
+            err.contains("fast-forward") || err.contains("diverged") || err.contains("Diverged"),
             "error: {}",
             err
         );
+    }
+
+    #[test]
+    fn pull_branch_returns_diverged_for_diverged_branches() {
+        // PR 4 cycle 1: divergence must produce a typed `MorphError::Diverged`
+        // with branch / local_tip / remote_tip populated, not an opaque
+        // string-based error. The CLI uses the typed variant to suggest
+        // `morph pull --merge`.
+        let (local_dir, local_store) = setup_repo();
+        let (remote_dir, remote_store) = setup_repo();
+
+        let local_tip =
+            make_commit(local_store.as_ref(), local_dir.path(), "local");
+        let remote_tip =
+            make_commit(remote_store.as_ref(), remote_dir.path(), "remote");
+
+        let err = pull_branch(
+            local_store.as_ref(),
+            remote_store.as_ref(),
+            "origin",
+            "main",
+        )
+        .unwrap_err();
+
+        match err {
+            MorphError::Diverged {
+                branch,
+                local_tip: lt,
+                remote_tip: rt,
+            } => {
+                assert_eq!(branch, "main");
+                assert_eq!(lt, local_tip.to_string());
+                assert_eq!(rt, remote_tip.to_string());
+            }
+            other => panic!("expected MorphError::Diverged, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn pull_branch_still_fast_forwards_when_local_is_ancestor() {
+        // Cycle 2: regression — clean fast-forward path still works after
+        // we change the divergence error type.
+        let (_, local_store) = setup_repo();
+        let (remote_dir, remote_store) = setup_repo();
+
+        let commit =
+            make_commit(remote_store.as_ref(), remote_dir.path(), "remote-commit");
+
+        let tip = pull_branch(
+            local_store.as_ref(),
+            remote_store.as_ref(),
+            "origin",
+            "main",
+        )
+        .unwrap();
+        assert_eq!(tip, commit);
+        assert_eq!(
+            local_store.ref_read("heads/main").unwrap(),
+            Some(commit)
+        );
+    }
+
+    #[test]
+    fn pull_branch_already_up_to_date_returns_local_tip() {
+        // Cycle 3: regression — pull is idempotent.
+        let (_, local_store) = setup_repo();
+        let (remote_dir, remote_store) = setup_repo();
+
+        let commit =
+            make_commit(remote_store.as_ref(), remote_dir.path(), "commit");
+        pull_branch(local_store.as_ref(), remote_store.as_ref(), "origin", "main")
+            .unwrap();
+
+        let tip = pull_branch(
+            local_store.as_ref(),
+            remote_store.as_ref(),
+            "origin",
+            "main",
+        )
+        .unwrap();
+        assert_eq!(tip, commit);
     }
 
     // ── Evidence-backed sync ─────────────────────────────────────────
