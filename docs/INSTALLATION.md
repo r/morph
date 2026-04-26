@@ -126,6 +126,7 @@ The service exposes a stable JSON API for browsing commits (with behavioral stat
 
 - **Commit the filesystem:** [CURSOR-SETUP.md § Committing](CURSOR-SETUP.md#5-committing-the-filesystem) / [CLAUDE-CODE-SETUP.md § Committing](CLAUDE-CODE-SETUP.md#4-committing-the-filesystem) / [OPENCODE-SETUP.md § Committing](OPENCODE-SETUP.md#5-committing-the-filesystem).
 - **Use Morph with Git:** [MORPH-AND-GIT.md](MORPH-AND-GIT.md).
+- **Sync between machines:** [MULTI-MACHINE.md](MULTI-MACHINE.md) walks through bare repos, SSH transport, `morph push`/`morph pull`/`morph sync`. If you're hosting the server, see [SERVER-SETUP.md](SERVER-SETUP.md). The merge engine those workflows depend on is documented in [MERGE.md](MERGE.md).
 - **MCP tool reference:** [CURSOR-SETUP.md § MCP Tool Reference](CURSOR-SETUP.md#6-mcp-tool-reference) (same tools in all IDEs).
 - **Hosted service API:** [v0-spec.md § 16](v0-spec.md#16-hosted-service-phase-7).
 

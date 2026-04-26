@@ -1131,3 +1131,161 @@ The commit detail endpoint returns a `behavioral_status` object:
 ## Organization-level policy
 
 An optional org-level policy file can set default required_metrics, thresholds, and named presets. The effective policy for each repo is the union of org and repo policies (repo overrides win for thresholds).
+
+---
+
+# 17. Behavioral Merge & Server-Readiness (Phase 8)
+
+Phase 5 introduced local-path remotes. Phase 8 extends Morph from "syncs to a directory" to "ready to host shared bare repositories driven over SSH, with server-enforced policy." It is the union of PRs 3, 4, 5, and 6 of the multi-machine roadmap and is the smallest set of changes that lets two engineers on two laptops collaborate the way Git users expect.
+
+For user-facing walkthroughs see [MULTI-MACHINE.md](MULTI-MACHINE.md) and [SERVER-SETUP.md](SERVER-SETUP.md). For the merge engine internals see [MERGE.md](MERGE.md). This section is the schema-level reference.
+
+## 17.1 Behavioral 3-way Merge (PRs 3–4)
+
+Merge is structural and behavioral, not textual. Given two divergent commits and their LCA from `merge_base`, Morph runs:
+
+- `objmerge::merge_eval_suites(base, ours, theirs)` — case + metric reconciliation.
+- `pipemerge::merge_pipelines(base, ours, theirs)` — node + edge reconciliation, prompt set union, provenance.
+- `treemerge::merge_trees(base, ours, theirs)` — file tree reconciliation. Disjoint changes compose. Same-path edits fall back to `git merge-file` for textual diff3, write conflict markers into the workdir, and record an `UnmergedEntry { base_blob, ours_blob, theirs_blob }` in the staging index.
+- `check_dominance(parent_a, parent_b, candidate, retired)` — the merged commit must be at least as good as both parents on every non-retired metric.
+
+The orchestrator lives in `morph-core/src/merge_flow.rs` and exposes `start_merge`, `continue_merge`, `abort_merge`, plus a `MergeProgress` view used by `morph status`. In-progress state is recorded under `.morph/MERGE_HEAD`, `MERGE_BASE`, and `MERGE_MSG`.
+
+## 17.2 Identity Fields on Commits (PR 6 stage A–B)
+
+Every commit now carries two identity fields:
+
+| Field | Type | Resolved from |
+|---|---|---|
+| `author` | `String` | `--author` flag → `MORPH_AUTHOR_NAME` / `MORPH_AUTHOR_EMAIL` env → `morph config user.name` / `user.email` → `"morph"` default |
+| `morph_instance` | `Option<String>` | `agent.instance_id` in `.morph/config.json`, generated at `morph init` time as `morph-<6-hex>` |
+
+`author` is the human; `morph_instance` is the machine. Two laptops belonging to the same person produce different commit hashes for identical content because their `morph_instance` differs. Both fields are `serde(default)` and round-trip through legacy commits unchanged.
+
+CLI:
+
+```
+morph config user.name <value>
+morph config user.email <value>
+morph config <key>           # get
+morph config --get <key>     # explicit get
+```
+
+## 17.3 Evidence Union on Merge (PR 6 stage C)
+
+The merge commit's `evidence_refs` is the deduped, sorted union of `parent_a.evidence_refs` and `parent_b.evidence_refs` (`merge::union_evidence_refs`). Both parents stay reachable through the merge — `morph log` and remote fetches that traverse `evidence_refs` continue to work after a merge.
+
+If both parents have no evidence the field stays `None` (rather than `Some(vec![])`) so empty cases serialize identically pre- and post-PR6.
+
+## 17.4 Bare Repositories (PR 6 stage D)
+
+A **bare** repo is the server-side layout: no working tree, no `.morph/` wrapper. `objects/`, `refs/`, `config.json`, etc. live directly at the repo root.
+
+```
+morph init --bare /srv/repos/myproject.morph
+```
+
+`config.json` carries `"bare": true` and the same `agent.instance_id` a working repo gets. Helpers:
+
+- `morph_core::init_bare(root)` — create a bare layout (no `.gitignore`).
+- `morph_core::is_bare(morph_dir)` — read the bare flag.
+- `morph_core::resolve_morph_dir(path)` — auto-detect `path/.morph` (working) vs `path/` (bare); used by `morph remote-helper` so it accepts both.
+
+Bare repos are the only kind that should accept pushes from multiple clients; pushing into a working repo would race with whatever is editing its working tree.
+
+## 17.5 SSH Transport (PR 5)
+
+Network transport is JSON-RPC over an SSH session driven by a hidden subcommand. There is no daemon, no port beyond SSH.
+
+- `morph remote-helper --repo-root <abs-path>` — server side. Reads one JSON request per line on stdin, writes one JSON response per line on stdout. Exits 0 on EOF.
+- `morph_core::ssh_proto` — wire types (`Request`, `Response`, `OkResponse`, `ErrResponse`, `ErrorKind`).
+- `morph_core::ssh_store::SshStore` — client-side `Store` implementation.
+- `morph_core::ssh_store::SshUrl` — accepts `ssh://user@host[:port]/path` and `user@host:path`.
+- `morph_core::ssh_store::RemoteSpawn` — spawns SSH; honors `MORPH_SSH` (override binary) and `MORPH_REMOTE_BIN` (server-side `morph` path).
+
+`morph remote add <name> <path-or-url>` stores SSH URLs verbatim and resolves plain paths to absolute. `morph push|fetch|pull` route through `open_remote_store` which dispatches to `SshStore` or `FsStore` based on URL shape.
+
+## 17.6 Branch Upstreams and `morph sync` (PR 5 stage G)
+
+Per-branch upstream tracking lives in `.morph/config.json` under `"branches"`:
+
+```json
+{
+  "branches": {
+    "main":    { "upstream": { "remote": "origin", "branch": "main" } },
+    "feature": { "upstream": { "remote": "origin", "branch": "feature" } }
+  }
+}
+```
+
+CLI:
+
+```
+morph branch --set-upstream <remote>/<branch>   # configure
+morph sync [branch]                              # fetch + pull --merge against upstream
+```
+
+`morph sync` defaults to the current branch when no argument is supplied. It is fetch + fast-forward when possible, fetch + 3-way merge when the branch has diverged.
+
+## 17.7 Schema Handshake (PR 6 stage E)
+
+Every SSH session begins with a `Hello` exchange. The server's `Hello` response now carries:
+
+```json
+{
+  "version": "0.13.0",
+  "protocol_version": 1,
+  "repo_version": "0.5"
+}
+```
+
+- `MORPH_PROTOCOL_VERSION` is a single integer constant in `morph_core::ssh_proto`. Bump it whenever the wire format changes incompatibly.
+- The client validates the field via `validate_hello`. On mismatch it raises `MorphError::IncompatibleRemote { remote, local, reason }`.
+- Legacy helpers that don't include `protocol_version` are accepted silently — exactly one release of overlap, then mismatch becomes a hard error.
+
+## 17.8 Server-Side Closure Validation (PR 6 stage F)
+
+`morph_core::verify_closure(store, tip)` walks the reachable graph from a tip hash and verifies every object is present. Wired into the `RefWrite` handler of `morph remote-helper`: a push that doesn't carry its full closure is rejected before the ref moves. This makes partial pushes impossible — either every dependency lands and the ref updates, or nothing changes.
+
+## 17.9 Server-Side Push Gating (PR 6 stage F)
+
+`RepoPolicy.push_gated_branches: Vec<String>` lists branch names the server will run `gate_check` against on every `RefWrite`. The flow:
+
+1. Receive `RefWrite { name, hash }`.
+2. `verify_closure(store, &hash)` — reject if incomplete.
+3. If `branch_from_ref(name)` is in `policy.push_gated_branches`, call `enforce_push_gate(store, morph_dir, name, &hash)`.
+4. `enforce_push_gate` runs `gate_check` against the policy; on failure returns `MorphError::Serialization("push gate failed for branch '<name>': <reasons>")`.
+5. Only on success is the ref written.
+
+Empty `push_gated_branches` (the default) reproduces pre-PR6 behavior — no server-side enforcement.
+
+## 17.10 Error Variants
+
+| Variant | Where it comes from |
+|---|---|
+| `Diverged { local, remote }` | `pull` without `--merge` against a divergent branch |
+| `IncompatibleRemote { remote, local, reason }` | `Hello` handshake mismatch |
+| `NotFound(String)` | `verify_closure` saw a missing object |
+| `Serialization("push gate failed for branch '...': ...")` | `enforce_push_gate` rejected a push |
+| `RepoTooOld(...)` / `RepoTooNew(...)` / `UpgradeRequired(...)` | Store-version compatibility checks (Phase 5+) |
+
+## 17.11 Module Map
+
+| File | Phase 8 role |
+|---|---|
+| `morph-core/src/merge.rs` | LCA, prepare/execute_merge, dominance, evidence union |
+| `morph-core/src/merge_flow.rs` | start/continue/abort orchestrator, `MergeProgress` |
+| `morph-core/src/treemerge.rs` | 3-way tree merge, `WorkdirOp`, textual fallback |
+| `morph-core/src/pipemerge.rs` | Pipeline DAG merge |
+| `morph-core/src/objmerge.rs` | EvalSuite case/metric merge |
+| `morph-core/src/index.rs` | `unmerged_entries`, `UnmergedEntry` |
+| `morph-core/src/workdir.rs` | `working_tree_clean`, restore |
+| `morph-core/src/repo.rs` | `init_repo`, `init_bare`, `is_bare`, `resolve_morph_dir` |
+| `morph-core/src/agent.rs` | `agent.instance_id` generation/read/write |
+| `morph-core/src/author.rs` | `user.name` / `user.email` resolution |
+| `morph-core/src/sync.rs` | `RemoteSpec`, `read_remotes`, `open_remote_store`, `verify_closure`, branch upstream config |
+| `morph-core/src/ssh_proto.rs` | wire types, `MORPH_PROTOCOL_VERSION`, error mapping |
+| `morph-core/src/ssh_store.rs` | `SshStore`, `SshUrl`, `RemoteSpawn`/`LocalSpawn`, `validate_hello` |
+| `morph-core/src/policy.rs` | `RepoPolicy.push_gated_branches`, `enforce_push_gate`, `branch_from_ref` |
+| `morph-cli/src/remote_helper.rs` | server-side JSON-RPC dispatch wired to closure + push-gate checks |
+

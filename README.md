@@ -22,6 +22,7 @@ Git assumes identity is byte equality, reproducibility is identical output, and 
 - **Paper:** [docs/morph-paper.tex](docs/morph-paper.tex) — formal foundations
 - **Install:** [docs/INSTALLATION.md](docs/INSTALLATION.md) · **IDE guides:** [Cursor](docs/CURSOR-SETUP.md) · [Claude Code](docs/CLAUDE-CODE-SETUP.md) · [OpenCode](docs/OPENCODE-SETUP.md)
 - **Morph + Git:** [docs/MORPH-AND-GIT.md](docs/MORPH-AND-GIT.md)
+- **Multi-machine:** [docs/MULTI-MACHINE.md](docs/MULTI-MACHINE.md) (clients) · [docs/SERVER-SETUP.md](docs/SERVER-SETUP.md) (server) · [docs/MERGE.md](docs/MERGE.md) (merge engine)
 
 ## Install and start in Cursor (quick)
 
@@ -70,7 +71,11 @@ morph merge-plan <branch>        # preview merge: parents, union suite, bar to b
 morph tag <name>                 # tag the current commit
 morph stash save | pop | list    # save/restore staged work
 morph revert <hash>              # undo a commit
-morph remote add | push | pull   # named local-path remotes
+morph remote add | push | pull   # named remotes (local path or ssh://user@host/path)
+morph fetch <remote>             # update remote-tracking refs without merging
+morph branch --set-upstream origin/main   # configure per-branch upstream
+morph sync [branch]              # fetch + pull --merge against the configured upstream
+morph init --bare /srv/repo      # create a bare server repo (for `morph push`)
 morph certify --metrics-file f   # certify a commit against policy metrics
 morph gate                       # check if HEAD passes policy (exit 1 on fail)
 morph policy show | set          # view or update repository policy
@@ -109,8 +114,8 @@ Stable JSON API and browser UI for inspecting commits (with certification/gate s
 ## Develop Morph (this repo)
 
 ```bash
-cargo test                                # 545 unit + CLI integration tests
-cargo test -p morph-e2e --test cucumber   # 32 e2e scenarios (Cucumber)
+cargo test --workspace                    # 787+ unit + CLI integration tests
+cargo test -p morph-e2e --test cucumber   # e2e scenarios (Cucumber)
 ```
 
 See [docs/TESTING.md](docs/TESTING.md) and [CONTRIBUTING.md](CONTRIBUTING.md).

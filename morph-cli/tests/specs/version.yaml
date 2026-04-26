@@ -3,5 +3,5 @@
   steps:
     - morph: ["--version"]
       stdout_contains:
-        - "morph 0.12.0 (built"
+        - "morph 0.13.0 (built"
         - "Z)"

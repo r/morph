@@ -75,6 +75,9 @@ THEORY.md defines the algebra. v0-spec.md projects that algebra into a buildable
 | **[CLAUDE-CODE-SETUP.md](CLAUDE-CODE-SETUP.md)** | Users | Full Claude Code reference: MCP server, hooks, committing. |
 | **[OPENCODE-SETUP.md](OPENCODE-SETUP.md)** | Users | Full OpenCode reference: MCP server, AGENTS.md, recording plugin, committing. |
 | **[MORPH-AND-GIT.md](MORPH-AND-GIT.md)** | Users | Running Morph and Git side-by-side in the same repository. |
+| **[MULTI-MACHINE.md](MULTI-MACHINE.md)** | Users | Sharing a Morph repo across machines: bare server, SSH transport, `morph push` / `morph pull` / `morph sync`. |
+| **[MERGE.md](MERGE.md)** | Users | How `morph merge` works: 3-way structural merge, behavioral dominance, evidence union, conflict resolution. |
+| **[SERVER-SETUP.md](SERVER-SETUP.md)** | Admins | Standing up a Morph SSH server: bare repos, SSH access, push-gate policy, schema handshake. |
 | **[TESTING.md](TESTING.md)** | Contributors | Test architecture, running tests, coverage, known gaps. |
 
 ### Academic
