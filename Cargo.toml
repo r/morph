@@ -3,4 +3,4 @@ resolver = "2"
 members = ["morph-core", "morph-cli", "morph-mcp", "morph-serve", "morph-e2e"]
 
 [workspace.package]
-version = "0.17.0"
+version = "0.19.0"

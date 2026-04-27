@@ -24,7 +24,7 @@ Feature: Team CI workflow (Phase 6)
     Then the last command succeeded
     When I run "morph add code.txt"
     Then the last command succeeded
-    When I run "morph commit -m candidate-commit"
+    When I run "morph commit -m candidate-commit --allow-empty-metrics"
     Then the last command succeeded
     When I create a JSON file "metrics.json" with metrics "tests_passed=42"
     When I run "morph certify --metrics-file metrics.json"

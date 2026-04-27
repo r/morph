@@ -673,7 +673,7 @@
   </div>
 
   <nav>
-    <a href="./" class="logo">morph<span class="version">v0.7.1 &middot; alpha</span></a>
+    <a href="./" class="logo">morph<span class="version">v0.19.0 &middot; alpha</span></a>
     <ul class="links">
       <li><a href="#problem">Problem</a></li>
       <li><a href="#solution">Thesis</a></li>
@@ -687,7 +687,7 @@
 
   <!-- Hero -->
   <div class="hero">
-    <span class="badge">Alpha &middot; v0.7.1 &middot; Research prototype</span>
+    <span class="badge">Alpha &middot; v0.19.0 &middot; Research prototype</span>
     <h1>Git for <em>AI-assisted</em> development</h1>
     <p class="subtitle">
       Morph is a version control system that records every agent session as an immutable
@@ -794,10 +794,13 @@
           <div class="text">
             <h3>Behavioral commits &mdash; evidence, not vibes</h3>
             <p>
-              A Morph commit stores a file tree hash <em>and</em> an optional behavioral
+              A Morph commit stores a file tree hash <em>and</em> a behavioral
               contract: which pipeline was run, which evaluation suite, what scores were
-              observed, and in which environment. Plain <code>morph commit -m "&hellip;"</code>
-              still works exactly like Git when you don't need evaluation gating.
+              observed, and in which environment. Fresh repos enforce <code>tests_total</code>
+              and <code>tests_passed</code> by default, so commits arrive with evidence.
+              Run <code>morph eval run -- cargo test</code> (or pytest, vitest, jest, go),
+              then <code>morph commit --from-run &lt;hash&gt;</code> &mdash; the metrics flow into
+              the commit automatically.
             </p>
           </div>
           <div class="commit-box">
@@ -921,17 +924,23 @@
     </p>
 
     <div class="cli-block">
-      <span class="comment"># Standard Git-shaped workflow</span><br>
+      <span class="comment"># Standard Git-shaped workflow (init writes a default policy:</span><br>
+      <span class="comment">#   required_metrics = [tests_total, tests_passed])</span><br>
       <span class="prompt">$ </span><span class="cmd">morph init</span><br>
       <span class="prompt">$ </span><span class="cmd">morph add .</span><br>
-      <span class="prompt">$ </span><span class="cmd">morph commit <span class="flag">-m</span> <span class="str">"fix retry loop"</span> <span class="flag">--metrics</span> <span class="str">'{"pass_rate": 1.0}'</span></span><br>
+      <span class="prompt">$ </span><span class="cmd">morph commit <span class="flag">-m</span> <span class="str">"fix retry loop"</span> <span class="flag">--from-run</span> <span class="flag">&lt;hash&gt;</span></span><br>
       <span class="prompt">$ </span><span class="cmd">morph log</span> <span class="comment"># history with metrics</span><br>
       <span class="prompt">$ </span><span class="cmd">morph diff <span class="flag">main</span> <span class="flag">feature</span></span><br>
+      <br>
+      <span class="comment"># Eval-driven workflow: spec first, then commit from a run</span><br>
+      <span class="prompt">$ </span><span class="cmd">morph eval add-case specs/login.yaml</span>&nbsp;&nbsp;<span class="comment"># YAML or Cucumber</span><br>
+      <span class="prompt">$ </span><span class="cmd">morph eval run -- cargo test --workspace</span>&nbsp;<span class="comment"># records a metric-bearing Run</span><br>
+      <span class="prompt">$ </span><span class="cmd">morph eval gaps</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="comment"># report unaddressed evidence gaps</span><br>
       <br>
       <span class="comment"># Branching and behavioral merge</span><br>
       <span class="prompt">$ </span><span class="cmd">morph branch feature</span><br>
       <span class="prompt">$ </span><span class="cmd">morph checkout feature</span><br>
-      <span class="prompt">$ </span><span class="cmd">morph merge-plan main</span>&nbsp;&nbsp;<span class="comment"># preview bar to beat</span><br>
+      <span class="prompt">$ </span><span class="cmd">morph merge-plan main</span>&nbsp;&nbsp;<span class="comment"># preview bar to beat + case provenance</span><br>
       <span class="prompt">$ </span><span class="cmd">morph merge main</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="comment"># dominance required</span><br>
       <br>
       <span class="comment"># Inspect recorded agent work</span><br>
@@ -941,7 +950,7 @@
       <span class="prompt">$ </span><span class="cmd">morph traces final-artifact <span class="flag">&lt;ref&gt;</span></span>&nbsp;<span class="comment"># what the agent produced</span><br>
       <br>
       <span class="comment"># Policy, certification, gating</span><br>
-      <span class="prompt">$ </span><span class="cmd">morph policy set <span class="flag">--require</span> pass_rate<span class="flag">=1.0</span></span><br>
+      <span class="prompt">$ </span><span class="cmd">morph policy require-metrics tests_passed pass_rate</span><br>
       <span class="prompt">$ </span><span class="cmd">morph certify <span class="flag">--metrics-file</span> metrics.json</span><br>
       <span class="prompt">$ </span><span class="cmd">morph gate</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="comment"># exit 1 if HEAD fails policy</span><br>
       <br>
@@ -1014,10 +1023,11 @@
           <li>IDE setup for Cursor, Claude Code, and OpenCode via one <code>morph setup</code> command</li>
           <li>Recording prompts and responses as immutable Runs + Traces, always-on via hooks</li>
           <li>Core Git-shaped workflow: <code>init</code>, <code>add</code>, <code>commit</code>, <code>log</code>, <code>diff</code>, <code>branch</code>, <code>checkout</code>, <code>merge</code>, <code>tag</code>, <code>stash</code>, <code>revert</code></li>
-          <li>Behavioral merge with dominance check and <code>merge-plan</code> preview</li>
-          <li>Policy, <code>certify</code>, and <code>gate</code> for pass/fail enforcement</li>
+          <li>Behavioral merge with dominance check and <code>merge-plan</code> preview (incl. case provenance)</li>
+          <li>Policy with <code>required_metrics</code> gate, <code>certify</code>, and <code>gate</code> for pass/fail enforcement; opinionated default policy on <code>morph init</code></li>
+          <li>Eval-driven workflow: <code>morph eval add-case</code>, <code>suite-from-specs</code>, <code>run</code>, <code>from-output</code>, <code>record</code>, <code>gaps</code> &mdash; ingest YAML/Cucumber specs, parse cargo/pytest/vitest/jest/go output, fail commits without metrics</li>
           <li><code>morph serve</code>: local browser UI + JSON API for inspecting commits, runs, traces</li>
-          <li>545+ unit/CLI tests and 32 end-to-end Cucumber scenarios</li>
+          <li>880+ unit/CLI tests and 32 end-to-end Cucumber scenarios</li>
         </ul>
       </div>
 
@@ -1025,7 +1035,7 @@
         <h3>What's rough <span class="tag">WIP</span></h3>
         <ul>
           <li>Structured trace events (tool calls, file edits, shell invocations) are captured inconsistently across IDEs &mdash; coverage is improving but uneven</li>
-          <li>Evaluation-suite integration is minimal: metrics are honored, but the full "suite as versioned contract" story is still being built</li>
+          <li>Eval-suite ingestion handles YAML and Cucumber out of the box; richer expectation DSLs and per-case scoring are still in progress</li>
           <li>Storage: filesystem only; SQLite and real remote backends are designed but not implemented</li>
           <li>On-disk format has already changed twice; expect more <code>morph upgrade</code> migrations before v1.0</li>
           <li>Remotes are local-path only; no hosted Morph forge yet</li>

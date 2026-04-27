@@ -4,17 +4,17 @@
 
 | Crate | Tests | Location |
 |-------|-------|----------|
-| **morph-core** | 539 unit tests across the lib's modules | `#[cfg(test)]` blocks in each source file |
-| **morph-cli** | 182 YAML-driven integration tests + 21 unit tests + 20 dedicated integration tests (`remote_helper_integration`, `ssh_fetch_integration`, `status_merge_integration`) | YAML specs in `morph-cli/tests/specs/*.yaml`, compiled by `build.rs`; unit tests in `setup.rs`; dedicated integration files under `morph-cli/tests/`. |
-| **morph-e2e** | Cucumber scenarios | `morph-e2e/features/*.feature`, step defs in `morph-e2e/tests/cucumber.rs` |
-| **morph-mcp** | 20 integration tests | `#[cfg(test)]` in `morph-mcp/src/main.rs` |
+| **morph-core** | 575 unit tests across the lib's modules | `#[cfg(test)]` blocks in each source file |
+| **morph-cli** | 207 YAML-driven integration tests + 21 unit tests + 20 dedicated integration tests (`remote_helper_integration`, `ssh_fetch_integration`, `status_merge_integration`) | YAML specs in `morph-cli/tests/specs/*.yaml`, compiled by `build.rs`; unit tests in `setup.rs`; dedicated integration files under `morph-cli/tests/`. |
+| **morph-e2e** | Cucumber scenarios (16 features, 37 scenarios) | `morph-e2e/features/*.feature`, step defs in `morph-e2e/tests/cucumber.rs` |
+| **morph-mcp** | 28 integration tests | `#[cfg(test)]` in `morph-mcp/src/main.rs` |
 | **morph-serve** | 37 unit/API tests (views, service, handlers, org policy, multi-repo) | `morph-serve/src/tests.rs` + `org_policy::tests` |
 
-Totals: **819 Rust tests** (539 + 21 + 182 + 20 + 2 + 8 + 10 + 20 + 37) plus the Cucumber suite, all green.
+Totals: **878 Rust tests** (575 + 21 + 207 + 28 + 2 + 8 + 37) plus the Cucumber suite (34 scenarios, 3 skipped), all green.
 
 ### morph-core unit test highlights
 
-The lib's 539 unit tests cover the core object/storage/merge layers. Notable areas (non-exhaustive):
+The lib's 575 unit tests cover the core object/storage/merge layers. Notable areas (non-exhaustive):
 
 - **Object model**: hash determinism, paper-aligned commit fields (review nodes, per-node `env`, set-valued attribution, `morph_instance`, `morph_version`), legacy compatibility (`from-run` provenance, `pipeline`/`program` aliases).
 - **Storage**: `FsStore` in legacy, Git-format flat, and Git-format fan-out modes; ref read/write/delete; type-index directories; collision detection.
@@ -27,6 +27,9 @@ The lib's 539 unit tests cover the core object/storage/merge layers. Notable are
 - **SSH transport**: `SshUrl` parsing (URL + scp shorthand), `validate_hello`, error mapping, protocol-version mismatch.
 - **Policy**: round-trip, certification pass/fail, gate pass/fail, `push_gated_branches` glob matching (`*` / `?` / literal), `enforce_push_gate`.
 - **Tap & traces**: event grouping, task extraction, diagnostics, trace stats, eval export modes, kind normalization.
+- **Eval ingestion** (`eval_suite`): YAML and Cucumber → `EvalCase` round-trip, directory walk, dedupe-by-id when extending a suite, `compute_eval_gaps` covering `empty_head_metrics`, `empty_default_suite`, and `no_recent_run` signals.
+- **Eval parsers** (`eval_parsers`): cargo / pytest / vitest / jest / go output parsing, multi-binary aggregation, ANSI-escape robustness, hint vs. content auto-detection, `parse_with_runner` dispatch.
+- **Record / annotate**: `record_eval_run` writes both Run and Trace with the captured stdout, `run_test_command` exec→parse→record helper, `parse_introduces_cases_arg` whitespace handling, `build_introduces_cases_annotation` skips empty case lists.
 - **Misc**: `morphignore` matching, `diff` between commits, `tag` / `stash` / `revert` / `gc` lifecycles, pipeline extraction from runs.
 
 ### morph-cli integration tests
@@ -35,7 +38,7 @@ YAML specs in `morph-cli/tests/specs/` cover every user-facing CLI command. Cate
 
 ### morph-mcp integration tests
 
-All 15 MCP tools tested (17 test functions): **init** (success + already-initialized error), **record_session** (hash return), **record_run**, **record_eval** (file-based metrics), **stage** (explicit paths + default `.`), **commit** (basic, with metrics, with `--from-run` provenance), **branch** (success + no-commit error), **checkout** (branch switch), **annotate** (annotation creation), **status** (file listing), **log** (commit history), **show** (object JSON), **diff** (between commits), **merge** (behavioral dominance), **repo_store** (not-found error message, accepts upgraded store version 0.4).
+All MCP tools have integration coverage: **init**, **record_session**, **record_run**, **record_eval**, **eval_from_output**, **eval_run**, **add_eval_case**, **eval_suite_from_specs**, **eval_suite_show**, **eval_gaps**, **stage**, **commit** (basic, with metrics, with `--from-run` provenance, `--new-cases` annotation, `--allow-empty-metrics` policy bypass), **branch**, **checkout**, **annotate**, **status** (with the Evidence summary block), **log**, **show**, **diff**, **merge** (behavioral dominance), the `get_trace_*` family, and **repo_store** (not-found errors, store version compatibility).
 
 ---
 

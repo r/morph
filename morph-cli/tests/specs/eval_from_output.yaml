@@ -1,0 +1,50 @@
+# Phase 3b: `morph eval from-output` parses captured stdout from a
+# test runner into the canonical metric map. Each fixture exercises
+# a different supported runner.
+
+- name: eval_from_output_cargo
+  files:
+    cargo.txt: "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s\n"
+  steps:
+    - morph: [eval, from-output, --runner, cargo, cargo.txt]
+      stdout_contains:
+        - "tests_passed"
+        - "tests_total"
+        - "pass_rate"
+
+- name: eval_from_output_pytest
+  files:
+    pytest.txt: "===== 5 passed in 0.10s =====\n"
+  steps:
+    - morph: [eval, from-output, --runner, pytest, pytest.txt]
+      stdout_contains:
+        - "tests_passed"
+        - "tests_total"
+
+- name: eval_from_output_jest
+  files:
+    jest.txt: "Tests:       1 failed, 41 passed, 42 total\nTime:        2.345 s\n"
+  steps:
+    - morph: [eval, from-output, --runner, jest, jest.txt]
+      stdout_contains:
+        - "tests_passed"
+        - "tests_failed"
+        - "tests_total"
+
+- name: eval_from_output_auto_detects_cargo
+  files:
+    log.txt: "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s\n"
+  steps:
+    - morph: [eval, from-output, log.txt]
+      stdout_contains: "tests_passed"
+
+- name: eval_from_output_record_creates_run_linked_to_head
+  files:
+    foo.txt: "hello"
+    cargo.txt: "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n"
+  steps:
+    - morph: [add, foo.txt]
+    - morph: [commit, -m, "base", --metrics, '{"tests_total":4,"tests_passed":4}']
+    - morph: [eval, from-output, --runner, cargo, --record, cargo.txt]
+      capture_first_line: run_hash
+      assert_hash: true

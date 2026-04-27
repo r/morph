@@ -11,8 +11,14 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 fn init_repo_at(path: &std::path::Path) {
+    // Use the test-only `--no-default-policy` so legacy fixtures
+    // that commit without metrics keep working post-Phase-2a.
     let mut cmd = cargo_bin_cmd!("morph");
-    cmd.arg("init").arg(path).assert().success();
+    cmd.arg("init")
+        .arg("--no-default-policy")
+        .arg(path)
+        .assert()
+        .success();
 }
 
 /// Spawn `morph remote-helper --repo-root <path>` as a child

@@ -8,7 +8,12 @@ use predicates::prelude::*;
 use std::fs;
 
 fn init_repo_at(path: &std::path::Path) {
-    cargo_bin_cmd!("morph").arg("init").arg(path).assert().success();
+    cargo_bin_cmd!("morph")
+        .arg("init")
+        .arg("--no-default-policy")
+        .arg(path)
+        .assert()
+        .success();
 }
 
 fn write(path: &std::path::Path, content: &str) {

@@ -36,6 +36,97 @@ fn resolve_path(repo_root: &std::path::Path, p: impl Into<PathBuf>) -> PathBuf {
     if pb.is_absolute() { pb } else { repo_root.join(pb) }
 }
 
+/// Build the evidence-summary block surfaced by `morph_status` and
+/// `morph_eval_gaps`. Pulls together everything an agent or human
+/// needs to see the gap between "I committed" and "Morph has
+/// behavioral evidence for that commit": HEAD metrics, default eval
+/// suite size, recent runs split by metric availability, and a hint
+/// when the working tree is dirty since the last run.
+fn build_evidence_summary(
+    morph_dir: &std::path::Path,
+    store: &dyn Store,
+    changed_files: u64,
+) -> Result<String, String> {
+    let mut out = String::new();
+    out.push_str("Evidence:\n");
+
+    let head = morph_core::resolve_head(store).map_err(|e| e.to_string())?;
+    let head_metrics = match &head {
+        Some(h) => match store.get(h).map_err(|e| e.to_string())? {
+            morph_core::MorphObject::Commit(c) => Some(c.eval_contract.observed_metrics.clone()),
+            _ => None,
+        },
+        None => None,
+    };
+    let head_metric_str = match &head_metrics {
+        Some(m) if !m.is_empty() => m.iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .collect::<Vec<_>>()
+            .join(" "),
+        Some(_) => "(none)".to_string(),
+        None => "(no commits)".to_string(),
+    };
+    out.push_str(&format!("  HEAD metrics:           {}\n", head_metric_str));
+
+    let policy = morph_core::read_policy(morph_dir).map_err(|e| e.to_string())?;
+    let suite_summary = match policy.default_eval_suite.as_deref() {
+        Some(suite_hex) => {
+            let trimmed: String = suite_hex.chars().take(8).collect();
+            match Hash::from_hex(suite_hex).ok().and_then(|h| store.get(&h).ok()) {
+                Some(morph_core::MorphObject::EvalSuite(s)) => {
+                    format!("{}  ({} cases)", trimmed, s.cases.len())
+                }
+                _ => format!("{}  (unknown)", trimmed),
+            }
+        }
+        None => "(unset)  (0 cases)".to_string(),
+    };
+    out.push_str(&format!("  Default eval suite:     {}\n", suite_summary));
+
+    let mut runs_with = 0usize;
+    let mut runs_without = 0usize;
+    let mut latest_run_with_metrics: Option<String> = None;
+    let runs = store
+        .list(morph_core::ObjectType::Run)
+        .map_err(|e| e.to_string())?;
+    let recent: Vec<_> = runs.iter().rev().take(5).collect();
+    for run_hash in &recent {
+        match store.get(run_hash).map_err(|e| e.to_string())? {
+            morph_core::MorphObject::Run(r) => {
+                if r.metrics.is_empty() {
+                    runs_without += 1;
+                } else {
+                    runs_with += 1;
+                    if latest_run_with_metrics.is_none() {
+                        latest_run_with_metrics = Some(run_hash.to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out.push_str(&format!(
+        "  Recent runs (last {}):   {} with metrics, {} without\n",
+        recent.len(),
+        runs_with,
+        runs_without
+    ));
+
+    let working_tree_msg = if changed_files == 0 {
+        "clean".to_string()
+    } else {
+        let metric_run = latest_run_with_metrics.is_some();
+        if metric_run {
+            format!("{} files changed (latest run has metrics)", changed_files)
+        } else {
+            format!("{} files changed, no metric-bearing run since last commit", changed_files)
+        }
+    };
+    out.push_str(&format!("  Working tree:           {}\n", working_tree_msg));
+
+    Ok(out)
+}
+
 #[derive(Clone)]
 pub struct MorphServer {
     tool_router: ToolRouter<Self>,
@@ -120,6 +211,200 @@ impl MorphServer {
         Ok(CallToolResult::success(vec![Content::text(serde_json::to_string_pretty(&metrics).unwrap_or_default())]))
     }
 
+    /// Phase 3b: parse already-captured test runner stdout into a
+    /// metrics map. Pair this with `morph_commit` to attach
+    /// behavioral evidence to the commit you're about to make.
+    #[tool(description = "Parse a captured test-runner stdout string into Morph's canonical metric map. Required: stdout (string), runner (cargo|pytest|vitest|jest|go|auto). Optional: record (bool, also writes a Run linked to HEAD); workspace_path. When record=true, returns the run hash; otherwise returns the metric map JSON.")]
+    async fn morph_eval_from_output(
+        &self,
+        params: Parameters<EvalFromOutputParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+        let runner = params.0.runner.as_deref().unwrap_or("auto").to_string();
+        let stdout = params.0.stdout;
+        let metrics = morph_core::parse_with_runner(&runner, &stdout, params.0.command.as_deref());
+        if params.0.record.unwrap_or(false) {
+            let hash = morph_core::record_eval_run(
+                store.as_ref(),
+                &metrics,
+                &runner,
+                params.0.command.as_deref(),
+                Some(&stdout),
+                None,
+            ).map_err(mcp_err)?;
+            Ok(CallToolResult::success(vec![Content::text(hash.to_string())]))
+        } else {
+            Ok(CallToolResult::success(vec![Content::text(
+                serde_json::to_string_pretty(&metrics).unwrap_or_default(),
+            )]))
+        }
+    }
+
+    /// Phase 3b: execute a test command, parse its stdout, and store
+    /// a metrics-bearing Run linked to HEAD. Designed for headless
+    /// agents that can shell out — the returned hash composes with
+    /// `morph_commit { from_run: <hash> }`.
+    #[tool(description = "Execute a test command, capture stdout, parse metrics, and write a Run object linked to HEAD. Required: command (array of argv strings). Optional: runner (cargo|pytest|vitest|jest|go|auto), cwd (path relative to repo root), workspace_path. Returns the run hash for use with `morph_commit { from_run }`.")]
+    async fn morph_eval_run(
+        &self,
+        params: Parameters<EvalRunParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let (repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+        let runner = params.0.runner.as_deref().unwrap_or("auto").to_string();
+        if params.0.command.is_empty() {
+            return Err(mcp_err("`command` array cannot be empty"));
+        }
+        let cwd_path = params.0.cwd.as_deref().map(std::path::Path::new);
+        let outcome = morph_core::run_test_command(
+            store.as_ref(),
+            &repo_root,
+            &params.0.command,
+            &runner,
+            cwd_path,
+        ).map_err(mcp_err)?;
+        let mut out = outcome.run_hash.to_string();
+        if outcome.metrics.is_empty() {
+            out.push_str(&format!(
+                "\nwarning: no metrics extracted from `{}` (runner={}). \
+                 Try setting `runner` explicitly or check the command output.",
+                params.0.command.join(" "),
+                runner,
+            ));
+        }
+        Ok(CallToolResult::success(vec![Content::text(out)]))
+    }
+
+    /// Phase 4b: append acceptance cases from YAML/cucumber files
+    /// to the repo's eval suite. Returns the new suite hash.
+    #[tool(description = "Append acceptance cases from YAML/cucumber files to an EvalSuite. Required: paths (array of file or directory paths). Optional: suite (existing suite hash to extend; defaults to policy.default_eval_suite), no_default (build a fresh suite), no_set_default (don't update policy). Returns the new suite hash.")]
+    async fn morph_add_eval_case(
+        &self,
+        params: Parameters<AddEvalCaseParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let (repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+        if params.0.paths.is_empty() {
+            return Err(mcp_err("`paths` cannot be empty"));
+        }
+        let resolved: Vec<PathBuf> = params.0.paths.iter().map(|p| {
+            let pp = std::path::Path::new(p);
+            if pp.is_absolute() {
+                pp.to_path_buf()
+            } else {
+                repo_root.join(pp)
+            }
+        }).collect();
+        let cases = morph_core::add_cases_from_paths(&resolved).map_err(mcp_err)?;
+        if cases.is_empty() {
+            return Err(mcp_err(format!(
+                "no acceptance cases found in: [{}]",
+                params.0.paths.join(", ")
+            )));
+        }
+        let morph_dir = repo_root.join(".morph");
+        let policy = morph_core::read_policy(&morph_dir).map_err(mcp_err)?;
+        let prev: Option<Hash> = if params.0.no_default.unwrap_or(false) {
+            None
+        } else if let Some(s) = params.0.suite.as_deref() {
+            Some(Hash::from_hex(s).map_err(mcp_err)?)
+        } else {
+            match policy.default_eval_suite.as_deref() {
+                Some(h) => Some(Hash::from_hex(h).map_err(mcp_err)?),
+                None => None,
+            }
+        };
+        let new_hash = morph_core::build_or_extend_suite(store.as_ref(), prev, &cases).map_err(mcp_err)?;
+        if !params.0.no_set_default.unwrap_or(false) {
+            let mut updated = policy.clone();
+            updated.default_eval_suite = Some(new_hash.to_string());
+            morph_core::write_policy(&morph_dir, &updated).map_err(mcp_err)?;
+        }
+        let body = format!(
+            "{}\nadded {} case(s); default_eval_suite={}",
+            new_hash,
+            cases.len(),
+            if params.0.no_set_default.unwrap_or(false) { "unchanged" } else { "updated" }
+        );
+        Ok(CallToolResult::success(vec![Content::text(body)]))
+    }
+
+    /// Phase 4b: bulk-ingest a directory of specs/features into a
+    /// fresh suite, replacing the default.
+    #[tool(description = "Bulk-build a fresh EvalSuite from YAML/cucumber files and (by default) make it the policy's default. Required: paths. Optional: no_set_default. Returns the suite hash.")]
+    async fn morph_eval_suite_from_specs(
+        &self,
+        params: Parameters<EvalSuiteFromSpecsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let (repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+        if params.0.paths.is_empty() {
+            return Err(mcp_err("`paths` cannot be empty"));
+        }
+        let resolved: Vec<PathBuf> = params.0.paths.iter().map(|p| {
+            let pp = std::path::Path::new(p);
+            if pp.is_absolute() {
+                pp.to_path_buf()
+            } else {
+                repo_root.join(pp)
+            }
+        }).collect();
+        let cases = morph_core::add_cases_from_paths(&resolved).map_err(mcp_err)?;
+        if cases.is_empty() {
+            return Err(mcp_err(format!(
+                "no acceptance cases found in: [{}]",
+                params.0.paths.join(", ")
+            )));
+        }
+        let new_hash = morph_core::build_or_extend_suite(store.as_ref(), None, &cases).map_err(mcp_err)?;
+        let morph_dir = repo_root.join(".morph");
+        if !params.0.no_set_default.unwrap_or(false) {
+            let mut policy = morph_core::read_policy(&morph_dir).map_err(mcp_err)?;
+            policy.default_eval_suite = Some(new_hash.to_string());
+            morph_core::write_policy(&morph_dir, &policy).map_err(mcp_err)?;
+        }
+        Ok(CallToolResult::success(vec![Content::text(format!(
+            "{}\nbuilt fresh suite with {} case(s)",
+            new_hash,
+            cases.len()
+        ))]))
+    }
+
+    /// Phase 4b: print the contents of a suite (default or by hash)
+    /// as JSON for downstream tooling.
+    #[tool(description = "Show the contents of an EvalSuite as JSON. Optional: suite (hash; defaults to policy.default_eval_suite).")]
+    async fn morph_eval_suite_show(
+        &self,
+        params: Parameters<EvalSuiteShowParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let (repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+        let morph_dir = repo_root.join(".morph");
+        let policy = morph_core::read_policy(&morph_dir).map_err(mcp_err)?;
+        let target = match params.0.suite.as_deref() {
+            Some(s) => Hash::from_hex(s).map_err(mcp_err)?,
+            None => match policy.default_eval_suite.as_deref() {
+                Some(h) => Hash::from_hex(h).map_err(mcp_err)?,
+                None => {
+                    return Err(mcp_err(
+                        "no `suite` supplied and policy.default_eval_suite is unset",
+                    ));
+                }
+            },
+        };
+        let obj = store.get(&target).map_err(mcp_err)?;
+        let suite = match obj {
+            morph_core::MorphObject::EvalSuite(s) => s,
+            _ => return Err(mcp_err(format!("object {} is not an EvalSuite", target))),
+        };
+        let json = serde_json::json!({
+            "hash": target.to_string(),
+            "case_count": suite.cases.len(),
+            "metric_count": suite.metrics.len(),
+            "cases": suite.cases,
+            "metrics": suite.metrics,
+        });
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&json).unwrap_or_default(),
+        )]))
+    }
+
     #[tool(description = "Stage paths into the object store (paths: array of paths, default [\".\"])")]
     async fn morph_stage(&self, params: Parameters<StageParams>) -> Result<CallToolResult, McpError> {
         let (repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
@@ -130,23 +415,59 @@ impl MorphServer {
         Ok(CallToolResult::success(vec![Content::text(out)]))
     }
 
-    #[tool(description = "Create a commit. Required: message. Optional: pipeline (hash), eval_suite (hash), metrics (JSON object), author, from_run (run hash for evidence-backed provenance).")]
+    #[tool(description = "Create a commit. Required: message. Optional: pipeline (hash), eval_suite (hash), metrics (JSON object), author, from_run (run hash for evidence-backed provenance), allow_empty_metrics (bypass policy), new_cases (comma-separated acceptance-case ids).")]
     async fn morph_commit(&self, params: Parameters<CommitParams>) -> Result<CallToolResult, McpError> {
         let (repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
         let morph_dir = repo_root.join(".morph");
         let version = read_repo_version(&morph_dir).map_err(mcp_err)?;
         let prog_hash = params.0.pipeline.as_deref().map(Hash::from_hex).transpose().map_err(mcp_err)?;
-        let suite_hash = params.0.eval_suite.as_deref().map(Hash::from_hex).transpose().map_err(mcp_err)?;
+        let policy = morph_core::read_policy(&morph_dir).map_err(mcp_err)?;
+        let suite_hash: Option<Hash> = match params.0.eval_suite.as_deref() {
+            Some(s) => Some(Hash::from_hex(s).map_err(mcp_err)?),
+            None => match policy.default_eval_suite.as_deref() {
+                Some(s) => Some(Hash::from_hex(s).map_err(mcp_err)?),
+                None => None,
+            },
+        };
         let metrics = params.0.metrics.unwrap_or_default();
+        let allow_empty = params.0.allow_empty_metrics.unwrap_or(false);
+        if !allow_empty {
+            let missing = morph_core::missing_required_metrics(&policy, &metrics);
+            if !missing.is_empty() {
+                return Err(mcp_err(format!(
+                    "policy requires metrics that are missing: [{}]. \
+                     Pass `metrics`, run `morph_eval_run` / `morph_eval_from_output`, \
+                     or set `allow_empty_metrics=true`.",
+                    missing.join(", ")
+                )));
+            }
+        }
         let provenance = match params.0.from_run {
             Some(ref h) => Some(morph_core::resolve_provenance_from_run(&store, &Hash::from_hex(h).map_err(mcp_err)?).map_err(mcp_err)?),
             None => None,
         };
+        let metrics_were_empty = metrics.is_empty();
         let hash = morph_core::create_tree_commit_with_provenance(
             &store, &repo_root, prog_hash.as_ref(), suite_hash.as_ref(),
             metrics, params.0.message, params.0.author, Some(&version), provenance.as_ref(),
         ).map_err(mcp_err)?;
-        Ok(CallToolResult::success(vec![Content::text(hash.to_string())]))
+
+        if let Some(cases_arg) = params.0.new_cases.as_deref() {
+            let cases = morph_core::parse_introduces_cases_arg(cases_arg);
+            if let Some(ann) = morph_core::build_introduces_cases_annotation(&hash, &cases, None) {
+                store.put(&ann).map_err(mcp_err)?;
+            }
+        }
+
+        let mut out = hash.to_string();
+        if metrics_were_empty {
+            out.push_str(
+                "\nwarning: commit has no observed_metrics. Morph cannot enforce \
+                 behavioral merge gating without evidence. Pass `metrics`, \
+                 run `morph_eval_run`, or set a policy via `morph policy init`.",
+            );
+        }
+        Ok(CallToolResult::success(vec![Content::text(out)]))
     }
 
     #[tool(description = "Attach an annotation to an object. Required: target_hash, kind, data (JSON object). Optional: target_sub, author.")]
@@ -181,15 +502,16 @@ impl MorphServer {
         Ok(CallToolResult::success(vec![Content::text(format!("{}{}", msg, tree_msg))]))
     }
 
-    #[tool(description = "Show changes relative to last commit (git-style status) and accumulated Morph activity")]
+    #[tool(description = "Show changes relative to last commit (git-style status), accumulated Morph activity, and a behavioral evidence summary (HEAD metrics, default eval suite, recent runs).")]
     async fn morph_status(&self, params: Parameters<WorkspaceOnlyParams>) -> Result<CallToolResult, McpError> {
         let (repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+        let morph_dir = repo_root.join(".morph");
         let changes = morph_core::working_status(&store, &repo_root).map_err(mcp_err)?;
         let summary = morph_core::activity_summary(&store, &repo_root).map_err(mcp_err)?;
         let mut out = String::new();
 
         if changes.is_empty() && summary.runs == 0 && summary.traces == 0 && summary.prompts == 0 {
-            out = "nothing to commit, working tree clean".into();
+            out.push_str("nothing to commit, working tree clean\n");
         } else {
             if !changes.is_empty() {
                 out.push_str("Changes not staged for commit:\n\n");
@@ -211,7 +533,35 @@ impl MorphServer {
                 out.push_str(&format!("Morph activity: {}\n", parts.join(", ")));
             }
         }
+
+        // Phase 1b + Phase 5a: evidence summary so agents see the
+        // gaps mid-task (not just at session start).
+        let evidence = build_evidence_summary(&morph_dir, store.as_ref(), changes.len() as u64).map_err(mcp_err)?;
+        out.push('\n');
+        out.push_str(&evidence);
         Ok(CallToolResult::success(vec![Content::text(out)]))
+    }
+
+    /// Phase 5b: cheap, structured "what's still missing?" check for
+    /// agents and stop-hooks. Returns a JSON array; an empty array
+    /// means the working state is fully covered by behavioral
+    /// evidence as far as Morph can tell.
+    #[tool(description = "Return a structured list of behavioral-evidence gaps for the current repo: empty HEAD metrics, empty default eval suite, or a dirty working tree without a metric-bearing run since the last commit. Output is `{\"gaps\": [{kind, hint}]}` JSON. Cheap enough to call before every commit.")]
+    async fn morph_eval_gaps(
+        &self,
+        params: Parameters<WorkspaceOnlyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let (repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+        let morph_dir = repo_root.join(".morph");
+        let changes = morph_core::working_status(&store, &repo_root).map_err(mcp_err)?;
+        let gaps = morph_core::compute_eval_gaps(&morph_dir, store.as_ref(), changes.len() as u64).map_err(mcp_err)?;
+        let body = serde_json::json!({
+            "gaps": gaps,
+            "count": gaps.len(),
+        });
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&body).unwrap_or_default(),
+        )]))
     }
 
     #[tool(description = "Show commit history from HEAD or a named ref")]
@@ -420,6 +770,12 @@ mod tests {
     fn setup_repo() -> (tempfile::TempDir, MorphServer) {
         let dir = tempfile::tempdir().unwrap();
         morph_core::init_repo(dir.path()).unwrap();
+        // Phase 2a: tests predate the opinionated default policy and
+        // commit without tests_total/tests_passed. Reset to an empty
+        // policy so each test can opt in to enforcement explicitly
+        // when it cares.
+        let permissive = morph_core::RepoPolicy::default();
+        morph_core::write_policy(&dir.path().join(".morph"), &permissive).unwrap();
         let server = MorphServer::new(Some(dir.path().to_path_buf()));
         (dir, server)
     }
@@ -508,10 +864,13 @@ mod tests {
         assert_eq!(extract_text(&stage_result).trim().len(), 64);
         let commit_result = server
             .morph_commit(Parameters(CommitParams {
-                message: "first commit".into(), pipeline: None, eval_suite: None,
-                workspace_path: Some(ws), metrics: None, author: Some("test-author".into()), from_run: None,
+                message: "first commit".into(),
+                workspace_path: Some(ws), author: Some("test-author".into()),
+                allow_empty_metrics: Some(true),
+                ..Default::default()
             })).await.unwrap();
-        assert_eq!(extract_text(&commit_result).len(), 64);
+        let first_line = extract_text(&commit_result).lines().next().unwrap_or("").to_string();
+        assert_eq!(first_line.len(), 64);
     }
 
     #[tokio::test]
@@ -520,7 +879,7 @@ mod tests {
         let ws = dir.path().to_str().unwrap().to_string();
         std::fs::write(dir.path().join("f.txt"), "content").unwrap();
         server.morph_stage(Parameters(StageParams { workspace_path: Some(ws.clone()), paths: Some(vec![".".into()]) })).await.unwrap();
-        server.morph_commit(Parameters(CommitParams { message: "initial".into(), pipeline: None, eval_suite: None, workspace_path: Some(ws.clone()), metrics: None, author: None, from_run: None })).await.unwrap();
+        server.morph_commit(Parameters(CommitParams { message: "initial".into(), workspace_path: Some(ws.clone()), allow_empty_metrics: Some(true), ..Default::default() })).await.unwrap();
         let branch_result = server.morph_branch(Parameters(BranchParams { name: "feature".into(), workspace_path: Some(ws.clone()) })).await.unwrap();
         assert!(extract_text(&branch_result).contains("Created branch feature"));
         let checkout_result = server.morph_checkout(Parameters(CheckoutParams { ref_name: "feature".into(), workspace_path: Some(ws) })).await.unwrap();
@@ -575,8 +934,9 @@ mod tests {
         metrics.insert("tests_passed".to_string(), 42.0);
         metrics.insert("coverage".to_string(), 0.85);
         let result = server.morph_commit(Parameters(CommitParams {
-            message: "commit with metrics".into(), pipeline: None, eval_suite: None,
-            workspace_path: Some(ws), metrics: Some(metrics), author: Some("agent".into()), from_run: None,
+            message: "commit with metrics".into(),
+            workspace_path: Some(ws), metrics: Some(metrics), author: Some("agent".into()),
+            ..Default::default()
         })).await.unwrap();
         assert_eq!(extract_text(&result).len(), 64);
     }
@@ -595,10 +955,13 @@ mod tests {
         let run_hash = store.list(morph_core::ObjectType::Run).unwrap().into_iter().next().unwrap().to_string();
         server.morph_stage(Parameters(StageParams { workspace_path: Some(ws.clone()), paths: Some(vec![".".into()]) })).await.unwrap();
         let commit_result = server.morph_commit(Parameters(CommitParams {
-            message: "evidence-backed commit".into(), pipeline: None, eval_suite: None,
-            workspace_path: Some(ws), metrics: None, author: None, from_run: Some(run_hash),
+            message: "evidence-backed commit".into(),
+            workspace_path: Some(ws), from_run: Some(run_hash),
+            allow_empty_metrics: Some(true),
+            ..Default::default()
         })).await.unwrap();
-        assert_eq!(extract_text(&commit_result).len(), 64);
+        let first_line = extract_text(&commit_result).lines().next().unwrap_or("").to_string();
+        assert_eq!(first_line.len(), 64);
     }
 
     #[tokio::test]
@@ -672,12 +1035,89 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn status_includes_evidence_block_with_suite_and_runs() {
+        let (dir, server) = setup_repo();
+        let ws = dir.path().to_str().unwrap().to_string();
+
+        // Build a 1-case suite so the evidence summary has a real
+        // case count to report.
+        std::fs::create_dir_all(dir.path().join("specs")).unwrap();
+        std::fs::write(
+            dir.path().join("specs/login.yaml"),
+            "- name: login_alpha\n",
+        )
+        .unwrap();
+        server
+            .morph_add_eval_case(Parameters(AddEvalCaseParams {
+                paths: vec!["specs/login.yaml".into()],
+                suite: None,
+                no_default: None,
+                no_set_default: None,
+                workspace_path: Some(ws.clone()),
+            }))
+            .await
+            .unwrap();
+
+        // Stage + commit once so HEAD has metrics.
+        std::fs::write(dir.path().join("foo.txt"), "v1").unwrap();
+        server
+            .morph_stage(Parameters(StageParams {
+                workspace_path: Some(ws.clone()),
+                paths: Some(vec![".".into()]),
+            }))
+            .await
+            .unwrap();
+        let mut metrics = std::collections::BTreeMap::new();
+        metrics.insert("tests_passed".into(), 5.0);
+        metrics.insert("tests_total".into(), 5.0);
+        server
+            .morph_commit(Parameters(CommitParams {
+                message: "with metrics".into(),
+                workspace_path: Some(ws.clone()),
+                metrics: Some(metrics),
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
+
+        // Record one Run with metrics so the "recent runs" line has
+        // signal too.
+        server
+            .morph_eval_from_output(Parameters(EvalFromOutputParams {
+                stdout: "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s\n".into(),
+                runner: Some("cargo".into()),
+                command: None,
+                record: Some(true),
+                workspace_path: Some(ws.clone()),
+            }))
+            .await
+            .unwrap();
+
+        let result = server
+            .morph_status(Parameters(WorkspaceOnlyParams {
+                workspace_path: Some(ws.clone()),
+            }))
+            .await
+            .unwrap();
+        let text = extract_text(&result);
+
+        assert!(text.contains("Evidence:"), "missing evidence header: {text}");
+        assert!(text.contains("HEAD metrics:"), "missing HEAD metrics line: {text}");
+        assert!(text.contains("tests_passed=5"), "missing tests_passed=5: {text}");
+        assert!(text.contains("Default eval suite:"), "missing default eval suite line: {text}");
+        assert!(text.contains("(1 cases)"), "missing case count: {text}");
+        assert!(text.contains("Recent runs"), "missing recent runs line: {text}");
+        assert!(text.contains("with metrics"), "missing metric counter: {text}");
+        assert!(text.contains("Working tree:"), "missing working tree line: {text}");
+    }
+
+    #[tokio::test]
     async fn log_shows_commits() {
         let (dir, server) = setup_repo();
         let ws = dir.path().to_str().unwrap().to_string();
         std::fs::write(dir.path().join("f.txt"), "data").unwrap();
         server.morph_stage(Parameters(StageParams { workspace_path: Some(ws.clone()), paths: Some(vec![".".into()]) })).await.unwrap();
-        server.morph_commit(Parameters(CommitParams { message: "test-commit-msg".into(), pipeline: None, eval_suite: None, workspace_path: Some(ws.clone()), metrics: None, author: None, from_run: None })).await.unwrap();
+        server.morph_commit(Parameters(CommitParams { message: "test-commit-msg".into(), workspace_path: Some(ws.clone()), allow_empty_metrics: Some(true), ..Default::default() })).await.unwrap();
         let result = server.morph_log(Parameters(LogParams { ref_name: None, workspace_path: Some(ws) })).await.unwrap();
         assert!(extract_text(&result).contains("test-commit-msg"));
     }
@@ -688,8 +1128,8 @@ mod tests {
         let ws = dir.path().to_str().unwrap().to_string();
         std::fs::write(dir.path().join("x.txt"), "hello").unwrap();
         server.morph_stage(Parameters(StageParams { workspace_path: Some(ws.clone()), paths: Some(vec![".".into()]) })).await.unwrap();
-        let commit_result = server.morph_commit(Parameters(CommitParams { message: "initial".into(), pipeline: None, eval_suite: None, workspace_path: Some(ws.clone()), metrics: None, author: None, from_run: None })).await.unwrap();
-        let commit_hash = extract_text(&commit_result).to_string();
+        let commit_result = server.morph_commit(Parameters(CommitParams { message: "initial".into(), workspace_path: Some(ws.clone()), allow_empty_metrics: Some(true), ..Default::default() })).await.unwrap();
+        let commit_hash = extract_text(&commit_result).lines().next().unwrap_or("").to_string();
         let result = server.morph_show(Parameters(ShowParams { hash: commit_hash, workspace_path: Some(ws) })).await.unwrap();
         assert!(extract_text(&result).contains("commit"));
         assert!(extract_text(&result).contains("initial"));
@@ -834,15 +1274,326 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn eval_from_output_returns_metrics_json() {
+        let (dir, server) = setup_repo();
+        let ws = dir.path().to_str().unwrap().to_string();
+        let result = server
+            .morph_eval_from_output(Parameters(EvalFromOutputParams {
+                stdout: "test result: ok. 5 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s\n".into(),
+                runner: Some("cargo".into()),
+                command: None,
+                record: Some(false),
+                workspace_path: Some(ws.clone()),
+            }))
+            .await
+            .unwrap();
+        let text = extract_text(&result);
+        let parsed: std::collections::BTreeMap<String, f64> =
+            serde_json::from_str(text).expect("expected metrics json");
+        assert_eq!(parsed.get("tests_passed").copied(), Some(5.0));
+        assert_eq!(parsed.get("tests_failed").copied(), Some(1.0));
+        assert_eq!(parsed.get("tests_total").copied(), Some(6.0));
+    }
+
+    #[tokio::test]
+    async fn eval_from_output_record_links_run_to_head() {
+        let (dir, server) = setup_repo();
+        let ws = dir.path().to_str().unwrap().to_string();
+        std::fs::write(dir.path().join("a.txt"), "v1").unwrap();
+        server
+            .morph_stage(Parameters(StageParams {
+                workspace_path: Some(ws.clone()),
+                paths: Some(vec![".".into()]),
+            }))
+            .await
+            .unwrap();
+        let head = extract_text(
+            &server
+                .morph_commit(Parameters(CommitParams {
+                    message: "base".into(),
+                    workspace_path: Some(ws.clone()),
+                    allow_empty_metrics: Some(true),
+                    ..Default::default()
+                }))
+                .await
+                .unwrap(),
+        )
+        .lines()
+        .next()
+        .unwrap_or("")
+        .to_string();
+
+        let result = server
+            .morph_eval_from_output(Parameters(EvalFromOutputParams {
+                stdout: "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n".into(),
+                runner: Some("auto".into()),
+                command: Some("cargo test".into()),
+                record: Some(true),
+                workspace_path: Some(ws.clone()),
+            }))
+            .await
+            .unwrap();
+        let run_hash = extract_text(&result).trim().to_string();
+        assert_eq!(run_hash.len(), 64, "expected 64-char run hash, got {run_hash:?}");
+
+        let store = morph_core::open_store(&dir.path().join(".morph")).unwrap();
+        let obj = store.get(&morph_core::Hash::from_hex(&run_hash).unwrap()).unwrap();
+        match obj {
+            morph_core::MorphObject::Run(r) => {
+                assert_eq!(r.commit.as_deref(), Some(head.as_str()));
+                assert_eq!(r.metrics.get("tests_passed").copied(), Some(3.0));
+            }
+            _ => panic!("expected a Run object"),
+        }
+    }
+
+    #[tokio::test]
+    async fn eval_run_executes_command_and_records_run() {
+        let (dir, server) = setup_repo();
+        let ws = dir.path().to_str().unwrap().to_string();
+        std::fs::write(dir.path().join("a.txt"), "v1").unwrap();
+        server
+            .morph_stage(Parameters(StageParams {
+                workspace_path: Some(ws.clone()),
+                paths: Some(vec![".".into()]),
+            }))
+            .await
+            .unwrap();
+        server
+            .morph_commit(Parameters(CommitParams {
+                message: "base".into(),
+                workspace_path: Some(ws.clone()),
+                allow_empty_metrics: Some(true),
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
+
+        let result = server
+            .morph_eval_run(Parameters(EvalRunParams {
+                command: vec![
+                    "printf".into(),
+                    "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s\n".into(),
+                ],
+                runner: Some("cargo".into()),
+                cwd: None,
+                workspace_path: Some(ws.clone()),
+            }))
+            .await
+            .unwrap();
+        let body = extract_text(&result);
+        let run_hash = body.lines().next().unwrap_or("").to_string();
+        assert_eq!(run_hash.len(), 64, "expected 64-char run hash, got {body:?}");
+        assert!(!body.contains("warning: no metrics"), "should have parsed metrics: {body}");
+
+        let store = morph_core::open_store(&dir.path().join(".morph")).unwrap();
+        let obj = store.get(&morph_core::Hash::from_hex(&run_hash).unwrap()).unwrap();
+        match obj {
+            morph_core::MorphObject::Run(r) => {
+                assert_eq!(r.metrics.get("tests_passed").copied(), Some(7.0));
+            }
+            _ => panic!("expected a Run object"),
+        }
+    }
+
+    #[tokio::test]
+    async fn add_eval_case_creates_default_suite() {
+        let (dir, server) = setup_repo();
+        let ws = dir.path().to_str().unwrap().to_string();
+        std::fs::create_dir_all(dir.path().join("specs")).unwrap();
+        std::fs::write(
+            dir.path().join("specs/login.yaml"),
+            "- name: login_alpha\n  steps:\n    - morph: [status]\n",
+        )
+        .unwrap();
+
+        let result = server
+            .morph_add_eval_case(Parameters(AddEvalCaseParams {
+                paths: vec!["specs/login.yaml".into()],
+                suite: None,
+                no_default: None,
+                no_set_default: None,
+                workspace_path: Some(ws.clone()),
+            }))
+            .await
+            .unwrap();
+        let body = extract_text(&result);
+        let suite_hash = body.lines().next().unwrap_or("").to_string();
+        assert_eq!(suite_hash.len(), 64, "expected 64-char suite hash, got: {body}");
+
+        // Default eval suite is now wired to the new hash.
+        let policy = morph_core::read_policy(&dir.path().join(".morph")).unwrap();
+        assert_eq!(policy.default_eval_suite.as_deref(), Some(suite_hash.as_str()));
+    }
+
+    #[tokio::test]
+    async fn eval_suite_show_lists_cases() {
+        let (dir, server) = setup_repo();
+        let ws = dir.path().to_str().unwrap().to_string();
+        std::fs::create_dir_all(dir.path().join("specs")).unwrap();
+        std::fs::write(
+            dir.path().join("specs/a.yaml"),
+            "- name: case_one\n- name: case_two\n",
+        )
+        .unwrap();
+        server
+            .morph_add_eval_case(Parameters(AddEvalCaseParams {
+                paths: vec!["specs/a.yaml".into()],
+                suite: None,
+                no_default: None,
+                no_set_default: None,
+                workspace_path: Some(ws.clone()),
+            }))
+            .await
+            .unwrap();
+
+        let result = server
+            .morph_eval_suite_show(Parameters(EvalSuiteShowParams {
+                suite: None,
+                workspace_path: Some(ws.clone()),
+            }))
+            .await
+            .unwrap();
+        let text = extract_text(&result);
+        assert!(text.contains("case_one"), "missing case_one in: {text}");
+        assert!(text.contains("case_two"), "missing case_two in: {text}");
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(json["case_count"], serde_json::json!(2));
+    }
+
+    #[tokio::test]
+    async fn eval_suite_from_specs_replaces_default() {
+        let (dir, server) = setup_repo();
+        let ws = dir.path().to_str().unwrap().to_string();
+        std::fs::create_dir_all(dir.path().join("specs")).unwrap();
+        std::fs::write(dir.path().join("specs/x.yaml"), "- name: x_only\n").unwrap();
+        std::fs::write(dir.path().join("specs/y.yaml"), "- name: y_only\n").unwrap();
+
+        let first = extract_text(
+            &server
+                .morph_eval_suite_from_specs(Parameters(EvalSuiteFromSpecsParams {
+                    paths: vec!["specs".into()],
+                    no_set_default: None,
+                    workspace_path: Some(ws.clone()),
+                }))
+                .await
+                .unwrap(),
+        )
+        .lines()
+        .next()
+        .unwrap_or("")
+        .to_string();
+        assert_eq!(first.len(), 64);
+
+        // Removing y.yaml and re-running gives a smaller suite — proves
+        // suite-from-specs builds fresh, not append.
+        std::fs::remove_file(dir.path().join("specs/y.yaml")).unwrap();
+        let second_body = extract_text(
+            &server
+                .morph_eval_suite_from_specs(Parameters(EvalSuiteFromSpecsParams {
+                    paths: vec!["specs".into()],
+                    no_set_default: None,
+                    workspace_path: Some(ws.clone()),
+                }))
+                .await
+                .unwrap(),
+        )
+        .to_string();
+        let second = second_body.lines().next().unwrap_or("").to_string();
+        assert_eq!(second.len(), 64);
+        assert_ne!(first, second, "rebuild with fewer cases must change the hash");
+
+        let show = extract_text(
+            &server
+                .morph_eval_suite_show(Parameters(EvalSuiteShowParams {
+                    suite: None,
+                    workspace_path: Some(ws.clone()),
+                }))
+                .await
+                .unwrap(),
+        )
+        .to_string();
+        assert!(show.contains("x_only"));
+        assert!(!show.contains("y_only"));
+    }
+
+    #[tokio::test]
+    async fn eval_gaps_returns_structured_list() {
+        let (dir, server) = setup_repo();
+        let ws = dir.path().to_str().unwrap().to_string();
+
+        // Fresh repo: no suite, no commits → at least
+        // empty_default_suite is reported.
+        let result = server
+            .morph_eval_gaps(Parameters(WorkspaceOnlyParams {
+                workspace_path: Some(ws.clone()),
+            }))
+            .await
+            .unwrap();
+        let body = extract_text(&result);
+        let v: serde_json::Value = serde_json::from_str(body).unwrap();
+        let kinds: Vec<&str> = v["gaps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|g| g["kind"].as_str())
+            .collect();
+        assert!(kinds.contains(&"empty_default_suite"), "kinds={kinds:?}");
+
+        // Add a suite + commit with metrics → no gaps reported.
+        std::fs::create_dir_all(dir.path().join("specs")).unwrap();
+        std::fs::write(dir.path().join("specs/a.yaml"), "- name: alpha\n").unwrap();
+        server
+            .morph_add_eval_case(Parameters(AddEvalCaseParams {
+                paths: vec!["specs/a.yaml".into()],
+                suite: None,
+                no_default: None,
+                no_set_default: None,
+                workspace_path: Some(ws.clone()),
+            }))
+            .await
+            .unwrap();
+        std::fs::write(dir.path().join("foo.txt"), "v1").unwrap();
+        server
+            .morph_stage(Parameters(StageParams {
+                workspace_path: Some(ws.clone()),
+                paths: Some(vec![".".into()]),
+            }))
+            .await
+            .unwrap();
+        let mut metrics = std::collections::BTreeMap::new();
+        metrics.insert("tests_passed".into(), 1.0);
+        metrics.insert("tests_total".into(), 1.0);
+        server
+            .morph_commit(Parameters(CommitParams {
+                message: "with metrics".into(),
+                workspace_path: Some(ws.clone()),
+                metrics: Some(metrics),
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
+
+        let result = server
+            .morph_eval_gaps(Parameters(WorkspaceOnlyParams {
+                workspace_path: Some(ws.clone()),
+            }))
+            .await
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_str(extract_text(&result)).unwrap();
+        assert_eq!(v["count"], serde_json::json!(0), "expected zero gaps after evidence is registered, got: {v:?}");
+    }
+
+    #[tokio::test]
     async fn diff_between_commits() {
         let (dir, server) = setup_repo();
         let ws = dir.path().to_str().unwrap().to_string();
         std::fs::write(dir.path().join("a.txt"), "v1").unwrap();
         server.morph_stage(Parameters(StageParams { workspace_path: Some(ws.clone()), paths: Some(vec![".".into()]) })).await.unwrap();
-        let c1 = extract_text(&server.morph_commit(Parameters(CommitParams { message: "first".into(), pipeline: None, eval_suite: None, workspace_path: Some(ws.clone()), metrics: None, author: None, from_run: None })).await.unwrap()).to_string();
+        let c1 = extract_text(&server.morph_commit(Parameters(CommitParams { message: "first".into(), workspace_path: Some(ws.clone()), allow_empty_metrics: Some(true), ..Default::default() })).await.unwrap()).lines().next().unwrap_or("").to_string();
         std::fs::write(dir.path().join("b.txt"), "new file").unwrap();
         server.morph_stage(Parameters(StageParams { workspace_path: Some(ws.clone()), paths: Some(vec!["b.txt".into()]) })).await.unwrap();
-        let c2 = extract_text(&server.morph_commit(Parameters(CommitParams { message: "second".into(), pipeline: None, eval_suite: None, workspace_path: Some(ws.clone()), metrics: None, author: None, from_run: None })).await.unwrap()).to_string();
+        let c2 = extract_text(&server.morph_commit(Parameters(CommitParams { message: "second".into(), workspace_path: Some(ws.clone()), allow_empty_metrics: Some(true), ..Default::default() })).await.unwrap()).lines().next().unwrap_or("").to_string();
         let result = server.morph_diff(Parameters(DiffParams { old_ref: c1, new_ref: c2, workspace_path: Some(ws) })).await.unwrap();
         assert!(extract_text(&result).contains("A"));
         assert!(extract_text(&result).contains("b.txt"));

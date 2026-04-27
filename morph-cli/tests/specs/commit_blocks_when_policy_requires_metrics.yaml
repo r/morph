@@ -1,0 +1,38 @@
+# Phase 2b: with `policy.required_metrics` set, a commit that does
+# not supply those metrics fails with a clear explanation pointing
+# at `morph eval record` and the `--allow-empty-metrics` escape
+# hatch.
+
+- name: commit_blocks_when_required_metrics_missing
+  files:
+    foo.txt: "hello"
+    .morph/config.json: |
+      {
+        "repo_version": "0.0",
+        "policy": {
+          "required_metrics": ["tests_total", "tests_passed"]
+        }
+      }
+  steps:
+    - morph: [add, foo.txt]
+    - morph: [commit, -m, "no metrics"]
+      expect_exit: 1
+      stderr_contains:
+        - "policy requires metrics that are missing"
+        - "tests_total"
+        - "tests_passed"
+        - "--allow-empty-metrics"
+
+- name: commit_passes_when_required_metrics_present
+  files:
+    foo.txt: "hello"
+    .morph/config.json: |
+      {
+        "repo_version": "0.0",
+        "policy": {
+          "required_metrics": ["tests_total", "tests_passed"]
+        }
+      }
+  steps:
+    - morph: [add, foo.txt]
+    - morph: [commit, -m, "with metrics", --metrics, '{"tests_total":1,"tests_passed":1}']

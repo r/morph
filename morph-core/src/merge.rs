@@ -9,9 +9,9 @@
 use crate::commit::{current_branch, resolve_head};
 use crate::objects::{Commit, EvalContract, EvalSuite, MorphObject};
 use crate::policy::read_policy;
-use crate::store::{MorphError, Store};
+use crate::store::{MorphError, ObjectType, Store};
 use crate::Hash;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::path::Path;
 
@@ -88,6 +88,12 @@ pub struct MergePlan {
     /// `None` when neither parent had any (don't churn hashes by
     /// emitting an empty array on legacy / suite-free histories).
     pub evidence_refs: Option<Vec<String>>,
+    /// Phase 6b: acceptance case ids contributed by each branch's
+    /// history since the merge base (or since the root, when there
+    /// is no shared history). Recorded via `morph commit
+    /// --new-cases`. Sorted+deduped per branch.
+    pub head_introduces_cases: Vec<String>,
+    pub other_introduces_cases: Vec<String>,
     head_commit: Commit,
     other_commit: Commit,
 }
@@ -154,7 +160,41 @@ impl MergePlan {
             out.push('\n');
         }
 
+        // Phase 6b: surface case provenance so a reviewer can see at
+        // a glance which acceptance cases each branch introduced and
+        // therefore which cases the merged candidate must satisfy.
+        let union: BTreeSet<&String> = self
+            .head_introduces_cases
+            .iter()
+            .chain(self.other_introduces_cases.iter())
+            .collect();
+        out.push_str("\nCase provenance:\n");
+        out.push_str(&format!(
+            "  {} introduces {} case(s){}\n",
+            head_label,
+            self.head_introduces_cases.len(),
+            format_case_list(&self.head_introduces_cases),
+        ));
+        out.push_str(&format!(
+            "  {} introduces {} case(s){}\n",
+            self.other_branch,
+            self.other_introduces_cases.len(),
+            format_case_list(&self.other_introduces_cases),
+        ));
+        out.push_str(&format!(
+            "  Merged candidate must pass all {} (union) plus existing suite.\n",
+            union.len(),
+        ));
+
         out
+    }
+}
+
+fn format_case_list(cases: &[String]) -> String {
+    if cases.is_empty() {
+        String::new()
+    } else {
+        format!(": {}", cases.join(", "))
     }
 }
 
@@ -314,6 +354,16 @@ pub fn prepare_merge(
         other_commit.evidence_refs.as_deref(),
     );
 
+    // Phase 6b: walk back from each tip, stopping at the merge base
+    // when there is one, to collect `introduces_cases` annotations.
+    // We deliberately tolerate missing-base (disjoint histories) by
+    // walking back to root.
+    let base = crate::objmerge::merge_base(store, &head_hash, &other_hash)?;
+    let head_introduces_cases =
+        collect_introduces_cases(store, &head_hash, base.as_ref())?;
+    let other_introduces_cases =
+        collect_introduces_cases(store, &other_hash, base.as_ref())?;
+
     Ok(MergePlan {
         head_hash,
         other_hash,
@@ -327,9 +377,66 @@ pub fn prepare_merge(
         reference_bar,
         retired_metrics: retired.to_vec(),
         evidence_refs,
+        head_introduces_cases,
+        other_introduces_cases,
         head_commit,
         other_commit,
     })
+}
+
+/// Phase 6b: collect acceptance case ids from `introduces_cases`
+/// annotations recorded along a branch's ancestry. Walks
+/// `commit.parents` from `tip` and stops at any commit hash in
+/// `stop_at` (typically the merge base). The returned list is
+/// sorted+deduped.
+pub fn collect_introduces_cases(
+    store: &dyn Store,
+    tip: &Hash,
+    stop_at: Option<&Hash>,
+) -> Result<Vec<String>, MorphError> {
+    // BFS the ancestry from `tip`, excluding `stop_at` (so its cases
+    // remain attributed to shared history). We track hashes as hex
+    // strings to avoid requiring `Ord` on the binary `Hash` newtype.
+    let stop_str = stop_at.map(|h| h.to_string());
+    let mut branch_commits: BTreeSet<String> = BTreeSet::new();
+    let mut queue: VecDeque<Hash> = VecDeque::new();
+    queue.push_back(tip.clone());
+
+    while let Some(h) = queue.pop_front() {
+        let h_str = h.to_string();
+        if stop_str.as_deref() == Some(h_str.as_str()) || !branch_commits.insert(h_str) {
+            continue;
+        }
+        if let MorphObject::Commit(c) = store.get(&h)? {
+            for p in &c.parents {
+                if let Ok(ph) = Hash::from_hex(p) {
+                    queue.push_back(ph);
+                }
+            }
+        }
+    }
+
+    if branch_commits.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut cases: BTreeSet<String> = BTreeSet::new();
+    for ah in store.list(ObjectType::Annotation)? {
+        let MorphObject::Annotation(a) = store.get(&ah)? else { continue };
+        if a.kind != "introduces_cases" || !branch_commits.contains(&a.target) {
+            continue;
+        }
+        if let Some(arr) = a.data.get("cases").and_then(|v| v.as_array()) {
+            for v in arr {
+                if let Some(s) = v.as_str() {
+                    if !s.is_empty() {
+                        cases.insert(s.to_string());
+                    }
+                }
+            }
+        }
+    }
+    Ok(cases.into_iter().collect())
 }
 
 /// Pure helper: deduped sorted union of two optional evidence_ref
@@ -514,6 +621,65 @@ mod tests {
         assert_eq!(out, vec!["x".to_string(), "y".into()]);
         let out = union_evidence_refs(None, Some(&a)).unwrap();
         assert_eq!(out, vec!["x".to_string(), "y".into()]);
+    }
+
+    // Phase 6b: case provenance.
+    #[test]
+    fn prepare_merge_collects_introduces_cases_per_branch() {
+        let (dir, store) = setup_repo();
+        let suite = make_suite(vec![EvalMetric::new("acc", "mean", 0.0)]);
+        let mut m1 = BTreeMap::new();
+        m1.insert("acc".into(), 0.9);
+        let mut m2 = BTreeMap::new();
+        m2.insert("acc".into(), 0.85);
+        setup_two_branches(store.as_ref(), dir.path(), &suite, &suite, m1, m2);
+
+        // Annotate main HEAD (case `alpha`) and feature HEAD (case `beta`).
+        let main_hash = store.ref_read("heads/main").unwrap().unwrap();
+        let feature_hash = store.ref_read("heads/feature").unwrap().unwrap();
+        let mut data_main = BTreeMap::new();
+        data_main.insert(
+            "cases".to_string(),
+            serde_json::Value::Array(vec![serde_json::json!("alpha")]),
+        );
+        let ann_main = crate::create_annotation(
+            &main_hash, None, "introduces_cases".into(), data_main, None,
+        );
+        store.put(&ann_main).unwrap();
+
+        let mut data_feat = BTreeMap::new();
+        data_feat.insert(
+            "cases".to_string(),
+            serde_json::Value::Array(vec![
+                serde_json::json!("beta"),
+                serde_json::json!("gamma"),
+            ]),
+        );
+        let ann_feat = crate::create_annotation(
+            &feature_hash, None, "introduces_cases".into(), data_feat, None,
+        );
+        store.put(&ann_feat).unwrap();
+
+        let plan = prepare_merge(store.as_ref(), "feature", None, None).unwrap();
+        // Merge base is the shared `main commit` (same hash on
+        // both branches before we forked); annotations on `main`
+        // before the fork are excluded, but our annotation lives
+        // on `main_hash` which IS the merge base. So head_branch
+        // (still on `main`) reports zero new cases, and `feature`
+        // reports its own [beta, gamma]. This matches the
+        // documented contract: cases from the shared base are
+        // shared history, not branch-introduced.
+        assert_eq!(plan.head_introduces_cases, Vec::<String>::new());
+        assert_eq!(
+            plan.other_introduces_cases,
+            vec!["beta".to_string(), "gamma".into()],
+        );
+
+        let txt = plan.format_plan();
+        assert!(txt.contains("Case provenance:"), "missing header: {txt}");
+        assert!(txt.contains("introduces 0 case(s)"), "head 0: {txt}");
+        assert!(txt.contains("introduces 2 case(s): beta, gamma"), "feature 2: {txt}");
+        assert!(txt.contains("Merged candidate must pass all 2"), "union: {txt}");
     }
 
     #[test]

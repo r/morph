@@ -60,6 +60,23 @@ impl Default for RepoPolicy {
     }
 }
 
+/// Names from `policy.required_metrics` that are absent from `observed`.
+/// Returns an empty `Vec` when the gate is satisfied. The CLI and MCP
+/// commit handlers both share this check so the failure message stays
+/// in sync. Order matches `required_metrics` so the user sees them in
+/// the order they were configured.
+pub fn missing_required_metrics(
+    policy: &RepoPolicy,
+    observed: &BTreeMap<String, f64>,
+) -> Vec<String> {
+    policy
+        .required_metrics
+        .iter()
+        .filter(|m| !observed.contains_key(m.as_str()))
+        .cloned()
+        .collect()
+}
+
 /// Outcome of a certification attempt.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CertificationResult {
@@ -475,6 +492,28 @@ mod tests {
     }
 
     #[test]
+    fn missing_required_metrics_returns_absent_names_in_order() {
+        let mut policy = RepoPolicy::default();
+        policy.required_metrics = vec!["tests_total".into(), "tests_passed".into(), "pass_rate".into()];
+
+        let mut observed = BTreeMap::new();
+        observed.insert("tests_total".into(), 10.0);
+        let missing = missing_required_metrics(&policy, &observed);
+        assert_eq!(missing, vec!["tests_passed".to_string(), "pass_rate".to_string()]);
+
+        observed.insert("tests_passed".into(), 10.0);
+        observed.insert("pass_rate".into(), 1.0);
+        assert!(missing_required_metrics(&policy, &observed).is_empty());
+    }
+
+    #[test]
+    fn missing_required_metrics_empty_policy_is_always_satisfied() {
+        let policy = RepoPolicy::default();
+        let observed: BTreeMap<String, f64> = BTreeMap::new();
+        assert!(missing_required_metrics(&policy, &observed).is_empty());
+    }
+
+    #[test]
     fn policy_round_trip() {
         let (dir, _store) = setup_repo();
         let morph_dir = dir.path().join(".morph");
@@ -815,12 +854,30 @@ mod tests {
 
     #[test]
     fn default_policy_when_absent() {
-        let (dir, _store) = setup_repo();
+        // Phase 2a: use a bare temp dir (no `init_repo`) so we
+        // exercise the legacy code path where `.morph/config.json`
+        // has no `policy` key. Old/upgraded repos must still read
+        // back the empty defaults rather than failing.
+        let dir = tempfile::tempdir().unwrap();
         let morph_dir = dir.path().join(".morph");
+        std::fs::create_dir_all(&morph_dir).unwrap();
+        // No config.json at all — read_policy should return the
+        // empty default rather than blowing up.
         let policy = read_policy(&morph_dir).unwrap();
         assert!(policy.required_metrics.is_empty());
         assert!(policy.thresholds.is_empty());
         assert_eq!(policy.merge_policy, "dominance");
+
+        // Now write a config.json without a "policy" key (the shape
+        // older Morph repos shipped) and confirm we still get
+        // empty defaults rather than a parse error.
+        std::fs::write(
+            morph_dir.join("config.json"),
+            serde_json::json!({"repo_version":"0.0"}).to_string(),
+        )
+        .unwrap();
+        let policy2 = read_policy(&morph_dir).unwrap();
+        assert!(policy2.required_metrics.is_empty());
     }
 
     #[test]

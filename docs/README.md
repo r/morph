@@ -71,6 +71,7 @@ THEORY.md defines the algebra. v0-spec.md projects that algebra into a buildable
 | Document | Audience | What it covers |
 |---|---|---|
 | **[INSTALLATION.md](INSTALLATION.md)** | Users | Install Morph (binaries, init, IDE setup). Covers Cursor, Claude Code, and OpenCode. |
+| **[EVAL-DRIVEN.md](EVAL-DRIVEN.md)** | Users | Spec-first, eval-driven development with Morph: register acceptance cases, record runs, commit with metrics, merge with case provenance. |
 | **[CURSOR-SETUP.md](CURSOR-SETUP.md)** | Users | Full Cursor reference: MCP server, hooks for always-on recording, rules, committing. |
 | **[CLAUDE-CODE-SETUP.md](CLAUDE-CODE-SETUP.md)** | Users | Full Claude Code reference: MCP server, hooks, committing. |
 | **[OPENCODE-SETUP.md](OPENCODE-SETUP.md)** | Users | Full OpenCode reference: MCP server, AGENTS.md, recording plugin, committing. |

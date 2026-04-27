@@ -56,8 +56,12 @@ fn run_morph(repo: &std::path::Path, args: &[&str], env: &[(&str, &str)]) -> std
 }
 
 fn init_repo(path: &std::path::Path) {
+    // `--no-default-policy` keeps these pre-Phase-2a fixtures
+    // permissive so the bodies that commit without metrics still
+    // work. Production users get the strict default.
     let out = Command::new(morph_bin())
         .arg("init")
+        .arg("--no-default-policy")
         .arg(path)
         .output()
         .unwrap();
@@ -68,6 +72,7 @@ fn init_bare_repo(path: &std::path::Path) {
     let out = Command::new(morph_bin())
         .arg("init")
         .arg("--bare")
+        .arg("--no-default-policy")
         .arg(path)
         .output()
         .unwrap();

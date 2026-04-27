@@ -1,0 +1,31 @@
+# Phase 4b: `morph eval suite-from-specs` ingests a directory tree
+# of mixed YAML/.feature files and rebuilds the default suite from
+# scratch.
+
+- name: suite_from_specs_walks_directory
+  files:
+    spec/login.yaml: |
+      - name: user_can_login
+        steps:
+          - morph: [status]
+    spec/logout.feature: |
+      Feature: logout
+        Scenario: graceful logout
+          Given I am logged in
+          When I click logout
+          Then I am redirected to /login
+        Scenario: forced logout
+          When the session expires
+          Then I am redirected to /login
+    spec/notes.txt: "ignored — not a spec\n"
+  steps:
+    - morph: [eval, suite-from-specs, spec/]
+      capture_first_line: suite_hash
+      assert_hash: true
+    - morph: [eval, suite-show, --json]
+      stdout_contains:
+        - "user_can_login"
+        - "graceful logout"
+        - "forced logout"
+    - morph: [eval, suite-show]
+      stdout_not_contains: "ignored"

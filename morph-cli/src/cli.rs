@@ -36,6 +36,12 @@ pub enum Command {
         /// `morph push` to via SSH.
         #[arg(long)]
         bare: bool,
+        /// Skip writing the opinionated default RepoPolicy. Used by
+        /// the spec-test harness to keep pre-Phase-2a fixtures
+        /// permissive; humans should leave this off so new repos
+        /// require behavioral evidence by default.
+        #[arg(long, hide = true)]
+        no_default_policy: bool,
     },
     /// Print version + build metadata. Like `--version` but also
     /// supports `--json` for scripts and CI smoke tests.
@@ -105,6 +111,17 @@ pub enum Command {
         author: Option<String>,
         #[arg(long)]
         from_run: Option<String>,
+        /// Bypass the policy.required_metrics gate. Pre-commit
+        /// hook still warns; the commit is recorded without
+        /// behavioral evidence. Use sparingly.
+        #[arg(long)]
+        allow_empty_metrics: bool,
+        /// Comma-separated acceptance-case ids this commit
+        /// introduces. Stored as an `introduces_cases`
+        /// annotation; surfaced by merge plans for case
+        /// provenance.
+        #[arg(long)]
+        new_cases: Option<String>,
         /// Output structured JSON instead of human-readable summary
         #[arg(long)]
         json: bool,
@@ -564,7 +581,104 @@ pub enum RunCmd {
 
 #[derive(clap::Subcommand)]
 pub enum EvalCmd {
+    /// Record a metrics JSON file as an eval-result blob plus a Run.
     Record { file: PathBuf },
+    /// Parse a captured stdout file from a test runner and emit the
+    /// resulting metrics map. Composes with `morph eval record`,
+    /// `morph commit --metrics`, and `morph_commit` MCP.
+    FromOutput {
+        /// Which runner produced the file. Defaults to `auto`,
+        /// which sniffs based on content. Pass an explicit value
+        /// when the output is ambiguous (e.g. mixed runners in CI).
+        #[arg(long, default_value = "auto")]
+        runner: String,
+        /// Path to a file containing the runner's stdout (and
+        /// optionally stderr). `-` reads from standard input.
+        file: PathBuf,
+        /// Also create a Run object pointing at HEAD with these
+        /// metrics. The hash is printed on stdout so it composes
+        /// with `morph commit --from-run <hash>`.
+        #[arg(long)]
+        record: bool,
+    },
+    /// Execute a test command, capture its output, parse metrics, and
+    /// store a Run object linked to HEAD. Prints the run hash so the
+    /// caller can `morph commit --from-run <hash>`.
+    Run {
+        /// Runner family to use for parsing. `auto` (default) sniffs
+        /// from the command and output.
+        #[arg(long, default_value = "auto")]
+        runner: String,
+        /// Working directory for the test command. Defaults to the
+        /// repository root.
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+        /// The test command and its arguments. Use `--` to separate
+        /// from `morph eval run`'s own flags, e.g.
+        /// `morph eval run -- cargo test --workspace`.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        command: Vec<String>,
+    },
+    /// Phase 4b: ingest one or more YAML specs / cucumber `.feature`
+    /// files as acceptance cases. Updates the repo's default suite
+    /// (or `--suite <hash>`) by appending and deduping by case id.
+    ///
+    /// Print the new suite hash on stdout so callers can pipe into
+    /// `morph commit --eval-suite <hash>` if they don't want to use
+    /// the policy default.
+    AddCase {
+        /// Files or directories to ingest. Directories are walked
+        /// one level deep.
+        paths: Vec<PathBuf>,
+        /// Existing suite to extend. Defaults to
+        /// `policy.default_eval_suite`. Pass `--no-default` to
+        /// build a fresh suite.
+        #[arg(long)]
+        suite: Option<String>,
+        /// Build a fresh suite even if the policy already has a
+        /// default. Useful when starting over after a refactor.
+        #[arg(long)]
+        no_default: bool,
+        /// Skip updating `policy.default_eval_suite`. By default
+        /// the new suite hash is recorded so subsequent commits
+        /// pick it up automatically.
+        #[arg(long)]
+        no_set_default: bool,
+    },
+    /// Convenience wrapper for `morph eval add-case`: walks the
+    /// supplied directories, ingests every `*.yaml`/`*.yml`/`*.feature`,
+    /// and replaces the default suite with the result.
+    SuiteFromSpecs {
+        /// One or more directories (or files) to ingest.
+        paths: Vec<PathBuf>,
+        /// Skip updating `policy.default_eval_suite`.
+        #[arg(long)]
+        no_set_default: bool,
+    },
+    /// Print the contents of the default suite (or `--suite <hash>`)
+    /// in human-readable form.
+    SuiteShow {
+        /// Suite hash to inspect. Defaults to
+        /// `policy.default_eval_suite`.
+        #[arg(long)]
+        suite: Option<String>,
+        /// Emit JSON instead of the human summary.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Phase 5b: report behavioral evidence gaps in this repo, in
+    /// the same form as the `morph_eval_gaps` MCP tool. Use this in
+    /// stop-hooks to short-circuit a session that is about to
+    /// commit without evidence.
+    Gaps {
+        /// Emit JSON for downstream tooling.
+        #[arg(long)]
+        json: bool,
+        /// Exit non-zero when at least one gap is reported. Useful
+        /// in CI / git hooks.
+        #[arg(long)]
+        fail_on_gap: bool,
+    },
 }
 
 #[derive(clap::Subcommand)]
@@ -591,9 +705,24 @@ pub enum RemoteCmd {
 
 #[derive(clap::Subcommand)]
 pub enum PolicyCmd {
+    /// Write a default RepoPolicy if one is not already present.
+    /// New repos get this automatically; existing repos use this
+    /// to opt into behavioral merge gating without breaking history.
+    Init {
+        /// Overwrite an existing policy. Without this flag, `init`
+        /// is a no-op when a policy is already configured.
+        #[arg(long)]
+        force: bool,
+    },
     Show,
     Set { file: PathBuf },
     SetDefaultEval { hash: String },
+    /// Replace `policy.required_metrics` with the supplied list.
+    /// Pass an empty list to disable the gate; existing thresholds
+    /// and default-suite reference are preserved.
+    RequireMetrics {
+        metrics: Vec<String>,
+    },
 }
 
 #[derive(clap::Subcommand)]

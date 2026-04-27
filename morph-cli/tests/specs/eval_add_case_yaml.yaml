@@ -1,0 +1,57 @@
+# Phase 4b: ingesting a YAML spec via `morph eval add-case` should
+# build a fresh EvalSuite with one case per top-level document and
+# wire it up as the policy default.
+
+- name: add_case_yaml_creates_default_suite
+  files:
+    specs/login.yaml: |
+      - name: user_can_login
+        steps:
+          - morph: [status]
+      - name: user_can_logout
+        steps:
+          - morph: [status]
+  steps:
+    - morph: [eval, add-case, specs/login.yaml]
+      capture_first_line: suite_hash
+      assert_hash: true
+    - morph: [eval, suite-show, --json]
+      stdout_contains:
+        - "user_can_login"
+        - "user_can_logout"
+        - "yaml_spec"
+
+- name: add_case_no_set_default_keeps_policy_unchanged
+  files:
+    specs/login.yaml: |
+      - name: case_a
+        steps:
+          - morph: [status]
+  steps:
+    - morph: [eval, add-case, --no-set-default, specs/login.yaml]
+      capture_first_line: suite_hash
+      assert_hash: true
+    - morph: [policy, show]
+      stdout_contains: "\"default_eval_suite\": null"
+
+- name: add_case_extends_existing_default_suite
+  files:
+    specs/first.yaml: |
+      - name: alpha
+        steps:
+          - morph: [status]
+    specs/second.yaml: |
+      - name: beta
+        steps:
+          - morph: [status]
+  steps:
+    - morph: [eval, add-case, specs/first.yaml]
+      capture_first_line: suite_one
+      assert_hash: true
+    - morph: [eval, add-case, specs/second.yaml]
+      capture_first_line: suite_two
+      assert_hash: true
+    - morph: [eval, suite-show]
+      stdout_contains:
+        - "alpha"
+        - "beta"

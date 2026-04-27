@@ -1,37 +1,65 @@
 ---
-description: "Run evaluations before merging Morph branches; merges require behavioral dominance"
+description: "Run the eval suite before merging Morph branches; merges require behavioral dominance and surface case provenance."
 globs: ["**/*"]
 alwaysApply: false
 ---
 
 # Branch and Merge Evaluation
 
-Morph merges are behavioral, not just syntactic. A merge succeeds only if the merged program **dominates both parents** on every metric.
+Morph merges are behavioral, not syntactic. A merge succeeds only when the
+merged program **dominates both parents** on every metric in the registered
+eval suite.
 
 ## Before merging
 
-1. **Run the full test/eval suite** on the merge candidate.
-2. **Record the results** via `morph eval record` or `morph_record_eval`.
-3. **Commit with metrics** so the merge commit carries a behavioral certificate.
+1. **Run the full eval suite** on the merge candidate via `morph eval run
+   -- <test command>`. This captures stdout, parses common runner output
+   (cargo / pytest / vitest / jest / go), and writes a `Run` linked to
+   HEAD with the metrics map.
+2. **Confirm zero gaps** with `morph_eval_gaps` (or `morph eval gaps`). The
+   list must be empty before you merge.
+3. **Commit from the run** so the merge candidate carries a behavioral
+   certificate:
+
+   ```bash
+   morph commit -m "<message>" --from-run <run_hash> --new-cases <ids>
+   ```
 
 ## Merge command
 
-```
-morph merge <branch> --message "msg" --pipeline <hash> --eval-suite <hash> --metrics '{"tests_passed": N, "pass_rate": 1.0}'
+```bash
+morph merge <branch> \
+  --message "msg" \
+  --pipeline <hash> \
+  --eval-suite <hash> \
+  --metrics '{"tests_passed": N, "pass_rate": 1.0}'
 ```
 
-The merge will fail if the metrics do not dominate the componentwise join of both parents' certified scores. This is a **behavioral conflict** — analogous to a text conflict in Git, but at the semantic level.
+If `--eval-suite` is omitted, the merge inherits
+`policy.default_eval_suite`. The merge plan output also surfaces **case
+provenance** — the union of `--new-cases` annotations across each branch's
+history — so you can see which acceptance cases each side introduced.
+
+The merge will fail if the metrics do not dominate the component-wise join
+of both parents' certified scores. That's a **behavioral conflict** —
+analogous to a text conflict in Git, but at the semantic level.
 
 ## When a merge fails
 
 If the merge is rejected because metrics regressed:
 
 1. Identify which metrics dropped below the parent thresholds.
-2. Fix the regression — improve the code, add missing test coverage, optimize performance.
-3. Re-run evaluations and retry the merge.
+2. Fix the regression — improve the code, add missing acceptance cases via
+   `morph eval add-case`, optimize performance.
+3. Re-run the eval suite (`morph eval run`), commit from the new run, and
+   retry the merge.
 
-A merge that silently drops accuracy or blows up latency is the actual failure mode — Morph prevents it.
+A merge that silently drops correctness or blows up latency is the actual
+failure mode — Morph prevents it.
 
 ## Creating branches
 
-When branching for experimental work, note which metrics the branch should maintain or improve. This sets expectations for what the merge will require.
+When branching for experimental work, write the acceptance cases that
+define "done" *first*, register them with `morph eval add-case`, and let
+the merge gate enforce them. This sets explicit expectations and gives the
+eventual merge real evidence to evaluate.

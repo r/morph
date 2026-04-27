@@ -57,17 +57,20 @@ Then open the project in Cursor. Ensure `morph` and `morph-mcp` are on your PATH
 Git-shaped workflow, plus behavioral gating and agent-session recording:
 
 ```bash
-morph init                       # initialize a morph repo
-morph status                     # show working tree + accumulated runs/traces
+morph init                       # initialize a morph repo (writes a default policy
+                                 #   requiring tests_total + tests_passed; see policy section)
+morph status                     # working tree + recent runs + behavioral evidence summary
 morph add .                      # stage files
-morph commit -m "message"        # create a commit (optional --pipeline/--eval-suite/--metrics)
+morph commit -m "message"        # create a commit (--pipeline/--eval-suite/--metrics/
+                                 #   --from-run <hash>/--allow-empty-metrics/
+                                 #   --new-cases id1,id2)
 morph log                        # view commit history
 morph diff <ref1> <ref2>         # compare two commits/branches
 morph show <hash>                # inspect any stored object as pretty JSON
 morph branch <name>              # create a branch
 morph checkout <ref>             # switch branch or detach to a commit
 morph merge <branch> ...         # behavioral merge (dominance required)
-morph merge-plan <branch>        # preview merge: parents, union suite, bar to beat
+morph merge-plan <branch>        # preview merge: parents, union suite, bar, case provenance
 morph tag <name>                 # tag the current commit
 morph stash save | pop | list    # save/restore staged work
 morph revert <hash>              # undo a commit
@@ -79,10 +82,38 @@ morph init --bare /srv/repo      # create a bare server repo (for `morph push`)
 morph clone <url> [dest]         # one-shot init + remote add + fetch + checkout
 morph certify --metrics-file f   # certify a commit against policy metrics
 morph gate                       # check if HEAD passes policy (exit 1 on fail)
-morph policy show | set          # view or update repository policy
+morph policy init|show|set|require-metrics ...   # manage repository policy
 morph upgrade                    # migrate the store to the latest version
 morph gc                         # remove unreachable objects
 ```
+
+### Eval-driven workflow
+
+Morph treats acceptance tests and metric-bearing runs as first-class
+objects so behavioral merge gating actually has evidence to compare.
+See [docs/EVAL-DRIVEN.md](docs/EVAL-DRIVEN.md) for the full guide.
+
+```bash
+morph eval add-case specs/login.yaml         # ingest YAML / Cucumber specs as EvalCases
+morph eval suite-from-specs specs/           # bulk-ingest a directory
+morph eval suite-show                        # display the registered default suite
+morph eval run -- cargo test --workspace     # exec, parse metrics, store a Run linked to HEAD
+morph eval from-output --runner pytest f.txt # parse already-captured stdout
+morph eval record metrics.json               # ingest a precomputed metrics file
+morph eval gaps [--json] [--fail-on-gap]     # report missing behavioral evidence
+```
+
+### Default policy on `morph init`
+
+Fresh repos get an opinionated `RepoPolicy` so commits without test
+results fail loudly:
+
+```json
+{ "required_metrics": ["tests_total", "tests_passed"], "merge_policy": "dominance" }
+```
+
+Override per-commit with `--allow-empty-metrics` (or pass `metrics`),
+or change the policy globally via `morph policy require-metrics`.
 
 ## Recording and inspecting agent work
 

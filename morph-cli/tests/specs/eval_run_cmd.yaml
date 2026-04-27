@@ -1,0 +1,36 @@
+# Phase 3b: `morph eval run` shells out to a real command, captures
+# stdout, parses metrics, and writes a Run linked to HEAD. We use
+# `printf` rather than a real test runner so the spec is portable.
+
+- name: eval_run_records_hash_from_printf_cargo_output
+  files:
+    foo.txt: "seed"
+  steps:
+    - morph: [add, foo.txt]
+    - morph: [commit, -m, "base", --metrics, '{"tests_total":2,"tests_passed":2}']
+    - morph:
+        - eval
+        - run
+        - --runner
+        - cargo
+        - --
+        - printf
+        - "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.42s\n"
+      capture_first_line: run_hash
+      assert_hash: true
+
+- name: eval_run_warns_when_runner_produces_no_metrics
+  files:
+    foo.txt: "seed"
+  steps:
+    - morph: [add, foo.txt]
+    - morph: [commit, -m, "base", --metrics, '{"tests_total":2,"tests_passed":2}']
+    - morph:
+        - eval
+        - run
+        - --runner
+        - cargo
+        - --
+        - printf
+        - "no metrics here at all\n"
+      stderr_contains: "warning: no metrics extracted"

@@ -1,0 +1,35 @@
+# Phase 2a/2b: `morph policy init` writes the opinionated default
+# RepoPolicy on existing repos. (New repos get this same shape from
+# `morph init` automatically; that path is covered by morph-core
+# unit tests since the spec harness runs init in
+# permissive-fixture mode.)
+
+- name: policy_init_writes_default_required_metrics
+  steps:
+    - morph: [policy, init]
+      stdout_contains:
+        - "Policy initialized"
+        - "tests_total"
+        - "tests_passed"
+    - morph: [policy, show]
+      stdout_contains:
+        - "tests_total"
+        - "tests_passed"
+        - "dominance"
+  assert:
+    - kind: file_contains
+      path: .morph/config.json
+      contents: "tests_total"
+    - kind: file_contains
+      path: .morph/config.json
+      contents: "tests_passed"
+
+- name: policy_init_is_idempotent_without_force
+  steps:
+    - morph: [policy, init]
+    - morph: [policy, init]
+      stdout_contains:
+        - "already initialized"
+    - morph: [policy, init, --force]
+      stdout_contains:
+        - "Policy initialized"

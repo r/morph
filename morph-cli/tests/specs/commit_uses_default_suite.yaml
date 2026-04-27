@@ -1,0 +1,22 @@
+# Phase 4b: when no `--eval-suite` is supplied, `morph commit` should
+# resolve `policy.default_eval_suite` so the resulting commit points
+# at the curated suite instead of the legacy empty fallback.
+
+- name: commit_inherits_default_eval_suite_from_policy
+  files:
+    specs/login.yaml: |
+      - name: alpha
+        steps:
+          - morph: [status]
+    foo.txt: "hello"
+  steps:
+    - morph: [eval, add-case, specs/login.yaml]
+      capture_first_line: suite_hash
+      assert_hash: true
+    - morph: [add, foo.txt]
+    - morph: [commit, -m, "uses default", --metrics, '{"tests_total":1,"tests_passed":1}', --json]
+      capture_json_field:
+        var: commit_hash
+        field: hash
+    - morph: [show, "${commit_hash}"]
+      stdout_contains: "${suite_hash}"

@@ -27,6 +27,8 @@ pub mod merge_state;
 pub mod workdir;
 pub mod merge_flow;
 pub mod policy;
+pub mod eval_parsers;
+pub mod eval_suite;
 pub mod diff;
 pub mod tag;
 pub mod stash;
@@ -68,7 +70,10 @@ pub use merge_flow::{
     start_merge, ContinueMergeOpts, ContinueMergeOutcome, MergeProgress,
     StartMergeOpts, StartMergeOutcome,
 };
-pub use record::{record_run, record_eval_metrics, record_session, record_conversation, ConversationMessage};
+pub use record::{
+    record_run, record_eval_metrics, record_eval_run, record_session, record_conversation,
+    run_test_command, ConversationMessage, EvalRunOutcome,
+};
 pub use extract::extract_pipeline_from_run;
 pub use tap::{
     extract_task, diagnose_run, summarize_repo, export_eval_cases,
@@ -89,7 +94,10 @@ pub use structured::{
     TraceSummary, TaskStructure, TargetContext, FinalArtifact,
     ChangeSemantics, VerificationSteps, VerificationAction,
 };
-pub use annotate::{create_annotation, list_annotations};
+pub use annotate::{
+    create_annotation, list_annotations,
+    parse_introduces_cases_arg, build_introduces_cases_annotation,
+};
 pub use index::{read_index, write_index, clear_index, update_index, StagingIndex};
 pub use tree::{build_tree, flatten_tree, restore_tree, empty_tree_hash};
 pub use migrate::{migrate_0_0_to_0_2, migrate_0_2_to_0_3, migrate_0_3_to_0_4, migrate_0_4_to_0_5};
@@ -104,7 +112,15 @@ pub use sync::{
 pub use policy::{
     RepoPolicy, CertificationResult, GateResult,
     read_policy, write_policy, certify_commit, gate_check, enforce_push_gate,
-    branch_matches_pattern, branch_matches_any,
+    branch_matches_pattern, branch_matches_any, missing_required_metrics,
+};
+pub use eval_parsers::{
+    parse_cargo_test, parse_pytest, parse_vitest, parse_jest, parse_go_test, parse_auto,
+    parse_with_runner,
+};
+pub use eval_suite::{
+    add_cases_from_yaml, add_cases_from_cucumber, add_cases_from_paths, build_or_extend_suite,
+    compute_eval_gaps,
 };
 pub use diff::{diff_trees, diff_commits, diff_file_maps, DiffEntry, DiffStatus};
 pub use tag::{create_tag, list_tags, delete_tag};

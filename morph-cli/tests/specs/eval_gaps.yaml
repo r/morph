@@ -1,0 +1,33 @@
+# Phase 5b: `morph eval gaps` reports the same structured gaps
+# returned by the `morph_eval_gaps` MCP tool. New repos report at
+# least the empty-default-suite gap; once a suite is registered and
+# HEAD has metrics, the report is empty.
+
+- name: gaps_reports_empty_default_suite_for_fresh_repo
+  steps:
+    - morph: [eval, gaps, --json]
+      stdout_contains:
+        - "empty_default_suite"
+        - "\"count\""
+
+- name: gaps_clears_after_suite_and_metrics_recorded
+  files:
+    specs/spec.yaml: |
+      - name: alpha
+        steps:
+          - morph: [status]
+    foo.txt: "hello"
+  steps:
+    - morph: [eval, add-case, specs/spec.yaml]
+      capture_first_line: suite_hash
+      assert_hash: true
+    - morph: [add, "."]
+    - morph: [commit, -m, "metrics", --metrics, '{"tests_total":1,"tests_passed":1}']
+    - morph: [eval, gaps]
+      stdout_contains: "No behavioral evidence gaps"
+
+- name: gaps_fail_on_gap_returns_nonzero
+  steps:
+    - morph: [eval, gaps, --fail-on-gap]
+      expect_exit: 1
+      stdout_contains: "empty_default_suite"

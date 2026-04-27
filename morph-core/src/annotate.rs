@@ -26,6 +26,47 @@ pub fn create_annotation(
     })
 }
 
+/// Phase 6b: parse a comma-separated argument like
+/// `"login:alpha, login:beta"` into the canonical `cases` list. Trims
+/// whitespace and drops empties so callers don't have to worry about
+/// trailing commas. Returns an empty vec when the arg has no real
+/// values (signal to skip recording an annotation entirely).
+pub fn parse_introduces_cases_arg(arg: &str) -> Vec<String> {
+    arg.split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// Phase 6b: build (but don't store) an `introduces_cases` annotation
+/// for `commit`. Pair with `store.put(&...)` at the call site. Returns
+/// `None` when `cases` is empty so callers can compose without a
+/// guard. `author` defaults to `"morph"` when `None` — the CLI passes
+/// the current branch name as a provenance hint.
+pub fn build_introduces_cases_annotation(
+    commit: &Hash,
+    cases: &[String],
+    author: Option<String>,
+) -> Option<MorphObject> {
+    if cases.is_empty() {
+        return None;
+    }
+    let mut data = BTreeMap::new();
+    data.insert(
+        "cases".to_string(),
+        serde_json::Value::Array(
+            cases.iter().map(|c| serde_json::Value::String(c.clone())).collect(),
+        ),
+    );
+    Some(create_annotation(
+        commit,
+        None,
+        "introduces_cases".into(),
+        data,
+        author,
+    ))
+}
+
 /// List all annotations targeting the given object (and optionally target_sub).
 pub fn list_annotations(
     store: &dyn Store,
@@ -78,6 +119,40 @@ mod tests {
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].0, ann_hash);
         assert_eq!(list[0].1.kind, "feedback");
+    }
+
+    #[test]
+    fn parse_introduces_cases_arg_handles_whitespace_and_empties() {
+        assert!(parse_introduces_cases_arg("").is_empty());
+        assert!(parse_introduces_cases_arg(" , , ").is_empty());
+        assert_eq!(
+            parse_introduces_cases_arg("login:alpha, login:beta ,, login:gamma"),
+            vec![
+                "login:alpha".to_string(),
+                "login:beta".to_string(),
+                "login:gamma".to_string(),
+            ],
+        );
+    }
+
+    #[test]
+    fn build_introduces_cases_annotation_skips_empty_lists() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FsStore::new(dir.path());
+        std::fs::create_dir_all(store.objects_dir()).unwrap();
+        let blob = MorphObject::Blob(Blob { kind: "x".into(), content: serde_json::json!({}) });
+        let target = store.put(&blob).unwrap();
+        assert!(build_introduces_cases_annotation(&target, &[], None).is_none());
+
+        let cases = vec!["login:alpha".to_string(), "login:beta".to_string()];
+        let ann = build_introduces_cases_annotation(&target, &cases, None).expect("non-empty cases yield annotation");
+        if let MorphObject::Annotation(a) = ann {
+            assert_eq!(a.kind, "introduces_cases");
+            let arr = a.data.get("cases").and_then(|v| v.as_array()).unwrap();
+            assert_eq!(arr.len(), 2);
+        } else {
+            panic!("expected annotation");
+        }
     }
 
     #[test]

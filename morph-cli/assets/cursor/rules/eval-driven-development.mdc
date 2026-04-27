@@ -1,26 +1,88 @@
 ---
-description: "Nudge test-driven development: write tests before implementation, record eval metrics into Morph"
+description: "Spec-first development with Morph: write the acceptance case, register it as an EvalCase, run it, commit from the run."
 globs: ["**/*"]
 alwaysApply: true
 ---
 
-# Test-Driven Development with Morph Evaluation
+# Spec-First, Eval-Driven Development with Morph
 
-This project uses Morph for behavioral version control. Every commit can carry a **behavioral certificate** — metrics proving the code does what it claims. To feed this system, follow a test-driven workflow.
+This project uses Morph for behavioral version control. The **eval suite is
+the canonical specification** — every commit is gated against the union of
+acceptance cases registered in the repo's default `EvalSuite`. Unit tests
+are an implementation detail; the acceptance case is the contract.
+
+To feed this system, work spec-first.
 
 ## Workflow
 
-1. **Write tests first.** Before implementing a feature or fix, write or update tests that define the expected behavior. Tests are the evaluation contract — they specify what "correct" means.
+1. **Write the acceptance case before the code.**
+   - User-visible behavior → a YAML spec (see this project's spec
+     directory) where each top-level entry is one case.
+   - End-to-end flows → a cucumber `.feature`. Each `Scenario:` becomes one
+     case.
 
-2. **Run tests, then record results.** After implementation, run the test suite. When tests pass, record evaluation metrics so Morph can attach them to commits:
-   - Write a JSON file: `{"metrics": {"tests_total": N, "tests_passed": N, "pass_rate": 1.0}}`
-   - Call the MCP tool `morph_record_eval` with that file, or run `morph eval record <file>` from the CLI.
-   - Include any other meaningful metrics: build time, binary size, coverage percentage, benchmark results.
+   The spec describes behavior in terms a human reviewer can audit, not
+   implementation details.
 
-3. **Think about what "better" means.** When starting new work, articulate which metrics matter. Correctness (test pass rate) is the baseline. Performance, cost, latency, and coverage are also valuable. These metrics will gate merges — a merge cannot regress any metric.
+2. **Register it.** Add the case to the default eval suite:
+
+   ```bash
+   morph eval add-case path/to/spec.yaml
+   morph eval suite-show           # sanity-check what's registered
+   ```
+
+   The first call also wires the suite to `policy.default_eval_suite`, so
+   future commits inherit it automatically.
+
+3. **Watch it fail.** Run the eval suite via `morph eval run`. This shells
+   out to your test command, captures stdout, parses cargo / pytest /
+   vitest / jest / go output, and writes a metric-bearing `Run` linked to
+   HEAD. A failure is the spec doing its job:
+
+   ```bash
+   morph eval run -- cargo test --workspace
+   ```
+
+4. **Implement until it goes green.** Iterate with `morph eval run`. Unit
+   tests inside `#[cfg(test)] mod tests` (or the language equivalent) are
+   useful — but they're an implementation detail. The merge gate only sees
+   the suite.
+
+5. **Commit from the recorded run.**
+
+   ```bash
+   morph eval run -- cargo test --workspace
+   # Copy the printed run hash, then:
+   morph commit -m "<feature>" \
+     --from-run <hash> \
+     --new-cases <case_id_a>,<case_id_b>
+   ```
+
+   `--from-run` attaches the run's metrics as the commit's
+   `observed_metrics`, so the merge gate has evidence. `--new-cases`
+   records which acceptance cases this commit *introduced*; merge plans
+   surface that provenance across branches.
+
+   If repo policy requires metrics (the `morph init` default), an
+   empty-metrics commit is rejected. `--allow-empty-metrics` is an audited
+   escape hatch, not a default.
+
+## Self-check at any time
+
+- `morph_status` returns an `Evidence:` block: HEAD metrics, default suite
+  case count, recent runs, and working-tree freshness.
+- `morph_eval_gaps` returns a structured list of gaps —
+  `empty_head_metrics`, `empty_default_suite`, `no_recent_run`. If it
+  returns anything non-empty, you're not done.
 
 ## Why this matters
 
-In Morph, a commit without metrics is just a file snapshot. A commit **with** metrics is a behavioral certificate backed by evidence. Merges require the merged program to dominate both parents on every metric. Without evaluation data, branches and merges have no behavioral meaning.
+A commit without metrics is just a file snapshot. A commit *with* metrics
+attached to an acceptance case is a behavioral certificate. Morph merges
+require the merged program to dominate both parents on every registered
+metric — that comparison is only possible when each branch carries cases
+and metric-bearing runs.
 
-Tests are not just CI gates — they are the evaluation suite that makes behavioral version control work.
+Tests aren't a CI gate, and unit tests aren't the primary artifact. The
+acceptance case is. Treat it that way and Morph's behavioral merges work
+the way they're supposed to.

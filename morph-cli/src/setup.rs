@@ -8,6 +8,11 @@ mod assets {
     pub const HOOK_RESPONSE: &str =
         include_str!("../assets/cursor/hooks/morph-record-response.sh");
     pub const HOOK_STOP: &str = include_str!("../assets/cursor/hooks/morph-record-stop.sh");
+    /// Phase 5b: optional stop hook that surfaces eval gaps via
+    /// `morph eval gaps --json`. Co-installed alongside the
+    /// recording hooks so users get the nudge without extra setup.
+    pub const HOOK_CHECKS: &str =
+        include_str!("../assets/cursor/hooks/morph-record-checks.sh");
 
     pub const RULE_MORPH_RECORD: &str =
         include_str!("../assets/cursor/rules/morph-record.mdc");
@@ -22,6 +27,7 @@ mod assets {
         ("morph-record-prompt.sh", HOOK_PROMPT),
         ("morph-record-response.sh", HOOK_RESPONSE),
         ("morph-record-stop.sh", HOOK_STOP),
+        ("morph-record-checks.sh", HOOK_CHECKS),
     ];
 
     pub const RULES: &[(&str, &str)] = &[
@@ -207,6 +213,10 @@ fn merge_hooks_json(cursor_dir: &Path) -> anyhow::Result<bool> {
         ("beforeSubmitPrompt", ".cursor/morph-record-prompt.sh"),
         ("afterAgentResponse", ".cursor/morph-record-response.sh"),
         ("stop", ".cursor/morph-record-stop.sh"),
+        // Phase 5b: surface unaddressed eval gaps after the
+        // recording hook so the warning lands without breaking
+        // the recording pipeline.
+        ("stop", ".cursor/morph-record-checks.sh"),
     ];
 
     // Legacy paths we no longer use (scripts now live in .cursor/ for Git-style layout).
@@ -447,7 +457,7 @@ mod tests {
                 "hook script should be a bash script: {name}"
             );
         }
-        assert_eq!(report.hooks_written.len(), 3);
+        assert_eq!(report.hooks_written.len(), assets::HOOK_SCRIPTS.len());
     }
 
     #[test]

@@ -99,6 +99,90 @@ pub struct RecordEvalParams {
     pub workspace_path: Option<String>,
 }
 
+/// Phase 3b: parse a captured stdout buffer from a known test
+/// runner. Used to attach behavioral evidence to a commit without
+/// re-running the tests.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EvalFromOutputParams {
+    /// Captured stdout (and optionally stderr) from the test run.
+    pub stdout: String,
+    /// Optional runner family hint (cargo, pytest, vitest, jest,
+    /// go, or auto). Defaults to auto.
+    #[serde(default)]
+    pub runner: Option<String>,
+    /// Original CLI command that produced `stdout`. Used by the
+    /// auto-detector and stored on the resulting Run for audit.
+    #[serde(default)]
+    pub command: Option<String>,
+    /// When true, also persist a Run object linked to HEAD with
+    /// the parsed metrics. The response is then the run hash,
+    /// suitable for `morph_commit { from_run }`.
+    #[serde(default)]
+    pub record: Option<bool>,
+    #[serde(default)]
+    pub workspace_path: Option<String>,
+}
+
+/// Phase 3b: execute a test command and persist a metrics-bearing
+/// Run linked to HEAD.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EvalRunParams {
+    /// argv of the test command, e.g. `["cargo","test","--workspace"]`.
+    pub command: Vec<String>,
+    /// Optional runner family hint.
+    #[serde(default)]
+    pub runner: Option<String>,
+    /// Working directory; relative paths resolve from the repo
+    /// root. Defaults to the repo root.
+    #[serde(default)]
+    pub cwd: Option<String>,
+    #[serde(default)]
+    pub workspace_path: Option<String>,
+}
+
+/// Phase 4b: extend (or build) an EvalSuite from one or more YAML
+/// specs / cucumber `.feature` files. Mirrors `morph eval add-case`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AddEvalCaseParams {
+    /// Files or directories to ingest (paths relative to the repo
+    /// root unless absolute).
+    pub paths: Vec<String>,
+    /// Existing suite to extend. Defaults to
+    /// `policy.default_eval_suite`.
+    #[serde(default)]
+    pub suite: Option<String>,
+    /// Build a fresh suite, ignoring any `default_eval_suite`.
+    #[serde(default)]
+    pub no_default: Option<bool>,
+    /// Skip updating `policy.default_eval_suite` with the new hash.
+    #[serde(default)]
+    pub no_set_default: Option<bool>,
+    #[serde(default)]
+    pub workspace_path: Option<String>,
+}
+
+/// Phase 4b: bulk-ingest a directory tree into a fresh suite and
+/// (by default) make it the policy's default. Mirrors
+/// `morph eval suite-from-specs`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EvalSuiteFromSpecsParams {
+    /// Files or directories to ingest.
+    pub paths: Vec<String>,
+    #[serde(default)]
+    pub no_set_default: Option<bool>,
+    #[serde(default)]
+    pub workspace_path: Option<String>,
+}
+
+/// Phase 4b: introspect the current default suite (or `suite`).
+#[derive(Debug, Deserialize, JsonSchema, Default)]
+pub struct EvalSuiteShowParams {
+    #[serde(default)]
+    pub suite: Option<String>,
+    #[serde(default)]
+    pub workspace_path: Option<String>,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct StageParams {
     #[serde(default)]
@@ -107,8 +191,9 @@ pub struct StageParams {
     pub paths: Option<Vec<String>>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, JsonSchema, Default)]
 pub struct CommitParams {
+    #[serde(default)]
     pub message: String,
     #[serde(default, alias = "program")]
     pub pipeline: Option<String>,
@@ -122,6 +207,15 @@ pub struct CommitParams {
     pub author: Option<String>,
     #[serde(default)]
     pub from_run: Option<String>,
+    /// When true, bypass the policy.required_metrics gate. The
+    /// resulting response still includes a warning so the empty
+    /// commit is visible to the caller.
+    #[serde(default)]
+    pub allow_empty_metrics: Option<bool>,
+    /// Comma-separated acceptance-case ids this commit
+    /// introduces. Recorded as an `introduces_cases` annotation.
+    #[serde(default)]
+    pub new_cases: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

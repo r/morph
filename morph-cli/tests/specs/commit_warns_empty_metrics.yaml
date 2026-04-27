@@ -1,0 +1,32 @@
+# Phase 1a: committing without observed_metrics emits a stderr warning
+# so agents and humans alike can see that the commit lacks behavioral
+# evidence. The warning fires only when the policy is permissive
+# (no required_metrics); when policy enforces metrics, the commit
+# fails outright.
+
+- name: commit_warns_when_metrics_empty
+  files:
+    foo.txt: "hello"
+    .morph/config.json: '{"repo_version":"0.0","policy":{"required_metrics":[]}}'
+  steps:
+    - morph: [add, foo.txt]
+    - morph: [commit, -m, "no metrics", --json]
+      capture_json_field:
+        var: commit_hash
+        field: hash
+      assert_hash: true
+      stderr_contains:
+        - "warning: commit has no observed_metrics"
+        - "morph eval record"
+
+- name: commit_no_warning_when_metrics_provided
+  files:
+    foo.txt: "hello"
+    .morph/config.json: '{"repo_version":"0.0","policy":{"required_metrics":[]}}'
+  steps:
+    - morph: [add, foo.txt]
+    - morph: [commit, -m, "with metrics", --metrics, '{"tests_passed":1}', --json]
+      capture_json_field:
+        var: commit_hash
+        field: hash
+      assert_hash: true

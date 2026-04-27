@@ -46,6 +46,8 @@ morph init
 
 This creates a `.morph/` directory (objects, refs, config, prompts, runs, traces). Nothing else is modified. You only need to do this once per project.
 
+`morph init` also writes an opinionated default `RepoPolicy` that requires `tests_total` and `tests_passed` on every commit. Use `morph policy require-metrics <name>...` to relax or change the gate (pass no names to disable it). If you need a policy-free repo for scripted tests, the hidden `--no-default-policy` flag opts out at init time. See [EVAL-DRIVEN.md](EVAL-DRIVEN.md) for the full spec-first workflow.
+
 ### Quick path: one command for Cursor (recommended)
 
 After `morph init`, you can install Cursor MCP config, hooks, and rules in one step:

@@ -140,13 +140,19 @@ fn emit_test(spec: &TestSpec) -> String {
     writeln!(code, "    let repo = path.display();").unwrap();
 
     if do_init {
+        // Pass `--no-default-policy` so pre-Phase-2a specs keep their
+        // permissive policy. Specs that test the default policy use
+        // `init: false` and run `morph init` themselves.
         writeln!(code, "    {{").unwrap();
         writeln!(
             code,
             "        let mut cmd = cargo_bin_cmd!(\"morph\");"
         )
         .unwrap();
-        writeln!(code, "        cmd.arg(\"init\").arg(path).assert().success();").unwrap();
+        writeln!(
+            code,
+            "        cmd.arg(\"init\").arg(\"--no-default-policy\").arg(path).assert().success();"
+        ).unwrap();
         writeln!(code, "    }}").unwrap();
     }
 
@@ -235,7 +241,23 @@ fn emit_step(code: &mut String, step: &Step, idx: usize) {
         return;
     }
 
-    let args = step.morph.as_ref().expect("step must have morph, compute_hash, write_file, or delete_file");
+    let raw_args = step.morph.as_ref().expect("step must have morph, compute_hash, write_file, or delete_file");
+    // Inject `--no-default-policy` into any in-spec `morph init` so
+    // existing fixtures from before Phase 2a continue to start with a
+    // permissive policy. Specs that *want* the default policy can opt
+    // back in by passing `--default-policy` (no such flag exists yet)
+    // — for now, see `init_writes_default_policy.yaml`, which reads
+    // back the policy from the surrounding `init: true` harness call.
+    let args: Vec<String> = if raw_args.first().map(|s| s.as_str()) == Some("init")
+        && !raw_args.iter().any(|s| s == "--no-default-policy")
+    {
+        let mut out = raw_args.clone();
+        out.insert(1, "--no-default-policy".to_string());
+        out
+    } else {
+        raw_args.clone()
+    };
+    let args = &args;
     let needs_output = step.capture.is_some()
         || step.capture_first_line.is_some()
         || step.capture_json_field.is_some()

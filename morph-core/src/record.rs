@@ -5,7 +5,7 @@ use crate::objects::{AgentInfo, Blob, MorphObject, Run, RunEnvironment, Trace, T
 use crate::store::{MorphError, Store};
 use crate::Hash;
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Ingest a Run from JSON. Optionally ingest trace and artifacts first so refs resolve.
 /// Returns the Run's hash.
@@ -164,6 +164,148 @@ pub fn record_conversation(
 
     let run_hash = store.put(&run)?;
     Ok(run_hash)
+}
+
+/// Phase 3b: record a Run object that captures *behavioral evidence*
+/// — the metrics map produced by parsing a test runner's stdout.
+///
+/// The run is linked to HEAD when a commit exists, so the resulting
+/// hash composes directly with `morph commit --from-run <hash>` and
+/// the MCP equivalent. The trace stores the captured stdout under
+/// `kind = "test_output"` so the evidence is auditable later.
+pub fn record_eval_run(
+    store: &dyn Store,
+    metrics: &BTreeMap<String, f64>,
+    runner: &str,
+    command: Option<&str>,
+    captured_stdout: Option<&str>,
+    exit_code: Option<i32>,
+) -> Result<Hash, MorphError> {
+    let now = chrono::Utc::now().to_rfc3339();
+
+    let mut payload: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+    payload.insert(
+        "runner".into(),
+        serde_json::Value::String(runner.to_string()),
+    );
+    if let Some(cmd) = command {
+        payload.insert("command".into(), serde_json::Value::String(cmd.to_string()));
+    }
+    if let Some(stdout) = captured_stdout {
+        payload.insert("text".into(), serde_json::Value::String(stdout.to_string()));
+    }
+    if let Some(code) = exit_code {
+        payload.insert(
+            "exit_code".into(),
+            serde_json::Value::Number(serde_json::Number::from(code as i64)),
+        );
+    }
+    let event = TraceEvent {
+        id: "evt_test_output".into(),
+        seq: 0,
+        ts: now.clone(),
+        kind: "test_output".into(),
+        payload,
+    };
+    let trace = MorphObject::Trace(Trace { events: vec![event] });
+    let trace_hash = store.put(&trace)?;
+
+    let identity = identity_pipeline();
+    let pipeline_hash = store.put(&identity)?;
+
+    let head_commit = crate::commit::resolve_head(store)
+        .ok()
+        .flatten()
+        .map(|h| h.to_string());
+
+    let run = MorphObject::Run(Run {
+        pipeline: pipeline_hash.to_string(),
+        commit: head_commit,
+        environment: RunEnvironment {
+            model: "test-runner".to_string(),
+            version: runner.to_string(),
+            parameters: BTreeMap::new(),
+            toolchain: BTreeMap::new(),
+        },
+        input_state_hash: "0".repeat(64),
+        output_artifacts: vec![],
+        metrics: metrics.clone(),
+        trace: trace_hash.to_string(),
+        agent: AgentInfo {
+            id: "morph-eval-run".into(),
+            version: "1.0".into(),
+            policy: None,
+            instance_id: None,
+        },
+        contributors: None,
+        morph_version: None,
+    });
+
+    store.put(&run)
+}
+
+/// Outcome of [`run_test_command`]: the stored Run hash plus the
+/// captured outputs callers usually want to surface to the user.
+#[derive(Debug)]
+pub struct EvalRunOutcome {
+    pub run_hash: Hash,
+    pub metrics: BTreeMap<String, f64>,
+    pub combined_output: String,
+    pub exit_code: Option<i32>,
+}
+
+/// Phase 3b: spawn a test command, capture its stdout+stderr, parse
+/// metrics with the named runner (or `auto`), and persist the run via
+/// [`record_eval_run`]. Both `morph eval run` and `morph_eval_run`
+/// share this so the recorded evidence stays identical regardless of
+/// the entry point.
+///
+/// `command[0]` is the program; the rest are argv. `cwd` is resolved
+/// relative to `repo_root` when present and not absolute. An empty
+/// `command` returns `MorphError::Serialization`.
+pub fn run_test_command(
+    store: &dyn Store,
+    repo_root: &Path,
+    command: &[String],
+    runner: &str,
+    cwd: Option<&Path>,
+) -> Result<EvalRunOutcome, MorphError> {
+    if command.is_empty() {
+        return Err(MorphError::Serialization(
+            "command must contain at least the program to run".into(),
+        ));
+    }
+    let working_dir: PathBuf = match cwd {
+        Some(p) if p.is_absolute() => p.to_path_buf(),
+        Some(p) => repo_root.join(p),
+        None => repo_root.to_path_buf(),
+    };
+    let prog = &command[0];
+    let args: Vec<&str> = command.iter().skip(1).map(|s| s.as_str()).collect();
+    let output = std::process::Command::new(prog)
+        .args(&args)
+        .current_dir(&working_dir)
+        .output()?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let combined = format!("{}\n{}", stdout, stderr);
+    let cmd_str = command.join(" ");
+    let metrics = crate::eval_parsers::parse_with_runner(runner, &combined, Some(&cmd_str));
+    let exit_code = output.status.code();
+    let run_hash = record_eval_run(
+        store,
+        &metrics,
+        runner,
+        Some(&cmd_str),
+        Some(&combined),
+        exit_code,
+    )?;
+    Ok(EvalRunOutcome {
+        run_hash,
+        metrics,
+        combined_output: combined,
+        exit_code,
+    })
 }
 
 #[cfg(test)]
@@ -675,5 +817,92 @@ mod tests {
 
         let hash = record_run(&store, &run_file, None, &[art_file.as_path()]).unwrap();
         assert!(store.get(&hash).is_ok());
+    }
+
+    #[test]
+    fn record_eval_run_persists_run_with_metrics_and_trace() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = crate::init_repo(dir.path()).unwrap();
+
+        let mut metrics = BTreeMap::new();
+        metrics.insert("tests_total".into(), 12.0);
+        metrics.insert("tests_passed".into(), 11.0);
+        metrics.insert("pass_rate".into(), 11.0_f64 / 12.0_f64);
+
+        let run_hash = record_eval_run(
+            &store,
+            &metrics,
+            "cargo",
+            Some("cargo test --workspace"),
+            Some("test result: ok. 11 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.0s"),
+            Some(0),
+        )
+        .unwrap();
+
+        let MorphObject::Run(run) = store.get(&run_hash).unwrap() else {
+            panic!("expected Run")
+        };
+        assert_eq!(run.metrics["tests_total"], 12.0);
+        assert_eq!(run.metrics["tests_passed"], 11.0);
+        assert_eq!(run.environment.version, "cargo");
+        assert_eq!(run.agent.id, "morph-eval-run");
+
+        let trace_hash = Hash::from_hex(&run.trace).unwrap();
+        let MorphObject::Trace(trace) = store.get(&trace_hash).unwrap() else {
+            panic!("expected Trace")
+        };
+        assert_eq!(trace.events.len(), 1);
+        assert_eq!(trace.events[0].kind, "test_output");
+        assert_eq!(
+            trace.events[0]
+                .payload
+                .get("runner")
+                .and_then(|v| v.as_str()),
+            Some("cargo"),
+        );
+        assert_eq!(
+            trace.events[0]
+                .payload
+                .get("exit_code")
+                .and_then(|v| v.as_i64()),
+            Some(0),
+        );
+    }
+
+    #[test]
+    fn run_test_command_executes_and_records_metrics() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = crate::init_repo(dir.path()).unwrap();
+
+        // `printf` is universal on POSIX. We feed it a one-line cargo
+        // summary so the parser produces real metrics.
+        let summary = "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s\\n";
+        let cmd = vec![
+            "printf".to_string(),
+            summary.to_string(),
+        ];
+
+        let outcome = run_test_command(&store, dir.path(), &cmd, "cargo", None).unwrap();
+        assert_eq!(outcome.exit_code, Some(0));
+        assert_eq!(outcome.metrics.get("tests_passed").copied(), Some(3.0));
+        assert_eq!(outcome.metrics.get("tests_total").copied(), Some(3.0));
+        assert!(outcome.combined_output.contains("3 passed"));
+
+        let MorphObject::Run(run) = store.get(&outcome.run_hash).unwrap() else {
+            panic!("expected Run")
+        };
+        assert_eq!(run.metrics["tests_passed"], 3.0);
+    }
+
+    #[test]
+    fn run_test_command_rejects_empty_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = crate::init_repo(dir.path()).unwrap();
+        let cmd: Vec<String> = Vec::new();
+        let err = run_test_command(&store, dir.path(), &cmd, "auto", None).unwrap_err();
+        match err {
+            MorphError::Serialization(msg) => assert!(msg.contains("at least the program")),
+            other => panic!("unexpected error: {:?}", other),
+        }
     }
 }

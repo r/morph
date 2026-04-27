@@ -13,6 +13,11 @@ use tower::ServiceExt;
 fn setup_repo() -> (tempfile::TempDir, Box<dyn Store>) {
     let dir = tempfile::tempdir().unwrap();
     let store = morph_core::init_repo(dir.path()).unwrap();
+    // Phase 2a: tests predate the opinionated default policy and
+    // certify against bespoke metrics like `acc`. Reset to an empty
+    // policy so each test sets the required metrics it actually uses.
+    let permissive = morph_core::RepoPolicy::default();
+    morph_core::policy::write_policy(&dir.path().join(".morph"), &permissive).unwrap();
     (dir, Box::new(store))
 }
 

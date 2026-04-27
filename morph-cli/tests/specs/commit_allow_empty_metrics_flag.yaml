@@ -1,0 +1,20 @@
+# Phase 2b: `--allow-empty-metrics` is the documented escape hatch.
+# Even when policy demands `tests_total`/`tests_passed`, this flag
+# permits the commit and the still-empty observed_metrics emits
+# the Phase 1a stderr warning so the bypass is auditable.
+
+- name: commit_allow_empty_metrics_bypasses_policy
+  files:
+    foo.txt: "hello"
+    .morph/config.json: |
+      {
+        "repo_version": "0.0",
+        "policy": {
+          "required_metrics": ["tests_total", "tests_passed"]
+        }
+      }
+  steps:
+    - morph: [add, foo.txt]
+    - morph: [commit, -m, "bypass", --allow-empty-metrics]
+      stderr_contains:
+        - "warning: commit has no observed_metrics"

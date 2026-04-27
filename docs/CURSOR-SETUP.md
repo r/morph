@@ -76,14 +76,17 @@ Create or edit `.cursor/hooks.json` in your project (paths are relative to proje
   "hooks": {
     "beforeSubmitPrompt": [{"command": ".cursor/morph-record-prompt.sh"}],
     "afterAgentResponse": [{"command": ".cursor/morph-record-response.sh"}],
-    "stop": [{"command": ".cursor/morph-record-stop.sh"}]
+    "stop": [
+      {"command": ".cursor/morph-record-stop.sh"},
+      {"command": ".cursor/morph-record-checks.sh"}
+    ]
   }
 }
 ```
 
 - **beforeSubmitPrompt** -- Saves the prompt and composer mode to `.morph/hooks/pending-<conversation_id>.jsonl`.
 - **afterAgentResponse** -- Parses the agent's full transcript (from `transcript_path` in the payload) for structured events: tool calls (`Shell`, `Task`, `CallMcpTool`), file reads (`Read`, `Grep`, `Glob`), file edits (`StrReplace`, `Write`), and text. Builds a Run + Trace with these rich events, captures token usage (`input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`), runs `morph run record`, then clears the pending file. Falls back to pending prompts + response text if the transcript is unavailable.
-- **stop** -- Fallback: same structured transcript parsing as `afterAgentResponse`; fires if the response hook didn't.
+- **stop** -- Fallback: same structured transcript parsing as `afterAgentResponse`; fires if the response hook didn't. Also runs `morph-record-checks.sh`, which calls `morph eval gaps --json` and prints any unaddressed behavioral-evidence gaps to stderr so the next agent turn sees them.
 
 Hook scripts live under `.cursor/` (same as `hooks.json` and `mcp.json`), so the project root stays clean. Run `morph setup cursor` to install them, or copy the scripts from the Morph repo's `.cursor/` into your project's `.cursor/` and make them executable: `chmod +x .cursor/morph-record-*.sh`.
 
@@ -139,7 +142,16 @@ When you want a snapshot:
 1. **Stage:** `morph add .` (CLI) or `morph_stage` (MCP tool)
 2. **Commit:** `morph commit -m "message"` (CLI) or `morph_commit` (MCP tool)
 
-`--pipeline` and `--eval-suite` are optional; they default to the identity pipeline and empty eval suite, making Morph work as a plain VCS.
+By default a fresh repo's policy requires `tests_total` and `tests_passed` on every commit. The recommended flow is:
+
+```bash
+morph eval run -- cargo test --workspace      # records a metric-bearing Run linked to HEAD
+morph commit -m "implement feature" --from-run <run_hash> --new-cases spec:my_case
+```
+
+For commits that genuinely have no test results (rebases, content-only changes), pass `--allow-empty-metrics` (or `morph_commit { allow_empty_metrics: true }`). The flag is audited in the trace.
+
+`--pipeline` and `--eval-suite` remain optional. When no eval suite is supplied, Morph picks up `policy.default_eval_suite` so the suite registered by `morph eval add-case` flows into every commit automatically.
 
 ---
 
@@ -151,12 +163,18 @@ When you want a snapshot:
 | `morph_record_session` | Record prompt + response as Run + Trace (one call, no files needed) |
 | `morph_record_run` | Ingest a Run from a JSON file (with optional trace/artifact files) |
 | `morph_record_eval` | Ingest metrics from a JSON file |
+| `morph_eval_from_output` | Parse captured test-runner stdout into the canonical metric map; `record=true` writes a Run linked to HEAD |
+| `morph_eval_run` | Execute a test command, parse output, and write a metric-bearing Run (composes with `morph_commit { from_run }`) |
+| `morph_add_eval_case` | Append YAML/Cucumber acceptance cases to the default eval suite |
+| `morph_eval_suite_from_specs` | Bulk-rebuild the default suite from a directory tree |
+| `morph_eval_suite_show` | Inspect the cases in a suite |
+| `morph_eval_gaps` | Structured list of unaddressed behavioral-evidence gaps |
 | `morph_stage` | Stage files into the object store (like `git add`) |
-| `morph_commit` | Create a commit (file tree + optional pipeline/eval contract) |
+| `morph_commit` | Create a commit. Supports `from_run`, `allow_empty_metrics`, `new_cases` |
 | `morph_annotate` | Attach metadata to any object |
 | `morph_branch` | Create a branch at HEAD |
 | `morph_checkout` | Switch HEAD and restore working tree |
-| `morph_status` | Show working-space status (new/tracked files) |
+| `morph_status` | Working-space status plus an Evidence summary block |
 | `morph_log` | Show commit history from HEAD or a named ref |
 | `morph_show` | Show a stored object as pretty JSON |
 | `morph_diff` | Compare two commits/refs and show file-level changes |

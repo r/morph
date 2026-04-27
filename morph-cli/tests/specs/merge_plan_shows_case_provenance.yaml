@@ -1,0 +1,30 @@
+# Phase 6b: `morph merge-plan` walks each branch's history,
+# collects `introduces_cases` annotations recorded by `morph
+# commit --new-cases`, and surfaces case provenance so the user
+# can see which cases the merged candidate must satisfy.
+
+- name: merge_plan_lists_per_branch_cases
+  files:
+    base.txt: "v0"
+  steps:
+    - morph: [add, base.txt]
+    - morph: [commit, -m, "base", --metrics, '{"tests_total":1,"tests_passed":1}', --new-cases, "shared"]
+    - morph: [branch, feature]
+    - write_file:
+        path: main_only.txt
+        content: "main"
+    - morph: [add, main_only.txt]
+    - morph: [commit, -m, "main work", --metrics, '{"tests_total":1,"tests_passed":1}', --new-cases, "alpha,beta"]
+    - morph: [checkout, feature]
+    - write_file:
+        path: feature_only.txt
+        content: "feature"
+    - morph: [add, feature_only.txt]
+    - morph: [commit, -m, "feature work", --metrics, '{"tests_total":1,"tests_passed":1}', --new-cases, "gamma"]
+    - morph: [checkout, main]
+    - morph: [merge-plan, feature]
+      stdout_contains:
+        - "Case provenance:"
+        - "main introduces 2 case(s): alpha, beta"
+        - "feature introduces 1 case(s): gamma"
+        - "Merged candidate must pass all 3"

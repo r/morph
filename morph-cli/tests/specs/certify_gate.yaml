@@ -8,7 +8,7 @@
   steps:
     - morph: [policy, set, policy.json]
     - morph: [add, a.txt]
-    - morph: [commit, -m, "initial commit", --json]
+    - morph: [commit, -m, "initial commit", --json, --allow-empty-metrics]
       capture_json_field:
         var: commit_hash
         field: hash
@@ -36,7 +36,7 @@
   steps:
     - morph: [policy, set, policy.json]
     - morph: [add, a.txt]
-    - morph: [commit, -m, "initial"]
+    - morph: [commit, -m, "initial", --allow-empty-metrics]
     - morph: [certify, --metrics-file, metrics.json]
       expect_exit: 1
       stderr_contains: "FAIL"
@@ -49,7 +49,7 @@
   steps:
     - morph: [policy, set, policy.json]
     - morph: [add, a.txt]
-    - morph: [commit, -m, "initial"]
+    - morph: [commit, -m, "initial", --allow-empty-metrics]
     - morph: [certify, --metrics-file, metrics.json]
       expect_exit: 1
       stderr_contains:
@@ -74,7 +74,7 @@
   steps:
     - morph: [policy, set, policy.json]
     - morph: [add, a.txt]
-    - morph: [commit, -m, "initial", --json]
+    - morph: [commit, -m, "initial", --json, --allow-empty-metrics]
       capture_json_field:
         var: commit_hash
         field: hash
@@ -91,7 +91,7 @@
   steps:
     - morph: [policy, set, policy.json]
     - morph: [add, a.txt]
-    - morph: [commit, -m, "initial"]
+    - morph: [commit, -m, "initial", --allow-empty-metrics]
     - morph: [certify, --metrics-file, metrics.json]
       expect_exit: 1
     - morph: [gate]
@@ -108,7 +108,7 @@
   steps:
     - morph: [policy, set, policy.json]
     - morph: [add, a.txt]
-    - morph: [commit, -m, "initial"]
+    - morph: [commit, -m, "initial", --allow-empty-metrics]
     - morph: [certify, --metrics-file, metrics.json]
       expect_exit: 1
     - morph: [gate]

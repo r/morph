@@ -346,7 +346,7 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        Command::Init { path, bare } => {
+        Command::Init { path, bare, no_default_policy } => {
             verbose_msg(
                 verbose,
                 &format!(
@@ -368,6 +368,18 @@ fn main() -> anyhow::Result<()> {
                     .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(&path))
                     .join(".morph");
                 println!("Initialized empty Morph repository in {}/", abs_morph.display());
+            }
+            // Phase 2a: clear the default policy when the test harness
+            // asks for a permissive repo. Production users never pass
+            // this flag; spec fixtures from before Phase 2a do.
+            if no_default_policy {
+                let morph_dir = if bare {
+                    path.clone()
+                } else {
+                    path.join(".morph")
+                };
+                let permissive = morph_core::RepoPolicy::default();
+                morph_core::write_policy(&morph_dir, &permissive)?;
             }
         }
 
@@ -632,6 +644,7 @@ fn main() -> anyhow::Result<()> {
 
         Command::Status => {
             let (repo_root, store) = get_store(verbose)?;
+            let morph_dir = repo_root.join(".morph");
             let changes = morph_core::working_status(&store, &repo_root)?;
             let summary = morph_core::activity_summary(&store, &repo_root)?;
             let merge_progress = morph_core::merge_progress_summary(&*store, &repo_root)?;
@@ -662,9 +675,13 @@ fn main() -> anyhow::Result<()> {
                 }
             }
 
-            if changes.is_empty() && summary.runs == 0 && summary.traces == 0 && summary.prompts == 0 && merge_progress.is_none() {
+            let nothing_to_commit = changes.is_empty()
+                && summary.runs == 0
+                && summary.traces == 0
+                && summary.prompts == 0
+                && merge_progress.is_none();
+            if nothing_to_commit {
                 println!("nothing to commit, working tree clean");
-                return Ok(());
             }
 
             if !changes.is_empty() {
@@ -687,6 +704,37 @@ fn main() -> anyhow::Result<()> {
                 if summary.traces > 0 { parts.push(format!("{} trace{}", summary.traces, if summary.traces == 1 { "" } else { "s" })); }
                 if summary.prompts > 0 { parts.push(format!("{} prompt{}", summary.prompts, if summary.prompts == 1 { "" } else { "s" })); }
                 println!("Morph activity: {}", parts.join(", "));
+            }
+
+            // Phase 1b: nudge when HEAD has no observed_metrics so the
+            // gap is visible to anyone who runs `morph status`. Also
+            // surfaces the empty default eval suite so users aren't
+            // left wondering where their behavioral evidence lives.
+            if let Some(head) = morph_core::resolve_head(&store)? {
+                if let MorphObject::Commit(c) = store.get(&head)? {
+                    if c.eval_contract.observed_metrics.is_empty() {
+                        println!("warning: HEAD has no observed_metrics");
+                    }
+                }
+            }
+            let policy = morph_core::read_policy(&morph_dir)?;
+            let suite_cases = match policy.default_eval_suite.as_deref() {
+                Some(suite_hex) => match Hash::from_hex(suite_hex)
+                    .ok()
+                    .and_then(|h| store.get(&h).ok())
+                {
+                    Some(MorphObject::EvalSuite(s)) => Some(s.cases.len()),
+                    _ => None,
+                },
+                None => None,
+            };
+            match suite_cases {
+                Some(0) | None => println!("Eval suite: 0 cases registered"),
+                Some(n) => println!(
+                    "Eval suite: {} case{} registered",
+                    n,
+                    if n == 1 { "" } else { "s" }
+                ),
             }
         }
 
@@ -721,17 +769,41 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        Command::Commit { message, pipeline, eval_suite, metrics, author, from_run, json } => {
+        Command::Commit { message, pipeline, eval_suite, metrics, author, from_run, allow_empty_metrics, new_cases, json } => {
             let (repo_root, store) = get_store(verbose)?;
             let morph_dir = repo_root.join(".morph");
             let version = read_repo_version(&morph_dir)?;
             let prog_hash = pipeline.as_deref().map(|s| resolve_obj_hash(store.as_ref(), s)).transpose()?;
-            let suite_hash = eval_suite.as_deref().map(|s| resolve_obj_hash(store.as_ref(), s)).transpose()?;
-            let observed_metrics = metrics.as_deref()
+            let policy = morph_core::read_policy(&morph_dir)?;
+            // Resolve --eval-suite, falling back to the policy default
+            // when unset so commits inherit the latest registered
+            // acceptance suite instead of pointing at an empty one.
+            let suite_hash = match eval_suite.as_deref() {
+                Some(s) => Some(resolve_obj_hash(store.as_ref(), s)?),
+                None => match policy.default_eval_suite.as_deref() {
+                    Some(s) => Some(resolve_obj_hash(store.as_ref(), s)?),
+                    None => None,
+                },
+            };
+            let observed_metrics: std::collections::BTreeMap<String, f64> = metrics.as_deref()
                 .map(serde_json::from_str)
                 .transpose()
                 .map_err(|e| anyhow::anyhow!("invalid --metrics JSON: {}", e))?
                 .unwrap_or_default();
+
+            // Phase 2: enforce required_metrics from policy unless escape hatch is set.
+            if !allow_empty_metrics {
+                let missing = morph_core::missing_required_metrics(&policy, &observed_metrics);
+                if !missing.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "policy requires metrics that are missing: [{}]. \
+                         Pass --metrics with these keys, run `morph eval record`, \
+                         or override with --allow-empty-metrics. \
+                         (Configured in .morph/config.json under policy.required_metrics.)",
+                        missing.join(", ")
+                    ));
+                }
+            }
             let provenance = match from_run {
                 Some(ref run_hash_str) => {
                     let run_hash = resolve_obj_hash(store.as_ref(), run_hash_str)?;
@@ -744,6 +816,7 @@ fn main() -> anyhow::Result<()> {
             let is_root = morph_core::resolve_head(&store)?.is_none();
             let index = morph_core::read_index(&morph_dir)?;
             let file_count = index.entries.len();
+            let metrics_were_empty = observed_metrics.is_empty();
 
             let resolved_author = morph_core::resolve_author_for_repo(
                 &morph_dir,
@@ -754,6 +827,31 @@ fn main() -> anyhow::Result<()> {
                 observed_metrics, message.clone(), Some(resolved_author),
                 Some(&version), provenance.as_ref(),
             )?;
+
+            // Phase 6b: record which acceptance cases this commit
+            // introduces via an `introduces_cases` annotation. The
+            // case ids are caller-defined; we just split, trim, and
+            // store them so merge planning can show provenance.
+            if let Some(cases_arg) = new_cases.as_deref() {
+                let cases = morph_core::parse_introduces_cases_arg(cases_arg);
+                if let Some(ann) = morph_core::build_introduces_cases_annotation(
+                    &hash, &cases, Some(branch.clone()),
+                ) {
+                    store.put(&ann)?;
+                }
+            }
+
+            // Phase 1a: warn when committing without observed_metrics.
+            // Morph cannot enforce behavioral merge gating without
+            // evidence; print a stderr nudge so the leak is visible.
+            if metrics_were_empty {
+                eprintln!(
+                    "warning: commit has no observed_metrics. Morph cannot enforce \
+                     behavioral merge gating without evidence. Pass --metrics, \
+                     run `morph eval record` / `morph eval run`, or set a policy \
+                     via `morph policy init`."
+                );
+            }
 
             if json {
                 let out = serde_json::json!({
@@ -1150,6 +1248,233 @@ fn main() -> anyhow::Result<()> {
                 let metrics = morph_core::record_eval_metrics(&full)?;
                 println!("{}", serde_json::to_string_pretty(&metrics)?);
             }
+            EvalCmd::FromOutput { runner, file, record } => {
+                let stdout_text = if file.as_os_str() == "-" {
+                    use std::io::Read;
+                    let mut buf = String::new();
+                    std::io::stdin().read_to_string(&mut buf)?;
+                    buf
+                } else if file.is_absolute() {
+                    std::fs::read_to_string(&file)?
+                } else {
+                    // Resolve relative paths from the repo root when one
+                    // is available, otherwise fall back to the cwd so
+                    // the command works outside a repo (handy for one-off
+                    // scripts piping CI output).
+                    match get_store(verbose) {
+                        Ok((repo_root, _store)) => {
+                            std::fs::read_to_string(repo_root.join(&file))?
+                        }
+                        Err(_) => std::fs::read_to_string(&file)?,
+                    }
+                };
+                let metrics = morph_core::parse_with_runner(&runner, &stdout_text, None);
+                if record {
+                    let (_repo_root, store) = get_store(verbose)?;
+                    let hash = morph_core::record_eval_run(
+                        store.as_ref(),
+                        &metrics,
+                        &runner,
+                        None,
+                        Some(&stdout_text),
+                        None,
+                    )?;
+                    println!("{}", hash);
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&metrics)?);
+                }
+            }
+            EvalCmd::AddCase {
+                paths,
+                suite,
+                no_default,
+                no_set_default,
+            } => {
+                if paths.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "no paths supplied. Usage: morph eval add-case <file_or_dir>..."
+                    ));
+                }
+                let (repo_root, store) = get_store(verbose)?;
+                let cases = morph_core::add_cases_from_paths(&paths)?;
+                if cases.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "no acceptance cases found in: {}",
+                        paths
+                            .iter()
+                            .map(|p| p.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
+                let morph_dir = repo_root.join(".morph");
+                let policy = morph_core::read_policy(&morph_dir)?;
+                let prev: Option<morph_core::Hash> = if no_default {
+                    None
+                } else if let Some(s) = suite.as_deref() {
+                    let resolved = resolve_obj_hash(store.as_ref(), s)?;
+                    Some(resolved)
+                } else {
+                    match policy.default_eval_suite.as_deref() {
+                        Some(h) => Some(morph_core::Hash::from_hex(h)?),
+                        None => None,
+                    }
+                };
+                let new_hash = morph_core::build_or_extend_suite(store.as_ref(), prev, &cases)?;
+                if !no_set_default {
+                    let mut updated = policy.clone();
+                    updated.default_eval_suite = Some(new_hash.to_string());
+                    morph_core::write_policy(&morph_dir, &updated)?;
+                }
+                eprintln!(
+                    "Added {} case{} to suite {}",
+                    cases.len(),
+                    if cases.len() == 1 { "" } else { "s" },
+                    new_hash
+                );
+                println!("{}", new_hash);
+            }
+            EvalCmd::SuiteFromSpecs { paths, no_set_default } => {
+                if paths.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "no paths supplied. Usage: morph eval suite-from-specs <dir>..."
+                    ));
+                }
+                let (repo_root, store) = get_store(verbose)?;
+                let cases = morph_core::add_cases_from_paths(&paths)?;
+                if cases.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "no acceptance cases found in: {}",
+                        paths
+                            .iter()
+                            .map(|p| p.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
+                let new_hash =
+                    morph_core::build_or_extend_suite(store.as_ref(), None, &cases)?;
+                let morph_dir = repo_root.join(".morph");
+                if !no_set_default {
+                    let mut policy = morph_core::read_policy(&morph_dir)?;
+                    policy.default_eval_suite = Some(new_hash.to_string());
+                    morph_core::write_policy(&morph_dir, &policy)?;
+                }
+                eprintln!(
+                    "Built fresh suite with {} case{}: {}",
+                    cases.len(),
+                    if cases.len() == 1 { "" } else { "s" },
+                    new_hash
+                );
+                println!("{}", new_hash);
+            }
+            EvalCmd::SuiteShow { suite, json } => {
+                let (repo_root, store) = get_store(verbose)?;
+                let morph_dir = repo_root.join(".morph");
+                let policy = morph_core::read_policy(&morph_dir)?;
+                let target_hash: morph_core::Hash = match suite.as_deref() {
+                    Some(s) => resolve_obj_hash(store.as_ref(), s)?,
+                    None => match policy.default_eval_suite.as_deref() {
+                        Some(h) => morph_core::Hash::from_hex(h)?,
+                        None => {
+                            return Err(anyhow::anyhow!(
+                                "no suite hash supplied and policy.default_eval_suite is unset. \
+                                 Run `morph eval add-case <spec>` first or pass `--suite <hash>`."
+                            ));
+                        }
+                    },
+                };
+                let obj = store.get(&target_hash)?;
+                let suite_obj = match obj {
+                    morph_core::MorphObject::EvalSuite(s) => s,
+                    _ => {
+                        return Err(anyhow::anyhow!(
+                            "object {} is not an EvalSuite",
+                            target_hash
+                        ));
+                    }
+                };
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&suite_obj)?);
+                } else {
+                    println!("Suite {}", target_hash);
+                    println!("  cases:    {}", suite_obj.cases.len());
+                    println!("  metrics:  {}", suite_obj.metrics.len());
+                    for c in &suite_obj.cases {
+                        let kind = c
+                            .input
+                            .get("kind")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("?");
+                        println!("    - {}  [{}]  metric={}", c.id, kind, c.metric);
+                    }
+                    for m in &suite_obj.metrics {
+                        println!(
+                            "    metric: {} agg={} threshold={} dir={}",
+                            m.name, m.aggregation, m.threshold, m.direction
+                        );
+                    }
+                }
+            }
+            EvalCmd::Gaps { json, fail_on_gap } => {
+                let (repo_root, store) = get_store(verbose)?;
+                let morph_dir = repo_root.join(".morph");
+                let changes = morph_core::working_status(&store, &repo_root)?;
+                let gaps = morph_core::compute_eval_gaps(
+                    &morph_dir,
+                    store.as_ref(),
+                    changes.len() as u64,
+                )?;
+                if json {
+                    let body = serde_json::json!({
+                        "gaps": gaps,
+                        "count": gaps.len(),
+                    });
+                    println!("{}", serde_json::to_string_pretty(&body)?);
+                } else if gaps.is_empty() {
+                    println!("No behavioral evidence gaps detected.");
+                } else {
+                    println!("Found {} gap(s):", gaps.len());
+                    for g in &gaps {
+                        let kind = g.get("kind").and_then(|v| v.as_str()).unwrap_or("?");
+                        let hint = g.get("hint").and_then(|v| v.as_str()).unwrap_or("");
+                        println!("  - {}: {}", kind, hint);
+                    }
+                }
+                if fail_on_gap && !gaps.is_empty() {
+                    std::process::exit(1);
+                }
+            }
+            EvalCmd::Run { runner, cwd, command } => {
+                if command.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "no command supplied. Usage: morph eval run -- cargo test --workspace"
+                    ));
+                }
+                let (repo_root, store) = get_store(verbose)?;
+                let outcome = morph_core::run_test_command(
+                    store.as_ref(),
+                    &repo_root,
+                    &command,
+                    &runner,
+                    cwd.as_deref(),
+                )?;
+                if outcome.metrics.is_empty() {
+                    eprintln!(
+                        "warning: no metrics extracted from `{}` (runner={}). \
+                         Pass `--runner cargo|pytest|vitest|jest|go` explicitly \
+                         if auto-detection failed.",
+                        command.join(" "),
+                        runner,
+                    );
+                }
+                println!("{}", outcome.run_hash);
+                if let Some(code) = outcome.exit_code {
+                    if code != 0 {
+                        std::process::exit(code);
+                    }
+                }
+            }
         },
 
         Command::MergePlan { branch, retire } => {
@@ -1455,6 +1780,28 @@ fn main() -> anyhow::Result<()> {
         }
 
         Command::Policy { sub } => match sub {
+            PolicyCmd::Init { force } => {
+                let (repo_root, _store) = get_store(verbose)?;
+                let morph_dir = repo_root.join(".morph");
+                let existing = morph_core::read_policy(&morph_dir)?;
+                let already_set = !existing.required_metrics.is_empty()
+                    || !existing.thresholds.is_empty()
+                    || existing.default_eval_suite.is_some();
+                if already_set && !force {
+                    println!("Policy already initialized; pass --force to overwrite");
+                } else {
+                    let default = morph_core::RepoPolicy {
+                        required_metrics: vec![
+                            "tests_total".to_string(),
+                            "tests_passed".to_string(),
+                        ],
+                        default_eval_suite: existing.default_eval_suite,
+                        ..Default::default()
+                    };
+                    morph_core::write_policy(&morph_dir, &default)?;
+                    println!("Policy initialized: required_metrics=[tests_total, tests_passed]");
+                }
+            }
             PolicyCmd::Show => {
                 let (repo_root, _store) = get_store(verbose)?;
                 let policy = morph_core::read_policy(&repo_root.join(".morph"))?;
@@ -1476,6 +1823,18 @@ fn main() -> anyhow::Result<()> {
                 policy.default_eval_suite = Some(resolved.clone());
                 morph_core::write_policy(&morph_dir, &policy)?;
                 println!("Default eval suite set to {}", resolved);
+            }
+            PolicyCmd::RequireMetrics { metrics } => {
+                let (repo_root, _store) = get_store(verbose)?;
+                let morph_dir = repo_root.join(".morph");
+                let mut policy = morph_core::read_policy(&morph_dir)?;
+                policy.required_metrics = metrics.clone();
+                morph_core::write_policy(&morph_dir, &policy)?;
+                if metrics.is_empty() {
+                    println!("Cleared required_metrics");
+                } else {
+                    println!("required_metrics = [{}]", metrics.join(", "));
+                }
             }
         },
 

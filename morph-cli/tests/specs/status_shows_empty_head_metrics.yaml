@@ -1,0 +1,26 @@
+# Phase 1b: `morph status` calls out HEAD commits without observed
+# metrics so the gap is visible in the same place developers already
+# look. Also surfaces the eval-suite case count.
+
+- name: status_warns_when_head_has_empty_metrics
+  files:
+    foo.txt: "hello"
+    .morph/config.json: '{"repo_version":"0.0","policy":{"required_metrics":[]}}'
+  steps:
+    - morph: [add, foo.txt]
+    - morph: [commit, -m, "no metrics"]
+    - morph: [status]
+      stdout_contains:
+        - "warning: HEAD has no observed_metrics"
+        - "Eval suite: 0 cases registered"
+
+- name: status_no_warning_when_metrics_present
+  files:
+    foo.txt: "hello"
+    .morph/config.json: '{"repo_version":"0.0","policy":{"required_metrics":[]}}'
+  steps:
+    - morph: [add, foo.txt]
+    - morph: [commit, -m, "with metrics", --metrics, '{"tests_passed":1,"tests_total":1}']
+    - morph: [status]
+      stdout_not_contains:
+        - "warning: HEAD has no observed_metrics"

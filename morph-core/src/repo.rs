@@ -73,6 +73,15 @@ fn init_morph_dir_at(morph_dir: &Path, bare: bool) -> Result<FsStore, MorphError
     if bare {
         config["bare"] = serde_json::Value::Bool(true);
     }
+    // Phase 2a: opinionated default policy on every fresh repo
+    // (working or bare). New repos enforce the simplest possible
+    // behavioral evidence — `tests_total` and `tests_passed` —
+    // so commits without test results fail loudly. Existing repos
+    // are unaffected; they have no `policy` key and the default
+    // remains empty when no `policy` block is found.
+    let mut policy = crate::policy::RepoPolicy::default();
+    policy.required_metrics = vec!["tests_total".into(), "tests_passed".into()];
+    config["policy"] = serde_json::to_value(&policy).expect("RepoPolicy serializes");
     std::fs::write(morph_dir.join(CONFIG_FILE), serde_json::to_string_pretty(&config).unwrap())?;
 
     // Every fresh repo (bare or working) gets a stable
@@ -464,6 +473,41 @@ mod tests {
         let _ = init_repo(dir.path()).unwrap();
         let v = read_repo_version(&dir.path().join(".morph")).unwrap();
         assert_eq!(v, "0.0");
+    }
+
+    /// Phase 2a: every fresh `morph init` ships an opinionated
+    /// behavioral policy that demands `tests_total` and
+    /// `tests_passed`. This is the stick that turns
+    /// "behavioral version control" from aspiration into the
+    /// happy-path default.
+    #[test]
+    fn init_writes_default_policy_with_required_metrics() {
+        let dir = tempfile::tempdir().unwrap();
+        let _ = init_repo(dir.path()).unwrap();
+        let policy = crate::read_policy(&dir.path().join(".morph")).unwrap();
+        assert!(
+            policy.required_metrics.iter().any(|m| m == "tests_total"),
+            "required_metrics should include tests_total: {:?}",
+            policy.required_metrics
+        );
+        assert!(
+            policy.required_metrics.iter().any(|m| m == "tests_passed"),
+            "required_metrics should include tests_passed: {:?}",
+            policy.required_metrics
+        );
+        assert_eq!(policy.merge_policy, "dominance");
+        assert!(policy.push_gated_branches.is_empty());
+    }
+
+    #[test]
+    fn init_bare_writes_default_policy_with_required_metrics() {
+        let dir = tempfile::tempdir().unwrap();
+        let _ = crate::init_bare(dir.path()).unwrap();
+        // Bare repo writes config directly under `path`, not under
+        // `path/.morph`. Verify the policy still made it.
+        let policy = crate::read_policy(dir.path()).unwrap();
+        assert!(policy.required_metrics.contains(&"tests_total".to_string()));
+        assert!(policy.required_metrics.contains(&"tests_passed".to_string()));
     }
 
     #[test]

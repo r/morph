@@ -1,71 +1,138 @@
 ---
-description: "MANDATORY: write or update tests for every code change, run them, record metrics"
-globs: ["**/*.rs", "**/Cargo.toml", "morph-cli/tests/specs/*.yaml"]
+description: "MANDATORY: write a YAML/cucumber acceptance case for every change, register it as an EvalCase, run it via `morph eval run`, commit from the recorded run."
+globs: ["**/*.rs", "**/Cargo.toml", "morph-cli/tests/specs/*.yaml", "morph-e2e/features/**/*.feature"]
 alwaysApply: true
 ---
 
-# You MUST Write Tests for Every Code Change
+# Spec-First, Eval-Driven Development
 
-This is not optional. Every code change you make MUST include corresponding tests. A change without tests is incomplete — do not consider your task finished until tests exist, pass, and results are recorded.
+In Morph, **the eval suite is the canonical specification**. Every behavioral
+change starts as an acceptance case (YAML or `.feature`), is registered into
+the repo's eval suite, *fails* until the implementation lands, then passes
+when the work is done. Unit tests are an implementation detail; the
+acceptance case is the contract.
 
-## Required steps — follow this exact sequence
+This is not optional. A change without an acceptance case is a change with
+no behavioral evidence — Morph cannot merge it safely.
 
-### 1. Write or update tests BEFORE or ALONGSIDE implementation
+## Required workflow — follow this exact order
 
-- **Unit tests** go in a `#[cfg(test)] mod tests` block at the bottom of the same `.rs` file you are modifying. If the block doesn't exist yet, create it.
-- **CLI behavior changes** require a YAML spec in `morph-cli/tests/specs/`. See existing specs for the format (file/dir setup, sequenced `morph` commands, assertions on exit code, stdout, stderr, filesystem state).
-- If you are adding a new module, it MUST have a test block from the start. No exceptions.
+### 1. Write the acceptance case BEFORE you touch implementation code
 
-### 2. Follow the project's test patterns
+- **CLI behavior** → YAML spec under `morph-cli/tests/specs/<feature>.yaml`.
+  Each top-level entry is one case. The build script auto-generates a Rust
+  test from it.
+- **End-to-end / cross-component flows** → cucumber `.feature` under
+  `morph-e2e/features/`. Each `Scenario:` becomes one case.
+- **New library surface** → still write the spec; add a unit test only after
+  the spec exists.
 
-Read `docs/TESTING.md` for conventions. Key patterns:
+The spec describes user-visible behavior, not implementation. Aim for a
+fixture you would hand to a reviewer.
 
-- `setup_repo()` — creates a temp dir with `init_repo`, returns `(TempDir, FsStore)`.
-- `make_store()` — creates a bare store for lower-level tests.
-- `store_blob()` — helper to create and store a blob, returning its hash.
+### 2. Register the case in the eval suite
+
+Run *before* implementing:
+
+```bash
+morph eval add-case morph-cli/tests/specs/<feature>.yaml
+# or, for a cucumber feature:
+morph eval add-case morph-e2e/features/<flow>.feature
+```
+
+This appends an `EvalCase` to the default `EvalSuite` (creating one if none
+exists) and wires it as `policy.default_eval_suite`. The case is now part of
+the contract every future commit must satisfy.
+
+Sanity-check the suite:
+
+```bash
+morph eval suite-show
+```
+
+### 3. Watch the case fail
+
+Run the eval suite and confirm the new case is *red*:
+
+```bash
+morph eval run -- cargo test --workspace
+```
+
+`morph eval run` shells out, captures stdout, parses runner output (cargo /
+pytest / vitest / jest / go), and writes a `Run` object linked to HEAD with
+the parsed metrics. A failure here is good — it proves the spec is real.
+
+### 4. Implement until the case is green
+
+Now write the code. Keep iterating with `morph eval run` until the metrics
+in the latest run show `pass_rate: 1.0`.
+
+Unit tests inside `#[cfg(test)] mod tests` are welcome — but treat them as
+an *implementation detail* that helps you reach the spec. The merge gate
+only sees the suite.
+
+### 5. Commit from the recorded run
+
+```bash
+morph eval run -- cargo test --workspace
+# Note the printed run hash, e.g. 3a7b9c…
+morph commit -m "<feature>" --from-run 3a7b9c… --new-cases <case_id_a>,<case_id_b>
+```
+
+`--from-run` attaches the run's metrics as the commit's `observed_metrics`,
+so the merge gate has evidence. `--new-cases` records which acceptance
+cases this commit introduced (used by `morph merge` to surface case
+provenance across branches).
+
+If your repo policy requires metrics (the default since `morph init`), an
+empty-metrics commit is rejected. Use `--allow-empty-metrics` only as an
+explicit, audited override.
+
+## Mid-task self-check — call these MCP tools any time
+
+- `morph_status` — includes an `Evidence:` block with HEAD metrics, suite
+  case count, recent runs, and working-tree freshness.
+- `morph_eval_gaps` — returns a structured list of gaps:
+  `empty_head_metrics`, `empty_default_suite`, `no_recent_run`. Cheap to
+  call; surfaces what's still missing before you commit.
+
+If `morph_eval_gaps` returns anything non-empty, you are not done.
+
+## Test patterns and helpers (for the unit-test layer)
+
+`docs/TESTING.md` covers the full conventions. Quick references:
+
+- `setup_repo()` — temp dir with `init_repo`, returns `(TempDir, FsStore)`.
+- `make_store()` — bare store for lower-level tests.
+- `store_blob()` — create+store a blob, returns its hash.
 - All tests use `tempfile::tempdir()` for filesystem isolation.
-- CLI integration specs use `assert_cmd` + `predicates` under the hood.
+- CLI integration specs are driven by `assert_cmd` + `predicates`.
 
-### 3. Run the test suite and report results
-
-After implementation, you MUST run tests for every crate you touched:
+## Run tests for every crate you touched
 
 ```bash
-cargo test -p morph-core      # if you changed morph-core
-cargo test -p morph-cli        # if you changed morph-cli or specs
-cargo test -p morph-e2e --test cucumber  # if you changed CLI behavior
-cargo test --workspace         # when in doubt, run everything
+cargo test -p morph-core                         # if you changed morph-core
+cargo test -p morph-cli                          # if you changed morph-cli or specs
+cargo test -p morph-e2e --test cucumber          # if you changed CLI behavior
+cargo test --workspace                           # when in doubt
 ```
 
-Do NOT skip this step. Do NOT assume tests pass without running them. Report the count of tests passed and failed in your response.
-
-### 4. Record evaluation metrics
-
-After tests pass, record the results so Morph can attach them to commits:
-
-```bash
-morph eval record metrics.json   # where metrics.json contains the results
-```
-
-Or call the MCP tool `morph_record_eval`. The metrics object MUST include at minimum:
-
-```json
-{"tests_total": N, "tests_passed": N, "pass_rate": 1.0}
-```
-
-Also include when available: `build_time_secs`, `coverage_pct`, any domain-specific metrics.
-
-### 5. Include metrics when committing
-
-When committing via `morph_commit` or `morph commit`, pass the metrics from step 4. See the `behavioral-commits` rule for details. A commit without metrics is a missed opportunity — Morph cannot enforce behavioral merge gating without evidence.
+Do NOT skip this. Report pass/fail counts in your response.
 
 ## Why this is non-negotiable
 
-Morph merges are behavioral: a merge succeeds only if the merged program dominates both parents on every metric. If one branch has tests and metrics and the other doesn't, the merge has no evidence to compare against. Tests are not a nice-to-have — they are the evaluation suite that makes behavioral version control work. Every change without tests is a branch that cannot be safely merged.
+Morph merges require the merged program to dominate both parents on every
+metric in the eval suite. If one branch carries acceptance cases and
+metric-bearing runs and the other doesn't, the merge has no evidence to
+compare against — the gate is bypassed and you've lost the entire point of
+behavioral version control. Spec-first development makes that comparison
+possible.
 
 ## Checklist before you say "done"
 
-- [ ] Tests written or updated for every changed behavior
-- [ ] `cargo test` run on affected crates — all pass
-- [ ] Test results (pass count, fail count) reported in your response
-- [ ] Eval metrics recorded if committing
+- [ ] Acceptance case written (YAML or `.feature`) covering the change
+- [ ] `morph eval add-case` run; case visible in `morph eval suite-show`
+- [ ] `morph eval run -- <test command>` produced a run with full metrics
+- [ ] `morph_eval_gaps` reports zero gaps
+- [ ] `morph commit --from-run <hash> --new-cases <ids>` recorded
+- [ ] `cargo test` for affected crates — all pass — pass/fail reported

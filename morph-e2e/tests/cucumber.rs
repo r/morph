@@ -93,6 +93,7 @@ fn given_morph_repo(w: &mut MorphWorld) {
     Command::cargo_bin("morph")
         .expect("morph binary")
         .arg("init")
+        .arg("--no-default-policy")
         .arg(&canon)
         .assert()
         .success();
@@ -110,6 +111,7 @@ fn given_second_repo(w: &mut MorphWorld, subdir: String) {
     Command::cargo_bin("morph")
         .expect("morph binary")
         .arg("init")
+        .arg("--no-default-policy")
         .arg(&remote_path)
         .assert()
         .success();
@@ -271,6 +273,45 @@ fn when_write_file_with_captures(w: &mut MorphWorld, path: String, content: Stri
         std::fs::create_dir_all(parent).expect("create parent dirs");
     }
     std::fs::write(&full, content).expect("write file");
+}
+
+// Phase 6c: helper for spec-first scenarios that need to pass
+// metrics + acceptance-case ids without embedding escaped JSON
+// (cucumber-rs regex doesn't traverse `\"` cleanly).
+#[when(regex = r#"I commit message "([^"]*)" with metrics "([^"]*)" and new-cases "([^"]*)""#)]
+fn when_commit_with_metrics_and_cases(
+    w: &mut MorphWorld,
+    message: String,
+    metrics_kv: String,
+    new_cases: String,
+) {
+    let root = w.repo_root().to_path_buf();
+    // Translate `k=v,k=v` → JSON object.
+    let mut obj = serde_json::Map::new();
+    for pair in metrics_kv.split(',').filter(|s| !s.is_empty()) {
+        if let Some((k, v)) = pair.split_once('=') {
+            let val: f64 = v.parse().expect("metric value not a float");
+            obj.insert(k.trim().to_string(), serde_json::json!(val));
+        }
+    }
+    let metrics_json = serde_json::Value::Object(obj).to_string();
+    let output = Command::cargo_bin("morph")
+        .expect("morph binary")
+        .args([
+            "commit",
+            "-m",
+            &message,
+            "--metrics",
+            &metrics_json,
+            "--new-cases",
+            &new_cases,
+        ])
+        .current_dir(&root)
+        .output()
+        .expect("run morph commit");
+    w.last_stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    w.last_stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    w.last_exit = output.status.code();
 }
 
 #[when(regex = r#"I commit with from-run "([^"]*)" and message "([^"]*)""#)]

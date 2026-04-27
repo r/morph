@@ -592,10 +592,14 @@ Morph CLI mirrors Git where possible.
 ## 6.1 Repository Management
 
 ```
-morph init
+morph init [--bare] [--no-default-policy]
 morph status
 morph log
 ```
+
+`morph init` creates a working repo in `.morph/`. Fresh repos receive an opinionated default `RepoPolicy` that requires `tests_total` and `tests_passed` on every commit (see §11.1). The hidden `--no-default-policy` flag exists for the test harness; production use should rely on `morph policy require-metrics` to relax the gate when needed.
+
+`morph status` prints the working tree, accumulated runs/traces, and an **Evidence** summary block: the most recent metric-bearing run, the registered default eval suite (or a hint to register one), and any unaddressed gaps. The same data is exposed structurally over MCP via `morph_status` and `morph_eval_gaps`.
 
 ## 6.2 Prompt Operations
 
@@ -630,6 +634,9 @@ Pipeline manifests are created via `morph pipeline create <file>` and exist only
 morph add .
 morph commit -m "message"
 morph commit -m "message" --from-run <run_hash>
+morph commit -m "message" --metrics '{"tests_passed":42,"tests_total":42}'
+morph commit -m "message" --allow-empty-metrics              # bypass policy.required_metrics
+morph commit -m "message" --new-cases id1,id2                # record introduced acceptance cases
 ```
 
 `morph add .` stages files and updates the staging index. `morph commit -m "message"` builds the tree from the index, creates the commit, and clears the index.
@@ -640,13 +647,20 @@ morph commit -m "message" --from-run <run_hash>
 - Eval suite presence and hash integrity
 - Uses **recorded** observed metrics (from external evaluation or prior `morph eval record`) to form the eval contract
 
+`--eval-suite <hash>` is optional: when omitted, the commit picks up `policy.default_eval_suite` so the suite registered by `morph eval add-case` flows into every commit automatically. Pass an explicit hash to override.
+
 `--from-run <run_hash>` derives commit provenance from a recorded Run:
 
 - `evidence_refs`: the run hash and its trace hash
 - `env_constraints`: the Run's environment (model, version, parameters, toolchain)
 - `contributors`: the run's agent (with role "primary") and any additional contributors
+- `observed_metrics`: copied from the Run when no explicit `--metrics` is given
 
 If the run hash points to a missing object, a non-Run object, or a Run whose trace cannot be resolved, commit creation fails with a clear error. When `--from-run` is omitted, provenance fields are absent (plain VCS commit).
+
+`--allow-empty-metrics` bypasses the commit-time policy gate. The default policy on a fresh repo requires `tests_total` and `tests_passed` (see §11.1); this flag is the documented escape hatch for genuinely metric-less commits (rebases, backports). It is recorded in the trace so reviewers can audit when the gate was skipped.
+
+`--new-cases id1,id2` writes an `introduces_cases` annotation against the new commit. The case ids are caller-defined (typically `<spec_basename>:<case_name>` matching the suite). `morph merge-plan` reads these annotations and prints per-branch case provenance so a reviewer can see which acceptance cases each branch contributed.
 
 Morph does not run the eval suite; external tools do. Morph applies its **metrics validation layer** (aggregation, threshold checks) to reported scores.
 
@@ -672,11 +686,47 @@ morph run record-session --prompt <text> --response <text> [--model-name <name>]
 
 ## 6.7 Eval ingestion
 
+Morph treats acceptance cases and metric-bearing runs as first-class
+objects. The `morph eval` family covers both directions: ingesting
+human-authored specs into an `EvalSuite`, and ingesting test-runner
+output into a metric-bearing `Run`. Both feed the merge-dominance gate.
+
 ```
-morph eval record <file>
+morph eval record <file>                       # ingest precomputed metrics JSON
+morph eval from-output [--runner R] [--record] <file>  # parse captured stdout (use - for stdin)
+morph eval run -- <cmd...>                     # exec command, parse stdout, write Run linked to HEAD
+morph eval add-case <file_or_dir>...           # YAML / Cucumber → EvalCase, append to default suite
+morph eval suite-from-specs <dir>              # rebuild the default suite from a directory tree
+morph eval suite-show [--suite <hash>] [--json]   # print the cases in a suite
+morph eval gaps [--json] [--fail-on-gap]       # report missing behavioral evidence
 ```
 
-**Ingests** evaluation results (metrics against an EvalSuite). Does not run tests. External tools run the eval and report scores. Morph validates aggregation and thresholds and records the metrics for use in commits and merge dominance checks.
+- `record` — Ingests a `{"metrics": {...}}` JSON file. Used when an
+  external CI run already produced canonical scores. Does not run any
+  test command.
+- `from-output` / `run` — Wrap the supported runners (cargo / pytest /
+  vitest / jest / go) plus an `auto` mode that sniffs the output. They
+  produce the same canonical metric map (`tests_passed`,
+  `tests_failed`, `tests_total`, `pass_rate`, `wall_time_secs`, …) and
+  can optionally write a `Run` object linked to HEAD so a subsequent
+  `morph commit --from-run <hash>` inherits the metrics as
+  `observed_metrics`.
+- `add-case` / `suite-from-specs` — Convert YAML specs and Cucumber
+  `.feature` files into `EvalCase` objects. The first ingestion writes
+  a fresh `EvalSuite` and stores its hash under
+  `policy.default_eval_suite`; subsequent ingestions extend the same
+  suite (deduping by case id).
+- `suite-show` — Inspect the registered default suite (or any suite by
+  hash). `--json` is provided for tooling.
+- `gaps` — Returns a structured list of unaddressed evidence gaps:
+  `empty_head_metrics`, `empty_default_suite`, `no_recent_run`. The
+  Cursor stop-hook (`morph-record-checks.sh`, installed by `morph
+  setup cursor`) shells out to this command.
+
+The same surface is exposed over MCP as `morph_record_eval`,
+`morph_eval_from_output`, `morph_eval_run`, `morph_add_eval_case`,
+`morph_eval_suite_from_specs`, `morph_eval_suite_show`, and
+`morph_eval_gaps`.
 
 ## 6.8 Merge
 
@@ -987,23 +1037,25 @@ A repository-level policy is stored in `.morph/config.json` under the `"policy"`
 {
   "repo_version": "0.0",
   "policy": {
-    "required_metrics": ["tests_passed", "pass_rate"],
+    "required_metrics": ["tests_total", "tests_passed"],
     "thresholds": { "pass_rate": 0.95 },
     "directions": { "latency": "minimize" },
     "default_eval_suite": "<eval_suite_hash or null>",
     "merge_policy": "dominance",
-    "ci_defaults": { "runner": "github-actions" }
+    "ci_defaults": { "runner": "github-actions" },
+    "push_gated_branches": []
   }
 }
 ```
 
 Fields:
-- **required_metrics**: Metric names that must be present for certification.
+- **required_metrics**: Metric names that must be present on every commit (commit-time gate). `morph init` writes `["tests_total", "tests_passed"]` by default so commits without test results fail loudly. `morph commit --allow-empty-metrics` (or `morph_commit { allow_empty_metrics: true }`) bypasses the gate. `morph policy require-metrics <name>...` sets or clears the list (pass no names to disable).
 - **thresholds**: Minimum values per metric (direction-aware).
 - **directions**: Override direction per metric ("maximize" default, or "minimize").
-- **default_eval_suite**: Hash of the default eval suite for certification.
+- **default_eval_suite**: Hash of the default eval suite for certification. Set automatically by `morph eval add-case` / `morph eval suite-from-specs` unless `--no-set-default` is passed.
 - **merge_policy**: `"dominance"` (default) requires behavioral dominance at merge. Setting it to `"none"` opts out of the dominance gate — useful during rapid prototyping when behavioral evidence has not caught up to the structural change. Both `morph-core::merge::execute_merge` and `morph-core::merge_flow::continue_merge` honor this setting.
 - **ci_defaults**: Default CI runner metadata.
+- **push_gated_branches**: Branch-name globs (`*` / `?` / literal) that must pass `gate_check` before a bare server accepts a `RefWrite` over SSH. Empty list (default) gates nothing.
 
 ## 11.2 Certification
 
@@ -1026,9 +1078,11 @@ Gate is read-only and suitable for CI blocking steps. Exit code 0 = pass, 1 = fa
 ## 11.4 CLI Commands
 
 ```
+morph policy init [--force]             # write default policy if absent (idempotent)
 morph policy show                       # display current policy
 morph policy set <file>                 # set policy from JSON file
 morph policy set-default-eval <hash>    # set default eval suite
+morph policy require-metrics <name>...  # replace required_metrics (empty list disables)
 morph certify --metrics-file <file>     # certify HEAD or --commit <hash>
 morph certify --metrics-file <file> --json  # JSON output for CI
 morph gate                              # gate check on HEAD

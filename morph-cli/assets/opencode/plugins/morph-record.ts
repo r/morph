@@ -80,6 +80,89 @@ function rfc3339(msOrSec: number | undefined): string | undefined {
   }
 }
 
+// ---------- test-runner heuristics ----------
+//
+// Phase 3c: when the agent shells out to a known test runner via the
+// `bash` tool, opportunistically pipe the captured stdout into
+// `morph eval from-output --record` so a metrics-bearing Run lands
+// against HEAD without the agent having to remember. Strictly
+// fire-and-forget — failures are logged but never propagate, so a
+// missing morph binary or unparseable output cannot break the agent.
+
+const TEST_RUNNER_RE =
+  /^\s*(cargo\s+test|pytest|npm\s+(test|run\s+test)|pnpm\s+(test|run\s+test)|yarn\s+(test|run\s+test)|vitest|jest|go\s+test)\b/
+
+function detectRunnerFromCommand(cmd: string): string | undefined {
+  const c = cmd.trim().toLowerCase()
+  if (c.startsWith("cargo test") || c.startsWith("cargo nextest")) return "cargo"
+  if (c.startsWith("pytest") || c.startsWith("python -m pytest")) return "pytest"
+  if (c.startsWith("vitest") || /\bvitest\b/.test(c)) return "vitest"
+  if (c.startsWith("jest") || /\bjest\b/.test(c)) return "jest"
+  if (c.startsWith("go test")) return "go"
+  if (
+    c.startsWith("npm test") ||
+    c.startsWith("npm run test") ||
+    c.startsWith("pnpm test") ||
+    c.startsWith("pnpm run test") ||
+    c.startsWith("yarn test") ||
+    c.startsWith("yarn run test")
+  ) {
+    return "auto"
+  }
+  return undefined
+}
+
+async function captureBashAsEvalRun(
+  $: any,
+  directory: string,
+  bashInput: Record<string, any> | undefined,
+  output: any,
+): Promise<void> {
+  try {
+    const cmd = typeof bashInput?.command === "string" ? bashInput.command : ""
+    if (!cmd || !TEST_RUNNER_RE.test(cmd)) return
+    const runner = detectRunnerFromCommand(cmd) ?? "auto"
+    const stdout =
+      typeof output?.output === "string"
+        ? output.output
+        : safeJson(output?.output, MAX_TOOL_OUTPUT_LEN)
+    if (!stdout) return
+    // Write the captured stdout to a transient file under
+    // .morph/hooks/debug so we don't depend on Bun-shell stdin
+    // wiring, which is finicky across SDK versions.
+    const debugDir = join(directory, ".morph", "hooks", "debug")
+    mkdirSync(debugDir, { recursive: true })
+    const stdoutPath = join(
+      debugDir,
+      `eval-capture-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`,
+    )
+    writeFileSync(stdoutPath, stdout)
+    appendLog(
+      directory,
+      `eval-capture: ${stdout.length}B of \`${cmd}\` (runner=${runner}) → ${stdoutPath}`,
+    )
+    const proc = await $`morph eval from-output --runner ${runner} --record ${stdoutPath}`
+      .cwd(directory)
+      .quiet()
+      .nothrow()
+    const code =
+      typeof proc?.exitCode === "number"
+        ? proc.exitCode
+        : typeof proc?.code === "number"
+          ? proc.code
+          : 0
+    if (code === 0) {
+      const out = String(proc?.stdout ?? "")
+      const hash = out.trim().split("\n")[0] ?? ""
+      appendLog(directory, `eval-capture: recorded run ${hash}`)
+    } else {
+      appendLog(directory, `eval-capture: morph exited ${code}`)
+    }
+  } catch (err: any) {
+    appendLog(directory, `eval-capture error: ${err?.message || err}`)
+  }
+}
+
 // ---------- tool classification ----------
 
 // OpenCode built-in tool IDs are lowercase. See https://opencode.ai/docs/tools.
@@ -410,7 +493,7 @@ export const MorphRecordPlugin = async ({
   client: any
   directory: string
 }) => {
-  appendLog(directory, "plugin loaded (v7 — structured parts: text/reasoning/tool/file/patch)")
+  appendLog(directory, "plugin loaded (v8 — adds Phase 3c eval-capture for known test runners)")
 
   return {
     "tool.execute.before": async (input: any, _output: any) => {
@@ -439,6 +522,18 @@ export const MorphRecordPlugin = async ({
         directory,
         `tool.after  ${input.tool} call=${input.callID ?? "?"} out_len=${outLen}`,
       )
+      // Phase 3c: opportunistically capture metrics from common test
+      // runners. Limited to the bash tool — file edits and reads
+      // never produce eval evidence.
+      if (
+        (input.tool === "bash" || input.tool === "shell") &&
+        output &&
+        // Skip explicit error states; we still capture non-zero exits
+        // because tests legitimately fail and the metrics matter.
+        typeof input?.input === "object"
+      ) {
+        await captureBashAsEvalRun($, directory, input.input as any, output)
+      }
     },
 
     event: async ({ event }: { event: any }) => {
