@@ -135,7 +135,7 @@ morph push origin main
 Every SSH session starts with a `Hello` exchange. Server replies with:
 
 ```
-{"version": "0.14.0", "protocol_version": 1, "repo_version": "0.5"}
+{"version": "0.15.0", "protocol_version": 1, "repo_version": "0.5"}
 ```
 
 The client compares `protocol_version` against its own. On mismatch you get:
@@ -154,7 +154,7 @@ If the server admin has configured a push gate on the branch you're pushing to, 
 error: push gate failed for branch 'main': commit is not certified
 ```
 
-See [SERVER-SETUP.md](SERVER-SETUP.md) for how to configure gates; from a client perspective the cure is to certify your commit (`morph certify --metrics-file …`) and push again.
+Gate patterns can be globs — `release/*` covers every single-segment release branch — so the message will name your concrete branch (e.g. `release/v1.0`) even when the policy uses a wildcard. See [SERVER-SETUP.md](SERVER-SETUP.md) for how gates are configured; from a client perspective the cure is to certify your commit (`morph certify --metrics-file …`) and push again.
 
 ---
 

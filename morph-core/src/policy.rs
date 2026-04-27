@@ -351,6 +351,74 @@ fn branch_from_ref(ref_name: &str) -> Option<&str> {
     ref_name.strip_prefix("heads/")
 }
 
+/// PR 9: match a branch name against a single `push_gated_branches`
+/// pattern. The grammar mirrors what Git users expect from
+/// `branch.<name>` patterns:
+///
+/// - `*` matches zero or more non-`/` characters.
+/// - `?` matches exactly one non-`/` character.
+/// - everything else is literal.
+///
+/// `*` deliberately does *not* cross `/` boundaries, so `release/*`
+/// matches `release/v1.0` but not `release/v1/hotfix`. Patterns
+/// without metacharacters keep their pre-PR9 exact-match meaning,
+/// so existing policies continue to work unchanged.
+pub fn branch_matches_pattern(branch: &str, pattern: &str) -> bool {
+    glob_match(pattern.as_bytes(), branch.as_bytes())
+}
+
+fn glob_match(pat: &[u8], text: &[u8]) -> bool {
+    // Iterative two-pointer matcher with a single backtrack point
+    // for `*`. Plenty fast for branch-name length, no allocations.
+    let (mut pi, mut ti) = (0usize, 0usize);
+    let (mut star_p, mut star_t): (Option<usize>, usize) = (None, 0);
+    while ti < text.len() {
+        if pi < pat.len() {
+            match pat[pi] {
+                b'?' if text[ti] != b'/' => {
+                    pi += 1;
+                    ti += 1;
+                    continue;
+                }
+                b'*' => {
+                    star_p = Some(pi);
+                    star_t = ti;
+                    pi += 1;
+                    continue;
+                }
+                c if c == text[ti] => {
+                    pi += 1;
+                    ti += 1;
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        // Mismatch (or pattern exhausted): try to extend the most
+        // recent `*` over one more text byte, but never cross `/`.
+        if let Some(sp) = star_p {
+            if text[star_t] == b'/' {
+                return false;
+            }
+            pi = sp + 1;
+            star_t += 1;
+            ti = star_t;
+        } else {
+            return false;
+        }
+    }
+    // Trailing `*`s in the pattern can absorb empty input.
+    while pi < pat.len() && pat[pi] == b'*' {
+        pi += 1;
+    }
+    pi == pat.len()
+}
+
+/// PR 9: does any pattern in `patterns` match `branch`?
+pub fn branch_matches_any(branch: &str, patterns: &[String]) -> bool {
+    patterns.iter().any(|p| branch_matches_pattern(branch, p))
+}
+
 /// PR 6 stage F: server-side push gate enforcement.
 ///
 /// On a `RefWrite` from the SSH helper, this checks whether the
@@ -370,7 +438,7 @@ pub fn enforce_push_gate(
         return Ok(());
     };
     let policy = read_policy(morph_dir)?;
-    if !policy.push_gated_branches.iter().any(|b| b == branch) {
+    if !branch_matches_any(branch, &policy.push_gated_branches) {
         return Ok(());
     }
     let result = gate_check(store, morph_dir, tip)?;
@@ -572,6 +640,144 @@ mod tests {
         assert!(cert.passed);
         enforce_push_gate(store.as_ref(), &morph_dir, "heads/main", &h)
             .expect("certified commit with passing metric should be accepted");
+    }
+
+    // ── PR 9: glob patterns in push_gated_branches ───────────────
+
+    #[test]
+    fn branch_matches_pattern_handles_literal_strings() {
+        assert!(branch_matches_pattern("main", "main"));
+        assert!(!branch_matches_pattern("mainline", "main"));
+        assert!(!branch_matches_pattern("dev", "main"));
+        // The empty pattern only matches the empty branch — used by
+        // nobody, but a useful sanity test.
+        assert!(branch_matches_pattern("", ""));
+        assert!(!branch_matches_pattern("anything", ""));
+    }
+
+    #[test]
+    fn branch_matches_pattern_star_does_not_cross_slash() {
+        // Headline use case: `release/*` covers `release/v1.0` but
+        // refuses to gobble nested namespaces.
+        assert!(branch_matches_pattern("release/v1.0", "release/*"));
+        assert!(branch_matches_pattern("release/v2.5.1", "release/*"));
+        assert!(!branch_matches_pattern("release", "release/*"));
+        assert!(!branch_matches_pattern(
+            "release/v1/hotfix",
+            "release/*"
+        ));
+        // Top-level star matches any branch with no slashes.
+        assert!(branch_matches_pattern("main", "*"));
+        assert!(branch_matches_pattern("dev", "*"));
+        assert!(!branch_matches_pattern("release/v1", "*"));
+    }
+
+    #[test]
+    fn branch_matches_pattern_question_mark_matches_one_non_slash() {
+        assert!(branch_matches_pattern("v1", "v?"));
+        assert!(branch_matches_pattern("v9", "v?"));
+        assert!(!branch_matches_pattern("v10", "v?"));
+        assert!(!branch_matches_pattern("v/", "v?"));
+    }
+
+    #[test]
+    fn branch_matches_pattern_combinations() {
+        assert!(branch_matches_pattern(
+            "release/v1.0-rc1",
+            "release/v?.*"
+        ));
+        assert!(!branch_matches_pattern(
+            "release/v.0-rc1",
+            "release/v?.*"
+        ));
+        // Multiple stars in one segment.
+        assert!(branch_matches_pattern("hotfix-prod-2026", "hotfix-*-*"));
+        assert!(!branch_matches_pattern(
+            "hotfix-prod/2026",
+            "hotfix-*-*"
+        ));
+    }
+
+    #[test]
+    fn branch_matches_any_short_circuits() {
+        let patterns = vec!["main".into(), "release/*".into()];
+        assert!(branch_matches_any("main", &patterns));
+        assert!(branch_matches_any("release/v1", &patterns));
+        assert!(!branch_matches_any("feature/x", &patterns));
+        assert!(!branch_matches_any("release/v1/hotfix", &patterns));
+        // Empty pattern list never matches.
+        assert!(!branch_matches_any("anything", &[]));
+    }
+
+    #[test]
+    fn enforce_push_gate_matches_glob_patterns_in_push_gated_branches() {
+        // PR 9 cycle 6: the headline behavior — a `release/*` entry
+        // must gate `release/v1.0` even though the literal string
+        // `release/v1.0` was never enumerated in the policy.
+        let (dir, store) = setup_repo();
+        let morph_dir = dir.path().join(".morph");
+        let policy = RepoPolicy {
+            required_metrics: vec!["acc".into()],
+            push_gated_branches: vec!["release/*".into()],
+            ..Default::default()
+        };
+        write_policy(&morph_dir, &policy).unwrap();
+
+        let mut metrics = BTreeMap::new();
+        metrics.insert("other".into(), 0.9);
+        let h = make_commit(store.as_ref(), &dir, metrics);
+
+        let err = enforce_push_gate(
+            store.as_ref(),
+            &morph_dir,
+            "heads/release/v1.0",
+            &h,
+        )
+        .expect_err("release/v1.0 must be gated by `release/*`");
+        let msg = format!("{}", err);
+        assert!(msg.contains("push gate"), "wrong message: {}", msg);
+        assert!(msg.contains("release/v1.0"), "wrong branch name: {}", msg);
+
+        // A branch outside the glob must not be gated.
+        enforce_push_gate(
+            store.as_ref(),
+            &morph_dir,
+            "heads/feature/login",
+            &h,
+        )
+        .expect("feature/login is outside `release/*` and must pass through");
+    }
+
+    #[test]
+    fn enforce_push_gate_glob_does_not_cross_slash_in_release_pattern() {
+        // PR 9 cycle 7: `release/*` is a **single-component** glob,
+        // so a multi-segment branch like `release/v1/hotfix` is
+        // *not* gated by it. Admins who want that need either an
+        // explicit pattern (`release/*/*`) or a more permissive one
+        // — same shape as Git's refspec semantics.
+        let (dir, store) = setup_repo();
+        let morph_dir = dir.path().join(".morph");
+        let policy = RepoPolicy {
+            required_metrics: vec!["acc".into()],
+            push_gated_branches: vec!["release/*".into()],
+            ..Default::default()
+        };
+        write_policy(&morph_dir, &policy).unwrap();
+
+        let mut metrics = BTreeMap::new();
+        metrics.insert("other".into(), 0.9);
+        let h = make_commit(store.as_ref(), &dir, metrics);
+
+        // Without the glob's slash boundary this would mistakenly
+        // gate the nested branch and fail the gate. Asserting that
+        // it passes proves the matcher honors the boundary.
+        enforce_push_gate(
+            store.as_ref(),
+            &morph_dir,
+            "heads/release/v1/hotfix",
+            &h,
+        )
+        .expect("release/v1/hotfix should not be gated by `release/*`");
     }
 
     #[test]

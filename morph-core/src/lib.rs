@@ -104,6 +104,7 @@ pub use sync::{
 pub use policy::{
     RepoPolicy, CertificationResult, GateResult,
     read_policy, write_policy, certify_commit, gate_check, enforce_push_gate,
+    branch_matches_pattern, branch_matches_any,
 };
 pub use diff::{diff_trees, diff_commits, diff_file_maps, DiffEntry, DiffStatus};
 pub use tag::{create_tag, list_tags, delete_tag};

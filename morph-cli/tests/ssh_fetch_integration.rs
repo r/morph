@@ -586,6 +586,103 @@ fn fetched_commit_preserves_morph_instance_across_ssh() {
     );
 }
 
+/// PR 9: server-side push gate honors glob patterns in
+/// `push_gated_branches`. A `release/*` entry must gate every
+/// `release/<x>` branch; an unrelated branch must pass through.
+/// End-to-end via SSH against a bare server, the same shape as
+/// the PR 6 stage F gating test.
+#[test]
+fn ssh_push_gate_honors_glob_pattern_in_push_gated_branches() {
+    let tmp = tempfile::tempdir().unwrap();
+    let server = tmp.path().join("server.morph");
+    let client = tmp.path().join("client");
+    fs::create_dir_all(&client).unwrap();
+
+    init_bare_repo(&server);
+    init_repo(&client);
+
+    // Server gates every `release/*` branch on `acc`. The client
+    // never supplies metrics, so any push to a gated branch must
+    // fail; pushes to other branches must pass through.
+    let policy = serde_json::json!({
+        "policy": {
+            "required_metrics": ["acc"],
+            "push_gated_branches": ["release/*"],
+        }
+    });
+    let cfg_path = server.join("config.json");
+    let mut cfg: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&cfg_path).unwrap()).unwrap();
+    cfg.as_object_mut()
+        .unwrap()
+        .insert("policy".into(), policy["policy"].clone());
+    fs::write(&cfg_path, serde_json::to_string_pretty(&cfg).unwrap()).unwrap();
+
+    // Make a commit on `release/v1.0` — the gated case.
+    fs::write(client.join("a.txt"), "alpha").unwrap();
+    let _ = run_morph(&client, &["add", "a.txt"], &[]);
+    let _ = run_morph(&client, &["commit", "-m", "alpha"], &[]);
+    let _ = run_morph(&client, &["branch", "release/v1.0"], &[]);
+    let _ = run_morph(&client, &["checkout", "release/v1.0"], &[]);
+
+    let url = format!("ssh://fake.host{}", server.display());
+    let _ = run_morph(&client, &["remote", "add", "origin", &url], &[]);
+
+    let fake_ssh = write_fake_ssh(tmp.path());
+    let bin = morph_bin();
+    let env = [
+        ("MORPH_SSH", fake_ssh.to_str().unwrap()),
+        ("MORPH_REMOTE_BIN", bin.to_str().unwrap()),
+    ];
+
+    // Push to gated branch — must fail with a push-gate message
+    // that names the branch concretely (so the user knows the
+    // glob caught it, no surprise renames).
+    let out = run_morph(&client, &["push", "origin", "release/v1.0"], &env);
+    assert!(
+        !out.status.success(),
+        "push to release/v1.0 should fail under `release/*`; stdout={}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("push gate"),
+        "stderr should mention push gate: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains("release/v1.0"),
+        "stderr should name the concrete branch: {}",
+        stderr
+    );
+
+    // Now switch to `feature/login` — outside the glob, so it must
+    // pass through unconditionally.
+    let _ = run_morph(&client, &["checkout", "main"], &[]);
+    let _ = run_morph(&client, &["branch", "feature/login"], &[]);
+    let _ = run_morph(&client, &["checkout", "feature/login"], &[]);
+    fs::write(client.join("b.txt"), "beta").unwrap();
+    let _ = run_morph(&client, &["add", "b.txt"], &[]);
+    let _ = run_morph(&client, &["commit", "-m", "beta"], &[]);
+
+    let out = run_morph(&client, &["push", "origin", "feature/login"], &env);
+    assert!(
+        out.status.success(),
+        "push to feature/login should succeed (outside `release/*`); stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // Server should have feature/login as a real ref.
+    assert!(
+        server.join("refs/heads/feature/login").exists(),
+        "server should record feature/login when gate doesn't apply"
+    );
+    // And no rejected ref for release/v1.0.
+    assert!(
+        !server.join("refs/heads/release/v1.0").exists(),
+        "server must not have written release/v1.0 when gate failed"
+    );
+}
+
 /// PR 8 cycle 7: end-to-end `morph clone ssh://…` against a bare
 /// server. Mirrors the laptop-onboarding flow from
 /// MULTI-MACHINE.md: server-side `morph init --bare`, push from

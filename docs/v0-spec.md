@@ -1233,7 +1233,7 @@ Every SSH session begins with a `Hello` exchange. The server's `Hello` response 
 
 ```json
 {
-  "version": "0.14.0",
+  "version": "0.15.0",
   "protocol_version": 1,
   "repo_version": "0.5"
 }
@@ -1249,15 +1249,27 @@ Every SSH session begins with a `Hello` exchange. The server's `Hello` response 
 
 ## 17.9 Server-Side Push Gating (PR 6 stage F)
 
-`RepoPolicy.push_gated_branches: Vec<String>` lists branch names the server will run `gate_check` against on every `RefWrite`. The flow:
+`RepoPolicy.push_gated_branches: Vec<String>` lists branch-name patterns the server will run `gate_check` against on every `RefWrite`. The flow:
 
 1. Receive `RefWrite { name, hash }`.
 2. `verify_closure(store, &hash)` — reject if incomplete.
-3. If `branch_from_ref(name)` is in `policy.push_gated_branches`, call `enforce_push_gate(store, morph_dir, name, &hash)`.
+3. If `branch_from_ref(name)` matches any pattern in `policy.push_gated_branches` (via `branch_matches_any`), call `enforce_push_gate(store, morph_dir, name, &hash)`.
 4. `enforce_push_gate` runs `gate_check` against the policy; on failure returns `MorphError::Serialization("push gate failed for branch '<name>': <reasons>")`.
 5. Only on success is the ref written.
 
 Empty `push_gated_branches` (the default) reproduces pre-PR6 behavior — no server-side enforcement.
+
+### Pattern grammar (PR 9)
+
+Each entry is a glob:
+
+- `*` — zero or more non-`/` characters
+- `?` — exactly one non-`/` character
+- anything else literal
+
+`release/*` matches `release/v1.0` but **not** `release/v1/hotfix` — `*` is bounded by the next `/`, which mirrors Git refspec semantics. Patterns without metacharacters keep the pre-PR9 exact-match meaning, so existing configs upgrade unchanged.
+
+The matcher is `morph_core::branch_matches_pattern(branch, pattern)` and the membership wrapper is `branch_matches_any(branch, &patterns)`. Both are pure, allocation-free, and tested in `morph-core/src/policy.rs`.
 
 ## 17.10 `morph clone` (PR 8)
 
@@ -1310,6 +1322,6 @@ Default destination is the basename of `url` with any trailing `.morph` stripped
 | `morph-core/src/sync.rs` | `RemoteSpec`, `read_remotes`, `open_remote_store`, `verify_closure`, branch upstream config, `clone_repo` |
 | `morph-core/src/ssh_proto.rs` | wire types, `MORPH_PROTOCOL_VERSION`, error mapping |
 | `morph-core/src/ssh_store.rs` | `SshStore`, `SshUrl`, `RemoteSpawn`/`LocalSpawn`, `validate_hello` |
-| `morph-core/src/policy.rs` | `RepoPolicy.push_gated_branches`, `enforce_push_gate`, `branch_from_ref` |
+| `morph-core/src/policy.rs` | `RepoPolicy.push_gated_branches`, `enforce_push_gate`, `branch_from_ref`, `branch_matches_pattern`, `branch_matches_any` |
 | `morph-cli/src/remote_helper.rs` | server-side JSON-RPC dispatch wired to closure + push-gate checks |
 

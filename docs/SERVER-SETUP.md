@@ -17,7 +17,7 @@ Verify on the server:
 
 ```bash
 morph --version
-# morph 0.14.0 (built ...)
+# morph 0.15.0 (built ...)
 ```
 
 The server doesn't need any of the IDE integrations (`morph-mcp`, hooks). It only needs the CLI.
@@ -122,7 +122,19 @@ What each field controls:
 | `ci_defaults` | Free-form metadata stamped onto certifications |
 | `push_gated_branches` | **Server-side**: branch names that must pass `gate_check` before `RefWrite` is accepted. Empty = no gating (legacy behavior) |
 
-`push_gated_branches` is the PR 6 mechanism that turns the server into a quality gate. Each entry is a bare branch name (no `refs/heads/` prefix), e.g. `["main", "release-*"]` *(literal names only; globbing is not implemented yet)*.
+`push_gated_branches` is the PR 6 mechanism that turns the server into a quality gate. Each entry is a branch-name pattern (no `refs/heads/` prefix). Patterns understand:
+
+- `*` — zero or more non-`/` characters. `release/*` matches `release/v1.0` but not `release/v1/hotfix`. Top-level `*` matches every single-segment branch.
+- `?` — exactly one non-`/` character.
+- everything else literal.
+
+Plain names like `"main"` keep their pre-PR9 exact-match meaning, so existing policies upgrade with no behavior change. Common shapes:
+
+```json
+"push_gated_branches": ["main", "release/*", "hotfix/*"]
+```
+
+Multi-component branches need an explicit deeper pattern (e.g. `"release/*/*"` or `"release/*/hotfix"`); a single `*` segment is the boundary by design.
 
 When somebody runs `morph push origin main`, the server-side helper runs:
 
@@ -143,7 +155,7 @@ Every connection starts with a `Hello` exchange:
 
 ```
 client → {"op": "Hello"}
-server → {"version": "0.14.0", "protocol_version": 1, "repo_version": "0.5"}
+server → {"version": "0.15.0", "protocol_version": 1, "repo_version": "0.5"}
 ```
 
 - `protocol_version` is a single integer (`MORPH_PROTOCOL_VERSION` in `morph_core::ssh_proto`). Clients that speak a different version reject the session with `IncompatibleRemote`.
