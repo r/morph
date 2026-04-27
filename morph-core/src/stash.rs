@@ -17,6 +17,21 @@ pub struct StashEntry {
     pub index: StagingIndex,
 }
 
+fn next_stash_id(stashes_dir: &Path, now: chrono::DateTime<chrono::Utc>) -> String {
+    // Use nanosecond precision and add a numeric suffix if a file still collides.
+    // This keeps IDs stable-looking while guaranteeing uniqueness on fast runners.
+    let base = now.format("%Y%m%dT%H%M%S_%9f").to_string();
+    let mut candidate = base.clone();
+    let mut suffix = 1usize;
+
+    while stashes_dir.join(format!("{}.json", candidate)).exists() {
+        candidate = format!("{}_{}", base, suffix);
+        suffix += 1;
+    }
+
+    candidate
+}
+
 /// Save the current staging index as a stash and clear the index.
 pub fn stash_save(
     morph_dir: &Path,
@@ -33,7 +48,7 @@ pub fn stash_save(
     std::fs::create_dir_all(&stashes_dir)?;
 
     let now = chrono::Utc::now();
-    let id = now.format("%Y%m%dT%H%M%S_%3f").to_string();
+    let id = next_stash_id(&stashes_dir, now);
     let entry = StashEntry {
         id: id.clone(),
         message: message.map(|s| s.to_string()),
@@ -184,5 +199,20 @@ mod tests {
         update_index(dir.path(), "x.txt", &"x".repeat(64)).unwrap();
         let saved = stash_save(dir.path(), None).unwrap();
         assert!(saved.message.is_none());
+    }
+
+    #[test]
+    fn next_stash_id_adds_suffix_on_collision() {
+        let dir = setup();
+        let stashes_dir = dir.path().join(STASHES_DIR);
+        std::fs::create_dir_all(&stashes_dir).unwrap();
+
+        let now = chrono::Utc::now();
+        let id1 = next_stash_id(&stashes_dir, now);
+        std::fs::write(stashes_dir.join(format!("{}.json", id1)), "{}").unwrap();
+
+        let id2 = next_stash_id(&stashes_dir, now);
+        assert_ne!(id1, id2);
+        assert!(id2.ends_with("_1"));
     }
 }
