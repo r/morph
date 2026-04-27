@@ -199,6 +199,14 @@ pub struct Commit {
     /// from "git committed and we caught up".
     #[serde(default)]
     pub morph_origin: Option<String>,
+    /// Reference-mode: the git commit SHA this Morph commit was
+    /// synthesized from. Set for `morph_origin == Some("git-hook")`
+    /// commits; `None` for commits authored directly through Morph.
+    /// Used by `morph reference-sync` to detect already-synced
+    /// commits and by `morph status` to compute pending-certification
+    /// counts.
+    #[serde(default)]
+    pub git_origin_sha: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -387,6 +395,7 @@ mod tests {
             morph_version: Some("0.10.0".into()),
             morph_instance: Some("morph-abc123".into()),
             morph_origin: None,
+            git_origin_sha: None,
         });
         let s = serde_json::to_string(&original).unwrap();
         assert!(s.contains("\"morph_instance\":\"morph-abc123\""));
@@ -452,11 +461,50 @@ mod tests {
             morph_version: Some("0.24.0".into()),
             morph_instance: None,
             morph_origin: Some("git-hook".into()),
+            git_origin_sha: Some("a".repeat(40)),
         });
         let s = serde_json::to_string(&original).unwrap();
         assert!(s.contains("\"morph_origin\":\"git-hook\""));
+        assert!(s.contains("\"git_origin_sha\":\""));
         let parsed: MorphObject = serde_json::from_str(&s).unwrap();
         assert_eq!(parsed, original);
+    }
+
+    /// PR 2 (reference mode): legacy commits without the
+    /// `git_origin_sha` field still deserialize. Combined with
+    /// `legacy_commit_without_morph_origin_deserializes`, this
+    /// proves the schema is fully back-compatible across both
+    /// reference-mode foundation fields.
+    #[test]
+    fn legacy_commit_without_git_origin_sha_deserializes() {
+        let json = r#"{
+            "type": "commit",
+            "tree": null,
+            "pipeline": "0000000000000000000000000000000000000000000000000000000000000000",
+            "parents": [],
+            "message": "legacy commit",
+            "timestamp": "2024-01-01T00:00:00Z",
+            "author": "morph",
+            "contributors": null,
+            "eval_contract": {
+                "suite": "0000000000000000000000000000000000000000000000000000000000000000",
+                "observed_metrics": {}
+            },
+            "env_constraints": null,
+            "evidence_refs": null,
+            "morph_version": null,
+            "morph_instance": null,
+            "morph_origin": "git-hook"
+        }"#;
+        let obj: MorphObject =
+            serde_json::from_str(json).expect("legacy commit must deserialize");
+        match obj {
+            MorphObject::Commit(c) => {
+                assert_eq!(c.morph_origin.as_deref(), Some("git-hook"));
+                assert_eq!(c.git_origin_sha, None);
+            }
+            _ => panic!("expected a Commit variant"),
+        }
     }
 }
 

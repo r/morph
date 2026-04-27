@@ -236,6 +236,7 @@ fn rewrite_object(obj: &MorphObject, map: &HashMap<String, Hash>) -> Result<Morp
             morph_version: c.morph_version.clone(),
             morph_instance: c.morph_instance.clone(),
             morph_origin: c.morph_origin.clone(),
+            git_origin_sha: c.git_origin_sha.clone(),
         }),
         MorphObject::Run(r) => MorphObject::Run(Run {
             pipeline: subst(map, &r.pipeline),
@@ -318,6 +319,7 @@ mod tests {
             morph_version: None,
             morph_instance: None,
             morph_origin: None,
+            git_origin_sha: None,
         });
         let commit_hash = store.put(&commit).unwrap();
         store.ref_write_raw("HEAD", "ref: heads/main").unwrap();

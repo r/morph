@@ -372,16 +372,60 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        Command::Init { path, bare, no_default_policy } => {
+        Command::Init { path, bare, reference, no_default_policy } => {
             verbose_msg(
                 verbose,
                 &format!(
                     "initializing {} repo at {}",
-                    if bare { "bare" } else { "working" },
+                    if bare {
+                        "bare"
+                    } else if reference {
+                        "reference-mode"
+                    } else {
+                        "working"
+                    },
                     path.display()
                 ),
             );
-            if bare {
+            if reference {
+                if !morph_core::is_git_working_tree(&path) {
+                    eprintln!(
+                        "morph init --reference: {} is not a git repository (no .git directory found). \
+Run `git init` first or pass a path that is already a git working tree.",
+                        path.display()
+                    );
+                    std::process::exit(1);
+                }
+                morph_core::init_repo(&path)?;
+                let init_at = morph_core::git_head_sha(&path)?;
+                let morph_dir = path.join(".morph");
+                morph_core::write_reference_mode(&morph_dir, init_at.as_deref())?;
+                let hooks_dir = path.join(".git").join("hooks");
+                std::fs::create_dir_all(&hooks_dir)?;
+                let hook_path = hooks_dir.join("post-commit");
+                std::fs::write(&hook_path, morph_core::POST_COMMIT_HOOK_SCRIPT)?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let mut perms = std::fs::metadata(&hook_path)?.permissions();
+                    perms.set_mode(0o755);
+                    std::fs::set_permissions(&hook_path, perms)?;
+                }
+                let abs_morph = path
+                    .canonicalize()
+                    .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(&path))
+                    .join(".morph");
+                println!(
+                    "Initialized Morph repository in reference mode in {}/",
+                    abs_morph.display()
+                );
+                if let Some(sha) = init_at.as_deref() {
+                    println!("  bound to git HEAD {}", &sha[..sha.len().min(12)]);
+                } else {
+                    println!("  bound to empty git repository (no commits yet)");
+                }
+                println!("  installed post-commit hook at .git/hooks/post-commit");
+            } else if bare {
                 morph_core::init_bare(&path)?;
                 let abs = path
                     .canonicalize()
@@ -406,6 +450,37 @@ fn main() -> anyhow::Result<()> {
                 };
                 let permissive = morph_core::RepoPolicy::default();
                 morph_core::write_policy(&morph_dir, &permissive)?;
+            }
+        }
+
+        Command::ReferenceSync => {
+            let cwd = std::env::current_dir()?;
+            let repo_root = morph_core::find_repo(&cwd)
+                .ok_or_else(|| anyhow::anyhow!("not in a morph repository"))?;
+            let morph_dir = repo_root.join(".morph");
+            let mode = morph_core::read_repo_mode(&morph_dir)?;
+            if mode != morph_core::RepoMode::Reference {
+                eprintln!(
+                    "morph reference-sync: not in reference mode. Run `morph init --reference` \
+in a git repository first."
+                );
+                std::process::exit(1);
+            }
+            let store = morph_core::open_store(&morph_dir)?;
+            let outcome = morph_core::sync_to_head(
+                store.as_ref(),
+                &repo_root,
+                Some(env!("CARGO_PKG_VERSION")),
+            )?;
+            if outcome.already_synced {
+                println!("Already up to date.");
+            } else {
+                let short = outcome
+                    .git_sha
+                    .as_deref()
+                    .map(|s| &s[..s.len().min(8)])
+                    .unwrap_or("?");
+                println!("Synced 1 git commit ({}).", short);
             }
         }
 
@@ -780,6 +855,24 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
             }
+
+            // PR 2 (reference mode): surface the count of git-hook
+            // commits that haven't been certified yet. Standalone
+            // repos never produce git-hook commits, so this branch
+            // is a no-op there.
+            if morph_core::read_repo_mode(&morph_dir)? == morph_core::RepoMode::Reference {
+                if let Some(head) = morph_core::resolve_head(&store)? {
+                    let pending = morph_core::pending_certifications(store.as_ref(), &head)?;
+                    if !pending.is_empty() {
+                        println!(
+                            "{} uncertified git-hook commit{} on this branch — run `morph certify` to attach evidence.",
+                            pending.len(),
+                            if pending.len() == 1 { "" } else { "s" },
+                        );
+                    }
+                }
+            }
+
             let policy = morph_core::read_policy(&morph_dir)?;
             let suite_cases = match policy.default_eval_suite.as_deref() {
                 Some(suite_hex) => match Hash::from_hex(suite_hex)
@@ -1135,6 +1228,8 @@ fn main() -> anyhow::Result<()> {
                     "timestamp": commit.timestamp,
                     "parents": commit.parents,
                     "metrics": metrics,
+                    "morph_origin": commit.morph_origin,
+                    "git_origin_sha": commit.git_origin_sha,
                 });
                 println!("{}", serde_json::to_string_pretty(&body)?);
             } else {

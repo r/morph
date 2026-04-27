@@ -36,6 +36,7 @@ pub mod stash;
 pub mod revert;
 pub mod ssh_proto;
 pub mod ssh_store;
+pub mod reference;
 
 pub use hash::{canonical_json, content_hash, content_hash_git, Hash};
 pub use objects::MorphObject;
@@ -45,6 +46,7 @@ pub use store::{resolve_hash_prefix, resolve_revision, FsStore, MorphError, Obje
 pub use repo::{
     init_repo, init_bare, is_bare, open_store, read_repo_version, require_store_version,
     resolve_morph_dir,
+    read_repo_mode, read_init_at_git_sha, write_reference_mode, RepoMode,
     STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_0_4, STORE_VERSION_0_5, STORE_VERSION_INIT,
 };
 pub use identity::identity_pipeline;
@@ -134,6 +136,10 @@ pub use stash::{stash_save, stash_list, stash_pop, StashEntry};
 pub use revert::revert_commit;
 pub use gc::{gc, GcResult};
 pub use store::ObjectLayout;
+pub use reference::{
+    git_head_sha, is_git_working_tree, pending_certifications, read_git_commit, sync_to_head,
+    GitCommitInfo, SyncOutcome, POST_COMMIT_HOOK_SCRIPT,
+};
 
 pub mod gc;
 mod morphignore;

@@ -709,6 +709,7 @@ mod tests {
             morph_version: None,
             morph_instance: None,
             morph_origin: None,
+            git_origin_sha: None,
         });
         let commit_h = local_store.put(&commit).unwrap();
 

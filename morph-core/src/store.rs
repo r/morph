@@ -52,6 +52,11 @@ pub enum MorphError {
         local: String,
         reason: String,
     },
+    /// Catch-all for tool-shell-out failures and other miscellaneous
+    /// errors that don't fit a more specific variant. Introduced
+    /// alongside reference mode (PR 2) for git subprocess failures.
+    #[error("{0}")]
+    Other(String),
 }
 
 /// Object type filter for list operations.

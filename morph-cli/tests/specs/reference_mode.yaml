@@ -1,0 +1,131 @@
+# Reference mode: Morph sits alongside Git. Git owns file storage, Morph
+# owns behavioral metadata. 1:1 commit coupling — every git commit gets a
+# Morph commit (initially uncertified), and `morph certify` later attaches
+# evidence to satisfy policy gates.
+#
+# These cases pin the contract for:
+#   - `morph init --reference` (validates git repo, captures HEAD, installs hook)
+#   - `morph reference-sync` (creates Morph commits from git HEAD)
+#   - `morph status` (surfaces uncertified git-hook commits in reference mode)
+#   - Late certification (the unified certification model from PR 1)
+
+# ── init --reference ────────────────────────────────────────────────────
+
+- name: reference_init_requires_git_repo
+  init: false
+  steps:
+    - morph: [init, --reference, "${repo}"]
+      expect_exit: 1
+      stderr_contains: "not a git repository"
+
+- name: reference_init_captures_git_head
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first git commit'"
+    - morph: [init, --reference, "${repo}"]
+      stdout_contains: "Initialized Morph repository in reference mode"
+  assert:
+    - kind: dir_exists
+      path: .morph
+    - kind: file_contains
+      path: .morph/config.json
+      contents: '"repo_mode": "reference"'
+    - kind: file_contains
+      path: .morph/config.json
+      contents: '"init_at_git_sha"'
+
+- name: reference_init_handles_empty_git_repo
+  init: false
+  steps:
+    - shell: "git init -q -b main"
+    - morph: [init, --reference, "${repo}"]
+      stdout_contains: "Initialized Morph repository in reference mode"
+  assert:
+    - kind: file_contains
+      path: .morph/config.json
+      contents: '"repo_mode": "reference"'
+
+- name: reference_init_installs_post_commit_hook
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+  assert:
+    - kind: file_exists
+      path: .git/hooks/post-commit
+    - kind: file_contains
+      path: .git/hooks/post-commit
+      contents: "morph reference-sync"
+
+- name: reference_init_conflicts_with_bare
+  init: false
+  steps:
+    - morph: [init, --reference, --bare, "${repo}"]
+      expect_exit: 2
+      stderr_contains: "cannot be used with"
+
+# ── reference-sync ──────────────────────────────────────────────────────
+
+- name: reference_sync_creates_morph_commit_with_git_hook_origin
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first git commit'"
+    - morph: [init, --reference, "${repo}"]
+    - shell: "git commit --allow-empty -q -m 'second git commit'"
+    - morph: [reference-sync]
+      stdout_contains: "Synced 1 git commit"
+    - morph: [head, --json]
+      stdout_contains: "second git commit"
+    - morph: [head, --json]
+      stdout_contains: '"morph_origin": "git-hook"'
+
+- name: reference_sync_idempotent_when_no_new_git_commits
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - shell: "git commit --allow-empty -q -m 'second'"
+    - morph: [reference-sync]
+      stdout_contains: "Synced 1 git commit"
+    - morph: [reference-sync]
+      stdout_contains: "Already up to date"
+
+- name: reference_sync_carries_git_commit_message
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - shell: "git commit --allow-empty -q -m 'feat: add user authentication'"
+    - morph: [reference-sync]
+    - morph: [log, --oneline, -n, "1"]
+      stdout_contains: "feat: add user authentication"
+
+- name: reference_sync_errors_outside_reference_mode
+  steps:
+    - morph: [reference-sync]
+      expect_exit: 1
+      stderr_contains: "not in reference mode"
+
+# ── status integration ──────────────────────────────────────────────────
+
+- name: reference_status_surfaces_pending_certifications
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - shell: "git commit --allow-empty -q -m 'second'"
+    - morph: [reference-sync]
+    - morph: [status]
+      stdout_contains: "uncertified git-hook commit"
+
+- name: reference_status_clears_pending_after_certify
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - shell: "git commit --allow-empty -q -m 'second'"
+    - morph: [reference-sync]
+    - morph: [certify, --metrics, '{"tests_passed":10,"tests_total":10,"pass_rate":1.0}']
+      stdout_contains: "PASS"
+    - morph: [status]
+      stdout_not_contains: "uncertified git-hook commit"

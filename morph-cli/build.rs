@@ -37,6 +37,11 @@ struct Step {
     write_file: Option<WriteFile>,
     #[serde(default)]
     delete_file: Option<DeleteFile>,
+    /// Run an arbitrary shell command (`sh -c <cmd>`) in the fixture's
+    /// cwd. Used for setting up git repos, running git commands, etc.
+    /// Step succeeds iff the shell exits 0; failure aborts the test.
+    #[serde(default)]
+    shell: Option<String>,
     /// Override working directory for this step (relative to temp dir).
     #[serde(default)]
     cwd: Option<String>,
@@ -241,7 +246,70 @@ fn emit_step(code: &mut String, step: &Step, idx: usize) {
         return;
     }
 
-    let raw_args = step.morph.as_ref().expect("step must have morph, compute_hash, write_file, or delete_file");
+    if let Some(sh) = &step.shell {
+        let cwd_expr = match &step.cwd {
+            Some(d) if d.contains("${") => {
+                let fmt_str = escape_braces_for_format(d);
+                format!("path.join(format!({:?}))", fmt_str)
+            }
+            Some(d) => format!("path.join({:?})", d),
+            None => "path.to_path_buf()".to_string(),
+        };
+        let cmd_expr = if sh.contains("${") {
+            let fmt_str = escape_braces_for_format(sh);
+            format!("format!({:?})", fmt_str)
+        } else {
+            format!("{:?}.to_string()", sh)
+        };
+        writeln!(code, "    {{").unwrap();
+        writeln!(code, "        let cwd = {};", cwd_expr).unwrap();
+        writeln!(code, "        let shell_cmd = {};", cmd_expr).unwrap();
+        writeln!(
+            code,
+            "        let status = std::process::Command::new(\"sh\")"
+        )
+        .unwrap();
+        writeln!(code, "            .arg(\"-c\")").unwrap();
+        writeln!(code, "            .arg(&shell_cmd)").unwrap();
+        writeln!(code, "            .current_dir(&cwd)").unwrap();
+        // Make git deterministic and non-interactive in tests.
+        writeln!(
+            code,
+            "            .env(\"GIT_AUTHOR_NAME\", \"morph-test\")"
+        )
+        .unwrap();
+        writeln!(
+            code,
+            "            .env(\"GIT_AUTHOR_EMAIL\", \"morph-test@example.com\")"
+        )
+        .unwrap();
+        writeln!(
+            code,
+            "            .env(\"GIT_COMMITTER_NAME\", \"morph-test\")"
+        )
+        .unwrap();
+        writeln!(
+            code,
+            "            .env(\"GIT_COMMITTER_EMAIL\", \"morph-test@example.com\")"
+        )
+        .unwrap();
+        let expect_exit = step.expect_exit.unwrap_or(0);
+        writeln!(
+            code,
+            "            .status().expect(\"shell step failed to spawn\");"
+        )
+        .unwrap();
+        writeln!(
+            code,
+            "        assert_eq!(status.code(), Some({}), \"shell step exit mismatch: {{}}\", shell_cmd);",
+            expect_exit
+        )
+        .unwrap();
+        writeln!(code, "    }}").unwrap();
+        return;
+    }
+
+    let raw_args = step.morph.as_ref().expect("step must have morph, compute_hash, write_file, delete_file, or shell");
     // Inject `--no-default-policy` into any in-spec `morph init` so
     // existing fixtures from before Phase 2a continue to start with a
     // permissive policy. Specs that *want* the default policy can opt

@@ -34,8 +34,16 @@ pub enum Command {
         /// Create a bare repository at `path` (no working tree, no
         /// `.morph/` wrapper). Use this on a server you intend to
         /// `morph push` to via SSH.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "reference")]
         bare: bool,
+        /// Initialize in *reference mode*: Morph sits alongside an
+        /// existing Git repository. Git owns file storage; Morph
+        /// stores only behavioral metadata and mirrors every git
+        /// commit into a Morph commit (via the post-commit hook
+        /// installed automatically). Requires `path` to be a git
+        /// working tree. Mutually exclusive with `--bare`.
+        #[arg(long, conflicts_with = "bare")]
+        reference: bool,
         /// Skip writing the opinionated default RepoPolicy. Used by
         /// the spec-test harness to keep pre-Phase-2a fixtures
         /// permissive; humans should leave this off so new repos
@@ -43,6 +51,15 @@ pub enum Command {
         #[arg(long, hide = true)]
         no_default_policy: bool,
     },
+    /// Mirror the current Git HEAD into a Morph commit. In reference
+    /// mode this is invoked by the installed post-commit hook after
+    /// every `git commit`; you can also run it manually to recover
+    /// from a missed sync. Errors when the repo is not in reference
+    /// mode. The created Morph commit has `morph_origin = "git-hook"`
+    /// and empty inline metrics — late certification (`morph certify`)
+    /// attaches evidence afterwards.
+    #[command(name = "reference-sync")]
+    ReferenceSync,
     /// Print version + build metadata. Like `--version` but also
     /// supports `--json` for scripts and CI smoke tests.
     Version {

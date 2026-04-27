@@ -689,6 +689,7 @@ pub fn continue_merge(
             .or_else(|| other_commit.morph_version.clone()),
         morph_instance,
         morph_origin: None,
+        git_origin_sha: None,
     });
     let merge_hash = store.put(&merge_commit)?;
 
@@ -1255,6 +1256,7 @@ mod tests {
                 morph_version: Some("0.5".to_string()),
                 morph_instance: None,
                 morph_origin: None,
+                git_origin_sha: None,
             };
             store.put(&MorphObject::Commit(commit)).unwrap()
         };
@@ -1804,6 +1806,7 @@ mod tests {
                 morph_version: Some("0.5".to_string()),
                 morph_instance: None,
                 morph_origin: None,
+                git_origin_sha: None,
             };
             store.put(&MorphObject::Commit(commit)).unwrap()
         };
