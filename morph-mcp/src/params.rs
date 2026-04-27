@@ -281,6 +281,20 @@ pub struct IdentifyParams {
     pub workspace_path: Option<String>,
 }
 
+/// `morph_reference_sync`: mirror git history into Morph commits.
+/// Either appends one commit (HEAD-only sync) or walks the full
+/// `init_at_git_sha..HEAD` range (`backfill: true`).
+#[derive(Debug, Deserialize, JsonSchema, Default)]
+pub struct ReferenceSyncParams {
+    /// When true, walk every git commit in `init_at_git_sha..HEAD`
+    /// and synthesise any not yet mirrored. When false (the
+    /// default), mirror only the current git HEAD.
+    #[serde(default)]
+    pub backfill: Option<bool>,
+    #[serde(default)]
+    pub workspace_path: Option<String>,
+}
+
 /// `morph_annotations`: list every annotation attached to a target.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct AnnotationsParams {

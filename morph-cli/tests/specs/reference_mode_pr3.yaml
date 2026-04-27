@@ -1,0 +1,173 @@
+# PR 3: reference-mode hardening.
+#
+# Five threads bundled together because they all attach to the same
+# core decision (reference mode is now a real lifecycle, not just an
+# init flag): the policy carve-out for git-hook origins, the backfill
+# path for late adoption, the standalone hook installer, multi-parent
+# (merge-commit) sync handling, and the MCP surface (the latter
+# tested directly in morph-mcp unit tests).
+
+# ── policy.exempt_origins ───────────────────────────────────────────────
+#
+# Reference mode without this carve-out would force the default
+# policy (`required_metrics: [tests_total, tests_passed]`) to fail on
+# every git-hook commit until the user runs `morph certify`. That's
+# the wrong default — the *standalone* policy should still gate, but
+# git-hook commits are inherently provisional and the carve-out gives
+# users a place to opt them out of `required_metrics` while still
+# enforcing it on direct commits.
+
+- name: policy_exempt_git_hook_skips_required_metrics
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - shell: "git commit --allow-empty -q -m 'second'"
+    - morph: [reference-sync]
+    # gate-check on the new git-hook commit must succeed even though
+    # observed_metrics is empty, because the default reference-mode
+    # policy puts "git-hook" in exempt_origins.
+    - morph: [gate]
+      stdout_contains: "PASS"
+
+- name: policy_exempt_does_not_apply_to_cli_commits
+  init: false
+  steps:
+    # Standalone repo with default policy + an explicit git-hook
+    # exemption. A direct CLI commit (morph_origin = None, treated as
+    # "cli") still has to satisfy `required_metrics`.
+    - morph: [init, "${repo}"]
+    - write_file:
+        path: .morph/config.json
+        content: |
+          {"repo_version":"0.5","policy":{"required_metrics":["tests_passed"],"exempt_origins":["git-hook"]}}
+    - write_file:
+        path: hello.txt
+        content: hi
+    - morph: [add, hello.txt]
+    - morph: [commit, -m, "cli commit no metrics"]
+      expect_exit: 1
+      stderr_contains: "policy requires metrics"
+
+# ── reference-sync --backfill ───────────────────────────────────────────
+#
+# Late adoption: a user with a long git history runs `morph init
+# --reference` and wants a morph commit per past git commit (or at
+# least from `init_at_git_sha` forward). Without --backfill, only new
+# commits from this point on get mirrored. With --backfill, sync walks
+# git log from init_at_git_sha (or from the very first git commit if
+# the field is null) up to HEAD and creates a morph commit for each
+# in chronological order.
+
+- name: reference_sync_backfill_creates_morph_commit_per_git_commit
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'g1' && git commit --allow-empty -q -m 'g2' && git commit --allow-empty -q -m 'g3'"
+    - morph: [init, --reference, "${repo}"]
+    # init bound to git HEAD (g3); without backfill there's no morph
+    # commit yet. Backfill walks from init_at_git_sha forward,
+    # inclusive — at minimum it mirrors the init point itself.
+    - morph: [reference-sync, --backfill]
+      stdout_contains: "Synced 1 git commit"
+    - morph: [log, --oneline]
+      stdout_contains: "g3"
+
+- name: reference_sync_backfill_walks_from_init_sha_when_history_grows
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'g1'"
+    - morph: [init, --reference, "${repo}"]
+    - shell: "git commit --allow-empty -q -m 'g2' && git commit --allow-empty -q -m 'g3' && git commit --allow-empty -q -m 'g4'"
+    # User went heads-down for a few commits with the hook somehow
+    # disabled (or just never installed). --backfill catches up:
+    # init_at_git_sha is the boundary, walk is *inclusive* of init
+    # forward to HEAD, so g1+g2+g3+g4 = 4 commits.
+    - morph: [reference-sync, --backfill]
+      stdout_contains: "Synced 4 git commits"
+    - morph: [log, --oneline, -n, "5"]
+      stdout_contains: "g4"
+    - morph: [log, --oneline, -n, "5"]
+      stdout_contains: "g3"
+    - morph: [log, --oneline, -n, "5"]
+      stdout_contains: "g2"
+    - morph: [log, --oneline, -n, "5"]
+      stdout_contains: "g1"
+
+- name: reference_sync_backfill_idempotent
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'g1'"
+    - morph: [init, --reference, "${repo}"]
+    - shell: "git commit --allow-empty -q -m 'g2'"
+    - morph: [reference-sync, --backfill]
+      stdout_contains: "Synced 2 git commits"
+    - morph: [reference-sync, --backfill]
+      stdout_contains: "Already up to date"
+
+# ── morph install-hooks ─────────────────────────────────────────────────
+
+- name: install_hooks_writes_post_commit_in_reference_mode
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - shell: "rm .git/hooks/post-commit"
+    - morph: [install-hooks]
+      stdout_contains: "Installed post-commit"
+  assert:
+    - kind: file_exists
+      path: .git/hooks/post-commit
+    - kind: file_contains
+      path: .git/hooks/post-commit
+      contents: "morph reference-sync"
+
+- name: install_hooks_idempotent
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    # init already wrote the hook; install-hooks should report
+    # already-installed without rewriting.
+    - morph: [install-hooks]
+      stdout_contains: "already installed"
+
+- name: install_hooks_errors_outside_reference_mode
+  steps:
+    - morph: [install-hooks]
+      expect_exit: 1
+      stderr_contains: "not in reference mode"
+
+# ── reference-mode merge commits ────────────────────────────────────────
+#
+# `git merge` produces a commit with multiple parents. sync_to_head
+# must mirror it as a multi-parent morph commit, mapping each git
+# parent SHA to the morph commit that previously synced from it. If
+# any git parent has no corresponding morph commit (the user only
+# installed reference mode partway through), --backfill is the recovery
+# path; for now sync should do its best and fall back to a single
+# parent.
+
+- name: reference_sync_mirrors_git_merge_commit_with_two_parents
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'base'"
+    - morph: [init, --reference, "${repo}"]
+    - shell: "git checkout -q -b feature && git commit --allow-empty -q -m 'feature work' && git checkout -q main && git merge --no-ff feature -q -m 'merge feature'"
+    # Backfill walks: base (init point), feature work, merge feature.
+    # Three git commits → three morph commits.
+    - morph: [reference-sync, --backfill]
+      stdout_contains: "Synced 3 git commits"
+    # HEAD is the merge commit. The JSON-rendered commit has a
+    # `parents` array that — because git merge wired both branch tips
+    # into one node — must contain two distinct entries. The
+    # surrounding tests in `reference::tests` pin the structural
+    # shape; here we just verify the user-visible artifact.
+    - morph: [head, --json]
+      stdout_contains: "merge feature"
+    - morph: [head, --json]
+      stdout_contains: '"parents": ['
+    - morph: [head, --json]
+      stdout_contains: "git-hook"
+    # The first-parent log walks main → base; the feature-side
+    # commit isn't reachable through `morph log --oneline` (it
+    # follows first parent only), so we don't assert on it here.

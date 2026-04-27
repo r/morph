@@ -400,17 +400,24 @@ Run `git init` first or pass a path that is already a git working tree.",
                 let init_at = morph_core::git_head_sha(&path)?;
                 let morph_dir = path.join(".morph");
                 morph_core::write_reference_mode(&morph_dir, init_at.as_deref())?;
-                let hooks_dir = path.join(".git").join("hooks");
-                std::fs::create_dir_all(&hooks_dir)?;
-                let hook_path = hooks_dir.join("post-commit");
-                std::fs::write(&hook_path, morph_core::POST_COMMIT_HOOK_SCRIPT)?;
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let mut perms = std::fs::metadata(&hook_path)?.permissions();
-                    perms.set_mode(0o755);
-                    std::fs::set_permissions(&hook_path, perms)?;
-                }
+                // Reference mode default policy: empty `required_metrics`
+                // (so direct CLI commits aren't blocked at commit time
+                // either, until the user opts in via `morph policy init`)
+                // plus a carve-out for git-hook commits in `gate_check`.
+                // Every git commit produces a morph commit before the
+                // user has had a chance to certify it; without this
+                // carve-out the manual gate would always fail. The
+                // merge gate is unaffected — it still requires
+                // evidence on each parent before letting them combine.
+                // We write this even when `--no-default-policy` is
+                // set, because reference mode's correctness *depends*
+                // on the carve-out, not just on policy ergonomics.
+                let policy = morph_core::RepoPolicy {
+                    exempt_origins: vec!["git-hook".to_string()],
+                    ..Default::default()
+                };
+                morph_core::write_policy(&morph_dir, &policy)?;
+                morph_core::install_post_commit_hook(&path)?;
                 let abs_morph = path
                     .canonicalize()
                     .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(&path))
@@ -442,7 +449,12 @@ Run `git init` first or pass a path that is already a git working tree.",
             // Phase 2a: clear the default policy when the test harness
             // asks for a permissive repo. Production users never pass
             // this flag; spec fixtures from before Phase 2a do.
-            if no_default_policy {
+            // Reference mode is exempt: it writes its own
+            // exempt_origins=["git-hook"] policy that is *already*
+            // permissive on metrics, and clobbering it here would
+            // remove the carve-out the gate needs to recognise
+            // git-hook commits.
+            if no_default_policy && !reference {
                 let morph_dir = if bare {
                     path.clone()
                 } else {
@@ -453,7 +465,7 @@ Run `git init` first or pass a path that is already a git working tree.",
             }
         }
 
-        Command::ReferenceSync => {
+        Command::ReferenceSync { backfill } => {
             let cwd = std::env::current_dir()?;
             let repo_root = morph_core::find_repo(&cwd)
                 .ok_or_else(|| anyhow::anyhow!("not in a morph repository"))?;
@@ -467,20 +479,54 @@ in a git repository first."
                 std::process::exit(1);
             }
             let store = morph_core::open_store(&morph_dir)?;
-            let outcome = morph_core::sync_to_head(
-                store.as_ref(),
-                &repo_root,
-                Some(env!("CARGO_PKG_VERSION")),
-            )?;
-            if outcome.already_synced {
-                println!("Already up to date.");
+            let version = Some(env!("CARGO_PKG_VERSION"));
+            if backfill {
+                let init_sha = morph_core::read_init_at_git_sha(&morph_dir)?;
+                let count = morph_core::backfill_from_init(
+                    store.as_ref(),
+                    &repo_root,
+                    init_sha.as_deref(),
+                    version,
+                )?;
+                if count == 0 {
+                    println!("Already up to date.");
+                } else {
+                    let plural = if count == 1 { "commit" } else { "commits" };
+                    println!("Synced {} git {}.", count, plural);
+                }
             } else {
-                let short = outcome
-                    .git_sha
-                    .as_deref()
-                    .map(|s| &s[..s.len().min(8)])
-                    .unwrap_or("?");
-                println!("Synced 1 git commit ({}).", short);
+                let outcome = morph_core::sync_to_head(store.as_ref(), &repo_root, version)?;
+                if outcome.already_synced {
+                    println!("Already up to date.");
+                } else {
+                    let short = outcome
+                        .git_sha
+                        .as_deref()
+                        .map(|s| &s[..s.len().min(8)])
+                        .unwrap_or("?");
+                    println!("Synced 1 git commit ({}).", short);
+                }
+            }
+        }
+
+        Command::InstallHooks => {
+            let cwd = std::env::current_dir()?;
+            let repo_root = morph_core::find_repo(&cwd)
+                .ok_or_else(|| anyhow::anyhow!("not in a morph repository"))?;
+            let morph_dir = repo_root.join(".morph");
+            let mode = morph_core::read_repo_mode(&morph_dir)?;
+            if mode != morph_core::RepoMode::Reference {
+                eprintln!(
+                    "morph install-hooks: not in reference mode. Run `morph init --reference` \
+in a git repository first."
+                );
+                std::process::exit(1);
+            }
+            let wrote = morph_core::install_post_commit_hook(&repo_root)?;
+            if wrote {
+                println!("Installed post-commit hook at .git/hooks/post-commit.");
+            } else {
+                println!("post-commit hook already installed (no changes).");
             }
         }
 

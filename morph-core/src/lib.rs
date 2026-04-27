@@ -137,8 +137,9 @@ pub use revert::revert_commit;
 pub use gc::{gc, GcResult};
 pub use store::ObjectLayout;
 pub use reference::{
-    git_head_sha, is_git_working_tree, pending_certifications, read_git_commit, sync_to_head,
-    GitCommitInfo, SyncOutcome, POST_COMMIT_HOOK_SCRIPT,
+    backfill_from_init, git_head_sha, git_log_range, git_parents, install_post_commit_hook,
+    is_git_working_tree, pending_certifications, read_git_commit, sync_to_head, GitCommitInfo,
+    SyncOutcome, POST_COMMIT_HOOK_SCRIPT,
 };
 
 pub mod gc;

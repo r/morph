@@ -40,6 +40,18 @@ pub struct RepoPolicy {
     /// behavior, matching pre-PR6 servers).
     #[serde(default)]
     pub push_gated_branches: Vec<String>,
+    /// Origins (matching `Commit.morph_origin`) whose commits are
+    /// fully exempt from `gate_check` — they pass the manual gate
+    /// regardless of `required_metrics`, `thresholds`, or
+    /// certification status. The intended use is reference mode
+    /// (`init --reference` populates this with `["git-hook"]`) so
+    /// that bare git-hook commits don't trip CI gates before the
+    /// user has had a chance to certify them. The merge gate is
+    /// unaffected — dominance comparisons still rely on certified
+    /// metrics, so an exempt commit lacking metrics will still be
+    /// caught when it tries to participate in a merge.
+    #[serde(default)]
+    pub exempt_origins: Vec<String>,
 }
 
 fn default_merge_policy() -> String {
@@ -56,6 +68,7 @@ impl Default for RepoPolicy {
             merge_policy: default_merge_policy(),
             ci_defaults: BTreeMap::new(),
             push_gated_branches: Vec::new(),
+            exempt_origins: Vec::new(),
         }
     }
 }
@@ -366,6 +379,24 @@ pub fn gate_check(
     let policy = read_policy(morph_dir)?;
     let mut reasons = Vec::new();
 
+    // Origin-based carve-out: if the commit's morph_origin matches
+    // one listed in policy.exempt_origins, the manual gate passes
+    // regardless of metrics or certification. See `RepoPolicy.exempt_origins`
+    // for rationale (reference mode git-hook commits).
+    let origin = match store.get(commit_hash)? {
+        MorphObject::Commit(c) => c.morph_origin.clone(),
+        _ => None,
+    };
+    if let Some(origin) = origin.as_deref() {
+        if policy.exempt_origins.iter().any(|o| o == origin) {
+            return Ok(GateResult {
+                passed: true,
+                commit: commit_hash.to_string(),
+                reasons: Vec::new(),
+            });
+        }
+    }
+
     for name in &policy.required_metrics {
         if !metrics.contains_key(name) {
             reasons.push(format!("missing required metric: {}", name));
@@ -599,6 +630,7 @@ mod tests {
                 m
             },
             push_gated_branches: vec![],
+            exempt_origins: vec![],
         };
 
         write_policy(&morph_dir, &policy).unwrap();

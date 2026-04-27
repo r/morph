@@ -59,7 +59,19 @@ pub enum Command {
     /// and empty inline metrics — late certification (`morph certify`)
     /// attaches evidence afterwards.
     #[command(name = "reference-sync")]
-    ReferenceSync,
+    ReferenceSync {
+        /// Walk git log from `init_at_git_sha` (inclusive) to HEAD and
+        /// mirror every git commit not yet represented in morph. Used
+        /// by repos where the post-commit hook is missing or was
+        /// disabled while git history grew.
+        #[arg(long)]
+        backfill: bool,
+    },
+    /// Idempotently (re-)install reference-mode git hooks (currently
+    /// just `post-commit`). Skips when the hook is already correct;
+    /// refuses to clobber a hook with foreign content.
+    #[command(name = "install-hooks")]
+    InstallHooks,
     /// Print version + build metadata. Like `--version` but also
     /// supports `--json` for scripts and CI smoke tests.
     Version {

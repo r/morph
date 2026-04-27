@@ -341,8 +341,29 @@ pub fn build_status_json(repo_root: &Path, store: &dyn Store) -> Result<serde_js
         None => serde_json::json!({ "in_progress": false }),
     };
 
+    // Reference-mode summary: agents and CI need to know whether this
+    // repo is git-coupled and how far behind certification HEAD is,
+    // without having to call `morph reference-sync` blindly.
+    let repo_mode = crate::repo::read_repo_mode(&morph_dir)?;
+    let reference = if repo_mode == crate::repo::RepoMode::Reference {
+        let init_at = crate::repo::read_init_at_git_sha(&morph_dir)?;
+        let pending = match &head_hash {
+            Some(h) => crate::reference::pending_certifications(store, h)
+                .map(|v| v.len())
+                .unwrap_or(0),
+            None => 0,
+        };
+        serde_json::json!({
+            "init_at_git_sha": init_at,
+            "pending_certifications": pending,
+        })
+    } else {
+        serde_json::Value::Null
+    };
+
     Ok(serde_json::json!({
         "repo": repo_root.display().to_string(),
+        "repo_mode": repo_mode.as_str(),
         "branch": branch,
         "detached": branch.is_none() && head_hash.is_some(),
         "head": head,
@@ -364,6 +385,7 @@ pub fn build_status_json(repo_root: &Path, store: &dyn Store) -> Result<serde_js
         "eval_suite": suite_summary,
         "required_metrics": policy.required_metrics,
         "merge": merge_obj,
+        "reference": reference,
     }))
 }
 

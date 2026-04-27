@@ -450,6 +450,57 @@ impl MorphServer {
         Ok(CallToolResult::success(vec![json_text(body)]))
     }
 
+    /// PR 3: MCP parity for reference mode. Mirrors `morph reference-sync`
+    /// (with optional `--backfill`). Errors when the repo isn't in
+    /// reference mode, matching the CLI behavior.
+    #[tool(description = "Mirror git history into Morph commits when the repo is in reference mode. Single-commit by default (HEAD only); pass `backfill: true` to walk every git commit between `init_at_git_sha` and HEAD that hasn't been mirrored yet. Returns `{mode, backfill, synced, git_sha, new_commit, already_synced}` JSON.")]
+    async fn morph_reference_sync(
+        &self,
+        params: Parameters<ReferenceSyncParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let (repo_root, store) = self
+            .repo_store(params.0.workspace_path.as_deref())
+            .map_err(mcp_err)?;
+        let morph_dir = repo_root.join(".morph");
+        let mode = morph_core::read_repo_mode(&morph_dir).map_err(mcp_err)?;
+        if mode != morph_core::RepoMode::Reference {
+            return Err(mcp_err(
+                "morph_reference_sync: repository is not in reference mode. Run \
+                 `morph init --reference` in the underlying git working tree first.",
+            ));
+        }
+        let version = Some(env!("CARGO_PKG_VERSION"));
+        let backfill = params.0.backfill.unwrap_or(false);
+        let body = if backfill {
+            let init_sha = morph_core::read_init_at_git_sha(&morph_dir).map_err(mcp_err)?;
+            let count = morph_core::backfill_from_init(
+                store.as_ref(),
+                &repo_root,
+                init_sha.as_deref(),
+                version,
+            )
+            .map_err(mcp_err)?;
+            serde_json::json!({
+                "mode": "reference",
+                "backfill": true,
+                "synced": count,
+                "init_at_git_sha": init_sha,
+            })
+        } else {
+            let outcome = morph_core::sync_to_head(store.as_ref(), &repo_root, version)
+                .map_err(mcp_err)?;
+            serde_json::json!({
+                "mode": "reference",
+                "backfill": false,
+                "synced": if outcome.already_synced { 0 } else { 1 },
+                "already_synced": outcome.already_synced,
+                "git_sha": outcome.git_sha,
+                "new_commit": outcome.new_commit.as_ref().map(|h| h.to_string()),
+            })
+        };
+        Ok(CallToolResult::success(vec![json_text(body)]))
+    }
+
     /// Phase 5b: cheap, structured "what's still missing?" check for
     /// agents and stop-hooks. Returns a JSON array; an empty array
     /// means the working state is fully covered by behavioral

@@ -20,7 +20,7 @@
 use crate::hash::Hash;
 use crate::objects::{Commit, EvalContract, MorphObject};
 use crate::store::{MorphError, Store};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::process::Command;
 
@@ -76,6 +76,82 @@ pub struct GitCommitInfo {
     pub message: String,
     pub author: String,
     pub timestamp: String,
+}
+
+/// Read the parent SHAs of a git commit, in the order git stores them
+/// (first parent is the mainline). For an octopus merge there will be
+/// more than two; for the root commit the vec is empty.
+pub fn git_parents(repo_root: &Path, sha: &str) -> Result<Vec<String>, MorphError> {
+    let out = Command::new("git")
+        .arg("rev-list")
+        .arg("--parents")
+        .arg("-n")
+        .arg("1")
+        .arg(sha)
+        .current_dir(repo_root)
+        .output()
+        .map_err(|e| MorphError::Other(format!("git rev-list failed to spawn: {}", e)))?;
+    if !out.status.success() {
+        return Err(MorphError::Other(format!(
+            "git rev-list failed for {}: {}",
+            sha,
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let line = stdout.lines().next().unwrap_or("");
+    let mut parts = line.split_whitespace();
+    parts.next();
+    Ok(parts.map(String::from).collect())
+}
+
+/// Topologically ordered list of git commit SHAs reachable from `to_sha`
+/// but stopping at (and including) `from_sha`. The earliest commit in
+/// the returned vec is `from_sha`, the latest is `to_sha`. When
+/// `from_sha` is `None`, returns the entire history reachable from
+/// `to_sha`. Used by `morph reference-sync --backfill`.
+pub fn git_log_range(
+    repo_root: &Path,
+    from_sha: Option<&str>,
+    to_sha: &str,
+) -> Result<Vec<String>, MorphError> {
+    let mut cmd = Command::new("git");
+    cmd.arg("log")
+        .arg("--reverse")
+        .arg("--topo-order")
+        .arg("--format=%H");
+    match from_sha {
+        Some(from) => {
+            cmd.arg(format!("{}^..{}", from, to_sha));
+        }
+        None => {
+            cmd.arg(to_sha);
+        }
+    }
+    let out = cmd
+        .current_dir(repo_root)
+        .output()
+        .map_err(|e| MorphError::Other(format!("git log failed to spawn: {}", e)))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        // `<root>^..HEAD` fails when from_sha is the very first commit
+        // (no parent of root). Fall back to walking everything from
+        // HEAD in that case — harmless because backfill skips already
+        // mirrored commits.
+        if stderr.contains("unknown revision") || stderr.contains("Needed a single revision") {
+            return git_log_range(repo_root, None, to_sha);
+        }
+        return Err(MorphError::Other(format!(
+            "git log range failed: {}",
+            stderr.trim()
+        )));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect())
 }
 
 pub fn read_git_commit(repo_root: &Path, sha: &str) -> Result<GitCommitInfo, MorphError> {
@@ -134,20 +210,117 @@ pub struct SyncOutcome {
     pub already_synced: bool,
 }
 
+/// Walk every commit reachable from any branch and build a
+/// `git_origin_sha → morph_hash` cache. Used by sync to resolve git
+/// parents to the morph commits that mirror them; without this we
+/// couldn't reconstruct multi-parent merge commits across branches.
+fn build_git_to_morph_cache(store: &dyn Store) -> Result<HashMap<String, Hash>, MorphError> {
+    let mut cache: HashMap<String, Hash> = HashMap::new();
+    let mut visited: std::collections::HashSet<Hash> = std::collections::HashSet::new();
+    let mut frontier: Vec<Hash> = Vec::new();
+    for (_name, hash) in store.list_branches()? {
+        frontier.push(hash);
+    }
+    while let Some(h) = frontier.pop() {
+        if !visited.insert(h) {
+            continue;
+        }
+        let obj = match store.get(&h) {
+            Ok(o) => o,
+            Err(_) => continue,
+        };
+        if let MorphObject::Commit(c) = obj {
+            if let Some(git_sha) = c.git_origin_sha.as_ref() {
+                cache.entry(git_sha.clone()).or_insert(h);
+            }
+            for p in &c.parents {
+                if let Ok(ph) = Hash::from_hex(p) {
+                    frontier.push(ph);
+                }
+            }
+        }
+    }
+    Ok(cache)
+}
+
+/// Mirror a single git commit identified by `git_sha` into a Morph
+/// commit. Resolves parents via `cache` (built from existing morph
+/// history); falls back to current morph HEAD as a single parent when
+/// no git-parent-side mirror is available (the user is partly
+/// backfilled).
+///
+/// Updates `cache` with the new mapping so a subsequent sync in the
+/// same backfill loop can find this commit as a parent.
+fn sync_one_commit(
+    store: &dyn Store,
+    repo_root: &Path,
+    git_sha: &str,
+    morph_version: Option<&str>,
+    cache: &mut HashMap<String, Hash>,
+) -> Result<Hash, MorphError> {
+    let info = read_git_commit(repo_root, git_sha)?;
+    let parent_shas = git_parents(repo_root, git_sha)?;
+
+    let mut morph_parents: Vec<String> = Vec::new();
+    let mut resolved_any = false;
+    for p in &parent_shas {
+        if let Some(h) = cache.get(p) {
+            morph_parents.push(h.to_string());
+            resolved_any = true;
+        }
+    }
+    // Fallback: if git lists parents but none resolved (e.g. partial
+    // backfill state), peg the new commit to current morph HEAD so
+    // history stays connected. Better a slightly inaccurate parent than
+    // a free-floating commit.
+    if !parent_shas.is_empty() && !resolved_any {
+        if let Some(head) = crate::commit::resolve_head(store)? {
+            morph_parents.push(head.to_string());
+        }
+    }
+
+    let identity = crate::identity::identity_pipeline();
+    let pipeline_hash = store.put(&identity)?;
+    let empty_suite = MorphObject::EvalSuite(crate::objects::EvalSuite {
+        cases: vec![],
+        metrics: vec![],
+    });
+    let suite_hash = store.put(&empty_suite)?;
+
+    let morph_dir = repo_root.join(".morph");
+    let commit = MorphObject::Commit(Commit {
+        tree: None,
+        pipeline: pipeline_hash.to_string(),
+        parents: morph_parents,
+        message: info.message,
+        timestamp: info.timestamp,
+        author: info.author,
+        contributors: None,
+        eval_contract: EvalContract {
+            suite: suite_hash.to_string(),
+            observed_metrics: BTreeMap::new(),
+        },
+        env_constraints: None,
+        evidence_refs: None,
+        morph_version: morph_version.map(String::from),
+        morph_instance: crate::agent::read_instance_id(&morph_dir)?,
+        morph_origin: Some("git-hook".into()),
+        git_origin_sha: Some(info.sha.clone()),
+    });
+    let hash = store.put(&commit)?;
+    cache.insert(info.sha, hash);
+    Ok(hash)
+}
+
 /// Mirror the git working tree's HEAD into a Morph commit.
 ///
 /// - Reads `git rev-parse HEAD`.
-/// - If the current Morph HEAD already has `git_origin_sha` matching
-///   the git SHA, returns `already_synced = true` without writing.
-/// - Otherwise creates a new Morph commit with:
-///     - `morph_origin = Some("git-hook")`
-///     - `git_origin_sha = Some(<git_sha>)`
-///     - `tree = None` (file storage stays in git)
-///     - `pipeline = identity_pipeline()` (placeholder until the
-///       pipeline graph is meaningful in reference mode)
-///     - `eval_contract.observed_metrics = {}` (late certification
-///       attaches evidence)
-///     - parent = previous Morph HEAD (if any).
+/// - If a morph commit already has `git_origin_sha` matching the git
+///   SHA, returns `already_synced = true`.
+/// - Otherwise creates a new Morph commit. Parents are derived from
+///   git's parents (resolved against existing morph history), so a
+///   git merge commit becomes a multi-parent morph commit.
+/// - Advances the current branch ref to the new commit.
 pub fn sync_to_head(
     store: &dyn Store,
     repo_root: &Path,
@@ -164,64 +337,106 @@ pub fn sync_to_head(
         }
     };
 
-    if let Some(head) = crate::commit::resolve_head(store)? {
-        if let MorphObject::Commit(c) = store.get(&head)? {
-            if c.git_origin_sha.as_deref() == Some(git_sha.as_str()) {
-                return Ok(SyncOutcome {
-                    new_commit: None,
-                    git_sha: Some(git_sha),
-                    already_synced: true,
-                });
-            }
-        }
+    let mut cache = build_git_to_morph_cache(store)?;
+    if cache.contains_key(&git_sha) {
+        return Ok(SyncOutcome {
+            new_commit: None,
+            git_sha: Some(git_sha),
+            already_synced: true,
+        });
     }
 
-    let info = read_git_commit(repo_root, &git_sha)?;
-
-    let identity = crate::identity::identity_pipeline();
-    let pipeline_hash = store.put(&identity)?;
-    let empty_suite = MorphObject::EvalSuite(crate::objects::EvalSuite {
-        cases: vec![],
-        metrics: vec![],
-    });
-    let suite_hash = store.put(&empty_suite)?;
-
-    let parent_list: Vec<String> = crate::commit::resolve_head(store)?
-        .map(|h| vec![h.to_string()])
-        .unwrap_or_default();
-
-    let morph_dir = repo_root.join(".morph");
-    let commit = MorphObject::Commit(Commit {
-        tree: None,
-        pipeline: pipeline_hash.to_string(),
-        parents: parent_list,
-        message: info.message,
-        timestamp: info.timestamp,
-        author: info.author,
-        contributors: None,
-        eval_contract: EvalContract {
-            suite: suite_hash.to_string(),
-            observed_metrics: BTreeMap::new(),
-        },
-        env_constraints: None,
-        evidence_refs: None,
-        morph_version: morph_version.map(String::from),
-        morph_instance: crate::agent::read_instance_id(&morph_dir)?,
-        morph_origin: Some("git-hook".into()),
-        git_origin_sha: Some(info.sha.clone()),
-    });
-
-    let hash = store.put(&commit)?;
-
+    let hash = sync_one_commit(store, repo_root, &git_sha, morph_version, &mut cache)?;
     let branch = crate::commit::current_branch(store)?
         .unwrap_or_else(|| crate::commit::DEFAULT_BRANCH.to_string());
     store.ref_write(&format!("heads/{}", branch), &hash)?;
 
     Ok(SyncOutcome {
         new_commit: Some(hash),
-        git_sha: Some(info.sha),
+        git_sha: Some(git_sha),
         already_synced: false,
     })
+}
+
+/// Backfill morph commits from `init_at_git_sha` (inclusive) up to the
+/// current git HEAD. Skips git commits already mirrored. This is the
+/// late-adoption path: a user who turned off the post-commit hook (or
+/// who installed reference mode mid-history) calls
+/// `morph reference-sync --backfill` to catch up.
+///
+/// Returns the number of new morph commits created. The branch ref is
+/// advanced to the most recent mirrored commit when at least one is
+/// created.
+pub fn backfill_from_init(
+    store: &dyn Store,
+    repo_root: &Path,
+    init_at_git_sha: Option<&str>,
+    morph_version: Option<&str>,
+) -> Result<usize, MorphError> {
+    let head_sha = match git_head_sha(repo_root)? {
+        Some(s) => s,
+        None => return Ok(0),
+    };
+    let range = git_log_range(repo_root, init_at_git_sha, &head_sha)?;
+    if range.is_empty() {
+        return Ok(0);
+    }
+
+    let mut cache = build_git_to_morph_cache(store)?;
+    let mut last_hash: Option<Hash> = None;
+    let mut created = 0usize;
+    for sha in &range {
+        if cache.contains_key(sha) {
+            continue;
+        }
+        let hash = sync_one_commit(store, repo_root, sha, morph_version, &mut cache)?;
+        last_hash = Some(hash);
+        created += 1;
+    }
+    if let Some(hash) = last_hash {
+        let branch = crate::commit::current_branch(store)?
+            .unwrap_or_else(|| crate::commit::DEFAULT_BRANCH.to_string());
+        store.ref_write(&format!("heads/{}", branch), &hash)?;
+    }
+    Ok(created)
+}
+
+/// Idempotently install the Morph post-commit hook into a git
+/// working tree. Returns `true` when a new file was written, `false`
+/// when an identical hook already existed. Errors when the path is
+/// not a git working tree or an existing post-commit hook contains
+/// foreign content (so we don't clobber user hooks).
+pub fn install_post_commit_hook(repo_root: &Path) -> Result<bool, MorphError> {
+    if !is_git_working_tree(repo_root) {
+        return Err(MorphError::Other(
+            "not a git working tree (.git missing)".into(),
+        ));
+    }
+    let hooks_dir = repo_root.join(".git").join("hooks");
+    std::fs::create_dir_all(&hooks_dir)?;
+    let hook_path = hooks_dir.join("post-commit");
+    if hook_path.exists() {
+        let existing = std::fs::read_to_string(&hook_path)?;
+        if existing == POST_COMMIT_HOOK_SCRIPT {
+            return Ok(false);
+        }
+        if !existing.contains("morph reference-sync") {
+            return Err(MorphError::Other(
+                "post-commit hook exists with foreign content; \
+                 refusing to overwrite (move it aside and re-run)"
+                    .into(),
+            ));
+        }
+    }
+    std::fs::write(&hook_path, POST_COMMIT_HOOK_SCRIPT)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&hook_path)?.permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&hook_path, perms)?;
+    }
+    Ok(true)
 }
 
 /// Count git-hook-origin commits reachable from HEAD whose effective
@@ -236,7 +451,7 @@ pub fn pending_certifications(
     head: &Hash,
 ) -> Result<Vec<Hash>, MorphError> {
     let mut pending = Vec::new();
-    let mut cursor = Some(head.clone());
+    let mut cursor = Some(*head);
     while let Some(h) = cursor {
         let obj = store.get(&h)?;
         let c = match obj {
@@ -249,7 +464,7 @@ pub fn pending_certifications(
         }
         let effective = crate::policy::effective_metrics(store, &h)?;
         if effective.is_empty() {
-            pending.push(h.clone());
+            pending.push(h);
         }
         cursor = c
             .parents
@@ -355,7 +570,7 @@ mod tests {
         let second = sync_to_head(store.as_ref(), dir.path(), None).unwrap();
         assert!(!second.already_synced);
         let new = second.new_commit.unwrap();
-        assert_ne!(Some(new.clone()), first.new_commit);
+        assert_ne!(Some(new), first.new_commit);
         match store.get(&new).unwrap() {
             MorphObject::Commit(c) => {
                 assert_eq!(c.parents.len(), 1);
@@ -410,6 +625,131 @@ mod tests {
         .unwrap();
         let pending = pending_certifications(store.as_ref(), &first).unwrap();
         assert!(pending.is_empty(), "certified commit should not be pending");
+    }
+
+    #[test]
+    fn git_parents_returns_empty_for_root_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        run_git(dir.path(), &["init", "-q", "-b", "main"]);
+        run_git(dir.path(), &["commit", "--allow-empty", "-q", "-m", "root"]);
+        let head = git_head_sha(dir.path()).unwrap().unwrap();
+        let parents = git_parents(dir.path(), &head).unwrap();
+        assert!(parents.is_empty());
+    }
+
+    #[test]
+    fn git_parents_returns_two_for_merge_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        run_git(dir.path(), &["init", "-q", "-b", "main"]);
+        run_git(dir.path(), &["commit", "--allow-empty", "-q", "-m", "base"]);
+        run_git(dir.path(), &["checkout", "-q", "-b", "feature"]);
+        run_git(dir.path(), &["commit", "--allow-empty", "-q", "-m", "feat"]);
+        run_git(dir.path(), &["checkout", "-q", "main"]);
+        run_git(
+            dir.path(),
+            &["merge", "--no-ff", "feature", "-q", "-m", "merge"],
+        );
+        let head = git_head_sha(dir.path()).unwrap().unwrap();
+        let parents = git_parents(dir.path(), &head).unwrap();
+        assert_eq!(parents.len(), 2, "merge commit has two parents");
+    }
+
+    #[test]
+    fn backfill_creates_one_commit_per_git_commit_in_topo_order() {
+        let dir = tempfile::tempdir().unwrap();
+        run_git(dir.path(), &["init", "-q", "-b", "main"]);
+        run_git(dir.path(), &["commit", "--allow-empty", "-q", "-m", "g1"]);
+        run_git(dir.path(), &["commit", "--allow-empty", "-q", "-m", "g2"]);
+        run_git(dir.path(), &["commit", "--allow-empty", "-q", "-m", "g3"]);
+        let store: Box<dyn Store> = Box::new(crate::init_repo(dir.path()).unwrap());
+        let init_sha = git_head_sha(dir.path()).unwrap().unwrap();
+        // Backfill from current HEAD: only the init point itself
+        // (g3) gets mirrored, since the range `g3^..g3` is just g3.
+        let n = backfill_from_init(store.as_ref(), dir.path(), Some(&init_sha), None).unwrap();
+        assert_eq!(n, 1);
+
+        // Add more commits, then backfill: g4 enters the range, the
+        // already-mirrored g3 is skipped (idempotent).
+        run_git(dir.path(), &["commit", "--allow-empty", "-q", "-m", "g4"]);
+        let n2 = backfill_from_init(store.as_ref(), dir.path(), Some(&init_sha), None).unwrap();
+        assert_eq!(n2, 1, "only g4 should be new");
+    }
+
+    #[test]
+    fn backfill_resolves_merge_commit_parents_from_both_branches() {
+        let dir = tempfile::tempdir().unwrap();
+        run_git(dir.path(), &["init", "-q", "-b", "main"]);
+        run_git(dir.path(), &["commit", "--allow-empty", "-q", "-m", "base"]);
+        let init_sha = git_head_sha(dir.path()).unwrap().unwrap();
+        run_git(dir.path(), &["checkout", "-q", "-b", "feature"]);
+        run_git(dir.path(), &["commit", "--allow-empty", "-q", "-m", "feat"]);
+        run_git(dir.path(), &["checkout", "-q", "main"]);
+        run_git(
+            dir.path(),
+            &["merge", "--no-ff", "feature", "-q", "-m", "merge"],
+        );
+        let store: Box<dyn Store> = Box::new(crate::init_repo(dir.path()).unwrap());
+        let n = backfill_from_init(store.as_ref(), dir.path(), Some(&init_sha), None).unwrap();
+        assert_eq!(n, 3, "base + feat + merge → 3 morph commits");
+
+        // Resolve HEAD's two parents and confirm one tracks back to
+        // the base commit's mirror and the other to the feature
+        // commit's mirror.
+        let head = crate::commit::resolve_head(store.as_ref())
+            .unwrap()
+            .unwrap();
+        let merge_commit = match store.get(&head).unwrap() {
+            MorphObject::Commit(c) => c,
+            _ => panic!("expected commit"),
+        };
+        assert_eq!(
+            merge_commit.parents.len(),
+            2,
+            "merge mirror has two morph parents"
+        );
+        let mut messages: Vec<String> = merge_commit
+            .parents
+            .iter()
+            .map(|p| {
+                let h = Hash::from_hex(p).unwrap();
+                match store.get(&h).unwrap() {
+                    MorphObject::Commit(c) => c.message.trim().to_string(),
+                    _ => panic!("parent not a commit"),
+                }
+            })
+            .collect();
+        messages.sort();
+        assert_eq!(messages, vec!["base".to_string(), "feat".to_string()]);
+    }
+
+    #[test]
+    fn install_post_commit_hook_writes_executable_script() {
+        let dir = tempfile::tempdir().unwrap();
+        run_git(dir.path(), &["init", "-q", "-b", "main"]);
+        // Remove the hooks dir to verify install creates it.
+        let _ = std::fs::remove_dir_all(dir.path().join(".git").join("hooks"));
+        let wrote = install_post_commit_hook(dir.path()).unwrap();
+        assert!(wrote);
+        let hook_path = dir.path().join(".git/hooks/post-commit");
+        let content = std::fs::read_to_string(&hook_path).unwrap();
+        assert!(content.contains("morph reference-sync"));
+        // Idempotent: second call returns false (no rewrite).
+        let again = install_post_commit_hook(dir.path()).unwrap();
+        assert!(!again);
+    }
+
+    #[test]
+    fn install_post_commit_hook_refuses_to_clobber_foreign_content() {
+        let dir = tempfile::tempdir().unwrap();
+        run_git(dir.path(), &["init", "-q", "-b", "main"]);
+        let hooks_dir = dir.path().join(".git/hooks");
+        std::fs::create_dir_all(&hooks_dir).unwrap();
+        std::fs::write(hooks_dir.join("post-commit"), "#!/bin/sh\necho hi\n").unwrap();
+        let err = install_post_commit_hook(dir.path()).expect_err("foreign hook is rejected");
+        match err {
+            MorphError::Other(msg) => assert!(msg.contains("foreign content")),
+            other => panic!("unexpected error: {:?}", other),
+        }
     }
 
     #[test]
