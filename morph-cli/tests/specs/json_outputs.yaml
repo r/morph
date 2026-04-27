@@ -1,0 +1,126 @@
+# Acceptance cases pinning `--json` output on read-side commands.
+# Agents need a stable, machine-readable shape to reason about;
+# every plain-text command on the read path should grow `--json`.
+
+- name: status_json_no_repo_state
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "first"]
+    - morph: [status, --json]
+      stdout_contains:
+        - '"repo":'
+        - '"branch": "main"'
+        - '"head":'
+        - '"working_tree":'
+        - '"staging":'
+
+- name: status_json_with_dirty_working_tree
+  files:
+    a.txt: "v1"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "first"]
+    - write_file:
+        path: a.txt
+        content: "v2"
+    - morph: [status, --json]
+      stdout_contains:
+        - '"modified":'
+        - "a.txt"
+
+- name: branch_json_lists_branches
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "first"]
+    - morph: [branch, feature]
+    - morph: [branch, --json]
+      stdout_contains:
+        - '"current": "main"'
+        - '"branches":'
+        - "main"
+        - "feature"
+
+- name: refs_json_lists_refs
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "first"]
+    - morph: [refs, --json]
+      stdout_contains:
+        - '"refs":'
+        - "main"
+        - '"hash":'
+
+- name: annotations_json_lists_annotations
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "first"]
+    - morph: [annotate, HEAD, --kind, bookmark, --data, '{"note":"x"}']
+    - morph: [annotations, HEAD, --json]
+      stdout_contains:
+        - '"annotations":'
+        - "bookmark"
+
+- name: tag_list_json
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "first"]
+    - morph: [tag, v1]
+    - morph: [tag, --json]
+      stdout_contains:
+        - '"tags":'
+        - "v1"
+
+- name: diff_json_summarizes_changes
+  files:
+    a.txt: "v1"
+  steps:
+    - morph: [add, .]
+    - morph: [commit, -m, first, --json]
+      capture_json_field:
+        var: c1
+        field: hash
+    - write_file:
+        path: b.txt
+        content: "new"
+    - morph: [add, b.txt]
+    - morph: [commit, -m, second, --json]
+      capture_json_field:
+        var: c2
+        field: hash
+    - morph: [diff, "${c1}", "${c2}", --json]
+      stdout_contains:
+        - '"from":'
+        - '"to":'
+        - '"changes":'
+        - '"status": "A"'
+        - "b.txt"
+
+- name: run_list_json
+  steps:
+    - morph: [run, record-session, --prompt, "Fix", --response, "Fixed"]
+    - morph: [run, list, --json]
+      stdout_contains:
+        - '"runs":'
+        - '"hash":'
+
+- name: remote_list_json
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [remote, add, origin, /tmp/some-remote]
+    - morph: [remote, list, --json]
+      stdout_contains:
+        - '"remotes":'
+        - "origin"
+        - "/tmp/some-remote"

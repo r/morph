@@ -1,0 +1,93 @@
+# Acceptance cases for `morph head` and `morph identify`.
+#
+# These are the "what does this id/ref mean?" entry points humans
+# (and agents) need so they don't have to scrape `morph log` or
+# `cat .morph/refs/HEAD`.
+
+- name: head_human_shows_short_hash_branch_message
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "initial commit"]
+    - morph: [head]
+      stdout_contains:
+        - "main"
+        - "initial commit"
+
+- name: head_json_emits_structured_envelope
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "initial commit"]
+    - morph: [head, --json]
+      stdout_contains:
+        - '"hash":'
+        - '"short":'
+        - '"branch": "main"'
+        - '"message": "initial commit"'
+
+- name: head_no_commits_errors
+  steps:
+    - morph: [head]
+      expect_exit: 1
+      stderr_contains: "no commit"
+
+- name: head_json_no_commits_errors
+  steps:
+    - morph: [head, --json]
+      expect_exit: 1
+
+- name: identify_resolves_HEAD
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "first", --json]
+      capture_json_field:
+        var: full_hash
+        field: hash
+    - morph: [identify, HEAD]
+      stdout_contains: "${full_hash}"
+
+- name: identify_resolves_branch_name
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "first", --json]
+      capture_json_field:
+        var: full_hash
+        field: hash
+    - morph: [identify, main]
+      stdout_contains: "${full_hash}"
+
+- name: identify_resolves_short_prefix
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "first", --json]
+      capture_json_field:
+        var: full_hash
+        field: hash
+    - morph: [identify, "${full_hash:.8}"]
+      stdout_contains: "${full_hash}"
+
+- name: identify_json_returns_envelope
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "first"]
+    - morph: [identify, HEAD, --json]
+      stdout_contains:
+        - '"input": "HEAD"'
+        - '"hash":'
+        - '"type": "commit"'
+
+- name: identify_unknown_errors
+  steps:
+    - morph: [identify, no-such-ref]
+      expect_exit: 1

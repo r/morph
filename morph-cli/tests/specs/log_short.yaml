@@ -1,0 +1,73 @@
+# Acceptance cases for log ergonomics:
+#   - default to short hashes (humans don't track 64-char strings)
+#   - --full-hash to opt back into long form
+#   - --oneline / -n N
+#   - --json for agents
+
+- name: log_default_uses_short_hash
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "first", --json]
+      capture_json_field:
+        var: c1
+        field: hash
+    - morph: [log]
+      stdout_contains: "${c1:.8}"
+      stdout_not_contains: "${c1}"
+
+- name: log_full_hash_flag_restores_long
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "first", --json]
+      capture_json_field:
+        var: c1
+        field: hash
+    - morph: [log, --full-hash]
+      stdout_contains: "${c1}"
+
+- name: log_n_limits_entries
+  files:
+    a.txt: "v1"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "first"]
+    - write_file:
+        path: a.txt
+        content: "v2"
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "second"]
+    - write_file:
+        path: a.txt
+        content: "v3"
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "third"]
+    - morph: [log, -n, "1"]
+      stdout_contains: "third"
+      stdout_not_contains: "first"
+
+- name: log_oneline_compact_format
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "subject line"]
+    - morph: [log, --oneline]
+      stdout_contains: "subject line"
+
+- name: log_json_emits_array_of_commits
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "first"]
+    - morph: [log, --json]
+      stdout_contains:
+        - '"hash":'
+        - '"short":'
+        - '"message": "first"'
+        - '"author":'
+        - '"timestamp":'

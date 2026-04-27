@@ -661,6 +661,7 @@ mod tests {
             evidence_refs: None,
             morph_version: None,
             morph_instance: None,
+            morph_origin: None,
         });
         let commit_hash = fs.put(&commit).unwrap();
         fs.ref_write_raw("HEAD", "ref: heads/main").unwrap();

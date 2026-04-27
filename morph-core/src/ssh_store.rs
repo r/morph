@@ -708,6 +708,7 @@ mod tests {
             evidence_refs: None,
             morph_version: None,
             morph_instance: None,
+            morph_origin: None,
         });
         let commit_h = local_store.put(&commit).unwrap();
 

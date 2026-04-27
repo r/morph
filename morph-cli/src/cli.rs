@@ -89,9 +89,17 @@ pub enum Command {
         sub: PipelineCmd,
     },
     /// Show changes relative to last commit (git-style status)
-    Status,
+    Status {
+        /// Emit a structured JSON envelope instead of the human summary.
+        #[arg(long)]
+        json: bool,
+    },
     /// List all tracked and new files in the working directory
-    Files,
+    Files {
+        /// Emit a JSON array of `{path, status, hash}` entries.
+        #[arg(long)]
+        json: bool,
+    },
     /// Stage working-space changes into the object store
     Add {
         #[arg(default_value = ".")]
@@ -136,14 +144,46 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Show a stored Morph object (commit, run, trace, etc.) as pretty JSON
+    /// Show a stored Morph object (commit, run, trace, etc.) as pretty JSON.
+    /// Accepts a full hash, hash prefix (≥4 hex chars), `HEAD`, a branch
+    /// name, or a tag name.
     Show {
         hash: String,
     },
-    /// Show commit history
+    /// Show commit history. Accepts `HEAD`, branches, tags, or hashes.
+    /// Defaults to short hashes so output stays scannable; pass
+    /// `--full-hash` to restore the long form.
     Log {
         #[arg(default_value = "HEAD")]
         ref_name: String,
+        /// Limit the number of commits shown (newest first).
+        #[arg(short = 'n', long, value_name = "N")]
+        max_count: Option<usize>,
+        /// One commit per line: `<short>  <message subject>`.
+        #[arg(long)]
+        oneline: bool,
+        /// Print full 64-char hashes instead of the 8-char short form.
+        #[arg(long)]
+        full_hash: bool,
+        /// Emit a JSON array of commit objects.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show the current HEAD commit (branch, hash, message, author, timestamp).
+    Head {
+        /// Emit a JSON envelope instead of the human summary.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Resolve any revision (ref / hash / prefix) to the full hash and
+    /// the type of object it points at. Useful for scripts that need
+    /// to know "what does HEAD mean right now?".
+    Identify {
+        /// Revision to resolve. Accepts the same forms as `morph show`.
+        revision: String,
+        /// Emit a JSON envelope instead of just the hash.
+        #[arg(long)]
+        json: bool,
     },
     /// Create or list branches
     Branch {
@@ -152,6 +192,9 @@ pub enum Command {
         /// `--set-upstream origin/main`. Used by `morph sync`.
         #[arg(long, value_name = "REMOTE/BRANCH")]
         set_upstream: Option<String>,
+        /// Emit a JSON envelope listing every branch and the current one.
+        #[arg(long)]
+        json: bool,
     },
     /// Switch branch or detach to a commit
     Checkout {
@@ -302,11 +345,24 @@ pub enum Command {
         get: bool,
     },
     /// List all refs (local branches and remote-tracking refs)
-    Refs,
-    /// Certify a commit using externally produced metrics
-    Certify {
+    Refs {
+        /// Emit a JSON envelope instead of `<hash>\t<name>` lines.
         #[arg(long)]
-        metrics_file: PathBuf,
+        json: bool,
+    },
+    /// Certify a commit using externally produced metrics.
+    ///
+    /// Provide metrics via `--metrics-file <path>` (JSON file) or
+    /// `--metrics '<json>'` (inline JSON object). Exactly one of
+    /// the two is required; specifying both is an error.
+    Certify {
+        /// Inline JSON object of metric name → number, e.g.
+        /// `--metrics '{"acc":0.95,"tests_passed":42}'`.
+        #[arg(long, conflicts_with = "metrics_file")]
+        metrics: Option<String>,
+        /// Path to a JSON file containing a metric name → number map.
+        #[arg(long)]
+        metrics_file: Option<PathBuf>,
         #[arg(long)]
         commit: Option<String>,
         #[arg(long)]
@@ -342,11 +398,15 @@ pub enum Command {
         #[arg(long)]
         author: Option<String>,
     },
-    /// List annotations on an object
+    /// List annotations on an object. The target accepts `HEAD`, branches,
+    /// tags, full hashes, or hash prefixes.
     Annotations {
         target_hash: String,
         #[arg(long)]
         sub: Option<String>,
+        /// Emit a JSON envelope listing every annotation.
+        #[arg(long)]
+        json: bool,
     },
     /// Read a Morph object from JSON, store it, print its content hash
     HashObject {
@@ -363,12 +423,18 @@ pub enum Command {
         old_ref: String,
         #[arg(default_value = "HEAD")]
         new_ref: String,
+        /// Emit a JSON envelope: `{from, to, changes: [{status, path}]}`.
+        #[arg(long)]
+        json: bool,
     },
     /// Create, list, or delete tags
     Tag {
         name: Option<String>,
         #[arg(short, long)]
         delete: bool,
+        /// When listing, emit a JSON envelope instead of `<name> <hash>` lines.
+        #[arg(long)]
+        json: bool,
     },
     /// Stash staged changes
     Stash {
@@ -459,7 +525,11 @@ pub enum MergeCmd {
 #[derive(clap::Subcommand)]
 pub enum TapCmd {
     /// Show summary statistics for all traces in the repo
-    Summary,
+    Summary {
+        /// Emit a JSON envelope with the summary fields.
+        #[arg(long)]
+        json: bool,
+    },
     /// Inspect a single run/trace and show extracted steps
     Inspect {
         /// Run hash to inspect (or "all" for every run)
@@ -565,7 +635,12 @@ pub enum SetupCmd {
 
 #[derive(clap::Subcommand)]
 pub enum RunCmd {
-    List,
+    /// List recorded runs.
+    List {
+        /// Emit a JSON envelope listing every run hash.
+        #[arg(long)]
+        json: bool,
+    },
     Show {
         hash: String,
         #[arg(long)]
@@ -716,7 +791,11 @@ pub enum PromptCmd {
 #[derive(clap::Subcommand)]
 pub enum RemoteCmd {
     Add { name: String, path: PathBuf },
-    List,
+    List {
+        /// Emit a JSON envelope with every configured remote.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(clap::Subcommand)]

@@ -264,6 +264,109 @@ fn count_dir_entries(dir: &Path) -> usize {
         .unwrap_or(0)
 }
 
+fn short8(s: &str) -> String { s.chars().take(8).collect() }
+
+/// Build the structured JSON envelope used by `morph status --json` and
+/// `morph_status` (MCP). Single source of truth so humans and agents see
+/// the same shape.
+pub fn build_status_json(repo_root: &Path, store: &dyn Store) -> Result<serde_json::Value, MorphError> {
+    let morph_dir = repo_root.join(".morph");
+    let changes = working_status(store, repo_root)?;
+    let summary = activity_summary(store, repo_root)?;
+    let merge = crate::merge_progress_summary(store, &morph_dir).ok().flatten();
+
+    let head_hash = crate::resolve_head(store)?;
+    let branch = crate::current_branch(store)?;
+    let head = match &head_hash {
+        Some(h) => {
+            let commit = match store.get(h)? {
+                MorphObject::Commit(c) => Some(c),
+                _ => None,
+            };
+            // PR 1: report `effective_metrics` so a late certification
+            // shows up in `morph_status` immediately, matching `morph
+            // log --json` and the eval-gaps signal.
+            let metrics = match &commit {
+                Some(c) => Some(crate::policy::effective_metrics_for_commit(store, h, c)?),
+                None => None,
+            };
+            let h_str = h.to_string();
+            serde_json::json!({
+                "hash": h_str,
+                "short": short8(&h_str),
+                "message": commit.as_ref().map(|c| c.message.clone()),
+                "author": commit.as_ref().map(|c| c.author.clone()),
+                "timestamp": commit.as_ref().map(|c| c.timestamp.clone()),
+                "metrics": metrics,
+            })
+        }
+        None => serde_json::Value::Null,
+    };
+
+    let mut added: Vec<&str> = Vec::new();
+    let mut modified: Vec<&str> = Vec::new();
+    let mut deleted: Vec<&str> = Vec::new();
+    for c in &changes {
+        match c.status {
+            crate::DiffStatus::Added => added.push(&c.path),
+            crate::DiffStatus::Modified => modified.push(&c.path),
+            crate::DiffStatus::Deleted => deleted.push(&c.path),
+        }
+    }
+
+    let staging = crate::read_index(&morph_dir)?;
+    let staged_paths: Vec<&String> = staging.entries.keys().collect();
+
+    let policy = crate::read_policy(&morph_dir)?;
+    let suite_summary = match policy.default_eval_suite.as_deref() {
+        Some(s) => match Hash::from_hex(s).ok().and_then(|h| store.get(&h).ok()) {
+            Some(MorphObject::EvalSuite(es)) => serde_json::json!({
+                "hash": s,
+                "short": short8(s),
+                "case_count": es.cases.len(),
+                "metric_count": es.metrics.len(),
+            }),
+            _ => serde_json::json!({ "hash": s, "short": short8(s) }),
+        },
+        None => serde_json::Value::Null,
+    };
+
+    let merge_obj = match merge {
+        Some(p) => serde_json::json!({
+            "in_progress": true,
+            "branch": p.on_branch,
+            "unmerged_paths": p.unmerged_paths,
+            "pipeline_node_conflicts": p.pipeline_node_conflicts,
+        }),
+        None => serde_json::json!({ "in_progress": false }),
+    };
+
+    Ok(serde_json::json!({
+        "repo": repo_root.display().to_string(),
+        "branch": branch,
+        "detached": branch.is_none() && head_hash.is_some(),
+        "head": head,
+        "working_tree": {
+            "added": added,
+            "modified": modified,
+            "deleted": deleted,
+            "clean": changes.is_empty(),
+        },
+        "staging": {
+            "count": staged_paths.len(),
+            "paths": staged_paths,
+        },
+        "activity": {
+            "runs": summary.runs,
+            "traces": summary.traces,
+            "prompts": summary.prompts,
+        },
+        "eval_suite": suite_summary,
+        "required_metrics": policy.required_metrics,
+        "merge": merge_obj,
+    }))
+}
+
 /// Add path(s) to the store and update the staging index. Works like `git add`:
 /// - `"."` stages all working-directory files (excluding `.morph/` internals).
 /// - A specific file is staged according to its location (prompt, eval, or blob).

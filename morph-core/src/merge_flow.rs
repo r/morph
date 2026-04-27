@@ -577,14 +577,21 @@ pub fn continue_merge(
     // value from each parent so the merge commit dominates both by
     // construction. The user can re-run their pipeline post-merge to
     // record real evidence.
+    //
+    // PR 1: `effective_metrics` is the parent reading layer, so a
+    // late certification on either tip contributes to the merge
+    // commit's seeded metrics. The result still gets re-checked
+    // against the dominance bar below.
     let mut merged_metrics: BTreeMap<String, f64> = BTreeMap::new();
     let directions: BTreeMap<String, String> = union_suite
         .metrics
         .iter()
         .map(|m| (m.name.clone(), m.direction.clone()))
         .collect();
-    let head_obs = &head_commit.eval_contract.observed_metrics;
-    let other_obs = &other_commit.eval_contract.observed_metrics;
+    let head_obs =
+        crate::policy::effective_metrics_for_commit(store, &head, &head_commit)?;
+    let other_obs =
+        crate::policy::effective_metrics_for_commit(store, &other, &other_commit)?;
     for k in head_obs.keys().chain(other_obs.keys()) {
         if merged_metrics.contains_key(k) {
             continue;
@@ -612,12 +619,12 @@ pub fn continue_merge(
     // (including the default) requires both parents to be dominated.
     let policy = crate::policy::read_policy(&morph_dir).unwrap_or_default();
     if policy.merge_policy != "none" {
-        if !crate::metrics::check_dominance_with_suite(&merged_metrics, head_obs, &union_suite) {
+        if !crate::metrics::check_dominance_with_suite(&merged_metrics, &head_obs, &union_suite) {
             return Err(MorphError::Serialization(
                 "merge rejected: merged metrics do not dominate current branch".into(),
             ));
         }
-        if !crate::metrics::check_dominance_with_suite(&merged_metrics, other_obs, &union_suite) {
+        if !crate::metrics::check_dominance_with_suite(&merged_metrics, &other_obs, &union_suite) {
             return Err(MorphError::Serialization(
                 "merge rejected: merged metrics do not dominate merging-in branch".into(),
             ));
@@ -681,6 +688,7 @@ pub fn continue_merge(
             .clone()
             .or_else(|| other_commit.morph_version.clone()),
         morph_instance,
+        morph_origin: None,
     });
     let merge_hash = store.put(&merge_commit)?;
 
@@ -1246,6 +1254,7 @@ mod tests {
                 evidence_refs: None,
                 morph_version: Some("0.5".to_string()),
                 morph_instance: None,
+                morph_origin: None,
             };
             store.put(&MorphObject::Commit(commit)).unwrap()
         };
@@ -1794,6 +1803,7 @@ mod tests {
                 evidence_refs: None,
                 morph_version: Some("0.5".to_string()),
                 morph_instance: None,
+                morph_origin: None,
             };
             store.put(&MorphObject::Commit(commit)).unwrap()
         };

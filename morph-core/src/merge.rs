@@ -444,11 +444,22 @@ pub fn prepare_merge(
         crate::metrics::retire_metrics(&union, retired)?
     };
 
-    let reference_bar = compute_reference_bar(
-        &head_commit.eval_contract.observed_metrics,
-        &other_commit.eval_contract.observed_metrics,
-        &union,
-    );
+    // PR 1 (unified certification): the dominance bar is computed
+    // against parents' *effective* metrics, not just inline ones.
+    // This means a parent that was certified after-the-fact (the
+    // common case for git-hook-mirrored commits in reference mode,
+    // or a flaky-test re-run in standalone mode) contributes its
+    // certified evidence to the bar — no need to rewrite the parent
+    // commit. The plan also stores the effective values so the
+    // merge commit is self-describing without re-reading annotations.
+    let head_effective = crate::policy::effective_metrics_for_commit(
+        store, &head_hash, &head_commit,
+    )?;
+    let other_effective = crate::policy::effective_metrics_for_commit(
+        store, &other_hash, &other_commit,
+    )?;
+
+    let reference_bar = compute_reference_bar(&head_effective, &other_effective, &union);
 
     let head_branch = current_branch(store)?;
 
@@ -479,8 +490,8 @@ pub fn prepare_merge(
         other_hash,
         head_branch,
         other_branch: other_branch.to_string(),
-        head_metrics: head_commit.eval_contract.observed_metrics.clone(),
-        other_metrics: other_commit.eval_contract.observed_metrics.clone(),
+        head_metrics: head_effective,
+        other_metrics: other_effective,
         head_suite_hash: head_commit.eval_contract.suite.clone(),
         other_suite_hash: other_commit.eval_contract.suite.clone(),
         union_suite: union,
@@ -652,6 +663,7 @@ pub fn execute_merge(
         evidence_refs: plan.evidence_refs.clone(),
         morph_version: morph_version.map(String::from),
         morph_instance,
+        morph_origin: None,
     });
     let hash = store.put(&commit)?;
 

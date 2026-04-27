@@ -244,22 +244,37 @@ pub fn certify_commit(
     Ok(result)
 }
 
-// ── gate ─────────────────────────────────────────────────────────────
+// ── effective metrics (unified read path) ────────────────────────────
 
-/// Check whether a commit satisfies the repository's behavioral policy.
+/// PR 1 (reference-mode foundation): the single read path every metric
+/// consumer routes through.
 ///
-/// Checks:
-/// 1. The commit has the required metrics in its eval_contract.observed_metrics.
-/// 2. The commit's metrics satisfy configured thresholds.
-/// 3. The commit has been certified (has a "certification" annotation with passed=true).
-pub fn gate_check(
+/// `effective_metrics` returns the union of two layers, with the
+/// **latest certification annotation winning** when a key appears in
+/// both:
+///
+///   1. The commit's inline `eval_contract.observed_metrics` (the
+///      values the author committed with).
+///   2. The most recent `kind: "certification"` annotation attached
+///      to the commit (late-arriving evidence — flaky-test re-runs,
+///      external CI runs, manual `morph certify`).
+///
+/// This makes the read path mode-orthogonal (standalone and
+/// reference repos behave identically) and lets a commit recorded
+/// without metrics — the common case for git-hook-mirrored commits
+/// in reference mode — accumulate evidence over time without
+/// rewriting history.
+///
+/// "Latest wins" matches the lifecycle: certifications always
+/// supersede inline values, because they're the more recent claim
+/// about the same commit. To resurrect an older certification,
+/// re-run `morph certify` — that's the only way evidence gets added.
+pub fn effective_metrics(
     store: &dyn Store,
-    morph_dir: &Path,
     commit_hash: &Hash,
-) -> Result<GateResult, MorphError> {
-    let obj = store.get(commit_hash)?;
-    let commit = match obj {
-        MorphObject::Commit(c) => c,
+) -> Result<BTreeMap<String, f64>, MorphError> {
+    let mut effective = match store.get(commit_hash)? {
+        MorphObject::Commit(c) => c.eval_contract.observed_metrics.clone(),
         _ => {
             return Err(MorphError::Serialization(format!(
                 "object {} is not a commit",
@@ -267,30 +282,98 @@ pub fn gate_check(
             )));
         }
     };
+    if let Some(certified) = latest_certification_metrics(store, commit_hash)? {
+        for (k, v) in certified {
+            effective.insert(k, v);
+        }
+    }
+    Ok(effective)
+}
+
+/// Like `effective_metrics`, but starting from an already-loaded
+/// `Commit`. Saves a redundant store lookup on the hot merge path
+/// where the caller already has the commit in hand.
+pub fn effective_metrics_for_commit(
+    store: &dyn Store,
+    commit_hash: &Hash,
+    commit: &crate::objects::Commit,
+) -> Result<BTreeMap<String, f64>, MorphError> {
+    let mut effective = commit.eval_contract.observed_metrics.clone();
+    if let Some(certified) = latest_certification_metrics(store, commit_hash)? {
+        for (k, v) in certified {
+            effective.insert(k, v);
+        }
+    }
+    Ok(effective)
+}
+
+/// Most recent certification annotation's metrics, if any.
+/// `None` means "no certification on this commit"; `Some(empty)`
+/// means "certified, but the certification carried no metrics" —
+/// the caller should treat those distinctly only if the difference
+/// matters to them.
+///
+/// "Most recent" is decided by `Annotation.timestamp` (RFC 3339)
+/// because `list_annotations` returns annotations in hash-space
+/// order, not chronological order. Sorting by timestamp keeps the
+/// helper deterministic across stores even when several
+/// certifications stack on the same commit (a flaky-test re-run
+/// followed by a fresh CI run, for instance).
+fn latest_certification_metrics(
+    store: &dyn Store,
+    commit_hash: &Hash,
+) -> Result<Option<BTreeMap<String, f64>>, MorphError> {
+    let mut annotations = crate::annotate::list_annotations(store, commit_hash, None)?;
+    annotations.retain(|(_, a)| a.kind == "certification");
+    if annotations.is_empty() {
+        return Ok(None);
+    }
+    // RFC 3339 timestamps sort lexicographically the same way they
+    // sort chronologically, so a string compare is enough. We use
+    // `(timestamp, hash)` so two certifications written within the
+    // same second get a stable tiebreaker (the bigger hash wins).
+    annotations.sort_by(|(ah, a), (bh, b)| {
+        a.timestamp
+            .cmp(&b.timestamp)
+            .then_with(|| ah.to_string().cmp(&bh.to_string()))
+    });
+    let (_, latest) = annotations.last().expect("non-empty after retain");
+    if let Some(metrics_val) = latest.data.get("metrics") {
+        if let Ok(metrics) =
+            serde_json::from_value::<BTreeMap<String, f64>>(metrics_val.clone())
+        {
+            return Ok(Some(metrics));
+        }
+    }
+    Ok(Some(BTreeMap::new()))
+}
+
+// ── gate ─────────────────────────────────────────────────────────────
+
+/// Check whether a commit satisfies the repository's behavioral policy.
+///
+/// Checks (using `effective_metrics` so late certifications count):
+/// 1. All `policy.required_metrics` are present.
+/// 2. All `policy.thresholds` are satisfied (direction-aware).
+/// 3. The commit has at least one passing certification annotation.
+pub fn gate_check(
+    store: &dyn Store,
+    morph_dir: &Path,
+    commit_hash: &Hash,
+) -> Result<GateResult, MorphError> {
+    let metrics = effective_metrics(store, commit_hash)?;
 
     let policy = read_policy(morph_dir)?;
     let mut reasons = Vec::new();
 
     for name in &policy.required_metrics {
-        if !commit.eval_contract.observed_metrics.contains_key(name) {
-            let certified_metrics = find_certification_metrics(store, commit_hash)?;
-            if !certified_metrics.contains_key(name) {
-                reasons.push(format!("missing required metric: {}", name));
-            }
+        if !metrics.contains_key(name) {
+            reasons.push(format!("missing required metric: {}", name));
         }
     }
 
-    let all_metrics = {
-        let mut m = commit.eval_contract.observed_metrics.clone();
-        let certified = find_certification_metrics(store, commit_hash)?;
-        for (k, v) in certified {
-            m.entry(k).or_insert(v);
-        }
-        m
-    };
-
     for (name, &threshold) in &policy.thresholds {
-        if let Some(&val) = all_metrics.get(name) {
+        if let Some(&val) = metrics.get(name) {
             let dir = policy
                 .directions
                 .get(name)
@@ -321,24 +404,6 @@ pub fn gate_check(
         commit: commit_hash.to_string(),
         reasons,
     })
-}
-
-/// Find the most recent certification annotation on a commit and extract its metrics.
-fn find_certification_metrics(
-    store: &dyn Store,
-    commit_hash: &Hash,
-) -> Result<BTreeMap<String, f64>, MorphError> {
-    let annotations = crate::annotate::list_annotations(store, commit_hash, None)?;
-    for (_hash, ann) in annotations.iter().rev() {
-        if ann.kind == "certification" {
-            if let Some(metrics_val) = ann.data.get("metrics") {
-                if let Ok(metrics) = serde_json::from_value::<BTreeMap<String, f64>>(metrics_val.clone()) {
-                    return Ok(metrics);
-                }
-            }
-        }
-    }
-    Ok(BTreeMap::new())
 }
 
 /// Check whether a commit has at least one passing certification annotation.
@@ -1094,6 +1159,133 @@ mod tests {
         assert!(!gate.passed);
         let all_reasons = gate.reasons.join("; ");
         assert!(all_reasons.contains("threshold"), "should mention threshold: {}", all_reasons);
+    }
+
+    // ── effective_metrics (PR 1: unified certification model) ────────
+
+    #[test]
+    fn effective_metrics_returns_inline_when_no_certification() {
+        let (dir, store) = setup_repo();
+        let mut inline = BTreeMap::new();
+        inline.insert("acc".into(), 0.9);
+        inline.insert("f1".into(), 0.85);
+        let h = make_commit(store.as_ref(), &dir, inline.clone());
+
+        let got = effective_metrics(store.as_ref(), &h).unwrap();
+        assert_eq!(got, inline);
+    }
+
+    #[test]
+    fn effective_metrics_returns_empty_for_uncertified_empty_commit() {
+        let (dir, store) = setup_repo();
+        let h = make_commit(store.as_ref(), &dir, BTreeMap::new());
+        let got = effective_metrics(store.as_ref(), &h).unwrap();
+        assert!(got.is_empty());
+    }
+
+    #[test]
+    fn effective_metrics_layers_certification_over_empty_inline() {
+        // Headline standalone-mode case: a commit recorded without
+        // metrics (empty inline), then later certified, surfaces the
+        // certification metrics. This is the "evidence over time"
+        // contract — every metric reader (status, eval gaps, merge
+        // gate, show JSON) uses this helper so the late evidence is
+        // visible everywhere consistently.
+        let (dir, store) = setup_repo();
+        let morph_dir = dir.path().join(".morph");
+        let h = make_commit(store.as_ref(), &dir, BTreeMap::new());
+
+        let mut metrics = BTreeMap::new();
+        metrics.insert("acc".into(), 0.95);
+        metrics.insert("tests_passed".into(), 42.0);
+        certify_commit(store.as_ref(), &morph_dir, &h, &metrics, None, None).unwrap();
+
+        let got = effective_metrics(store.as_ref(), &h).unwrap();
+        assert_eq!(got, metrics);
+    }
+
+    #[test]
+    fn effective_metrics_certification_overrides_inline_per_key() {
+        // If a key appears in both inline and certification, the
+        // certification value wins because it's the more recent
+        // claim about the same commit (e.g. a flaky-test re-run).
+        let (dir, store) = setup_repo();
+        let morph_dir = dir.path().join(".morph");
+        let mut inline = BTreeMap::new();
+        inline.insert("acc".into(), 0.80);
+        inline.insert("latency".into(), 200.0);
+        let h = make_commit(store.as_ref(), &dir, inline);
+
+        let mut certified = BTreeMap::new();
+        certified.insert("acc".into(), 0.95);
+        certify_commit(store.as_ref(), &morph_dir, &h, &certified, None, None).unwrap();
+
+        let got = effective_metrics(store.as_ref(), &h).unwrap();
+        assert_eq!(got.get("acc"), Some(&0.95), "certification overrides inline");
+        assert_eq!(
+            got.get("latency"),
+            Some(&200.0),
+            "inline keys absent from cert survive"
+        );
+    }
+
+    #[test]
+    fn effective_metrics_uses_latest_certification_when_multiple_exist() {
+        // Multiple certifications can stack on a commit (re-run after
+        // a flake fix, second CI runner). The most recently appended
+        // certification wins — same semantics as `gate_check` had
+        // before the helper was extracted.
+        let (dir, store) = setup_repo();
+        let morph_dir = dir.path().join(".morph");
+        let h = make_commit(store.as_ref(), &dir, BTreeMap::new());
+
+        let mut first = BTreeMap::new();
+        first.insert("acc".into(), 0.80);
+        certify_commit(store.as_ref(), &morph_dir, &h, &first, Some("ci-1"), None).unwrap();
+
+        let mut second = BTreeMap::new();
+        second.insert("acc".into(), 0.95);
+        certify_commit(store.as_ref(), &morph_dir, &h, &second, Some("ci-2"), None).unwrap();
+
+        let got = effective_metrics(store.as_ref(), &h).unwrap();
+        assert_eq!(got.get("acc"), Some(&0.95), "latest certification wins");
+    }
+
+    #[test]
+    fn effective_metrics_for_commit_matches_effective_metrics() {
+        let (dir, store) = setup_repo();
+        let morph_dir = dir.path().join(".morph");
+        let mut inline = BTreeMap::new();
+        inline.insert("f1".into(), 0.7);
+        let h = make_commit(store.as_ref(), &dir, inline);
+
+        let mut metrics = BTreeMap::new();
+        metrics.insert("acc".into(), 0.95);
+        certify_commit(store.as_ref(), &morph_dir, &h, &metrics, None, None).unwrap();
+
+        let commit = match store.get(&h).unwrap() {
+            MorphObject::Commit(c) => c,
+            _ => panic!("expected Commit"),
+        };
+        let from_hash = effective_metrics(store.as_ref(), &h).unwrap();
+        let from_loaded = effective_metrics_for_commit(store.as_ref(), &h, &commit).unwrap();
+        assert_eq!(from_hash, from_loaded);
+    }
+
+    #[test]
+    fn effective_metrics_errors_on_non_commit_target() {
+        let (dir, store) = setup_repo();
+        let _ = dir;
+        let blob_hash = store
+            .put(&MorphObject::Blob(crate::objects::Blob {
+                kind: "text".into(),
+                content: serde_json::json!("hello"),
+            }))
+            .unwrap();
+        let err = effective_metrics(store.as_ref(), &blob_hash).expect_err(
+            "effective_metrics on a non-commit must surface a clear error",
+        );
+        assert!(format!("{}", err).contains("not a commit"));
     }
 
     #[test]

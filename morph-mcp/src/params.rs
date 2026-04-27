@@ -269,3 +269,26 @@ pub struct TraceHashParams {
     #[serde(default)]
     pub workspace_path: Option<String>,
 }
+
+/// `morph_identify`: resolve a user-supplied revision to its full
+/// hash and object type. Mirrors `morph identify <rev>` in the CLI.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct IdentifyParams {
+    /// Any revision: full hash, prefix (>=4 hex), `HEAD`, branch
+    /// name, or tag name.
+    pub revision: String,
+    #[serde(default)]
+    pub workspace_path: Option<String>,
+}
+
+/// `morph_annotations`: list every annotation attached to a target.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AnnotationsParams {
+    /// Target hash or ref (`HEAD`, branch name, tag name, prefix).
+    pub target_hash: String,
+    /// Optional sub-id within the target (e.g. a pipeline node id).
+    #[serde(default)]
+    pub target_sub: Option<String>,
+    #[serde(default)]
+    pub workspace_path: Option<String>,
+}

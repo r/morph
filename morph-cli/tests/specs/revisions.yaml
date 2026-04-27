@@ -1,0 +1,128 @@
+# Acceptance cases for the unified revision resolver.
+#
+# Every command that takes a "hash" argument should also accept:
+#   - HEAD                          (the symbolic ref)
+#   - <branch>                      (e.g. main, feature/x)
+#   - <tag>                         (any tag created with `morph tag`)
+#   - <full 64-char hash>           (already supported)
+#   - <hash prefix ≥4 hex chars>    (already supported)
+#
+# Before this work, refs (HEAD / branch / tag) only worked in
+# `checkout`, `log`, and `diff`. `show`, `annotate`, `annotations`,
+# `revert`, `certify --commit`, `gate --commit`, and the various
+# pipeline / suite hash arguments rejected named refs. This file
+# pins the new contract.
+
+- name: show_accepts_HEAD
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, first]
+    - morph: [show, HEAD]
+      stdout_contains:
+        - '"type": "commit"'
+        - '"message": "first"'
+
+- name: show_accepts_branch_name
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, first]
+    - morph: [show, main]
+      stdout_contains:
+        - '"type": "commit"'
+        - '"message": "first"'
+
+- name: show_accepts_tag_name
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, first]
+    - morph: [tag, v1]
+    - morph: [show, v1]
+      stdout_contains:
+        - '"type": "commit"'
+        - '"message": "first"'
+
+- name: annotate_accepts_HEAD
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, first]
+    - morph: [annotate, HEAD, --kind, bookmark, --data, '{"note":"hi"}']
+      capture: ann_hash
+      assert_hash: true
+    - morph: [annotations, HEAD]
+      stdout_contains: bookmark
+
+- name: annotations_accepts_branch_name
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, first]
+    - morph: [annotate, main, --kind, bookmark, --data, '{}']
+    - morph: [annotations, main]
+      stdout_contains: bookmark
+
+- name: revert_accepts_HEAD
+  files:
+    a.txt: "v1"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, first]
+    - write_file:
+        path: a.txt
+        content: "v2"
+    - morph: [add, a.txt]
+    - morph: [commit, -m, second]
+    - morph: [revert, HEAD]
+      capture: revert_hash
+      assert_hash: true
+
+- name: certify_accepts_branch_name
+  files:
+    a.txt: "hello"
+    metrics.json: '{"tests_passed": 1.0, "tests_total": 1.0}'
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, first]
+    - morph: [certify, --metrics-file, metrics.json, --commit, main]
+      stdout_contains: "PASS"
+
+- name: gate_accepts_HEAD_explicitly
+  files:
+    a.txt: "hello"
+    metrics.json: '{"tests_passed": 1.0, "tests_total": 1.0}'
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, first, --metrics, '{"tests_passed":1,"tests_total":1}']
+    - morph: [certify, --metrics-file, metrics.json, --commit, HEAD]
+    - morph: [gate, --commit, HEAD]
+      stdout_contains: "PASS"
+
+- name: pipeline_show_accepts_branch_for_commit_pipeline_lookup
+  # `morph pipeline show <hash>` historically required the pipeline
+  # hash directly. This is unchanged — pipelines aren't named.
+  # But callers can grab the pipeline hash from a commit by passing
+  # the commit ref to `morph show <ref>` and reading `.pipeline`.
+  # No behavior change here; this case is just documentation.
+  init: false
+  steps:
+    - morph: [version]
+      stdout_contains: morph
+
+- name: error_when_ref_unknown
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, first]
+    - morph: [show, no-such-ref]
+      expect_exit: 1
+      stderr_contains:
+        - "no-such-ref"

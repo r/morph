@@ -35,8 +35,15 @@ pub fn compute_eval_gaps(
     let mut gaps = Vec::new();
     let head = crate::commit::resolve_head(store)?;
     if let Some(h) = &head {
-        if let MorphObject::Commit(c) = store.get(h)? {
-            if c.eval_contract.observed_metrics.is_empty() {
+        // PR 1 (unified certification): a HEAD with empty inline
+        // metrics but a passing certification annotation is _not_ a
+        // gap — `morph certify` is the official late-evidence path.
+        // Routing through `effective_metrics` keeps the gap list
+        // aligned with the merge gate, status warning, and `morph
+        // head --json` so users see one consistent story.
+        if matches!(store.get(h)?, MorphObject::Commit(_)) {
+            let effective = crate::policy::effective_metrics(store, h)?;
+            if effective.is_empty() {
                 gaps.push(json!({
                     "kind": "empty_head_metrics",
                     "hint": "Run `morph eval run -- <test command>` then `morph commit --from-run <hash>`.",

@@ -188,6 +188,17 @@ pub struct Commit {
     /// stay `None`.
     #[serde(default)]
     pub morph_instance: Option<String>,
+    /// Reference-mode foundation: how this commit entered the morph
+    /// DAG. Conventional values are `"cli"`, `"mcp"`, and
+    /// `"git-hook"`; anything is accepted to keep the schema open.
+    /// Absence is treated as `"cli"` for compatibility with all
+    /// pre-existing commits — those were necessarily authored
+    /// through `morph-cli`. The git-hook case is reserved for
+    /// reference-mode auto-mirrored commits and lets the merge
+    /// gate / certification flow distinguish "human said done"
+    /// from "git committed and we caught up".
+    #[serde(default)]
+    pub morph_origin: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -375,9 +386,75 @@ mod tests {
             evidence_refs: None,
             morph_version: Some("0.10.0".into()),
             morph_instance: Some("morph-abc123".into()),
+            morph_origin: None,
         });
         let s = serde_json::to_string(&original).unwrap();
         assert!(s.contains("\"morph_instance\":\"morph-abc123\""));
+        let parsed: MorphObject = serde_json::from_str(&s).unwrap();
+        assert_eq!(parsed, original);
+    }
+
+    /// PR 1 (reference-mode foundation): legacy commit JSON without
+    /// the new `morph_origin` field still deserializes cleanly.
+    /// Pre-PR-1 commits could only originate from morph-cli, so
+    /// reading them back as `morph_origin: None` is the right
+    /// default. Treating `None` as "cli" is a read-side concern
+    /// owned by callers (e.g., the future git-hook policy gate).
+    #[test]
+    fn legacy_commit_without_morph_origin_deserializes() {
+        let json = r#"{
+            "type": "commit",
+            "tree": null,
+            "pipeline": "0000000000000000000000000000000000000000000000000000000000000000",
+            "parents": [],
+            "message": "legacy commit",
+            "timestamp": "2024-01-01T00:00:00Z",
+            "author": "morph",
+            "contributors": null,
+            "eval_contract": {
+                "suite": "0000000000000000000000000000000000000000000000000000000000000000",
+                "observed_metrics": {}
+            },
+            "env_constraints": null,
+            "evidence_refs": null,
+            "morph_version": null,
+            "morph_instance": null
+        }"#;
+        let obj: MorphObject =
+            serde_json::from_str(json).expect("legacy commit must deserialize");
+        match obj {
+            MorphObject::Commit(c) => assert_eq!(c.morph_origin, None),
+            _ => panic!("expected a Commit variant"),
+        }
+    }
+
+    /// PR 1: explicit `morph_origin` round-trips. The git-hook
+    /// origin is the headline non-default case — when reference
+    /// mode auto-mirrors a `git commit`, it stamps `"git-hook"`
+    /// here so downstream gates can distinguish certified human
+    /// work from passive mirroring.
+    #[test]
+    fn commit_with_morph_origin_round_trips() {
+        let original = MorphObject::Commit(Commit {
+            tree: None,
+            pipeline: "0".repeat(64),
+            parents: vec![],
+            message: "git-mirrored".into(),
+            timestamp: "2026-04-27T00:00:00Z".into(),
+            author: "Raffi <r@e.com>".into(),
+            contributors: None,
+            eval_contract: EvalContract {
+                suite: "0".repeat(64),
+                observed_metrics: BTreeMap::new(),
+            },
+            env_constraints: None,
+            evidence_refs: None,
+            morph_version: Some("0.24.0".into()),
+            morph_instance: None,
+            morph_origin: Some("git-hook".into()),
+        });
+        let s = serde_json::to_string(&original).unwrap();
+        assert!(s.contains("\"morph_origin\":\"git-hook\""));
         let parsed: MorphObject = serde_json::from_str(&s).unwrap();
         assert_eq!(parsed, original);
     }

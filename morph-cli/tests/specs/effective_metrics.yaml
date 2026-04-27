@@ -1,0 +1,88 @@
+# PR 1 (reference-mode foundation, unified certification model):
+# `effective_metrics(commit)` is the single read path every metric
+# consumer routes through. Inline `eval_contract.observed_metrics`
+# is the bedrock; the most recent `kind: "certification"` annotation
+# layered on top of it overrides per-key values.
+#
+# These specs prove the user-visible consequences:
+#   1. `morph status` stops warning once HEAD has been certified,
+#      even though the inline metrics are still empty.
+#   2. `morph eval gaps` retracts `empty_head_metrics` once HEAD
+#      gains certification evidence.
+#   3. `morph show` reports the effective metrics under "metrics"
+#      so reviewers see the certified values directly.
+#
+# Plus the small UX win: `morph certify` accepts an inline
+# `--metrics` JSON string so trivial certifications don't need
+# a temp file.
+
+- name: status_clears_empty_head_metrics_warning_after_certify
+  files:
+    foo.txt: "hello"
+    .morph/config.json: '{"repo_version":"0.0","policy":{"required_metrics":[]}}'
+    metrics.json: '{"acc":0.95,"tests_passed":1,"tests_total":1}'
+  steps:
+    - morph: [add, foo.txt]
+    - morph: [commit, -m, "no metrics"]
+    - morph: [status]
+      stdout_contains:
+        - "warning: HEAD has no observed_metrics"
+    - morph: [certify, --metrics-file, metrics.json]
+      stdout_contains: "PASS"
+    - morph: [status]
+      stdout_not_contains:
+        - "warning: HEAD has no observed_metrics"
+
+- name: eval_gaps_clears_empty_head_metrics_after_certify
+  files:
+    foo.txt: "hello"
+    .morph/config.json: '{"repo_version":"0.0","policy":{"required_metrics":[]}}'
+    metrics.json: '{"acc":0.95}'
+  steps:
+    - morph: [add, foo.txt]
+    - morph: [commit, -m, "no metrics"]
+    - morph: [eval, gaps]
+      stdout_contains: "empty_head_metrics"
+    - morph: [certify, --metrics-file, metrics.json]
+      stdout_contains: "PASS"
+    - morph: [eval, gaps]
+      stdout_not_contains: "empty_head_metrics"
+
+- name: head_json_reflects_certified_metrics_after_late_certify
+  files:
+    foo.txt: "hello"
+    .morph/config.json: '{"repo_version":"0.0","policy":{"required_metrics":[]}}'
+    metrics.json: '{"pass_rate":0.97}'
+  steps:
+    - morph: [add, foo.txt]
+    - morph: [commit, -m, "uncertified"]
+    - morph: [head, --json]
+      stdout_not_contains: "0.97"
+    - morph: [certify, --metrics-file, metrics.json]
+      stdout_contains: "PASS"
+    - morph: [head, --json]
+      stdout_contains:
+        - "pass_rate"
+        - "0.97"
+
+- name: certify_accepts_inline_metrics_flag
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "initial"]
+    - morph: [certify, --metrics, '{"acc":0.95}']
+      stdout_contains: "PASS"
+
+- name: certify_inline_metrics_and_metrics_file_are_mutually_exclusive
+  files:
+    a.txt: "hello"
+    metrics.json: '{"acc":0.95}'
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "initial"]
+    - morph: [certify, --metrics, '{"acc":0.95}', --metrics-file, metrics.json]
+      expect_exit: 2
+      stderr_contains:
+        - "--metrics"
+        - "--metrics-file"

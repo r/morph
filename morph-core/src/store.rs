@@ -561,6 +561,56 @@ pub fn resolve_hash_prefix(store: &dyn Store, s: &str) -> Result<Hash, MorphErro
     }
 }
 
+/// Resolve a revision identifier (Git's "rev") to an object hash.
+///
+/// Accepts, in order:
+/// - A full 64-char hex hash (parsed directly).
+/// - The literal `HEAD` (resolved via `resolve_head`).
+/// - A branch name, looked up under `refs/heads/<name>` (slash-separated
+///   names like `feature/x` work).
+/// - A tag name, looked up under `refs/tags/<name>`.
+/// - A `refs/...` path like `heads/main` or `tags/v1`, looked up directly.
+/// - A Git-style hex prefix (≥4 chars), resolved via `resolve_hash_prefix`.
+///
+/// This is the canonical "what does the user mean?" entry point for any
+/// CLI/MCP read-path command that takes an object identifier. It lets
+/// humans and agents pass `HEAD`, branch names, tags, or short prefixes
+/// instead of memorising 64-character hashes.
+pub fn resolve_revision(store: &dyn Store, s: &str) -> Result<Hash, MorphError> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Err(MorphError::InvalidHash("empty revision".into()));
+    }
+    if s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Hash::from_hex(s).map_err(|e| MorphError::InvalidHash(format!("invalid hash: {}", e)));
+    }
+    if s == "HEAD" {
+        return crate::commit::resolve_head(store)?
+            .ok_or_else(|| MorphError::NotFound("HEAD has no commits".into()));
+    }
+    if let Some(rest) = s.strip_prefix("refs/") {
+        if let Some(h) = store.ref_read(rest)? {
+            return Ok(h);
+        }
+    }
+    if let Some(h) = store.ref_read(&format!("heads/{}", s))? {
+        return Ok(h);
+    }
+    if let Some(h) = store.ref_read(&format!("tags/{}", s))? {
+        return Ok(h);
+    }
+    // Common in `morph diff` / `morph log` callers that already pass a
+    // partial ref path (e.g. `remotes/origin/main`).
+    if let Some(h) = store.ref_read(s)? {
+        return Ok(h);
+    }
+    // Fall through to Git-style hex-prefix lookup. This preserves the
+    // existing "invalid hash prefix" / "no object matches prefix" error
+    // surfaces for inputs that are clearly hex-shaped, and produces a
+    // single canonical error message for everything else.
+    resolve_hash_prefix(store, s)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
