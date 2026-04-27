@@ -115,7 +115,7 @@ Stable JSON API and browser UI for inspecting commits (with certification/gate s
 ## Develop Morph (this repo)
 
 ```bash
-cargo test --workspace                    # 787+ unit + CLI integration tests
+cargo test --workspace                    # 800+ unit + CLI integration tests
 cargo test -p morph-e2e --test cucumber   # e2e scenarios (Cucumber)
 ```
 

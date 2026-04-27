@@ -8,11 +8,24 @@
 
 use crate::commit::{current_branch, resolve_head};
 use crate::objects::{Commit, EvalContract, EvalSuite, MorphObject};
+use crate::policy::read_policy;
 use crate::store::{MorphError, Store};
 use crate::Hash;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
+
+/// Whether `RepoPolicy.merge_policy` requires dominance for the
+/// repo at `repo_root`. Returns `true` when no policy is reachable
+/// (no repo root or read failure) so we never weaken the gate by
+/// accident — a missing config is treated as "dominance".
+fn dominance_required(repo_root: Option<&Path>) -> bool {
+    let Some(root) = repo_root else { return true };
+    match read_policy(&root.join(".morph")) {
+        Ok(p) => p.merge_policy != "none",
+        Err(_) => true,
+    }
+}
 
 /// A single metric that failed dominance during merge.
 #[derive(Clone, Debug)]
@@ -343,6 +356,14 @@ pub(crate) fn union_evidence_refs(
 
 /// Execute a merge: check dominance and create the merge commit.
 /// Returns detailed error messages when dominance fails.
+///
+/// Honors `RepoPolicy.merge_policy` when `repo_root` is supplied:
+/// `"dominance"` (default) enforces metric dominance, `"none"`
+/// short-circuits the gate so structural-only merges land. Without
+/// a `repo_root` we cannot read policy and behave conservatively
+/// (always check dominance), matching the historical behavior of
+/// every callsite that drives merges from outside a repo.
+#[allow(clippy::too_many_arguments)] // mirrors `create_tree_commit`'s shape
 pub fn execute_merge(
     store: &dyn Store,
     plan: &MergePlan,
@@ -353,13 +374,15 @@ pub fn execute_merge(
     repo_root: Option<&Path>,
     morph_version: Option<&str>,
 ) -> Result<Hash, MorphError> {
-    let dominance = plan.check_dominance(&merged_observed_metrics);
-    if !dominance.passed {
-        let mut msg = String::from("merge rejected: merged metrics do not dominate both parents\n");
-        for v in &dominance.violations {
-            msg.push_str(&format!("  {}\n", v));
+    if dominance_required(repo_root) {
+        let dominance = plan.check_dominance(&merged_observed_metrics);
+        if !dominance.passed {
+            let mut msg = String::from("merge rejected: merged metrics do not dominate both parents\n");
+            for v in &dominance.violations {
+                msg.push_str(&format!("  {}\n", v));
+            }
+            return Err(MorphError::Serialization(msg));
         }
-        return Err(MorphError::Serialization(msg));
     }
 
     let suite_obj = MorphObject::EvalSuite(plan.union_suite.clone());
@@ -695,6 +718,39 @@ mod tests {
         assert!(msg.contains("merge rejected"), "should say 'merge rejected': {}", msg);
         assert!(msg.contains("acc"), "should name the blocking metric: {}", msg);
         assert!(msg.contains("current"), "should identify the parent: {}", msg);
+    }
+
+    #[test]
+    fn execute_merge_skips_dominance_when_policy_is_none() {
+        // `RepoPolicy.merge_policy = "none"` should let a merge land
+        // even when the candidate metrics regress against a parent.
+        // This pins the documented escape hatch in MERGE.md so it
+        // stays wired to the gate.
+        let (dir, store) = setup_repo();
+        let suite = make_suite(vec![EvalMetric::new("acc", "mean", 0.0)]);
+        let mut m1 = BTreeMap::new();
+        m1.insert("acc".into(), 0.9);
+        let mut m2 = BTreeMap::new();
+        m2.insert("acc".into(), 0.85);
+        setup_two_branches(store.as_ref(), dir.path(), &suite, &suite, m1, m2);
+
+        let policy = crate::policy::RepoPolicy {
+            merge_policy: "none".into(),
+            ..Default::default()
+        };
+        crate::policy::write_policy(&dir.path().join(".morph"), &policy).unwrap();
+
+        let plan = prepare_merge(store.as_ref(), "feature", None, None).unwrap();
+        let prog = MorphObject::Blob(Blob { kind: "p".into(), content: serde_json::json!({}) });
+        let prog_hash = store.put(&prog).unwrap();
+        let mut merged = BTreeMap::new();
+        merged.insert("acc".into(), 0.5);
+
+        let hash = execute_merge(
+            store.as_ref(), &plan, &prog_hash, merged,
+            "merge".into(), None, Some(dir.path()), None,
+        ).expect("merge_policy=none must let the regression land");
+        assert!(matches!(store.get(&hash).unwrap(), MorphObject::Commit(_)));
     }
 
     /// Helper: rewrite the commit at `branch_ref` to set its

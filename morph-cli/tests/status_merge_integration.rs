@@ -1,14 +1,14 @@
-// Integration tests for `morph status` while a merge is in progress.
-// Sets up state via morph-core APIs (no CLI merge subcommand yet),
-// then runs the `morph` binary and asserts the rendered status output.
+// Integration tests for `morph status` while a merge is in progress,
+// driven entirely through the CLI: `morph merge feature` to enter the
+// conflict state, `morph status` to inspect it, and `morph merge --abort`
+// to clean up.
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use predicates::prelude::*;
 use std::fs;
 
 fn init_repo_at(path: &std::path::Path) {
-    let mut cmd = cargo_bin_cmd!("morph");
-    cmd.arg("init").arg(path).assert().success();
+    cargo_bin_cmd!("morph").arg("init").arg(path).assert().success();
 }
 
 fn write(path: &std::path::Path, content: &str) {
@@ -18,8 +18,8 @@ fn write(path: &std::path::Path, content: &str) {
     fs::write(path, content).unwrap();
 }
 
-fn open_store(repo: &std::path::Path) -> Box<dyn morph_core::Store> {
-    morph_core::open_store(&repo.join(".morph")).unwrap()
+fn morph(repo: &std::path::Path, args: &[&str]) -> assert_cmd::assert::Assert {
+    cargo_bin_cmd!("morph").current_dir(repo).args(args).assert()
 }
 
 #[test]
@@ -28,77 +28,41 @@ fn status_during_textual_merge_lists_unmerged_paths_and_hint() {
     let repo = dir.path();
     init_repo_at(repo);
 
-    // Build divergent commits via the CLI so the on-disk repo state
-    // matches what `start_merge` expects.
     write(&repo.join("file.txt"), "line1\nbase\nline3\n");
-    cargo_bin_cmd!("morph")
-        .current_dir(repo)
-        .args(["add", "file.txt"])
-        .assert()
-        .success();
-    cargo_bin_cmd!("morph")
-        .current_dir(repo)
-        .args(["commit", "-m", "base"])
-        .assert()
-        .success();
+    morph(repo, &["add", "file.txt"]).success();
+    morph(repo, &["commit", "-m", "base"]).success();
 
-    cargo_bin_cmd!("morph")
-        .current_dir(repo)
-        .args(["branch", "feature"])
-        .assert()
-        .success();
+    morph(repo, &["branch", "feature"]).success();
 
     write(&repo.join("file.txt"), "line1\nMAIN\nline3\n");
-    cargo_bin_cmd!("morph")
-        .current_dir(repo)
-        .args(["add", "file.txt"])
-        .assert()
-        .success();
-    cargo_bin_cmd!("morph")
-        .current_dir(repo)
-        .args(["commit", "-m", "main"])
-        .assert()
-        .success();
+    morph(repo, &["add", "file.txt"]).success();
+    morph(repo, &["commit", "-m", "main"]).success();
 
-    cargo_bin_cmd!("morph")
-        .current_dir(repo)
-        .args(["checkout", "feature"])
-        .assert()
-        .success();
+    morph(repo, &["checkout", "feature"]).success();
     write(&repo.join("file.txt"), "line1\nFEATURE\nline3\n");
-    cargo_bin_cmd!("morph")
-        .current_dir(repo)
-        .args(["add", "file.txt"])
-        .assert()
-        .success();
-    cargo_bin_cmd!("morph")
-        .current_dir(repo)
-        .args(["commit", "-m", "feature"])
-        .assert()
-        .success();
-    cargo_bin_cmd!("morph")
-        .current_dir(repo)
-        .args(["checkout", "main"])
-        .assert()
-        .success();
+    morph(repo, &["add", "file.txt"]).success();
+    morph(repo, &["commit", "-m", "feature"]).success();
+    morph(repo, &["checkout", "main"]).success();
 
-    let store = open_store(repo);
-    let _ = morph_core::start_merge(
-        &*store,
-        repo,
-        morph_core::StartMergeOpts::new("feature"),
-    )
-    .expect("start_merge should set up MERGE_HEAD with conflicts");
+    // Drive the conflict via the CLI now that `morph merge` is wired
+    // up to `start_merge`. Exits 1 because conflict markers landed
+    // on disk and the user needs to run `--continue` after fixing.
+    morph(repo, &["merge", "feature"]).code(1);
 
-    cargo_bin_cmd!("morph")
-        .current_dir(repo)
-        .arg("status")
-        .assert()
+    morph(repo, &["status"])
         .success()
         .stdout(predicate::str::contains("You have unmerged paths."))
         .stdout(predicate::str::contains("morph merge --continue"))
         .stdout(predicate::str::contains("morph merge --abort"))
         .stdout(predicate::str::contains("file.txt"));
+
+    // `--abort` cleans up and `status` no longer mentions a merge.
+    morph(repo, &["merge", "--abort"])
+        .success()
+        .stdout(predicate::str::contains("Merge aborted"));
+    morph(repo, &["status"])
+        .success()
+        .stdout(predicate::str::contains("You have unmerged paths.").not());
 }
 
 #[test]

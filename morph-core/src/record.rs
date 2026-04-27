@@ -174,7 +174,7 @@ mod tests {
     #[test]
     fn record_session_stores_run_and_trace() {
         let dir = tempfile::tempdir().unwrap();
-        let store = FsStore::new(dir.path().to_path_buf());
+        let store = FsStore::new(dir.path());
         let hash = record_session(
             &store,
             "What is 2+2?",
@@ -228,7 +228,7 @@ mod tests {
     #[test]
     fn record_run_ingests_run_from_json_file() {
         let dir = tempfile::tempdir().unwrap();
-        let store = FsStore::new(dir.path().to_path_buf());
+        let store = FsStore::new(dir.path());
 
         let trace = MorphObject::Trace(Trace {
             events: vec![TraceEvent {
@@ -275,7 +275,7 @@ mod tests {
     #[test]
     fn record_run_with_trace_file_validates_hash() {
         let dir = tempfile::tempdir().unwrap();
-        let store = FsStore::new(dir.path().to_path_buf());
+        let store = FsStore::new(dir.path());
 
         let trace = MorphObject::Trace(Trace {
             events: vec![TraceEvent {
@@ -324,7 +324,7 @@ mod tests {
     #[test]
     fn record_run_trace_hash_mismatch_fails() {
         let dir = tempfile::tempdir().unwrap();
-        let store = FsStore::new(dir.path().to_path_buf());
+        let store = FsStore::new(dir.path());
 
         let trace = MorphObject::Trace(Trace {
             events: vec![TraceEvent {
@@ -374,7 +374,7 @@ mod tests {
     #[test]
     fn record_run_rejects_non_run_object() {
         let dir = tempfile::tempdir().unwrap();
-        let store = FsStore::new(dir.path().to_path_buf());
+        let store = FsStore::new(dir.path());
 
         let blob = MorphObject::Blob(Blob {
             kind: "prompt".into(),
@@ -448,7 +448,7 @@ mod tests {
     #[test]
     fn record_conversation_stores_all_messages() {
         let dir = tempfile::tempdir().unwrap();
-        let store = FsStore::new(dir.path().to_path_buf());
+        let store = FsStore::new(dir.path());
         let messages = vec![
             ConversationMessage { role: "user".into(), content: "Build a web server".into(), metadata: BTreeMap::new(), timestamp: None },
             ConversationMessage { role: "assistant".into(), content: "I'll create the files".into(), metadata: BTreeMap::new(), timestamp: None },
@@ -486,7 +486,7 @@ mod tests {
     #[test]
     fn record_session_uses_defaults_for_model_and_agent() {
         let dir = tempfile::tempdir().unwrap();
-        let store = FsStore::new(dir.path().to_path_buf());
+        let store = FsStore::new(dir.path());
         let hash = record_session(&store, "p", "r", None, None).unwrap();
         let obj = store.get(&hash).unwrap();
         if let MorphObject::Run(run) = obj {
@@ -500,7 +500,7 @@ mod tests {
     #[test]
     fn record_conversation_metadata_merges_into_payload() {
         let dir = tempfile::tempdir().unwrap();
-        let store = FsStore::new(dir.path().to_path_buf());
+        let store = FsStore::new(dir.path());
         let mut meta = BTreeMap::new();
         meta.insert("name".into(), serde_json::json!("read_file"));
         meta.insert("path".into(), serde_json::json!("src/main.rs"));
@@ -521,7 +521,7 @@ mod tests {
     #[test]
     fn record_conversation_per_message_timestamps() {
         let dir = tempfile::tempdir().unwrap();
-        let store = FsStore::new(dir.path().to_path_buf());
+        let store = FsStore::new(dir.path());
         let messages = vec![
             ConversationMessage { role: "user".into(), content: "Hello".into(), metadata: BTreeMap::new(), timestamp: Some("2026-01-01T10:00:00Z".into()) },
             ConversationMessage { role: "assistant".into(), content: "Hi".into(), metadata: BTreeMap::new(), timestamp: Some("2026-01-01T10:00:05Z".into()) },
@@ -543,7 +543,7 @@ mod tests {
         // structured kind survives to the trace with the right metadata so tap
         // can reconstruct the session.
         let dir = tempfile::tempdir().unwrap();
-        let store = FsStore::new(dir.path().to_path_buf());
+        let store = FsStore::new(dir.path());
         let json = r#"[
           {"role":"user","content":"Fix the bug in auth.rs"},
           {"role":"assistant","content":"Let me read the file first."},
@@ -605,7 +605,7 @@ mod tests {
     #[test]
     fn record_conversation_backward_compat_no_metadata() {
         let dir = tempfile::tempdir().unwrap();
-        let store = FsStore::new(dir.path().to_path_buf());
+        let store = FsStore::new(dir.path());
         let json = r#"[{"role":"user","content":"Hello"},{"role":"assistant","content":"Hi"}]"#;
         let messages: Vec<ConversationMessage> = serde_json::from_str(json).unwrap();
         assert!(messages[0].metadata.is_empty());
@@ -631,7 +631,7 @@ mod tests {
     #[test]
     fn record_run_with_artifacts() {
         let dir = tempfile::tempdir().unwrap();
-        let store = FsStore::new(dir.path().to_path_buf());
+        let store = FsStore::new(dir.path());
 
         let artifact = MorphObject::Artifact(crate::objects::Artifact {
             kind: "model".into(),

@@ -110,7 +110,7 @@ morph-serve/    Hosted service: morph serve (multi-repo JSON API + browser UI)
 morph-e2e/      End-to-end tests (Cucumber/Gherkin)
 ```
 
-**Storage backend**: Trait-based (`Store`). v0 ships a filesystem backend (`FsStore`) selected by `repo_version` in `.morph/config.json`: **`FsStore::new`** (0.0, legacy: SHA-256 of canonical JSON), **`FsStore::new_git`** (0.2/0.3, Git-style `"blob "+len+"\0"+data` hashing, flat `objects/` + tree commits), and **`FsStore::new_git_fanout`** (0.4, same hashing with Git-style fan-out `objects/<xx>/<rest>.json`). Use `morph upgrade` to migrate. SQLite and remote backends are anticipated by the trait interface.
+**Storage backend**: Trait-based (`Store`). v0 ships a filesystem backend (`FsStore`) selected by `repo_version` in `.morph/config.json`: **`FsStore::new`** (0.0, legacy: SHA-256 of canonical JSON), **`FsStore::new_git`** (0.2/0.3, Git-style `"blob "+len+"\0"+data` hashing, flat `objects/` + tree commits), and **`FsStore::new_git_fanout`** (0.4/0.5, same hashing with Git-style fan-out `objects/<xx>/<rest>.json`; 0.5 is a config-only bump that locks in the merge state machine). Use `morph upgrade` to migrate. SQLite and remote backends are anticipated by the trait interface.
 
 **Write path**: IDE hooks → `morph run record` → morph-core → `.morph/objects/`; or IDE (via MCP) → morph-mcp → morph-core → `.morph/objects/`.
 **Read path**: CLI → morph-core → `.morph/objects/`.

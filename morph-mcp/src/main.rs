@@ -388,6 +388,29 @@ impl ServerHandler for MorphServer {
     }
 }
 
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        eprintln!(
+            "morph-mcp {} (built {})\n\nMCP server for Morph. Cursor starts this process and talks over stdio.\n\
+             Optional: set MORPH_WORKSPACE or pass it as first arg.\nVerify: morph-mcp --version",
+            env!("CARGO_PKG_VERSION"),
+            env!("MORPH_BUILD_DATE"),
+        );
+        return Ok(());
+    }
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        eprintln!("morph-mcp {} (built {})", env!("CARGO_PKG_VERSION"), env!("MORPH_BUILD_DATE"));
+        return Ok(());
+    }
+    let default_workspace = default_workspace_from_env_and_args(&args);
+    let service = MorphServer::new(default_workspace).serve(stdio()).await
+        .inspect_err(|e| eprintln!("morph-mcp error: {}", e))?;
+    service.waiting().await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -824,27 +847,4 @@ mod tests {
         assert!(extract_text(&result).contains("A"));
         assert!(extract_text(&result).contains("b.txt"));
     }
-}
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let args: Vec<String> = std::env::args().collect();
-    if args.iter().any(|a| a == "--help" || a == "-h") {
-        eprintln!(
-            "morph-mcp {} (built {})\n\nMCP server for Morph. Cursor starts this process and talks over stdio.\n\
-             Optional: set MORPH_WORKSPACE or pass it as first arg.\nVerify: morph-mcp --version",
-            env!("CARGO_PKG_VERSION"),
-            env!("MORPH_BUILD_DATE"),
-        );
-        return Ok(());
-    }
-    if args.iter().any(|a| a == "--version" || a == "-V") {
-        eprintln!("morph-mcp {} (built {})", env!("CARGO_PKG_VERSION"), env!("MORPH_BUILD_DATE"));
-        return Ok(());
-    }
-    let default_workspace = default_workspace_from_env_and_args(&args);
-    let service = MorphServer::new(default_workspace).serve(stdio()).await
-        .inspect_err(|e| eprintln!("morph-mcp error: {}", e))?;
-    service.waiting().await?;
-    Ok(())
 }

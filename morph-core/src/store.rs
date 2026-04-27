@@ -1000,7 +1000,7 @@ mod tests {
                 // find longest common hex prefix
                 let common = hs.chars().zip(es.chars()).take_while(|(a, b)| a == b).count();
                 if common >= 4 {
-                    collision = Some((existing.clone(), h.clone(), common));
+                    collision = Some((*existing, h, common));
                     break;
                 }
             }

@@ -81,7 +81,7 @@ pub fn add_remote(morph_dir: &Path, name: &str, path: &str) -> Result<(), MorphE
 
 /// Per-branch upstream tracking. Mirrors git's `branch.<name>.remote`
 /// + `branch.<name>.merge`. Drives `morph sync` and the
-/// "Already up to date" / "Diverged" hint in status.
+///   "Already up to date" / "Diverged" hint in status.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BranchUpstream {
     pub remote: String,

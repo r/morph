@@ -1186,7 +1186,7 @@ def add_task(db, title):
     #[test]
     fn task_scope_broad() {
         let files: Vec<String> = (0..10).map(|i| format!("f{}.py", i)).collect();
-        assert_eq!(classify_task_scope(&files, &vec![]), TaskScope::Broad);
+        assert_eq!(classify_task_scope(&files, &[]), TaskScope::Broad);
     }
 
     #[test]

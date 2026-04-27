@@ -357,6 +357,9 @@ fn relative_path(root: &Path, full: &Path) -> Option<String> {
         .map(|s| s.replace('\\', "/"))
 }
 
+#[allow(clippy::too_many_arguments)] // recursive directory walker; threading
+                                      // a context struct here would make
+                                      // the recursion noisier than it is now
 fn add_directory(
     dir: &Path,
     morph_dir: &Path,
@@ -655,7 +658,7 @@ mod tests {
 
         let hashes = add_paths(&store, root, &[std::path::PathBuf::from(".")]).unwrap();
         // staged.txt and .morphignore are staged; ignored.txt is not
-        assert!(hashes.len() >= 1 && hashes.len() <= 2, "staged.txt (and optionally .morphignore), got {}", hashes.len());
+        assert!(!hashes.is_empty() && hashes.len() <= 2, "staged.txt (and optionally .morphignore), got {}", hashes.len());
         let staged: Vec<String> = hashes
             .iter()
             .filter_map(|h| store.get(h).ok())

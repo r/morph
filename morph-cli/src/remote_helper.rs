@@ -94,6 +94,11 @@ fn handle_line(
     }
 }
 
+// `ErrResponse` carries optional structured error fields and is
+// inherently bigger than `OkResponse` for trivial replies; the helper
+// uses this `Result` only as control flow inside the loop, so the
+// payoff of boxing every error is too small to justify the noise.
+#[allow(clippy::result_large_err)]
 fn dispatch(
     req: Request,
     store: &dyn Store,

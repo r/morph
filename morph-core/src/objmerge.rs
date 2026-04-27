@@ -229,7 +229,7 @@ pub fn merge_commits(
                                 message: format!("node '{}': {}", nc.id, nc.axis),
                             });
                         }
-                        pipeline_node_conflicts.extend(out.conflicts.into_iter());
+                        pipeline_node_conflicts.extend(out.conflicts);
                     }
                 }
                 Err(_) => {

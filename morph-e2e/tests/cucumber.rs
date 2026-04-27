@@ -636,6 +636,9 @@ fn when_start_server(w: &mut MorphWorld, port: u16) {
         .output();
     std::thread::sleep(std::time::Duration::from_millis(200));
 
+    // Background server: we track it by PID and stop it later via `kill`,
+    // so we deliberately drop the Child handle here.
+    #[allow(clippy::zombie_processes)]
     let child = std::process::Command::new(
         assert_cmd::cargo::cargo_bin("morph"),
     )

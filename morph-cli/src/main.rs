@@ -154,6 +154,159 @@ fn print_trace_events(trace: &morph_core::objects::Trace) {
     }
 }
 
+/// Dispatch for `morph merge`. Maps the flag combo onto the four
+/// merge-flow entry points: `start_merge` (positional `<branch>`),
+/// `continue_merge` (`--continue`), `abort_merge` (`--abort`), and
+/// `resolve_node` (`resolve-node` subcommand). When the user passes
+/// a branch *and* the legacy single-shot flags (`--pipeline`,
+/// `--metrics`, `-m`), a clean three-way merge auto-finalizes via
+/// `execute_merge` for backwards compatibility with PR≤3 scripts.
+#[allow(clippy::too_many_arguments)]
+fn run_merge(
+    verbose: bool,
+    branch: Option<String>,
+    cont: bool,
+    abort: bool,
+    message: Option<String>,
+    pipeline: Option<String>,
+    eval_suite: Option<String>,
+    metrics: Option<String>,
+    author: Option<String>,
+    retire: Option<String>,
+    sub: Option<MergeCmd>,
+) -> anyhow::Result<()> {
+    let (repo_root, store) = get_store(verbose)?;
+    let morph_dir = repo_root.join(".morph");
+
+    if let Some(MergeCmd::ResolveNode { node, pick }) = sub {
+        morph_core::resolve_node(store.as_ref(), &repo_root, &node, &pick)?;
+        println!("Resolved pipeline node `{}` -> {}", node, pick);
+        return Ok(());
+    }
+
+    if abort {
+        morph_core::abort_merge(store.as_ref(), &repo_root)?;
+        println!("Merge aborted; working tree restored to ORIG_HEAD.");
+        return Ok(());
+    }
+
+    if cont {
+        let cont_outcome = morph_core::continue_merge(
+            store.as_ref(),
+            &repo_root,
+            morph_core::ContinueMergeOpts { message, author },
+        )?;
+        println!("{}", cont_outcome.merge_commit);
+        return Ok(());
+    }
+
+    let branch = branch.ok_or_else(|| {
+        anyhow::anyhow!(
+            "missing branch argument (use `morph merge <branch>` to start, \
+             `--continue` / `--abort` to manage an in-progress merge, \
+             or `morph merge resolve-node <id> --pick ours|theirs|base`)"
+        )
+    })?;
+
+    let single_shot = pipeline.is_some() && metrics.is_some() && message.is_some();
+    if single_shot {
+        let version = read_repo_version(&morph_dir)?;
+        let prog_hash = resolve_obj_hash(store.as_ref(), pipeline.as_deref().unwrap())?;
+        let suite_hash_opt = eval_suite
+            .as_deref()
+            .map(|s| resolve_obj_hash(store.as_ref(), s))
+            .transpose()?;
+        let observed: std::collections::BTreeMap<String, f64> = serde_json::from_str(
+            metrics.as_deref().unwrap(),
+        )
+        .map_err(|e| anyhow::anyhow!("invalid --metrics JSON: {}", e))?;
+        let retired: Option<Vec<String>> = retire
+            .map(|s| s.split(',').map(|m| m.trim().to_string()).collect());
+        let plan = morph_core::prepare_merge(
+            store.as_ref(),
+            &branch,
+            suite_hash_opt.as_ref(),
+            retired.as_deref(),
+        )?;
+        let resolved_author =
+            morph_core::resolve_author_for_repo(&morph_dir, author.as_deref())?;
+        let hash = morph_core::execute_merge(
+            store.as_ref(),
+            &plan,
+            &prog_hash,
+            observed,
+            message.unwrap(),
+            Some(resolved_author),
+            Some(&repo_root),
+            Some(&version),
+        )?;
+        println!("{}", hash);
+        return Ok(());
+    }
+
+    // Stateful flow: kick off the structural merge, then either
+    // surface the conflicts (so the user can resolve and run
+    // `--continue`) or auto-finalize a clean three-way merge.
+    let outcome = morph_core::start_merge(
+        store.as_ref(),
+        &repo_root,
+        morph_core::StartMergeOpts::new(&branch),
+    )?;
+
+    if outcome.needs_resolution {
+        if !outcome.textual_conflicts.is_empty() {
+            println!(
+                "Auto-merging failed for {} path{}; conflict markers written to disk.",
+                outcome.textual_conflicts.len(),
+                if outcome.textual_conflicts.len() == 1 { "" } else { "s" }
+            );
+            for p in &outcome.textual_conflicts {
+                println!("  CONFLICT (content): {}", p);
+            }
+        }
+        if !outcome.pipeline_node_conflicts.is_empty() {
+            println!(
+                "Pipeline has {} node-level conflict{}:",
+                outcome.pipeline_node_conflicts.len(),
+                if outcome.pipeline_node_conflicts.len() == 1 { "" } else { "s" }
+            );
+            for c in &outcome.pipeline_node_conflicts {
+                println!("  CONFLICT (pipeline node): {}", c.id);
+            }
+            println!(
+                "  resolve with: morph merge resolve-node <id> --pick ours|theirs|base"
+            );
+        }
+        println!("Run `morph status` for details, then `morph merge --continue`.");
+        std::process::exit(1);
+    }
+
+    if matches!(outcome.trivial, morph_core::TrivialOutcome::AlreadyMerged | morph_core::TrivialOutcome::AlreadyAhead) {
+        println!("Already up to date.");
+        return Ok(());
+    }
+
+    if matches!(outcome.trivial, morph_core::TrivialOutcome::FastForward) {
+        let branch_ref = morph_core::current_branch(store.as_ref())?
+            .unwrap_or_else(|| "main".to_string());
+        store.ref_write(&format!("heads/{}", branch_ref), &outcome.other)?;
+        morph_core::checkout_tree(store.as_ref(), &repo_root, &branch_ref)?;
+        println!("Fast-forwarded {} to {}.", branch_ref, outcome.other);
+        return Ok(());
+    }
+
+    let cont_outcome = morph_core::continue_merge(
+        store.as_ref(),
+        &repo_root,
+        morph_core::ContinueMergeOpts {
+            message: message.or_else(|| Some(format!("Merge branch '{}'", branch))),
+            author,
+        },
+    )?;
+    println!("{}", cont_outcome.merge_commit);
+    Ok(())
+}
+
 fn resolve_ref_name(store: &dyn Store, r: &str) -> anyhow::Result<Hash> {
     if r.len() == 64 && r.chars().all(|c| c.is_ascii_hexdigit()) {
         return Ok(Hash::from_hex(r)?);
@@ -1006,22 +1159,8 @@ fn main() -> anyhow::Result<()> {
             print!("{}", plan.format_plan());
         }
 
-        Command::Merge { branch, message, pipeline, eval_suite, metrics, author, retire } => {
-            let (repo_root, store) = get_store(verbose)?;
-            let morph_dir = repo_root.join(".morph");
-            let version = read_repo_version(&morph_dir)?;
-            let prog_hash = resolve_obj_hash(store.as_ref(), &pipeline)?;
-            let suite_hash_opt = eval_suite.as_deref().map(|s| resolve_obj_hash(store.as_ref(), s)).transpose()?;
-            let observed: std::collections::BTreeMap<String, f64> =
-                serde_json::from_str(&metrics).map_err(|e| anyhow::anyhow!("invalid --metrics JSON: {}", e))?;
-            let retired: Option<Vec<String>> = retire.map(|s| s.split(',').map(|m| m.trim().to_string()).collect());
-            let plan = morph_core::prepare_merge(&store, &branch, suite_hash_opt.as_ref(), retired.as_deref())?;
-            let resolved_author = morph_core::resolve_author_for_repo(
-                &morph_dir,
-                author.as_deref(),
-            )?;
-            let hash = morph_core::execute_merge(&store, &plan, &prog_hash, observed, message, Some(resolved_author), Some(&repo_root), Some(&version))?;
-            println!("{}", hash);
+        Command::Merge { branch, cont, abort, message, pipeline, eval_suite, metrics, author, retire, sub } => {
+            run_merge(verbose, branch, cont, abort, message, pipeline, eval_suite, metrics, author, retire, sub)?;
         }
 
         Command::Rollup { base_ref, tip_ref, message } => {
@@ -1038,9 +1177,9 @@ fn main() -> anyhow::Result<()> {
                 // are still resolved to absolute so the remote
                 // works from any cwd.
                 let raw = path.to_string_lossy().to_string();
-                let stored = if morph_core::ssh_store::SshUrl::parse(&raw).is_some() {
-                    raw
-                } else if path.is_absolute() {
+                let stored = if morph_core::ssh_store::SshUrl::parse(&raw).is_some()
+                    || path.is_absolute()
+                {
                     raw
                 } else {
                     std::env::current_dir()?.join(&path).to_string_lossy().to_string()

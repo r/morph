@@ -71,7 +71,7 @@ The structural rules:
 
 Textual fallback uses Git's own `git merge-file` binary: write `base.txt`, `ours.txt`, `theirs.txt` into a tempdir, invoke the tool, capture the merged buffer with conflict markers, and write that to the workdir. We trust Git's diff3 implementation rather than reimplementing it.
 
-The unmerged paths are recorded in `index.unmerged_entries: BTreeMap<Path, UnmergedEntry { base_blob, ours_blob, theirs_blob }>` so `morph status` can list them and `morph merge --continue` can drop them once the user `morph add`s a resolved file.
+The unmerged paths are recorded in `index.unmerged_entries: BTreeMap<Path, UnmergedEntry { base_blob, ours_blob, theirs_blob }>` so `morph status` can list them and `morph merge --continue` can drop them once the user runs `morph add` on a resolved file.
 
 ---
 
@@ -106,13 +106,15 @@ If both parents lack evidence the field stays `None` (rather than `Some(vec![])`
 
 ## 5. The merge state machine
 
-A merge can be in one of three states, recorded as files inside `.morph/`:
+A merge in progress is recorded as files inside `.morph/`. They are managed by `morph-core/src/merge_state.rs`:
 
 | File | Means |
 |---|---|
 | `MERGE_HEAD` | hash of "their" commit being merged in |
-| `MERGE_BASE` | hash of the LCA |
-| `MERGE_MSG` | proposed commit message; user can edit before `--continue` |
+| `ORIG_HEAD` | the HEAD commit before the merge started; consulted by `--abort` to restore the working tree |
+| `MERGE_MSG` | proposed commit message; the user can edit before `--continue` |
+| `MERGE_PIPELINE.json` | merged pipeline object (only when `start_merge` produced one with no node-level conflicts, **or** every node-level conflict was resolved by `morph merge resolve-node`) |
+| `MERGE_SUITE` | hash of the merged eval suite (only when `start_merge` produced one) |
 
 Plus the staging `index.json` carries `unmerged_entries` listing the conflicting paths.
 
@@ -127,16 +129,18 @@ Plus the staging `index.json` carries `unmerged_entries` listing the conflicting
                               │
                               ▼
    ┌──────────────────────────────────────┐
-   │ MERGE_HEAD / MERGE_BASE / MERGE_MSG  │
+   │ MERGE_HEAD / ORIG_HEAD / MERGE_MSG   │
+   │ (+ MERGE_PIPELINE / MERGE_SUITE)     │
    │ index.unmerged_entries populated     │
    │ workdir has conflict markers         │
    └──────────────────────────────────────┘
                   │                   │
        morph merge --abort     morph merge --continue
                   │                   │
-                  │      (after the user `morph add`s the
-                  │       resolved files; `unmerged_entries`
-                  │       must now be empty)
+                  │       (after the user runs `morph add`
+                  │        on every resolved file; the
+                  │        `unmerged_entries` map must now
+                  │        be empty)
                   ▼                   ▼
           ┌─────────────┐    ┌─────────────────┐
           │ no merge yet│    │  merge commit   │
@@ -147,33 +151,36 @@ Plus the staging `index.json` carries `unmerged_entries` listing the conflicting
                              └─────────────────┘
 ```
 
-**`morph merge <branch>`** (`start_merge`):
+**`morph merge <branch>`** (`start_merge`) returns a `StartMergeOutcome`:
 
 1. Read HEAD and `<branch>` tips.
-2. Compute LCA via `merge_base`.
-3. If LCA == HEAD, fast-forward: just move the branch ref. Return `Outcome::FastForward`.
-4. If LCA == `<branch>`, already up-to-date.
-5. Otherwise, run `prepare_merge`:
-   - 3-way merge each object (tree, pipeline, eval suite).
-   - Build the `MergePlan` (merged hashes, workdir ops, evidence union, conflicts).
-6. Apply workdir ops via `apply_workdir_ops`.
-7. If the plan had no conflicts, finalize the commit immediately. Return `Outcome::Merged { commit }`.
-8. Otherwise, write `MERGE_HEAD` / `MERGE_BASE` / `MERGE_MSG`, record `unmerged_entries`. Return `Outcome::Conflicts { paths }`.
+2. Compute the LCA via `merge_base` and call `objmerge::merge_commits`.
+3. If the relationship is `TrivialOutcome::AlreadyMerged` or `AlreadyAhead`, the CLI prints "Already up to date." and exits.
+4. If the relationship is `TrivialOutcome::FastForward`, the CLI moves the local branch ref to `other` and updates the working tree via `checkout_tree`.
+5. Otherwise (`TrivialOutcome::Diverged`), apply the engine's planned working-tree writes via `treemerge::apply_workdir_ops` (which writes diff3 conflict markers into the workdir for textual conflicts) and build a `MergePlan`.
+6. If `outcome.needs_resolution` is `false`, the CLI immediately calls `continue_merge` to finalize the merge commit.
+7. If `outcome.needs_resolution` is `true`, write `MERGE_HEAD` / `ORIG_HEAD` / `MERGE_MSG` (and `MERGE_PIPELINE` / `MERGE_SUITE` when relevant), record `unmerged_entries`, and exit non-zero so the user can resolve the listed conflicts and re-run `morph merge --continue`.
+
+**`morph merge resolve-node <id> --pick ours|theirs|base`** (`resolve_node`):
+
+1. Refuse when no merge is in progress.
+2. Look up the named pipeline-node conflict and replace its entry in `MERGE_PIPELINE.json` with the chosen side.
+3. Drop the node from the in-progress conflict list. When the list is empty, `--continue` is unblocked.
 
 **`morph merge --continue`** (`continue_merge`):
 
 1. Read state. Refuse if no merge is in progress.
-2. Refuse if `unmerged_entries` is still non-empty (the user hasn't resolved every conflict).
-3. Refuse if the working tree isn't clean of unstaged changes (`working_tree_clean`).
-4. Build the merge commit with `parents = [HEAD, MERGE_HEAD]`, the merged tree/pipeline/suite, the metrics from `prepare_merge`, and `evidence_refs = union_evidence_refs(...)`.
-5. Apply behavioral dominance (`check_dominance`) — fail loudly if the merged metrics regress.
-6. Update HEAD, clear `MERGE_HEAD` / `MERGE_BASE` / `MERGE_MSG`, return the new commit hash.
+2. Refuse if `unmerged_entries` is still non-empty (the user has not staged every resolution).
+3. Refuse if the working tree has uncommitted changes to tracked files (`working_tree_clean`).
+4. Build the merge commit with `parents = [HEAD, MERGE_HEAD]`, the merged tree/pipeline/suite, the recorded observed metrics, and `evidence_refs = union_evidence_refs(parents)`.
+5. Apply behavioral dominance (`check_dominance`) unless the repo's `merge_policy` is `"none"` — fail loudly if the merged metrics regress.
+6. Update the active branch ref, clear all `MERGE_*` state files, drop `unmerged_entries`, and return the new commit hash.
 
 **`morph merge --abort`** (`abort_merge`):
 
-1. Restore the workdir to HEAD via `restore_tree`.
-2. Clear all merge state files.
-3. Drop `unmerged_entries` from the index.
+1. Look up `ORIG_HEAD`. Refuse when no merge is in progress so users get a clear signal.
+2. Restore the workdir to `ORIG_HEAD` via `checkout_tree`.
+3. Clear all `MERGE_*` files and drop `unmerged_entries` from the index.
 
 `morph status` reads this state and prints the same kind of "Unmerged paths" / "All conflicts fixed but you are still merging" hints Git users expect.
 
@@ -185,28 +192,43 @@ The simplest possible session, no conflicts:
 
 ```bash
 morph merge feature
-# Outcome::Merged { commit: 8d8b287... }
+# 8d8b287a4c…   ← the new merge commit hash
 ```
 
 A conflicting session:
 
 ```bash
 morph merge feature
-# Outcome::Conflicts { paths: ["src/lib.rs"] }
+# Auto-merging failed for 1 path; conflict markers written to disk.
+#   CONFLICT (content): src/lib.rs
+# Run `morph status` for details, then `morph merge --continue`.
+
 morph status
-# both modified: src/lib.rs
+# Unmerged paths:
+#   both modified: src/lib.rs
 
 # Edit src/lib.rs, remove the <<<<<<<, =======, >>>>>>> markers.
 morph add src/lib.rs
 morph merge --continue
-# 8d8b287...
+# 8d8b287a4c…
+```
+
+If your divergence touches a pipeline node, you'll instead see a node-level conflict:
+
+```bash
+morph merge feature
+# Pipeline has 1 node-level conflict:
+#   CONFLICT (pipeline node): generate
+#   resolve with: morph merge resolve-node <id> --pick ours|theirs|base
+morph merge resolve-node generate --pick theirs
+morph merge --continue
 ```
 
 If you change your mind:
 
 ```bash
 morph merge --abort
-# workdir restored to HEAD; merge state cleared
+# Merge aborted; working tree restored to ORIG_HEAD.
 ```
 
 If a textual merge isn't enough — say `cargo test` fails on the merged tree — you can keep iterating:
@@ -220,12 +242,17 @@ morph merge --continue
 If the merge succeeds structurally but **dominance** fails:
 
 ```
-error: dominance check failed:
-  metric 'pass_rate' (maximize): candidate 0.91 < parents max 0.95
-  metric 'mean_latency_ms' (minimize): candidate 320 > parents min 280
+merge rejected: merged metrics do not dominate both parents
+  pass_rate: candidate 0.91 < required 0.95
+  mean_latency_ms: candidate 320 > required 280
 ```
 
-The fix is either to (a) re-run your eval suite on the merged tree until metrics dominate, (b) explicitly retire the offending metric with `--retire-metric pass_rate` if the pipeline really did change semantics, or (c) accept that this is the wrong merge and `--abort`.
+The fix is one of:
+
+- re-run your eval suite on the merged tree until the metrics dominate;
+- explicitly retire an obsolete metric with `morph merge … --retire metric_name` (single-shot form) so the merge contract drops it;
+- set `merge_policy = "none"` in `.morph/config.json` to opt out of dominance gating during prototyping (see [the policy block in v0-spec.md §11.1](v0-spec.md#111-repository-policy));
+- decide this is the wrong merge and run `morph merge --abort`.
 
 ---
 
@@ -246,13 +273,15 @@ In other words, **the same merge engine handles local merges, cross-branch merge
 | File | Role |
 |---|---|
 | `morph-core/src/merge.rs` | `merge_base`, `prepare_merge`, `execute_merge`, `check_dominance`, `union_evidence_refs` |
-| `morph-core/src/merge_flow.rs` | `start_merge`, `continue_merge`, `abort_merge`, `MergeProgress` |
+| `morph-core/src/merge_flow.rs` | `start_merge`, `continue_merge`, `abort_merge`, `resolve_node`, `MergeProgress` |
+| `morph-core/src/merge_state.rs` | `read_*` / `write_*` / `clear_merge_state` for the `.morph/MERGE_*` files |
 | `morph-core/src/treemerge.rs` | 3-way Tree merge, `WorkdirOp`, `apply_workdir_ops`, textual fallback |
+| `morph-core/src/text3way.rs` | Wrapper around `git merge-file` (the diff3 textual fallback) |
 | `morph-core/src/pipemerge.rs` | Pipeline DAG merge |
-| `morph-core/src/objmerge.rs` | EvalSuite case/metric merge |
+| `morph-core/src/objmerge.rs` | EvalSuite case/metric merge, `TrivialOutcome` (`AlreadyMerged` / `AlreadyAhead` / `FastForward` / `Diverged`) |
 | `morph-core/src/index.rs` | `StagingIndex.unmerged_entries`, `UnmergedEntry` |
-| `morph-core/src/workdir.rs` | `working_tree_clean`, restore helpers |
-| `morph-cli/src/main.rs` | `Command::Merge` dispatch (start / `--continue` / `--abort`) |
+| `morph-core/src/workdir.rs` | `working_tree_clean`, `checkout_tree` (used by `--abort` and fast-forward) |
+| `morph-cli/src/main.rs` | `run_merge` dispatch (start / single-shot / `--continue` / `--abort` / `resolve-node`) |
 | `morph-cli/tests/specs/merge*.yaml` | End-to-end spec tests for every branch above |
 
 The closest thing to a "single big test" is `merge_flow::tests::continue_merge_writes_evidence_union_from_parents`, which sets up two parents with disjoint evidence and proves the merged commit unions them.

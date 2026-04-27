@@ -342,7 +342,7 @@ async def refresh():
         assert!(names.contains(&"TaskRepo"));
         assert!(names.contains(&"refresh"));
         assert!(names.contains(&"add"));
-        assert!(names.iter().any(|n| *n == "__init__"));
+        assert!(names.contains(&"__init__"));
     }
 
     #[test]

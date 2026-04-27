@@ -22,8 +22,14 @@ use serde::{Deserialize, Serialize};
 pub const MORPH_PROTOCOL_VERSION: u32 = 1;
 
 /// Client → server request.
+///
+/// `Put` carries a full `MorphObject` so it's much larger than the
+/// other variants; boxing it would force every code path to allocate
+/// on the heap even though `Request` values exist only briefly on the
+/// stack between serialization steps.
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "op")]
+#[allow(clippy::large_enum_variant)]
 pub enum Request {
     #[serde(rename = "hello")]
     Hello,
@@ -53,8 +59,13 @@ pub struct RefEntry {
 /// Server → client response. Untagged so each variant drops its
 /// fields straight at the top level (matches what the v0 helper
 /// already emits, makes responses pleasant to read in logs).
+///
+/// `OkResponse` carries optional payload fields (objects, ref lists)
+/// and is naturally larger than `ErrResponse`; boxing the success
+/// path would penalize the common case for marginal stack savings.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
+#[allow(clippy::large_enum_variant)]
 pub enum Response {
     Ok(OkResponse),
     Err(ErrResponse),

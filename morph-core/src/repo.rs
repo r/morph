@@ -88,7 +88,7 @@ fn init_morph_dir_at(morph_dir: &Path, bare: bool) -> Result<FsStore, MorphError
         std::fs::write(morph_dir.join(".gitignore"), "/objects/\n")?;
     }
 
-    Ok(FsStore::new(morph_dir.to_path_buf()))
+    Ok(FsStore::new(morph_dir))
 }
 
 /// Initialize a Morph repository at `root`. Creates only `.morph/` — the

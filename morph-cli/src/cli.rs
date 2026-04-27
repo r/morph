@@ -146,21 +146,70 @@ pub enum Command {
         #[arg(long)]
         retire: Option<String>,
     },
-    /// Merge a branch (behavioral dominance required)
+    /// Merge a branch (behavioral dominance required by default).
+    ///
+    /// Flow:
+    ///   morph merge <branch>             # start a merge
+    ///   morph merge --continue           # finalize after resolving conflicts
+    ///   morph merge --abort              # discard an in-progress merge
+    ///   morph merge resolve-node <id> --pick ours|theirs|base
+    ///                                    # pick a side for one pipeline-node conflict
+    ///
+    /// The single-shot form (start + finalize in one go) keeps the
+    /// pre-PR4 ergonomics: when `<branch>` is supplied and the user
+    /// also passes `--pipeline` and `--metrics`, a clean three-way
+    /// merge is finalized immediately. Conflicting merges always
+    /// drop into the state machine and require an explicit
+    /// `--continue` once the user has resolved every conflict.
     Merge {
-        branch: String,
+        /// Branch to merge into HEAD. Omit when using `--continue`
+        /// or `--abort`.
+        branch: Option<String>,
+
+        /// Finalize an in-progress merge. Reads `MERGE_HEAD`,
+        /// `MERGE_MSG`, and the staging index, then creates the
+        /// merge commit. Errors out if any unmerged paths or
+        /// pipeline-node conflicts remain.
+        #[arg(long = "continue", conflicts_with_all = ["abort", "branch"])]
+        cont: bool,
+
+        /// Discard an in-progress merge. Restores the working tree
+        /// to `ORIG_HEAD` and clears `MERGE_*` state. Errors when
+        /// no merge is in progress.
+        #[arg(long, conflicts_with_all = ["cont", "branch", "message", "pipeline", "metrics", "eval_suite", "retire"])]
+        abort: bool,
+
+        /// Optional commit message. Required for the single-shot
+        /// form; used as override for `--continue` (default reads
+        /// `.morph/MERGE_MSG`).
         #[arg(short, long)]
-        message: String,
+        message: Option<String>,
+        /// Pipeline hash. Required for the single-shot form.
+        /// Optional on `--continue`; when absent, the pipeline
+        /// stored in `.morph/MERGE_PIPELINE.json` (or, if missing,
+        /// HEAD's pipeline) is used.
         #[arg(long)]
-        pipeline: String,
+        pipeline: Option<String>,
+        /// Eval suite hash override. Optional in every form.
         #[arg(long)]
         eval_suite: Option<String>,
+        /// Observed metrics as JSON object. Required for the
+        /// single-shot form. On `--continue` the merged metrics are
+        /// synthesized from both parents.
         #[arg(long)]
-        metrics: String,
+        metrics: Option<String>,
+        /// Override the commit author for this merge.
         #[arg(long)]
         author: Option<String>,
+        /// Comma-separated list of metric names to retire from the
+        /// dominance check. Useful when the pipeline's contract
+        /// genuinely changed.
         #[arg(long)]
         retire: Option<String>,
+
+        /// Subcommand-style operations on an in-progress merge.
+        #[command(subcommand)]
+        sub: Option<MergeCmd>,
     },
     /// Rollup (squash) commits: one new commit from base to tip
     Rollup {
@@ -356,6 +405,22 @@ pub enum Command {
 #[derive(clap::Subcommand)]
 pub enum TraceCmd {
     Show { hash: String },
+}
+
+#[derive(clap::Subcommand)]
+pub enum MergeCmd {
+    /// Pick a side for a single pipeline-node conflict surfaced by
+    /// `morph merge <branch>`. `--pick` accepts `ours`, `theirs`,
+    /// or `base`. The chosen node is written into
+    /// `.morph/MERGE_PIPELINE.json`; once every conflict is
+    /// resolved, finalize with `morph merge --continue`.
+    ResolveNode {
+        /// Pipeline-node id (matches `pipeline.graph.nodes[*].id`).
+        node: String,
+        /// Side to pick: `ours`, `theirs`, or `base`.
+        #[arg(long)]
+        pick: String,
+    },
 }
 
 #[derive(clap::Subcommand)]

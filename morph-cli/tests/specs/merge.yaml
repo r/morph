@@ -123,6 +123,83 @@
         - "acc"
         - "current"
 
+- name: merge_start_then_continue_clean_three_way
+  files:
+    a.txt: "aaa"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "base"]
+    - morph: [branch, feature]
+    - morph: [checkout, feature]
+    - write_file:
+        path: b.txt
+        content: "bbb"
+    - morph: [add, b.txt]
+    - morph: [commit, -m, "feature edit"]
+    - morph: [checkout, main]
+    - write_file:
+        path: c.txt
+        content: "ccc"
+    - morph: [add, c.txt]
+    - morph: [commit, -m, "main edit"]
+    - morph: [merge, feature]
+    - morph: [log]
+      stdout_contains: "Merge branch 'feature'"
+
+- name: merge_continue_without_in_progress_errors
+  files:
+    a.txt: "aaa"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "initial"]
+    - morph: [merge, --continue]
+      expect_exit: 1
+      stderr_contains: "no merge in progress"
+
+- name: merge_abort_without_in_progress_errors
+  files:
+    a.txt: "aaa"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "initial"]
+    - morph: [merge, --abort]
+      expect_exit: 1
+      stderr_contains: "no merge in progress"
+
+- name: merge_with_textual_conflict_drops_into_continue_flow
+  files:
+    file.txt: "line1\nbase\nline3\n"
+  steps:
+    - morph: [add, file.txt]
+    - morph: [commit, -m, "base"]
+    - morph: [branch, feature]
+    - write_file:
+        path: file.txt
+        content: "line1\nMAIN\nline3\n"
+    - morph: [add, file.txt]
+    - morph: [commit, -m, "main edit"]
+    - morph: [checkout, feature]
+    - write_file:
+        path: file.txt
+        content: "line1\nFEATURE\nline3\n"
+    - morph: [add, file.txt]
+    - morph: [commit, -m, "feature edit"]
+    - morph: [checkout, main]
+    - morph: [merge, feature]
+      expect_exit: 1
+      stdout_contains:
+        - "CONFLICT"
+        - "morph merge --continue"
+    - morph: [status]
+      stdout_contains:
+        - "unmerged paths"
+        - "morph merge --continue"
+        - "morph merge --abort"
+    - morph: [merge, --abort]
+      stdout_contains: "Merge aborted"
+    - morph: [status]
+      stdout_contains: "nothing to commit"
+
 - name: merge_with_retirement_succeeds
   files:
     prog.json: '{"graph":{"nodes":[{"id":"n1","kind":"identity","ref":null,"params":{}}],"edges":[]},"prompts":[],"eval_suite":null,"provenance":null}'

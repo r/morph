@@ -455,7 +455,6 @@ pub fn enforce_push_gate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::objects::{Blob, EvalContract, EvalSuite};
 
     fn setup_repo() -> (tempfile::TempDir, Box<dyn Store>) {
         let dir = tempfile::tempdir().unwrap();

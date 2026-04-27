@@ -176,13 +176,14 @@ The v0 implementation provides a single `FsStore` backend with several on-disk v
 | Store version | Backend | Hash function | Object layout | Notes |
 |---|---|---|---|---|
 | `"0.0"` | **FsStore** | SHA-256 of canonical JSON | flat `objects/<hash>.json` | Created by `morph init`. Legacy. |
-| `"0.2"` | **FsStore (Git-format)** | SHA-256 of `"blob " + len + "\0" + canonical_json` | flat `objects/<hash>.json` | Created by `morph upgrade` from 0.0. |
+| `"0.2"` | **FsStore (Git-format)** | SHA-256 of `"blob " + len + "\0" + canonical_json` | flat `objects/<hash>.json` | First Git-format hashing version. Reached by `morph upgrade` from 0.0. |
 | `"0.3"` | **FsStore (Git-format)** + tree commits | Same as 0.2 | flat `objects/<hash>.json` | Adds file tree storage in commits. |
-| `"0.4"` | **FsStore (Git-format, fan-out)** | Same as 0.2 | `objects/<xx>/<hash[2..]>.json` (Git-style fan-out) | Current. Scales to large object stores. |
+| `"0.4"` | **FsStore (Git-format, fan-out)** | Same as 0.2 | `objects/<xx>/<hash[2..]>.json` (Git-style fan-out) | Scales to large object stores. |
+| `"0.5"` | **FsStore (Git-format, fan-out)** | Same as 0.2 | Same as 0.4 | Config-only bump that locks in the merge state machine (`.morph/MERGE_*` files, `index.unmerged_entries`). Old binaries opening a 0.5 repo see a clear `RepoTooNew` error instead of silently mishandling an in-progress merge. Current. |
 
-All variants share the same directory layout outside of `objects/`: `refs/` for references and type-index directories (`runs/`, `traces/`, `prompts/`, `evals/`) for fast type-filtered listing. The `list(type)` operation uses type-index directories when available, falling back to full object scan for types without indexes.
+All variants share the same directory layout outside of `objects/`: `refs/` for references and type-index directories (`runs/`, `traces/`, `prompts/`, `evals/`) for fast type-filtered listing. The `list(type)` operation uses type-index directories when available, falling back to a full object scan for types without indexes.
 
-Migration between store versions is handled by `morph upgrade` (CLI only). Migration from 0.0 to 0.2 rewrites all objects with new hashes and updates all internal references. Migration from 0.3 to 0.4 rewrites the objects directory into the fan-out layout; hashes are preserved.
+Migration between store versions is handled by `morph upgrade` (CLI only). 0.0 → 0.2 rewrites every object under the new hash and updates all internal references. 0.3 → 0.4 moves objects into the fan-out layout; hashes are preserved. 0.4 → 0.5 is a config-only bump (no object rewrites).
 
 Other backends are explicitly anticipated (SQLite, S3, database-backed). The filesystem layout is a projection of the storage backend, not the backend itself. CLI and IDE integrations talk to the backend interface.
 
@@ -698,22 +699,48 @@ This command does not create a commit. It is the inspection/planning step.
 
 ### Merge execution
 
+The `morph merge` command runs in two modes. The **stateful** form is the default and matches Git's three-step lifecycle; the **single-shot** form is a backwards-compatible shortcut for scripts that already have the merged metrics in hand.
+
+#### Stateful flow
+
+```
+morph merge <branch>                                # start
+morph merge resolve-node <node-id> --pick ours|theirs|base   # for pipeline conflicts
+morph merge --continue [-m <message>] [--author <name>]      # finalize
+morph merge --abort                                  # back out
+```
+
+`morph merge <branch>`:
+
+1. Resolves both parents and the LCA (`merge_base`).
+2. If the result is `AlreadyMerged` / `AlreadyAhead` / `FastForward`, the CLI updates the local ref (and working tree) and exits.
+3. Otherwise runs the structural 3-way merge (`treemerge`, `pipemerge`, `objmerge`), applies workdir writes, and writes the merge state files (`MERGE_HEAD`, `ORIG_HEAD`, `MERGE_MSG`, plus `MERGE_PIPELINE` / `MERGE_SUITE` when relevant). If the merge has no conflicts the CLI immediately auto-finalizes by calling `continue_merge`.
+4. When there *are* conflicts the CLI exits non-zero with a list of the unmerged paths and pipeline-node conflicts, so the user can resolve them and run `--continue`.
+
+`morph merge resolve-node <id> --pick ours|theirs|base` writes the chosen side of a single pipeline-node conflict into `MERGE_PIPELINE.json` and removes it from the in-progress conflict list. `--continue` is unblocked once every conflict is resolved.
+
+`morph merge --continue` reads the staged tree and merge state, builds the merge commit with `parents = [HEAD, MERGE_HEAD]`, runs the dominance gate (when `merge_policy != "none"`), unions `evidence_refs` from both parents, advances the active branch ref, and clears all merge state. It refuses (without making partial commits) if no merge is in progress, the staging index still has unmerged entries, or the working tree is dirty.
+
+`morph merge --abort` rewinds the working tree to `ORIG_HEAD` and clears the merge state. It refuses when no merge is in progress so users get a clear signal rather than a silent no-op.
+
+#### Single-shot flow
+
 ```
 morph merge <branch> -m <message> --pipeline <hash> --metrics '<json>'
 morph merge <branch> -m <message> --pipeline <hash> --eval-suite <hash> --metrics '<json>'
 morph merge <branch> -m <message> --pipeline <hash> --metrics '<json>' --retire 'old_metric1,old_metric2'
 ```
 
-`--pipeline` and `--metrics` are required. `--eval-suite` is optional: when omitted, the union of both parents' evaluation suites is computed automatically. When provided, the explicit suite is used.
+When the user supplies `--pipeline`, `--metrics`, and `-m` together, `morph merge` skips the stateful flow and calls `prepare_merge` + `execute_merge` directly. `--eval-suite` is optional: when omitted, the union of both parents' evaluation suites is computed automatically. `--retire` (comma-separated) drops the named metrics from the union suite before the dominance check (paper §5.3).
 
-Merge procedure:
+In both flows the merge procedure is:
 
-1. Resolve both parent commits (current HEAD and target branch)
-2. Combine evaluation suites: if `--eval-suite` is provided, use it; otherwise compute T = T1 ⊎ T2 (union by metric ID)
-3. Apply metric retirement (if `--retire` is specified): remove retired metrics from the union suite. Retirement is explicit in the merge plan; per paper §5.3 the merged pipeline should include a `review` node for attribution (not enforced by the CLI in v0—see §6.8 notes below)
-4. Record the bar: embed each parent's scores into V_T and record the best from either parent on every surviving metric
-5. Validate **dominance**: merged pipeline's observed metrics must meet or exceed both parents' `observed_metrics` on every surviving metric (direction-aware). Only metrics in the (post-retirement) union suite are checked.
-6. Create merge commit if satisfied
+1. Resolve both parent commits (current HEAD and target branch).
+2. Combine evaluation suites: if `--eval-suite` is provided, use it; otherwise compute T = T1 ⊎ T2 (union by metric id).
+3. Apply metric retirement (if `--retire` is specified): remove retired metrics from the union suite.
+4. Record the bar: embed each parent's scores into V_T and record the best from either parent on every surviving metric.
+5. Validate **dominance**: the merged pipeline's observed metrics must meet or exceed both parents' `observed_metrics` on every surviving metric (direction-aware). Only metrics in the post-retirement union suite are checked. The check is skipped when `RepoPolicy.merge_policy = "none"` (see §11.1).
+6. Create merge commit if satisfied. The commit's `evidence_refs` is the deduped sorted union of both parents' `evidence_refs` (paper §5.1).
 
 If dominance is not achieved, merge aborts with a detailed explanation identifying which metric failed, the merged and parent values, and which parent was violated. Morph does not run evaluations; external tools do and report results.
 
@@ -975,7 +1002,7 @@ Fields:
 - **thresholds**: Minimum values per metric (direction-aware).
 - **directions**: Override direction per metric ("maximize" default, or "minimize").
 - **default_eval_suite**: Hash of the default eval suite for certification.
-- **merge_policy**: "dominance" (default) requires behavioral dominance at merge.
+- **merge_policy**: `"dominance"` (default) requires behavioral dominance at merge. Setting it to `"none"` opts out of the dominance gate — useful during rapid prototyping when behavioral evidence has not caught up to the structural change. Both `morph-core::merge::execute_merge` and `morph-core::merge_flow::continue_merge` honor this setting.
 - **ci_defaults**: Default CI runner metadata.
 
 ## 11.2 Certification
@@ -1149,7 +1176,7 @@ Merge is structural and behavioral, not textual. Given two divergent commits and
 - `treemerge::merge_trees(base, ours, theirs)` — file tree reconciliation. Disjoint changes compose. Same-path edits fall back to `git merge-file` for textual diff3, write conflict markers into the workdir, and record an `UnmergedEntry { base_blob, ours_blob, theirs_blob }` in the staging index.
 - `check_dominance(parent_a, parent_b, candidate, retired)` — the merged commit must be at least as good as both parents on every non-retired metric.
 
-The orchestrator lives in `morph-core/src/merge_flow.rs` and exposes `start_merge`, `continue_merge`, `abort_merge`, plus a `MergeProgress` view used by `morph status`. In-progress state is recorded under `.morph/MERGE_HEAD`, `MERGE_BASE`, and `MERGE_MSG`.
+The orchestrator lives in `morph-core/src/merge_flow.rs` and exposes `start_merge`, `continue_merge`, `abort_merge`, `resolve_node`, plus a `MergeProgress` view used by `morph status`. In-progress state is recorded under `.morph/MERGE_HEAD` (the "their" tip), `.morph/ORIG_HEAD` (used by `--abort` to rewind), `.morph/MERGE_MSG` (proposed message), and — when the merge produced one — `.morph/MERGE_PIPELINE.json` and `.morph/MERGE_SUITE`. See [`MERGE.md`](MERGE.md) for the full state-machine walkthrough.
 
 ## 17.2 Identity Fields on Commits (PR 6 stage A–B)
 
@@ -1233,7 +1260,7 @@ Every SSH session begins with a `Hello` exchange. The server's `Hello` response 
 
 ```json
 {
-  "version": "0.16.0",
+  "version": "0.17.0",
   "protocol_version": 1,
   "repo_version": "0.5"
 }

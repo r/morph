@@ -207,7 +207,7 @@ mod tests {
     fn aggregate_p95() {
         let s: Vec<f64> = (0..100).map(|i| i as f64).collect();
         let p95 = aggregate(&s, "p95").unwrap();
-        assert!(p95 >= 94.0 && p95 <= 96.0);
+        assert!((94.0..=96.0).contains(&p95));
     }
 
     #[test]

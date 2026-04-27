@@ -156,6 +156,9 @@ pub fn create_commit(
 /// `pipeline_hash` and `eval_suite_hash` are optional: defaults to identity pipeline / empty eval suite.
 /// `provenance` is optional: when provided, populates evidence_refs, env_constraints, and contributors.
 /// Clears the staging index after commit.
+#[allow(clippy::too_many_arguments)] // commits naturally carry many fields;
+                                     // a builder felt heavier than an
+                                     // ordered keyword list at the call site
 pub fn create_tree_commit(
     store: &dyn Store,
     repo_root: &Path,
@@ -173,6 +176,7 @@ pub fn create_tree_commit(
 }
 
 /// Create a tree commit with optional run-backed provenance.
+#[allow(clippy::too_many_arguments)] // see `create_tree_commit`
 pub fn create_tree_commit_with_provenance(
     store: &dyn Store,
     repo_root: &Path,
@@ -349,6 +353,7 @@ pub fn checkout_tree(
 /// `other_branch`: name of branch to merge in (e.g. "feature"). Current HEAD is the other parent.
 /// `repo_root`: if provided, builds tree from staging index and clears index after commit.
 /// `eval_suite_hash`: if None, auto-computes union of both parents' suites.
+#[allow(clippy::too_many_arguments)] // see `create_tree_commit`
 pub fn create_merge_commit(
     store: &dyn Store,
     other_branch: &str,
@@ -363,6 +368,7 @@ pub fn create_merge_commit(
 
 /// Full merge commit with optional tree, auto-computed union suite, and metric retirement.
 /// `retired_metrics`: optional list of metric names to remove from the union suite (paper §5.3).
+#[allow(clippy::too_many_arguments)] // see `create_tree_commit`
 pub fn create_merge_commit_full(
     store: &dyn Store,
     other_branch: &str,
@@ -378,6 +384,7 @@ pub fn create_merge_commit_full(
 }
 
 /// Merge commit with full metric retirement support (paper §5.3).
+#[allow(clippy::too_many_arguments)] // see `create_tree_commit`
 pub fn create_merge_commit_with_retirement(
     store: &dyn Store,
     other_branch: &str,

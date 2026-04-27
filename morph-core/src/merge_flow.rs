@@ -42,6 +42,7 @@ impl<'a> StartMergeOpts<'a> {
 }
 
 /// Options to [`continue_merge`].
+#[derive(Default)]
 pub struct ContinueMergeOpts {
     /// Optional explicit commit message. When `None`, the merge state's
     /// `MERGE_MSG` is used.
@@ -49,12 +50,6 @@ pub struct ContinueMergeOpts {
     /// Optional explicit author. When `None`, the in-process default is
     /// used.
     pub author: Option<String>,
-}
-
-impl Default for ContinueMergeOpts {
-    fn default() -> Self {
-        Self { message: None, author: None }
-    }
 }
 
 /// Result of calling [`continue_merge`].
@@ -151,10 +146,15 @@ pub fn start_merge(
     // disk for the user to resolve.
     crate::treemerge::apply_workdir_ops(repo_root, &outcome.working_writes)?;
 
+    /// `(path, base, ours, theirs)` — the blob hashes captured for
+    /// each textual conflict so we can mark the path unmerged in the
+    /// staging index. `None` means the blob is missing on that side
+    /// (added/deleted).
+    type TextualBlob = (String, Option<Hash>, Option<Hash>, Option<Hash>);
+
     let mut textual_conflicts: Vec<String> = vec![];
     let mut structural_tree_conflicts: Vec<String> = vec![];
-    let mut textual_blobs: Vec<(String, Option<Hash>, Option<Hash>, Option<Hash>)> =
-        vec![];
+    let mut textual_blobs: Vec<TextualBlob> = vec![];
     for c in &outcome.conflicts {
         match c {
             crate::objmerge::ObjConflict::Textual {
@@ -270,20 +270,10 @@ pub fn start_merge(
     })
 }
 
-/// Finalize a merge previously kicked off by [`start_merge`]. Reads
-/// `.morph/MERGE_HEAD`, `MERGE_MSG`, `MERGE_PIPELINE` (if present), and
-/// `MERGE_SUITE` (if present). Builds the merged tree from the staging
-/// index, runs dominance against both parents, creates the merge
-/// commit, advances HEAD's branch ref, and clears merge state.
-///
-/// Errors (without making partial commits) when:
-/// - no merge is in progress (no `MERGE_HEAD`),
-/// - the staging index has unmerged entries,
-/// - the merged metrics fail dominance against either parent.
-/// Abort an in-progress merge: clear merge-state files, drop unmerged
-/// staging-index entries, and restore the working tree to ORIG_HEAD.
-/// Errors when no merge is in progress so users get a clear signal
-/// rather than a no-op.
+/// Abort an in-progress merge: clear merge-state files, drop
+/// unmerged staging-index entries, and restore the working tree to
+/// `ORIG_HEAD`. Errors when no merge is in progress so users get a
+/// clear signal rather than a silent no-op.
 pub fn abort_merge(store: &dyn Store, repo_root: &Path) -> Result<(), MorphError> {
     let morph_dir = repo_root.join(".morph");
 
@@ -485,6 +475,18 @@ pub fn resolve_node(
     Ok(())
 }
 
+/// Finalize a merge previously kicked off by [`start_merge`]. Reads
+/// `.morph/MERGE_HEAD`, `MERGE_MSG`, `MERGE_PIPELINE` (if present),
+/// and `MERGE_SUITE` (if present); builds the merged tree from the
+/// staging index; runs dominance against both parents (unless the
+/// repo's `merge_policy = "none"`); creates the merge commit;
+/// advances the active branch ref; and clears merge state.
+///
+/// Errors (without making partial commits) when:
+///
+/// - no merge is in progress (no `MERGE_HEAD`),
+/// - the staging index has unmerged entries,
+/// - the merged metrics fail dominance against either parent.
 pub fn continue_merge(
     store: &dyn Store,
     repo_root: &Path,
@@ -571,16 +573,22 @@ pub fn continue_merge(
         merged_metrics.insert(k.clone(), v);
     }
 
-    // Final dominance gate.
-    if !crate::metrics::check_dominance_with_suite(&merged_metrics, head_obs, &union_suite) {
-        return Err(MorphError::Serialization(
-            "merge rejected: merged metrics do not dominate current branch".into(),
-        ));
-    }
-    if !crate::metrics::check_dominance_with_suite(&merged_metrics, other_obs, &union_suite) {
-        return Err(MorphError::Serialization(
-            "merge rejected: merged metrics do not dominate merging-in branch".into(),
-        ));
+    // Final dominance gate. `RepoPolicy.merge_policy = "none"` opts
+    // out — useful during rapid prototyping when behavioral evidence
+    // hasn't caught up to the structural change. Any other value
+    // (including the default) requires both parents to be dominated.
+    let policy = crate::policy::read_policy(&morph_dir).unwrap_or_default();
+    if policy.merge_policy != "none" {
+        if !crate::metrics::check_dominance_with_suite(&merged_metrics, head_obs, &union_suite) {
+            return Err(MorphError::Serialization(
+                "merge rejected: merged metrics do not dominate current branch".into(),
+            ));
+        }
+        if !crate::metrics::check_dominance_with_suite(&merged_metrics, other_obs, &union_suite) {
+            return Err(MorphError::Serialization(
+                "merge rejected: merged metrics do not dominate merging-in branch".into(),
+            ));
+        }
     }
 
     let message = match opts.message {
@@ -1964,6 +1972,39 @@ mod tests {
         assert!(crate::metrics::check_dominance(
             &commit.eval_contract.observed_metrics,
             &other_obs
+        ));
+    }
+
+    #[test]
+    fn continue_merge_skips_dominance_when_policy_is_none() {
+        // `RepoPolicy.merge_policy = "none"` opts a repo out of the
+        // dominance gate during `morph merge --continue`. Pin this
+        // so the documented escape hatch in MERGE.md stays wired.
+        let (dir, store) = setup_repo();
+        let (_b, _m, _f) = divergent_branches_clean(store.as_ref(), dir.path());
+
+        let policy = crate::policy::RepoPolicy {
+            merge_policy: "none".into(),
+            ..Default::default()
+        };
+        crate::policy::write_policy(&dir.path().join(".morph"), &policy).unwrap();
+
+        let _ = start_merge(
+            store.as_ref(),
+            dir.path(),
+            StartMergeOpts::new("feature"),
+        )
+        .unwrap();
+
+        let cont = continue_merge(
+            store.as_ref(),
+            dir.path(),
+            ContinueMergeOpts::default(),
+        )
+        .expect("continue_merge should land with merge_policy=none");
+        assert!(matches!(
+            store.get(&cont.merge_commit).unwrap(),
+            crate::objects::MorphObject::Commit(_)
         ));
     }
 

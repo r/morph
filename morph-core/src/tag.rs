@@ -104,7 +104,7 @@ mod tests {
     #[test]
     fn list_tags_empty_repo() {
         let dir = tempfile::tempdir().unwrap();
-        let store = FsStore::new(dir.path().to_path_buf());
+        let store = FsStore::new(dir.path());
         let tags = list_tags(&store).unwrap();
         assert!(tags.is_empty());
     }

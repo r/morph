@@ -135,7 +135,7 @@ morph push origin main
 Every SSH session starts with a `Hello` exchange. Server replies with:
 
 ```
-{"version": "0.16.0", "protocol_version": 1, "repo_version": "0.5"}
+{"version": "0.17.0", "protocol_version": 1, "repo_version": "0.5"}
 ```
 
 The client compares `protocol_version` against its own. On mismatch you get:

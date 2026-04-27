@@ -4,21 +4,34 @@
 
 | Crate | Tests | Location |
 |-------|-------|----------|
-| **morph-core** | 332 unit tests across 27 modules (26 with test blocks) | `#[cfg(test)]` blocks in each source file |
-| **morph-cli** | 140 integration tests + 18 unit tests | YAML specs in `morph-cli/tests/specs/*.yaml`, compiled by `build.rs`; unit tests in `setup.rs` |
-| **morph-e2e** | 32 passing + 3 skipped Cucumber scenarios (35 total) | `morph-e2e/features/*.feature`, step defs in `morph-e2e/tests/cucumber.rs` |
-| **morph-mcp** | 19 integration tests | `#[cfg(test)]` in `morph-mcp/src/main.rs` |
-| **morph-serve** | 36 unit/API tests (views, service, handlers, org policy, multi-repo) | `morph-serve/src/tests.rs` + `org_policy::tests` |
+| **morph-core** | 539 unit tests across the lib's modules | `#[cfg(test)]` blocks in each source file |
+| **morph-cli** | 182 YAML-driven integration tests + 21 unit tests + 20 dedicated integration tests (`remote_helper_integration`, `ssh_fetch_integration`, `status_merge_integration`) | YAML specs in `morph-cli/tests/specs/*.yaml`, compiled by `build.rs`; unit tests in `setup.rs`; dedicated integration files under `morph-cli/tests/`. |
+| **morph-e2e** | Cucumber scenarios | `morph-e2e/features/*.feature`, step defs in `morph-e2e/tests/cucumber.rs` |
+| **morph-mcp** | 20 integration tests | `#[cfg(test)]` in `morph-mcp/src/main.rs` |
+| **morph-serve** | 37 unit/API tests (views, service, handlers, org policy, multi-repo) | `morph-serve/src/tests.rs` + `org_policy::tests` |
 
-Totals: **545 Rust tests** (332 + 140 + 18 + 19 + 36) plus the Cucumber suite, all green.
+Totals: **819 Rust tests** (539 + 21 + 182 + 20 + 2 + 8 + 10 + 20 + 37) plus the Cucumber suite, all green.
 
-### morph-core unit test modules
+### morph-core unit test highlights
 
-`hash` (including paper-aligned fields: review nodes, per-node env, set-valued attribution), `store` (FsStore with legacy + Git hash modes, ref_delete), `repo`, `working`, `commit` (including merge with union suite, **provenance from run**, evidence_refs, env_constraints, contributors), `metrics` (direction-aware thresholds, metric retirement), `merge` (merge planning, dominance explanation, direction-aware reference bar, metric retirement in dominance checks, execute merge), `annotate`, `identity`, `record` (**record_run** with trace validation/mismatch/artifacts/error paths, **record_eval_metrics** with validation/error paths, record_session defaults, metadata merge into payload, per-message timestamps, backward compat without metadata, HEAD commit linking), `index`, `tree`, `migrate` (**0.0→0.2** hash rewriting, **0.2→0.3** version bump, idempotency, empty/missing objects dir), `extract` (pipeline extraction from runs: graph shape, provenance, attribution, error paths), **`tap`** (event grouping: simple/multi-step/aliases/tool calls/file events/empty traces/tool-result pairing, task extraction, diagnostics: shallow trace/empty response/prompt lengths/model+agent, trace stats: event details/structured detection, run filtering: by model/by min steps, repo summary, eval export: prompt-only/agentic multi-step/context with file content, kind normalization, placeholder response detection, token usage extraction from run parameters, error paths), **`sync`** (remote config round-trip, reachable object collection, ancestry checks, push/fetch/pull scenarios, evidence-backed sync), **`policy`** (policy round-trip, certification pass/fail, gate pass/fail, annotation recording), **`morphignore`** (load/match patterns, glob, directory, negation, nested paths, multiple patterns, paths outside repo), **`diff`** (empty trees, added/deleted/modified/mixed changes, nested trees, store-backed diff, None-to-tree and tree-to-None), **`tag`** (create/list/delete, duplicate tag error, nonexistent delete error, empty repo), **`stash`** (save/pop roundtrip, empty index error, empty pop error, LIFO ordering, list, no-message save), **`revert`** (parent tree restoration, root commit → empty tree, non-commit error, branch ref update), **`gc`** (garbage collection of unreferenced objects).
+The lib's 539 unit tests cover the core object/storage/merge layers. Notable areas (non-exhaustive):
+
+- **Object model**: hash determinism, paper-aligned commit fields (review nodes, per-node `env`, set-valued attribution, `morph_instance`, `morph_version`), legacy compatibility (`from-run` provenance, `pipeline`/`program` aliases).
+- **Storage**: `FsStore` in legacy, Git-format flat, and Git-format fan-out modes; ref read/write/delete; type-index directories; collision detection.
+- **Migration**: `0.0 → 0.2` hash rewriting, `0.2 → 0.3` version bump, `0.3 → 0.4` fan-out move, `0.4 → 0.5` config-only bump; idempotency, empty/missing objects dir.
+- **Working tree**: `working_tree_clean`, `checkout_tree`, `restore_tree`, `apply_workdir_ops`.
+- **Index**: staging entries, `unmerged_entries` for merge in progress.
+- **Merge**: LCA, `prepare_merge`, `execute_merge`, dominance with direction and retirement, evidence union, `merge_policy: "none"` opt-out, `start_merge`/`continue_merge`/`abort_merge`/`resolve_node`, structural conflicts on tree/pipeline/eval suite, textual fallback via `git merge-file`.
+- **Metrics**: aggregation (`mean`, `min`, `p95`, `lower_ci_bound`), direction-aware thresholds, dominance with metric retirement.
+- **Sync**: remote config round-trip, reachable closure, ancestry checks, push/fetch/pull scenarios, evidence-backed sync, `verify_closure`, schema handshake, branch upstreams, `clone_repo`.
+- **SSH transport**: `SshUrl` parsing (URL + scp shorthand), `validate_hello`, error mapping, protocol-version mismatch.
+- **Policy**: round-trip, certification pass/fail, gate pass/fail, `push_gated_branches` glob matching (`*` / `?` / literal), `enforce_push_gate`.
+- **Tap & traces**: event grouping, task extraction, diagnostics, trace stats, eval export modes, kind normalization.
+- **Misc**: `morphignore` matching, `diff` between commits, `tag` / `stash` / `revert` / `gc` lifecycles, pipeline extraction from runs.
 
 ### morph-cli integration tests
 
-`init`, `status`, `add`, `prompt create/materialize`, **`prompt show`** (latest, by run hash, no-runs error), `pipeline create/show`, `commit + log`, `run record + eval record`, **`run list`** (populated + empty), **`run show`** (summary, JSON, with-trace, invalid hash), **`trace show`** (event display), **`tap`** (summary empty/populated, inspect single/all, diagnose single/all/new-fields, export prompt-only/with-context/agentic/invalid-mode/to-file/filter-by-model/filter-by-agent, preview run, multi-step messages), `annotate + annotations`, `branch`, `checkout`, `merge`, `merge_plan`, `rollup`, `upgrade`, **`diff`** (added files, modified files, no changes, HEAD shorthand), **`tag`** (create/list, duplicate error, delete, delete nonexistent, list empty), **`stash`** (save/pop, list, empty save error, empty pop error), **`revert`** (undo commit, invalid hash error), **`error_paths`**, **`morphignore`**, `errors`, **`provenance`**, **`pipeline_extract`**, **`remote`**, **`push_pull`**, **`policy`**, **`certify_gate`**.
+YAML specs in `morph-cli/tests/specs/` cover every user-facing CLI command. Categories: repository lifecycle (`init`, `status`, `add`), prompts/pipelines (`prompt create/materialize/show`, `pipeline create/show/extract`), commits (`commit`, `log`, `--from-run` provenance), evidence (`run record`, `run list`, `run show`, `trace show`, `tap`, `traces`), branching (`branch`, `checkout`, `tag`, `stash`, `revert`, `diff`, `rollup`), merging (`merge_plan`, `merge` single-shot, `merge --continue`, `merge --abort`, `merge resolve-node`, textual conflict drop-into-continue flow), remotes (`remote`, `push_pull`, `clone`, `sync`, `branch --set-upstream`), policy (`policy`, `certify_gate`, push-gated branches), and misc (`upgrade`, `morphignore`, error paths). Three dedicated Rust integration files exercise the SSH server (`remote_helper_integration`, `ssh_fetch_integration`) and the merge state machine surfaced in `status` (`status_merge_integration`).
 
 ### morph-mcp integration tests
 

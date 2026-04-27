@@ -99,7 +99,11 @@ impl Drop for Connection {
     }
 }
 
+/// Raw, parsed-but-not-typed response from the helper. `OkResponse`
+/// holds the bulk of the payload (objects, ref lists), so boxing
+/// either variant just to balance sizes would penalize the hot path.
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum RawResponse {
     Ok(OkResponse),
     Err(ErrResponse),
