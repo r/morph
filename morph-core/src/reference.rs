@@ -25,16 +25,65 @@ use std::path::Path;
 use std::process::Command;
 
 /// Embedded post-commit hook script. Installed at `.git/hooks/post-commit`
-/// by `morph init --reference`. Failure of `morph reference-sync` is
-/// swallowed so it never blocks a `git commit` — the user can re-run
-/// sync manually or fix the underlying issue without losing their
-/// commit.
+/// by `morph init --reference` and `morph install-hooks`. Mirrors every
+/// git commit into a Morph commit with `morph_origin = "git-hook"` and
+/// empty inline metrics. Late certification via `morph certify`
+/// attaches evidence afterwards.
+///
+/// `MORPH_INTERNAL=1` short-circuits the hook so morph→git CLI
+/// wrappers (PR 5) can drive `git commit` without a double-write —
+/// the wrapper sets the env var, runs `git commit`, then writes the
+/// morph commit itself with the right metadata.
+///
+/// Failures are swallowed so a hook problem never blocks a `git
+/// commit`. The user fixes things up later with `morph reference-sync`.
 pub const POST_COMMIT_HOOK_SCRIPT: &str = r#"#!/bin/sh
-# Installed by `morph init --reference`. Mirrors every git commit into a
-# Morph commit with morph_origin=git-hook, no inline metrics. Late
-# certification via `morph certify` attaches evidence afterwards.
-exec morph reference-sync >/dev/null 2>&1 || true
+# Installed by morph (`morph init --reference` / `morph install-hooks`).
+# Mirrors every git commit into a Morph commit with morph_origin=git-hook.
+[ "$MORPH_INTERNAL" = "1" ] && exit 0
+exec morph hook post-commit >/dev/null 2>&1 || true
 "#;
+
+/// Embedded post-checkout hook script. Receives three positional args
+/// from git: previous HEAD, new HEAD, and a flag (1 = branch
+/// checkout, 0 = file checkout). The handler ignores file checkouts
+/// and, for branch switches, advances morph HEAD to the morph commit
+/// whose `git_origin_sha` matches the new git HEAD — creating the
+/// morph branch ref on the fly when git's current branch has no
+/// matching morph ref yet.
+pub const POST_CHECKOUT_HOOK_SCRIPT: &str = r#"#!/bin/sh
+# Installed by morph. Tracks git's HEAD movement so the next morph
+# commit lands on the right morph branch.
+[ "$MORPH_INTERNAL" = "1" ] && exit 0
+exec morph hook post-checkout "$@" >/dev/null 2>&1 || true
+"#;
+
+/// Embedded post-rewrite hook script. Receives one positional arg
+/// (`amend` or `rebase`) and a stdin stream of `<old-sha> <new-sha>
+/// [extra]` lines. The handler mirrors the new git history into morph
+/// (so the branch ref advances onto the rewritten tip) and, for every
+/// rewritten morph commit, attaches a `kind: "rewritten"` annotation
+/// pointing at its successor — that's how stale `morph certify`
+/// evidence is surfaced to consumers.
+pub const POST_REWRITE_HOOK_SCRIPT: &str = r#"#!/bin/sh
+# Installed by morph. Re-mirrors history after `git commit --amend`
+# or `git rebase` and flags now-stale certifications via a
+# `rewritten` annotation on each old commit.
+[ "$MORPH_INTERNAL" = "1" ] && exit 0
+exec morph hook post-rewrite "$@" >/dev/null 2>&1 || true
+"#;
+
+/// Filename → contents for every reference-mode hook this binary
+/// installs. Iterating this list keeps `install_reference_hooks`,
+/// `morph init --reference`, and the spec-test assertions in lock-step
+/// without copy/paste.
+pub fn reference_mode_hooks() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("post-commit", POST_COMMIT_HOOK_SCRIPT),
+        ("post-checkout", POST_CHECKOUT_HOOK_SCRIPT),
+        ("post-rewrite", POST_REWRITE_HOOK_SCRIPT),
+    ]
+}
 
 /// True when the path is the working tree of a git repository (a `.git`
 /// directory or file exists). We accept both a directory and a file
@@ -401,12 +450,35 @@ pub fn backfill_from_init(
     Ok(created)
 }
 
-/// Idempotently install the Morph post-commit hook into a git
-/// working tree. Returns `true` when a new file was written, `false`
-/// when an identical hook already existed. Errors when the path is
-/// not a git working tree or an existing post-commit hook contains
-/// foreign content (so we don't clobber user hooks).
-pub fn install_post_commit_hook(repo_root: &Path) -> Result<bool, MorphError> {
+/// Outcome of `install_reference_hooks`. `installed` lists the hook
+/// names that were newly written or rewritten; `already_present`
+/// lists those that matched the canonical script byte-for-byte
+/// already. The split is exposed so the CLI can print a sensible
+/// message ("Installed N hook(s)" vs "already installed").
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HookInstallReport {
+    pub installed: Vec<String>,
+    pub already_present: Vec<String>,
+}
+
+impl HookInstallReport {
+    pub fn changed(&self) -> bool {
+        !self.installed.is_empty()
+    }
+}
+
+/// Idempotently install all reference-mode git hooks into the working
+/// tree. Errors when `repo_root` isn't a git working tree, or when a
+/// hook file exists with foreign content (so we never clobber a
+/// user-authored hook). A hook whose contents already match the
+/// canonical script is left alone and reported as already-present.
+///
+/// Detection of "morph wrote this" relies on substring matches
+/// against either the legacy script (`morph reference-sync`) or the
+/// PR-4-and-later marker (`morph hook`). That tolerance lets
+/// upgrades from older binaries succeed without forcing the user to
+/// delete their hooks first.
+pub fn install_reference_hooks(repo_root: &Path) -> Result<HookInstallReport, MorphError> {
     if !is_git_working_tree(repo_root) {
         return Err(MorphError::Other(
             "not a git working tree (.git missing)".into(),
@@ -414,29 +486,249 @@ pub fn install_post_commit_hook(repo_root: &Path) -> Result<bool, MorphError> {
     }
     let hooks_dir = repo_root.join(".git").join("hooks");
     std::fs::create_dir_all(&hooks_dir)?;
-    let hook_path = hooks_dir.join("post-commit");
-    if hook_path.exists() {
-        let existing = std::fs::read_to_string(&hook_path)?;
-        if existing == POST_COMMIT_HOOK_SCRIPT {
-            return Ok(false);
+
+    let mut report = HookInstallReport::default();
+    for (name, canonical) in reference_mode_hooks() {
+        let hook_path = hooks_dir.join(name);
+        if hook_path.exists() {
+            let existing = std::fs::read_to_string(&hook_path)?;
+            if existing == *canonical {
+                report.already_present.push((*name).into());
+                continue;
+            }
+            // Tolerate older morph-authored scripts (the pre-PR4
+            // post-commit stub called `morph reference-sync`
+            // directly; the PR4-and-later stubs call `morph hook
+            // <event>`). Anything without one of those markers is
+            // assumed to be a user hook we mustn't clobber.
+            let morph_authored =
+                existing.contains("morph hook") || existing.contains("morph reference-sync");
+            if !morph_authored {
+                return Err(MorphError::Other(format!(
+                    "{} hook exists with foreign content; refusing to overwrite \
+                     (move it aside and re-run)",
+                    name
+                )));
+            }
         }
-        if !existing.contains("morph reference-sync") {
-            return Err(MorphError::Other(
-                "post-commit hook exists with foreign content; \
-                 refusing to overwrite (move it aside and re-run)"
-                    .into(),
-            ));
+        std::fs::write(&hook_path, canonical)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&hook_path)?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&hook_path, perms)?;
+        }
+        report.installed.push((*name).into());
+    }
+    Ok(report)
+}
+
+/// Backwards-compatible thin wrapper kept so existing callers (and
+/// any external integrations from the PR-2/PR-3 era) keep working.
+/// Always installs the full hook trio under the hood — there's no
+/// reference-mode path that wants the post-commit hook in
+/// isolation.
+pub fn install_post_commit_hook(repo_root: &Path) -> Result<bool, MorphError> {
+    Ok(install_reference_hooks(repo_root)?.changed())
+}
+
+/// Resolve git's current branch name (the unqualified form, e.g.
+/// `"main"`). Returns `Ok(None)` for detached HEAD.
+pub fn current_git_branch(repo_root: &Path) -> Result<Option<String>, MorphError> {
+    let out = Command::new("git")
+        .arg("symbolic-ref")
+        .arg("--quiet")
+        .arg("--short")
+        .arg("HEAD")
+        .current_dir(repo_root)
+        .output()
+        .map_err(|e| MorphError::Other(format!("git symbolic-ref failed to spawn: {}", e)))?;
+    if !out.status.success() {
+        return Ok(None);
+    }
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if s.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(s))
+    }
+}
+
+/// Find the morph commit whose `git_origin_sha` matches the supplied
+/// git SHA, walking the cache built from every branch's history.
+/// Returns `Ok(None)` when no morph mirror exists yet (the user
+/// `git checkout`-ed an unmirrored commit).
+pub fn lookup_morph_for_git_sha(
+    store: &dyn Store,
+    git_sha: &str,
+) -> Result<Option<Hash>, MorphError> {
+    let cache = build_git_to_morph_cache(store)?;
+    Ok(cache.get(git_sha).copied())
+}
+
+/// Outcome of `handle_post_checkout`. Designed for the CLI to print
+/// without ambiguity in unit-tests; the hook itself swallows output
+/// in production.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CheckoutOutcome {
+    /// HEAD landed on a branch and morph followed.
+    SwitchedBranch { branch: String, morph_hash: Hash },
+    /// HEAD is detached (e.g. `git checkout <sha>`); morph stays put.
+    DetachedHead,
+    /// Branch checkout, but no morph commit exists for the new git
+    /// SHA yet. Caller may want to run `morph reference-sync` to
+    /// create one.
+    NoMatchingMorphCommit { git_sha: String },
+    /// File-level checkout (`git checkout -- file`); HEAD didn't
+    /// move so morph has nothing to do.
+    FileCheckout,
+}
+
+/// Handle a `post-checkout` hook firing. The hook receives three
+/// args from git: `prev_sha`, `new_sha`, and `branch_flag` (1 for
+/// branch checkout, 0 for file checkout). We ignore file checkouts
+/// outright. For branch checkouts:
+///
+///   1. Read git's new symbolic branch (detached HEAD short-circuits
+///      to `DetachedHead` so we don't pin morph to nothing).
+///   2. Move morph HEAD to that branch — even when no morph commit
+///      mirrors `new_sha` yet. That's critical for the "user runs
+///      `git checkout -b feature` before any morph commit exists"
+///      flow: the next post-commit hook needs to land on the
+///      right morph branch, not on whatever branch morph used to
+///      be on.
+///   3. If a morph commit *does* mirror `new_sha`, fast-forward
+///      `heads/<branch>` to it so morph and git agree on tip.
+pub fn handle_post_checkout(
+    store: &dyn Store,
+    repo_root: &Path,
+    prev_sha: &str,
+    new_sha: &str,
+    branch_flag: &str,
+) -> Result<CheckoutOutcome, MorphError> {
+    let _ = prev_sha;
+    if branch_flag != "1" {
+        return Ok(CheckoutOutcome::FileCheckout);
+    }
+    let git_branch = match current_git_branch(repo_root)? {
+        Some(b) => b,
+        None => return Ok(CheckoutOutcome::DetachedHead),
+    };
+    crate::commit::set_head_branch(store, &git_branch)?;
+    let morph_hash = match lookup_morph_for_git_sha(store, new_sha)? {
+        Some(h) => h,
+        None => {
+            return Ok(CheckoutOutcome::NoMatchingMorphCommit {
+                git_sha: new_sha.into(),
+            });
+        }
+    };
+    store.ref_write(&format!("heads/{}", git_branch), &morph_hash)?;
+    Ok(CheckoutOutcome::SwitchedBranch {
+        branch: git_branch,
+        morph_hash,
+    })
+}
+
+/// Outcome of `handle_post_rewrite`. `rewrites` reports the
+/// (old_morph, new_morph) pairs the hook produced; `annotated`
+/// counts how many old morph commits got a `kind: "rewritten"`
+/// annotation (== `rewrites.len()` minus any pair where the old
+/// commit was never mirrored to morph in the first place).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RewriteOutcome {
+    pub command: String,
+    pub rewrites: Vec<(Hash, Hash)>,
+    pub annotated: usize,
+}
+
+/// Handle a `post-rewrite` hook firing. `command` is `"amend"` or
+/// `"rebase"`. `rewrite_lines` is the stdin git fed the hook: each
+/// line is `old_sha new_sha [extra]`.
+///
+/// For each pair we:
+///   1. Mirror `new_sha` into a morph commit (idempotent — if the
+///      post-commit hook already created it, we just look it up).
+///   2. If a morph commit exists for `old_sha`, attach a `kind:
+///      "rewritten"` annotation to it pointing at the new morph
+///      hash. That's the signal certified-evidence consumers use to
+///      surface "stale" state — we do not mutate the original
+///      certification annotation, since morph's object model is
+///      append-only.
+///
+/// Finally we advance the current branch ref to whichever new morph
+/// commit corresponds to git's current HEAD, so subsequent morph
+/// operations see the rewritten history.
+pub fn handle_post_rewrite(
+    store: &dyn Store,
+    repo_root: &Path,
+    command: &str,
+    rewrite_lines: &str,
+    morph_version: Option<&str>,
+) -> Result<RewriteOutcome, MorphError> {
+    let mut outcome = RewriteOutcome {
+        command: command.into(),
+        ..Default::default()
+    };
+
+    let mut cache = build_git_to_morph_cache(store)?;
+
+    for line in rewrite_lines.lines() {
+        let mut parts = line.split_whitespace();
+        let old_sha = match parts.next() {
+            Some(s) => s,
+            None => continue,
+        };
+        let new_sha = match parts.next() {
+            Some(s) => s,
+            None => continue,
+        };
+        let new_morph = if let Some(h) = cache.get(new_sha) {
+            *h
+        } else {
+            sync_one_commit(store, repo_root, new_sha, morph_version, &mut cache)?
+        };
+
+        if let Some(old_morph) = cache.get(old_sha).copied() {
+            if old_morph != new_morph {
+                let mut data = BTreeMap::new();
+                data.insert(
+                    "successor".into(),
+                    serde_json::Value::String(new_morph.to_string()),
+                );
+                data.insert(
+                    "git_command".into(),
+                    serde_json::Value::String(command.to_string()),
+                );
+                data.insert(
+                    "old_git_sha".into(),
+                    serde_json::Value::String(old_sha.to_string()),
+                );
+                data.insert(
+                    "new_git_sha".into(),
+                    serde_json::Value::String(new_sha.to_string()),
+                );
+                let annotation =
+                    crate::annotate::create_annotation(&old_morph, None, "rewritten".into(), data, None);
+                store.put(&annotation)?;
+                outcome.annotated += 1;
+            }
+            outcome.rewrites.push((old_morph, new_morph));
         }
     }
-    std::fs::write(&hook_path, POST_COMMIT_HOOK_SCRIPT)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&hook_path)?.permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&hook_path, perms)?;
+
+    if let Some(head_sha) = git_head_sha(repo_root)? {
+        if let Some(h) = cache.get(&head_sha).copied() {
+            let branch = current_git_branch(repo_root)?
+                .or_else(|| crate::commit::current_branch(store).ok().flatten())
+                .unwrap_or_else(|| crate::commit::DEFAULT_BRANCH.to_string());
+            store.ref_write(&format!("heads/{}", branch), &h)?;
+            crate::commit::set_head_branch(store, &branch)?;
+        }
     }
-    Ok(true)
+
+    Ok(outcome)
 }
 
 /// Count git-hook-origin commits reachable from HEAD whose effective
@@ -723,33 +1015,171 @@ mod tests {
     }
 
     #[test]
-    fn install_post_commit_hook_writes_executable_script() {
+    fn install_reference_hooks_writes_all_three() {
         let dir = tempfile::tempdir().unwrap();
         run_git(dir.path(), &["init", "-q", "-b", "main"]);
-        // Remove the hooks dir to verify install creates it.
         let _ = std::fs::remove_dir_all(dir.path().join(".git").join("hooks"));
+        let report = install_reference_hooks(dir.path()).unwrap();
+        assert_eq!(report.installed.len(), 3);
+        assert!(report.already_present.is_empty());
+        for hook in &["post-commit", "post-checkout", "post-rewrite"] {
+            let hook_path = dir.path().join(format!(".git/hooks/{}", hook));
+            assert!(hook_path.is_file(), "{} missing", hook);
+            let content = std::fs::read_to_string(&hook_path).unwrap();
+            assert!(
+                content.contains(&format!("morph hook {}", hook)),
+                "{} hook content unexpected: {}",
+                hook,
+                content
+            );
+            assert!(content.contains("MORPH_INTERNAL"));
+        }
+        let report2 = install_reference_hooks(dir.path()).unwrap();
+        assert_eq!(report2.installed.len(), 0);
+        assert_eq!(report2.already_present.len(), 3);
+        assert!(!report2.changed());
+    }
+
+    #[test]
+    fn install_post_commit_hook_back_compat_alias() {
+        let dir = tempfile::tempdir().unwrap();
+        run_git(dir.path(), &["init", "-q", "-b", "main"]);
         let wrote = install_post_commit_hook(dir.path()).unwrap();
         assert!(wrote);
-        let hook_path = dir.path().join(".git/hooks/post-commit");
-        let content = std::fs::read_to_string(&hook_path).unwrap();
-        assert!(content.contains("morph reference-sync"));
-        // Idempotent: second call returns false (no rewrite).
         let again = install_post_commit_hook(dir.path()).unwrap();
         assert!(!again);
     }
 
     #[test]
-    fn install_post_commit_hook_refuses_to_clobber_foreign_content() {
+    fn install_reference_hooks_tolerates_legacy_post_commit() {
         let dir = tempfile::tempdir().unwrap();
         run_git(dir.path(), &["init", "-q", "-b", "main"]);
         let hooks_dir = dir.path().join(".git/hooks");
         std::fs::create_dir_all(&hooks_dir).unwrap();
-        std::fs::write(hooks_dir.join("post-commit"), "#!/bin/sh\necho hi\n").unwrap();
-        let err = install_post_commit_hook(dir.path()).expect_err("foreign hook is rejected");
+        // A pre-PR-4 morph stub (PR2/PR3 era).
+        std::fs::write(
+            hooks_dir.join("post-commit"),
+            "#!/bin/sh\nexec morph reference-sync >/dev/null 2>&1 || true\n",
+        )
+        .unwrap();
+        let report = install_reference_hooks(dir.path()).unwrap();
+        assert!(report.installed.contains(&"post-commit".to_string()));
+        let content = std::fs::read_to_string(hooks_dir.join("post-commit")).unwrap();
+        assert!(content.contains("morph hook post-commit"));
+    }
+
+    #[test]
+    fn install_reference_hooks_refuses_to_clobber_foreign_content() {
+        let dir = tempfile::tempdir().unwrap();
+        run_git(dir.path(), &["init", "-q", "-b", "main"]);
+        let hooks_dir = dir.path().join(".git/hooks");
+        std::fs::create_dir_all(&hooks_dir).unwrap();
+        std::fs::write(hooks_dir.join("post-checkout"), "#!/bin/sh\necho hi\n").unwrap();
+        let err = install_reference_hooks(dir.path())
+            .expect_err("user-authored hook should be preserved");
         match err {
-            MorphError::Other(msg) => assert!(msg.contains("foreign content")),
+            MorphError::Other(msg) => {
+                assert!(msg.contains("foreign content"));
+                assert!(msg.contains("post-checkout"));
+            }
             other => panic!("unexpected error: {:?}", other),
         }
+    }
+
+    #[test]
+    fn handle_post_checkout_advances_morph_branch_to_match_git() {
+        let dir = tempfile::tempdir().unwrap();
+        run_git(dir.path(), &["init", "-q", "-b", "main"]);
+        run_git(dir.path(), &["commit", "--allow-empty", "-q", "-m", "main 1"]);
+        let store: Box<dyn Store> = Box::new(crate::init_repo(dir.path()).unwrap());
+        sync_to_head(store.as_ref(), dir.path(), None).unwrap();
+
+        run_git(dir.path(), &["checkout", "-q", "-b", "feature"]);
+        run_git(
+            dir.path(),
+            &["commit", "--allow-empty", "-q", "-m", "feature 1"],
+        );
+        let new_sha = git_head_sha(dir.path()).unwrap().unwrap();
+        sync_to_head(store.as_ref(), dir.path(), None).unwrap();
+
+        let outcome = handle_post_checkout(store.as_ref(), dir.path(), "", &new_sha, "1").unwrap();
+        match outcome {
+            CheckoutOutcome::SwitchedBranch { branch, .. } => assert_eq!(branch, "feature"),
+            other => panic!("expected SwitchedBranch, got {:?}", other),
+        }
+        assert_eq!(
+            crate::commit::current_branch(store.as_ref()).unwrap().as_deref(),
+            Some("feature")
+        );
+    }
+
+    #[test]
+    fn handle_post_checkout_returns_detached_head_outcome() {
+        let dir = tempfile::tempdir().unwrap();
+        run_git(dir.path(), &["init", "-q", "-b", "main"]);
+        run_git(dir.path(), &["commit", "--allow-empty", "-q", "-m", "first"]);
+        let store: Box<dyn Store> = Box::new(crate::init_repo(dir.path()).unwrap());
+        sync_to_head(store.as_ref(), dir.path(), None).unwrap();
+        let head = git_head_sha(dir.path()).unwrap().unwrap();
+        run_git(dir.path(), &["checkout", "-q", "--detach", "HEAD"]);
+        let outcome = handle_post_checkout(store.as_ref(), dir.path(), "", &head, "1").unwrap();
+        assert_eq!(outcome, CheckoutOutcome::DetachedHead);
+    }
+
+    #[test]
+    fn handle_post_checkout_skips_file_checkouts() {
+        let dir = tempfile::tempdir().unwrap();
+        run_git(dir.path(), &["init", "-q", "-b", "main"]);
+        run_git(dir.path(), &["commit", "--allow-empty", "-q", "-m", "first"]);
+        let store: Box<dyn Store> = Box::new(crate::init_repo(dir.path()).unwrap());
+        let outcome = handle_post_checkout(store.as_ref(), dir.path(), "", "", "0").unwrap();
+        assert_eq!(outcome, CheckoutOutcome::FileCheckout);
+    }
+
+    #[test]
+    fn handle_post_rewrite_amend_annotates_old_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        run_git(dir.path(), &["init", "-q", "-b", "main"]);
+        run_git(dir.path(), &["commit", "--allow-empty", "-q", "-m", "v1"]);
+        let store: Box<dyn Store> = Box::new(crate::init_repo(dir.path()).unwrap());
+        sync_to_head(store.as_ref(), dir.path(), None).unwrap();
+        let old_git = git_head_sha(dir.path()).unwrap().unwrap();
+        let old_morph = crate::commit::resolve_head(store.as_ref()).unwrap().unwrap();
+        run_git(
+            dir.path(),
+            &["commit", "--amend", "-q", "--allow-empty", "-m", "v1 (amended)"],
+        );
+        let new_git = git_head_sha(dir.path()).unwrap().unwrap();
+        let stdin = format!("{} {}\n", old_git, new_git);
+        let outcome =
+            handle_post_rewrite(store.as_ref(), dir.path(), "amend", &stdin, None).unwrap();
+        assert_eq!(outcome.command, "amend");
+        assert_eq!(outcome.rewrites.len(), 1);
+        assert_eq!(outcome.annotated, 1);
+        let anns = crate::annotate::list_annotations(store.as_ref(), &old_morph, None).unwrap();
+        assert!(
+            anns.iter().any(|(_, a)| a.kind == "rewritten"),
+            "expected a `rewritten` annotation on the old morph commit, got {:?}",
+            anns
+        );
+    }
+
+    #[test]
+    fn handle_post_rewrite_skips_when_old_morph_unknown() {
+        let dir = tempfile::tempdir().unwrap();
+        run_git(dir.path(), &["init", "-q", "-b", "main"]);
+        run_git(dir.path(), &["commit", "--allow-empty", "-q", "-m", "v1"]);
+        let store: Box<dyn Store> = Box::new(crate::init_repo(dir.path()).unwrap());
+        // Don't sync first — old SHA has no morph mirror, so the
+        // post-rewrite handler must not panic.
+        let stdin = format!("{} {}\n", "a".repeat(40), git_head_sha(dir.path()).unwrap().unwrap());
+        let outcome =
+            handle_post_rewrite(store.as_ref(), dir.path(), "rebase", &stdin, None).unwrap();
+        assert_eq!(outcome.annotated, 0);
+        // No mapping for the old SHA, but the new commit was still
+        // synced (the rewrite advances the mirror forward even if
+        // we can't annotate).
+        assert!(outcome.rewrites.is_empty());
     }
 
     #[test]

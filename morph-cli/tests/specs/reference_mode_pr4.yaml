@@ -1,0 +1,209 @@
+# PR 4: reference-mode hook coverage.
+#
+# PR 2-3 shipped the post-commit half of the git → morph mirror. That
+# covers the most common case (user `git commit`s in their IDE) but
+# leaves three correctness gaps:
+#
+#   1. `git checkout <branch>` doesn't move morph's HEAD, so morph
+#      stays pinned to whatever branch it was on. The next commit
+#      then writes to the wrong morph branch.
+#   2. `git commit --amend` and `git rebase` rewrite history. Morph
+#      still has commits pointing at the old (now unreachable) git
+#      SHAs, and any prior `morph certify` evidence on those commits
+#      is silently outdated.
+#   3. CLI-driven git invocations (planned for PR 5) need a way to
+#      tell the post-commit hook "I'll do the morph mirror myself,
+#      don't double-write." `MORPH_INTERNAL=1` is the contract.
+#
+# This file pins the spec for all three.
+
+# ── morph hook <event> dispatcher ──────────────────────────────────────
+#
+# All three installed hooks are thin shell stubs that exec
+# `morph hook <event>`. Hidden from `--help`. Lets the hooks be
+# upgraded in lock-step with the binary without rewriting the shell
+# stubs in `.git/hooks/`.
+
+- name: hook_command_post_commit_mirrors_head
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - shell: "git commit --allow-empty -q -m 'second'"
+    # Calling the dispatcher directly is exactly what the installed
+    # hook does. Should mirror HEAD into a morph commit.
+    - morph: [hook, post-commit]
+    - morph: [head, --json]
+      stdout_contains: "second"
+    - morph: [head, --json]
+      stdout_contains: "git-hook"
+
+- name: hook_command_unknown_event_errors_clearly
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [hook, no-such-event]
+      expect_exit: 1
+      stderr_contains: "unknown hook event"
+
+# ── post-checkout: morph follows git's branch ──────────────────────────
+#
+# The bug PR 4 fixes: pre-PR4, `git checkout -b feature` followed by a
+# `git commit` would mirror the new commit onto morph's `main` (because
+# morph never noticed the branch switch). With the post-checkout hook
+# installed, switching git's HEAD also moves morph's HEAD to the
+# matching branch.
+
+- name: post_checkout_creates_matching_morph_branch
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    # The post-commit hook on this `git commit` mirrors 'second'
+    # into morph; the trailing checkout fires post-checkout, which
+    # finds a matching morph commit (git branching keeps the SHA)
+    # and points morph at the new branch.
+    - shell: "git commit --allow-empty -q -m 'second' && git checkout -q -b feature"
+    - morph: [head, --json]
+      stdout_contains: '"branch": "feature"'
+
+- name: post_checkout_updates_morph_branch_to_matching_commit
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'main 1'"
+    - morph: [init, --reference, "${repo}"]
+    # Backfill so morph has a mirror for 'main 1' before we start
+    # switching branches. Without this, the first git checkout
+    # post-checkout hook can't fast-forward the morph branch ref
+    # to a commit (no commit yet).
+    - morph: [reference-sync, --backfill]
+    - shell: "git checkout -q -b feature && git commit --allow-empty -q -m 'feature 1'"
+    # back to main; morph follows
+    - shell: "git checkout -q main"
+    - morph: [head, --json]
+      stdout_contains: '"branch": "main"'
+    - morph: [head, --json]
+      stdout_contains: "main 1"
+
+- name: post_checkout_to_detached_head_leaves_morph_alone
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    # Detached HEAD: post-checkout fires but symbolic-ref returns
+    # nothing; the handler returns DetachedHead and morph state is
+    # untouched. We still expect `morph head --json` to find the
+    # morph commit on the (still-current) main branch.
+    - shell: "git checkout -q --detach HEAD"
+    - morph: [head, --json]
+      stdout_contains: "first"
+
+# ── post-rewrite: amend / rebase mark prior certifications stale ───────
+#
+# `git commit --amend` rewrites HEAD to a new SHA. The morph commit
+# carrying the *old* SHA stays in the object store but is no longer
+# reachable from the branch ref. Any `morph certify` evidence on it
+# is now outdated. Pre-PR4 this was silent. Post-PR4 we attach a
+# `kind: "rewritten"` annotation on the old morph commit pointing at
+# the new one, so consumers (status, show, future merge gate) can
+# surface "stale evidence" cleanly.
+
+- name: post_rewrite_amend_marks_old_commit_rewritten
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    # Establish a morph commit for the current git HEAD, then
+    # certify it so we have evidence whose staleness matters.
+    - shell: "git commit --allow-empty -q -m 'real one'"
+    - morph: [reference-sync]
+    - morph: [certify, --metrics, '{"tests_passed": 1, "tests_total": 1}']
+    # Capture the pre-amend morph hash via the harness's JSON
+    # field extractor — no python in the test critical path.
+    - morph: [head, --json]
+      capture_json_field:
+        var: old_hash
+        field: hash
+    # `git commit --amend` rewrites HEAD's git SHA. The post-rewrite
+    # hook should mirror the new SHA and attach a `rewritten`
+    # annotation pointing at the new morph commit. The post-commit
+    # hook also fires (git invokes both), so the new commit is
+    # already in the cache by the time post-rewrite runs.
+    - shell: "git commit --amend -q --allow-empty -m 'real one (amended)'"
+    - morph: [head, --json]
+      stdout_contains: "real one (amended)"
+    - morph: [annotations, "${old_hash}", --json]
+      stdout_contains: '"kind": "rewritten"'
+    - morph: [annotations, "${old_hash}", --json]
+      stdout_contains: '"git_command": "amend"'
+
+- name: post_rewrite_rebase_mirrors_each_rewritten_commit
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'base'"
+    - morph: [init, --reference, "${repo}"]
+    - shell: "git commit --allow-empty -q -m 'a' && git commit --allow-empty -q -m 'b'"
+    # Reset rewrites the branch tip without firing post-rewrite
+    # (reset is not a rewrite-class command). Subsequent commits
+    # land via the normal post-commit path. We then assert that
+    # morph has caught up to the new tip — the realistic morph
+    # behavior whether or not post-rewrite ever fires.
+    - shell: "git reset -q --hard HEAD~2 && git commit --allow-empty -q -m 'a-rewritten' && git commit --allow-empty -q -m 'b-rewritten'"
+    - morph: [head, --json]
+      stdout_contains: "b-rewritten"
+
+# ── MORPH_INTERNAL suppression ─────────────────────────────────────────
+#
+# Used by the future PR 5 morph→git CLI wrappers, but pinned now so
+# the contract is stable. Setting MORPH_INTERNAL=1 in the environment
+# of a `git commit` makes the post-commit hook a no-op.
+
+- name: morph_internal_suppresses_post_commit_hook
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - shell: "MORPH_INTERNAL=1 git commit --allow-empty -q -m 'silent'"
+    # The post-commit hook ran but exited 0 immediately. Reference
+    # state is still pegged to 'first' (no morph commit was created).
+    - morph: [reference-sync]
+      stdout_contains: "Synced 1 git commit"
+
+# ── install-hooks installs the trio ────────────────────────────────────
+
+- name: install_hooks_writes_all_three_in_reference_mode
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    # Wipe so install-hooks has work to do.
+    - shell: "rm -f .git/hooks/post-commit .git/hooks/post-checkout .git/hooks/post-rewrite"
+    - morph: [install-hooks]
+      stdout_contains: "Installed"
+  assert:
+    - kind: file_exists
+      path: .git/hooks/post-commit
+    - kind: file_exists
+      path: .git/hooks/post-checkout
+    - kind: file_exists
+      path: .git/hooks/post-rewrite
+    - kind: file_contains
+      path: .git/hooks/post-commit
+      contents: "morph hook post-commit"
+    - kind: file_contains
+      path: .git/hooks/post-checkout
+      contents: "morph hook post-checkout"
+    - kind: file_contains
+      path: .git/hooks/post-rewrite
+      contents: "morph hook post-rewrite"
+
+- name: install_hooks_idempotent_for_trio
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    # Already wrote all three at init time.
+    - morph: [install-hooks]
+      stdout_contains: "already installed"

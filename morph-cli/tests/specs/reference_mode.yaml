@@ -53,9 +53,12 @@
   assert:
     - kind: file_exists
       path: .git/hooks/post-commit
+    # PR4: hook contents migrated to the unified `morph hook <event>`
+    # dispatcher. The assertion stays a substring check so future
+    # script revisions don't force every spec to update.
     - kind: file_contains
       path: .git/hooks/post-commit
-      contents: "morph reference-sync"
+      contents: "morph hook post-commit"
 
 - name: reference_init_conflicts_with_bare
   init: false
@@ -71,7 +74,12 @@
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'first git commit'"
     - morph: [init, --reference, "${repo}"]
-    - shell: "git commit --allow-empty -q -m 'second git commit'"
+    # MORPH_INTERNAL=1 suppresses the post-commit hook so the
+    # explicit `morph reference-sync` below has work to do. Without
+    # the env var the hook auto-mirrors the new commit and sync
+    # reports "Already up to date" — which is the new normal in
+    # PR4 reality but doesn't exercise the manual sync code path.
+    - shell: "MORPH_INTERNAL=1 git commit --allow-empty -q -m 'second git commit'"
     - morph: [reference-sync]
       stdout_contains: "Synced 1 git commit"
     - morph: [head, --json]
@@ -84,7 +92,7 @@
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
     - morph: [init, --reference, "${repo}"]
-    - shell: "git commit --allow-empty -q -m 'second'"
+    - shell: "MORPH_INTERNAL=1 git commit --allow-empty -q -m 'second'"
     - morph: [reference-sync]
       stdout_contains: "Synced 1 git commit"
     - morph: [reference-sync]
@@ -95,6 +103,8 @@
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
     - morph: [init, --reference, "${repo}"]
+    # Hook fires automatically here — that's the realistic path. The
+    # explicit `reference-sync` below should be a no-op.
     - shell: "git commit --allow-empty -q -m 'feat: add user authentication'"
     - morph: [reference-sync]
     - morph: [log, --oneline, -n, "1"]
@@ -113,6 +123,10 @@
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
     - morph: [init, --reference, "${repo}"]
+    # Either path produces the same end state: the post-commit hook
+    # fires automatically via PATH-injection, OR the explicit
+    # `reference-sync` runs. We keep the explicit call so the
+    # assertion is reproducible regardless of harness PATH state.
     - shell: "git commit --allow-empty -q -m 'second'"
     - morph: [reference-sync]
     - morph: [status]

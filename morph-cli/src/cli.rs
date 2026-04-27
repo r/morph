@@ -67,11 +67,36 @@ pub enum Command {
         #[arg(long)]
         backfill: bool,
     },
-    /// Idempotently (re-)install reference-mode git hooks (currently
-    /// just `post-commit`). Skips when the hook is already correct;
-    /// refuses to clobber a hook with foreign content.
+    /// Idempotently (re-)install reference-mode git hooks
+    /// (`post-commit`, `post-checkout`, `post-rewrite`). Skips hooks
+    /// that already match the canonical script; refuses to clobber a
+    /// hook with foreign content.
     #[command(name = "install-hooks")]
     InstallHooks,
+    /// Internal: dispatch a git hook event into the corresponding
+    /// morph handler. Installed hook stubs in `.git/hooks/` exec
+    /// `morph hook <event>` so the per-event logic lives in the
+    /// binary, not in shell scripts. Hidden from `--help`; users
+    /// shouldn't call it directly.
+    ///
+    /// Events:
+    ///   - `post-commit`: mirror HEAD to morph (PR 2 behavior).
+    ///   - `post-checkout`: advance morph HEAD when git switches
+    ///     branch. Args: `<prev> <new> <flag>`.
+    ///   - `post-rewrite`: re-mirror after `amend`/`rebase` and
+    ///     flag old commits as rewritten. Args: `<command>`
+    ///     (`rebase`|`amend`); reads stdin pairs.
+    #[command(name = "hook", hide = true)]
+    Hook {
+        /// Hook event name (e.g. `post-commit`). Anything not on the
+        /// supported list returns a non-zero exit so misbehaving
+        /// stubs are caught instead of silently swallowed.
+        event: String,
+        /// Positional args git passes to the hook. Forwarded
+        /// verbatim to the per-event handler.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Print version + build metadata. Like `--version` but also
     /// supports `--json` for scripts and CI smoke tests.
     Version {

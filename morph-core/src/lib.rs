@@ -137,9 +137,12 @@ pub use revert::revert_commit;
 pub use gc::{gc, GcResult};
 pub use store::ObjectLayout;
 pub use reference::{
-    backfill_from_init, git_head_sha, git_log_range, git_parents, install_post_commit_hook,
-    is_git_working_tree, pending_certifications, read_git_commit, sync_to_head, GitCommitInfo,
-    SyncOutcome, POST_COMMIT_HOOK_SCRIPT,
+    backfill_from_init, current_git_branch, git_head_sha, git_log_range, git_parents,
+    handle_post_checkout, handle_post_rewrite, install_post_commit_hook, install_reference_hooks,
+    is_git_working_tree, lookup_morph_for_git_sha, pending_certifications, read_git_commit,
+    reference_mode_hooks, sync_to_head, CheckoutOutcome, GitCommitInfo, HookInstallReport,
+    RewriteOutcome, SyncOutcome, POST_CHECKOUT_HOOK_SCRIPT, POST_COMMIT_HOOK_SCRIPT,
+    POST_REWRITE_HOOK_SCRIPT,
 };
 
 pub mod gc;

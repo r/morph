@@ -77,6 +77,95 @@ fn write_last_run_breadcrumb(store: &dyn Store, repo_root: &std::path::Path, run
     }
 }
 
+/// Dispatch a git-hook event into the right per-event handler. Called
+/// from `morph hook <event>`, which is what every installed
+/// reference-mode hook stub `exec`s. Errors out loudly when:
+///
+///   - the repo isn't found (we shouldn't have been invoked at all),
+///   - the repo isn't in reference mode (likewise),
+///   - or the event name isn't on the supported list (a stale stub
+///     from a future binary, or a typo).
+///
+/// Output is best-effort: the installed shell stubs already redirect
+/// stdout/stderr away and `|| true` away the exit code, so a useful
+/// message printed here lands in user-visible terminals only when the
+/// user runs `morph hook ...` themselves.
+fn run_hook(event: &str, args: &[String]) -> anyhow::Result<()> {
+    let cwd = std::env::current_dir()?;
+    let repo_root = morph_core::find_repo(&cwd)
+        .ok_or_else(|| anyhow::anyhow!("not in a morph repository"))?;
+    let morph_dir = repo_root.join(".morph");
+    let mode = morph_core::read_repo_mode(&morph_dir)?;
+    if mode != morph_core::RepoMode::Reference {
+        anyhow::bail!(
+            "morph hook {}: not in reference mode (hook should not be installed in standalone repos)",
+            event
+        );
+    }
+    let store = morph_core::open_store(&morph_dir)?;
+    let version = Some(env!("CARGO_PKG_VERSION"));
+
+    match event {
+        "post-commit" => {
+            let outcome = morph_core::sync_to_head(store.as_ref(), &repo_root, version)?;
+            if outcome.already_synced {
+                println!("Already up to date.");
+            } else if let Some(sha) = outcome.git_sha.as_deref() {
+                println!("Synced 1 git commit ({}).", &sha[..sha.len().min(8)]);
+            }
+        }
+        "post-checkout" => {
+            // git passes: <prev_sha> <new_sha> <branch_flag>
+            let prev = args.first().map(String::as_str).unwrap_or("");
+            let new = args.get(1).map(String::as_str).unwrap_or("");
+            let flag = args.get(2).map(String::as_str).unwrap_or("0");
+            let outcome =
+                morph_core::handle_post_checkout(store.as_ref(), &repo_root, prev, new, flag)?;
+            match outcome {
+                morph_core::CheckoutOutcome::SwitchedBranch { branch, .. } => {
+                    println!("morph HEAD now tracks git branch '{}'.", branch);
+                }
+                morph_core::CheckoutOutcome::DetachedHead => {
+                    println!("git HEAD detached; morph HEAD unchanged.");
+                }
+                morph_core::CheckoutOutcome::NoMatchingMorphCommit { git_sha } => {
+                    println!(
+                        "no morph commit mirrors git {}; run `morph reference-sync` to create one.",
+                        &git_sha[..git_sha.len().min(8)]
+                    );
+                }
+                morph_core::CheckoutOutcome::FileCheckout => {}
+            }
+        }
+        "post-rewrite" => {
+            // git passes: <command>; stdin is "<old> <new> [extra]" lines.
+            let command = args.first().map(String::as_str).unwrap_or("rebase");
+            let mut buf = String::new();
+            use std::io::Read;
+            std::io::stdin().read_to_string(&mut buf)?;
+            let outcome = morph_core::handle_post_rewrite(
+                store.as_ref(),
+                &repo_root,
+                command,
+                &buf,
+                version,
+            )?;
+            println!(
+                "Rewrote {} commit(s) ({} annotated as 'rewritten').",
+                outcome.rewrites.len(),
+                outcome.annotated
+            );
+        }
+        other => {
+            anyhow::bail!(
+                "unknown hook event '{}': expected one of post-commit, post-checkout, post-rewrite",
+                other
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Structured version output for `morph version --json`. Stable
 /// shape (additive only): release pipelines and downstream tooling
 /// rely on the field names below to verify the binary's identity
@@ -417,7 +506,7 @@ Run `git init` first or pass a path that is already a git working tree.",
                     ..Default::default()
                 };
                 morph_core::write_policy(&morph_dir, &policy)?;
-                morph_core::install_post_commit_hook(&path)?;
+                let hook_report = morph_core::install_reference_hooks(&path)?;
                 let abs_morph = path
                     .canonicalize()
                     .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(&path))
@@ -431,7 +520,13 @@ Run `git init` first or pass a path that is already a git working tree.",
                 } else {
                     println!("  bound to empty git repository (no commits yet)");
                 }
-                println!("  installed post-commit hook at .git/hooks/post-commit");
+                let total = hook_report.installed.len() + hook_report.already_present.len();
+                println!(
+                    "  installed {} git hook(s) at .git/hooks/ ({} present, {} already up to date)",
+                    total,
+                    hook_report.installed.len(),
+                    hook_report.already_present.len()
+                );
             } else if bare {
                 morph_core::init_bare(&path)?;
                 let abs = path
@@ -522,12 +617,30 @@ in a git repository first."
                 );
                 std::process::exit(1);
             }
-            let wrote = morph_core::install_post_commit_hook(&repo_root)?;
-            if wrote {
-                println!("Installed post-commit hook at .git/hooks/post-commit.");
+            let report = morph_core::install_reference_hooks(&repo_root)?;
+            if report.changed() {
+                println!(
+                    "Installed {} hook(s) at .git/hooks/: {}.",
+                    report.installed.len(),
+                    report.installed.join(", ")
+                );
+                if !report.already_present.is_empty() {
+                    println!(
+                        "  ({} already up to date: {})",
+                        report.already_present.len(),
+                        report.already_present.join(", ")
+                    );
+                }
             } else {
-                println!("post-commit hook already installed (no changes).");
+                println!(
+                    "All {} reference-mode hooks already installed (no changes).",
+                    report.already_present.len()
+                );
             }
+        }
+
+        Command::Hook { event, args } => {
+            run_hook(&event, &args)?;
         }
 
         Command::Clone { url, destination, branch, bare } => {

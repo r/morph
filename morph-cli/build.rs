@@ -264,6 +264,29 @@ fn emit_step(code: &mut String, step: &Step, idx: usize) {
         writeln!(code, "    {{").unwrap();
         writeln!(code, "        let cwd = {};", cwd_expr).unwrap();
         writeln!(code, "        let shell_cmd = {};", cmd_expr).unwrap();
+        // Resolve the cargo-built `morph` binary's directory so that
+        // git hooks invoked by shell steps (post-commit, post-checkout,
+        // post-rewrite) can find `morph` on PATH. Without this, the
+        // hooks `|| true` away their work and tests silently
+        // mis-assert.
+        writeln!(
+            code,
+            "        let morph_bin = std::path::PathBuf::from(env!(\"CARGO_BIN_EXE_morph\"));"
+        )
+        .unwrap();
+        writeln!(
+            code,
+            "        let morph_bin_dir = morph_bin.parent().expect(\"morph binary has parent\");"
+        )
+        .unwrap();
+        writeln!(
+            code,
+            "        let augmented_path = match std::env::var_os(\"PATH\") {{ \
+                 Some(p) => {{ let mut joined = std::ffi::OsString::from(morph_bin_dir); \
+                              joined.push(\":\"); joined.push(p); joined }}, \
+                 None => morph_bin_dir.into() }};"
+        )
+        .unwrap();
         writeln!(
             code,
             "        let status = std::process::Command::new(\"sh\")"
@@ -272,7 +295,7 @@ fn emit_step(code: &mut String, step: &Step, idx: usize) {
         writeln!(code, "            .arg(\"-c\")").unwrap();
         writeln!(code, "            .arg(&shell_cmd)").unwrap();
         writeln!(code, "            .current_dir(&cwd)").unwrap();
-        // Make git deterministic and non-interactive in tests.
+        writeln!(code, "            .env(\"PATH\", &augmented_path)").unwrap();
         writeln!(
             code,
             "            .env(\"GIT_AUTHOR_NAME\", \"morph-test\")"

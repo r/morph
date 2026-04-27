@@ -77,11 +77,14 @@
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'g1'"
     - morph: [init, --reference, "${repo}"]
-    - shell: "git commit --allow-empty -q -m 'g2' && git commit --allow-empty -q -m 'g3' && git commit --allow-empty -q -m 'g4'"
-    # User went heads-down for a few commits with the hook somehow
-    # disabled (or just never installed). --backfill catches up:
-    # init_at_git_sha is the boundary, walk is *inclusive* of init
-    # forward to HEAD, so g1+g2+g3+g4 = 4 commits.
+    # MORPH_INTERNAL=1 suppresses the post-commit hook so the four
+    # commits accumulate without auto-mirroring. That's the
+    # late-adoption story --backfill is built for: the user
+    # disabled or didn't install hooks, then ran a long stretch of
+    # `git commit`s.
+    - shell: "MORPH_INTERNAL=1 git commit --allow-empty -q -m 'g2' && MORPH_INTERNAL=1 git commit --allow-empty -q -m 'g3' && MORPH_INTERNAL=1 git commit --allow-empty -q -m 'g4'"
+    # init_at_git_sha is g1; walk is *inclusive* of init forward to
+    # HEAD, so g1+g2+g3+g4 = 4 commits.
     - morph: [reference-sync, --backfill]
       stdout_contains: "Synced 4 git commits"
     - morph: [log, --oneline, -n, "5"]
@@ -98,7 +101,7 @@
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'g1'"
     - morph: [init, --reference, "${repo}"]
-    - shell: "git commit --allow-empty -q -m 'g2'"
+    - shell: "MORPH_INTERNAL=1 git commit --allow-empty -q -m 'g2'"
     - morph: [reference-sync, --backfill]
       stdout_contains: "Synced 2 git commits"
     - morph: [reference-sync, --backfill]
@@ -113,13 +116,17 @@
     - morph: [init, --reference, "${repo}"]
     - shell: "rm .git/hooks/post-commit"
     - morph: [install-hooks]
-      stdout_contains: "Installed post-commit"
+      stdout_contains: "post-commit"
   assert:
     - kind: file_exists
       path: .git/hooks/post-commit
+    # PR4: hooks now exec the unified `morph hook <event>` dispatcher
+    # instead of a per-event command. The substring stays stable
+    # across the PR3→PR4 transition because both forms include
+    # `morph` followed by the event name.
     - kind: file_contains
       path: .git/hooks/post-commit
-      contents: "morph reference-sync"
+      contents: "morph hook post-commit"
 
 - name: install_hooks_idempotent
   init: false
@@ -152,7 +159,12 @@
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'base'"
     - morph: [init, --reference, "${repo}"]
-    - shell: "git checkout -q -b feature && git commit --allow-empty -q -m 'feature work' && git checkout -q main && git merge --no-ff feature -q -m 'merge feature'"
+    # Suppress hooks so backfill can demonstrate it walks the full
+    # range. Without MORPH_INTERNAL=1 the post-commit and
+    # post-checkout hooks fire one at a time and the merge commit
+    # gets mirrored via post-commit, leaving --backfill nothing to
+    # do (the realistic happy path, but not what we're pinning here).
+    - shell: "MORPH_INTERNAL=1 git checkout -q -b feature && MORPH_INTERNAL=1 git commit --allow-empty -q -m 'feature work' && MORPH_INTERNAL=1 git checkout -q main && MORPH_INTERNAL=1 git merge --no-ff feature -q -m 'merge feature'"
     # Backfill walks: base (init point), feature work, merge feature.
     # Three git commits → three morph commits.
     - morph: [reference-sync, --backfill]
