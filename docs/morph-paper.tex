@@ -488,11 +488,11 @@ scores it got. The execution receipts are attached.
 \begin{definition}[Commit]
 A \textsc{Morph} commit is a tuple
 \begin{equation}
-  c = (\text{tree\_hash},\; \text{program\_id},\; T,\; v,\; \text{parents},\;
+  c = (\text{tree\_hash},\; \text{pipeline\_id},\; T,\; v,\; \text{parents},\;
   \text{env\_constraints},\; \text{evidence\_refs}),
 \end{equation}
 where $\text{tree\_hash}$ is the root hash of the working directory tree (same
-role as Git's tree object), $\text{program\_id}$ is the content hash of the
+role as Git's tree object), $\text{pipeline\_id}$ is the content hash of the
 pipeline DAG, $T$ is an evaluation suite (by hash), $v \in V_T$ is the scores
 the pipeline achieved, $\text{parents}$ are parent commit hashes forming the
 Merkle DAG, $\text{env\_constraints}$ records the environment in which the
@@ -597,6 +597,23 @@ include a \texttt{review} node. The review actor---human, agent, or both---is
 recorded as the one who made the call. This is not a human requirement; it is
 an attribution requirement. The \texttt{review} node records who decided, in
 what environment, and why. That record persists like everything else.
+
+Concretely, \texttt{morph merge --retire $m_1,\dots,m_k$} enforces this
+requirement: if the user-supplied pipeline already carries a \texttt{review}
+node, it is used unchanged; otherwise the merger synthesizes one whose
+\texttt{params} list the retired metrics and the reason supplied via
+\texttt{--retire-reason} (or a generic placeholder when omitted), and whose
+attribution points at the merge author. The synthesized node's identifier is
+derived deterministically from $(D, \text{reason}, \text{author})$, so an
+identical retirement collapses to the same node across reruns while distinct
+retirements get distinct ids. The same enforcement applies to long-running
+merges that pause for conflict resolution: \texttt{morph merge feature
+--retire $m_1,\dots,m_k$ --retire-reason \dots} persists $D$ and the reason
+as a \texttt{MERGE\_RETIRED.json} breadcrumb under \texttt{.morph/}, and a
+later \texttt{morph merge --continue} reads the breadcrumb to inject the
+same attributed \texttt{review} node before commit construction.
+\texttt{morph merge --abort} clears the breadcrumb alongside the rest of
+the merge state.
 
 The merge record still shows improvement on every metric that survived.
 \textsc{Morph} does not prevent someone from retiring every metric---that is a
@@ -735,15 +752,50 @@ The CLI mirrors Git where possible:
 \begin{center}
 \begin{tabular}{@{}ll@{}}
 \texttt{morph init} & Initialize repository \\
+\texttt{morph clone <url>} & Initialize from a remote \\
 \texttt{morph add .} & Stage working-space changes \\
 \texttt{morph commit -m "msg"} & Commit with eval contract \\
 \texttt{morph merge <branch>} & Merge with score recording \\
 \texttt{morph run record <file>} & Ingest execution receipt \\
+\texttt{morph eval run -- <cmd>} & Run tests, parse, and record evidence \\
 \texttt{morph eval record <file>} & Ingest evaluation results \\
+\texttt{morph eval add-case <path>} & Register acceptance case in default suite \\
 \texttt{morph annotate <hash>} & Attach metadata \\
 \texttt{morph log} / \texttt{status} & Inspect history and state \\
+\texttt{morph push <remote> <branch>} & Send commits + evidence to a remote \\
+\texttt{morph fetch <remote>} & Pull remote refs into tracking branches \\
+\texttt{morph pull <remote> <branch>} & Fetch + fast-forward (or merge) \\
+\texttt{morph sync [branch]} & Fetch + pull against the configured upstream \\
 \end{tabular}
 \end{center}
+
+\paragraph{Auto-attached evidence.}
+\textsc{Morph} optimizes for the common eval-driven workflow---run tests, then
+commit---by leaving a small \texttt{LAST\_RUN.json} breadcrumb under
+\texttt{.morph/} whenever \texttt{morph eval run} or
+\texttt{morph eval from-output --record} persists a metric-bearing run. The
+breadcrumb stores the run hash, HEAD at record time, and a fingerprint of the
+staging index. A subsequent \texttt{morph commit -m "msg"} (with neither
+\texttt{--from-run} nor \texttt{--metrics} supplied) reads the breadcrumb,
+verifies that HEAD and the index still match, and---if so---auto-attaches the
+run's metrics to the commit's eval contract and the run hash to its
+\texttt{evidence\_refs}. A stale breadcrumb (HEAD or index changed since
+recording) is ignored with a stderr nudge so the user can see why their
+evidence was not attached. The breadcrumb is cleared after a successful commit
+so the same run is never silently re-attached, and \texttt{--no-auto-run}
+disables the pickup entirely for audited metrics-less commits. The merge gate
+is unaffected: it only sees the resolved \texttt{Run} the breadcrumb pointed
+at, identical to what \texttt{--from-run <hash>} would have produced.
+
+\paragraph{Auto-detected acceptance cases.}
+\textsc{Morph} also auto-fills \texttt{introduces\_cases} annotations. When
+\texttt{morph commit} is run without an explicit \texttt{--new-cases} flag, it
+diffs the about-to-commit eval suite against HEAD's suite and records any
+case ids present in the new suite but absent in the parent's---typically the
+acceptance cases the user just registered with \texttt{morph eval add-case}.
+Pass \texttt{--new-cases ""} to suppress the diff, or
+\texttt{--new-cases "id1,id2"} to override it with a manual list. The
+annotation feeds merge planning's case provenance summary unchanged.
 
 % ============================================================
 \section{Axioms}
@@ -843,8 +895,15 @@ changing the commit format or the merge procedure.
 \paragraph{Built to distribute.}
 Because all objects are content-addressed and permanent, distributed settings
 are just Git's push/pull model applied to a richer object store. The v0
-implementation is local-only; a remote protocol and federated verification
-are planned.
+implementation already exposes that model: \texttt{morph clone},
+\texttt{morph push}, \texttt{morph fetch}, \texttt{morph pull}, and
+\texttt{morph sync} move the full object graph---commits, pipelines,
+evaluation suites, runs, traces, and annotations---over an SSH-based
+transport, with optional server-side push gates that refuse a ref update
+when the candidate commit fails the receiving repo's behavioral policy.
+What remains future work is federated verification across mutually
+distrustful hosts: signed commits, third-party run attestations, and
+cross-repo replay of evaluation suites without re-trusting the producer.
 
 \paragraph{On Git compatibility.}
 An implementation of \textsc{Morph} can use Git's object store directly.
@@ -891,11 +950,21 @@ actually measure what you think they measure. A bad eval produces meaningless
 scores. Garbage in, garbage out; \textsc{Morph} makes it auditable garbage,
 but it is still garbage.
 
-Second, structural merge of pipeline DAGs (step 1 of the merge procedure) is
-under-specified. Three-way text merge has decades of tooling behind it.
-Pipeline-graph merge does not. Even defining what a correct pipeline merge
-means---when two branches both modified the same prompt node in different
-directions---is an open problem. This is the hardest gap in \textsc{Morph} v0.
+Second, structural merge of pipeline DAGs (step 1 of the merge procedure)
+has a working implementation but no formal correctness theory.
+\textsc{Morph} v0 reconciles pipelines per-node by stable id (not by
+hash): nodes present on both sides with identical bodies merge cleanly,
+side-only nodes are unioned, and conflicting bodies are surfaced as
+\textit{add/add}, \textit{modify/modify}, or \textit{modify/delete}
+conflicts that drop into a \texttt{morph merge} state machine for
+explicit resolution. Trees merge per-path with a text leaf and the same
+conflict shape; eval suites auto-union when metric definitions agree and
+surface a structural conflict otherwise. That covers the practical cases.
+What is still open is a correctness statement for graph-level merge:
+when two branches modify the same prompt node in different directions,
+\textsc{Morph} can record a deterministic resolution but cannot yet
+\emph{prove} the merged pipeline is the right one. Three-way text merge
+has decades of theory behind it; pipeline-graph merge does not.
 
 Third, a recorded score difference may be real improvement or sampling noise.
 The formalism treats $\text{cert}_T$ as the declared aggregate and leaves

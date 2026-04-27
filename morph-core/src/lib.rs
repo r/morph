@@ -26,6 +26,7 @@ pub mod treemerge;
 pub mod merge_state;
 pub mod workdir;
 pub mod merge_flow;
+pub mod run_breadcrumb;
 pub mod policy;
 pub mod eval_parsers;
 pub mod eval_suite;
@@ -120,7 +121,11 @@ pub use eval_parsers::{
 };
 pub use eval_suite::{
     add_cases_from_yaml, add_cases_from_cucumber, add_cases_from_paths, build_or_extend_suite,
-    compute_eval_gaps,
+    compute_eval_gaps, diff_suite_case_ids,
+};
+pub use run_breadcrumb::{
+    clear_last_run, fingerprint_index, read_last_run, record_last_run,
+    resolve_fresh_last_run, write_last_run, LastRun, StaleReason,
 };
 pub use diff::{diff_trees, diff_commits, diff_file_maps, DiffEntry, DiffStatus};
 pub use tag::{create_tag, list_tags, delete_tag};

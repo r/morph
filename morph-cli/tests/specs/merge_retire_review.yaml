@@ -1,0 +1,105 @@
+# Paper §4.3 enforcement: any merge that retires metrics must
+# include a `review` node so the retirement decision is attributed.
+# The implementation auto-injects one when the user-supplied pipeline
+# lacks one, with attribution drawn from the merge author and reason
+# from --retire-reason (or a default when omitted). When the user-
+# supplied pipeline already has a review node, no synthesis happens.
+
+- name: merge_retire_synthesizes_review_node
+  files:
+    prog.json: '{"graph":{"nodes":[{"id":"n1","kind":"identity","ref":null,"params":{}}],"edges":[]},"prompts":[],"eval_suite":null,"provenance":null}'
+    .morph/evals/e.json: '{"cases":[],"metrics":[{"name":"acc","aggregation":"mean","threshold":0.0},{"name":"old_metric","aggregation":"mean","threshold":0.0}]}'
+    a.txt: "aaa"
+  steps:
+    - morph: [pipeline, create, prog.json]
+      capture: prog_hash
+    - morph: [add, .morph/evals/e.json]
+      capture_first_line: suite_hash
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "main commit", --pipeline, "${prog_hash}", --eval-suite, "${suite_hash}", --metrics, '{"acc": 0.9, "old_metric": 0.8}']
+    - morph: [branch, feature]
+    - morph: [checkout, feature]
+    - write_file:
+        path: b.txt
+        content: "bbb"
+    - morph: [add, b.txt]
+    - morph: [commit, -m, "feature commit", --pipeline, "${prog_hash}", --eval-suite, "${suite_hash}", --metrics, '{"acc": 0.85, "old_metric": 0.7}']
+    - morph: [checkout, main]
+    - morph: [merge, feature, -m, "retired merge", --pipeline, "${prog_hash}", --metrics, '{"acc": 0.92}', --retire, old_metric, --retire-reason, "switching retrieval strategy"]
+      capture: merge_hash
+      assert_hash: true
+    - morph: [show, "${merge_hash}"]
+      capture_json_field:
+        var: merge_pipeline
+        field: pipeline
+    - morph: [show, "${merge_hash}"]
+      stdout_not_contains: "\"pipeline\": \"${prog_hash}\""
+    - morph: [pipeline, show, "${merge_pipeline}"]
+      stdout_contains:
+        - "review"
+        - "old_metric"
+        - "switching retrieval strategy"
+
+- name: merge_retire_default_reason_when_omitted
+  files:
+    prog.json: '{"graph":{"nodes":[{"id":"n1","kind":"identity","ref":null,"params":{}}],"edges":[]},"prompts":[],"eval_suite":null,"provenance":null}'
+    .morph/evals/e.json: '{"cases":[],"metrics":[{"name":"acc","aggregation":"mean","threshold":0.0},{"name":"old_metric","aggregation":"mean","threshold":0.0}]}'
+    a.txt: "aaa"
+  steps:
+    - morph: [pipeline, create, prog.json]
+      capture: prog_hash
+    - morph: [add, .morph/evals/e.json]
+      capture_first_line: suite_hash
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "main commit", --pipeline, "${prog_hash}", --eval-suite, "${suite_hash}", --metrics, '{"acc": 0.9, "old_metric": 0.8}']
+    - morph: [branch, feature]
+    - morph: [checkout, feature]
+    - write_file:
+        path: b.txt
+        content: "bbb"
+    - morph: [add, b.txt]
+    - morph: [commit, -m, "feature commit", --pipeline, "${prog_hash}", --eval-suite, "${suite_hash}", --metrics, '{"acc": 0.85, "old_metric": 0.7}']
+    - morph: [checkout, main]
+    - morph: [merge, feature, -m, "retired merge", --pipeline, "${prog_hash}", --metrics, '{"acc": 0.92}', --retire, old_metric]
+      capture: merge_hash
+      assert_hash: true
+    - morph: [show, "${merge_hash}"]
+      capture_json_field:
+        var: merge_pipeline
+        field: pipeline
+    - morph: [pipeline, show, "${merge_pipeline}"]
+      stdout_contains:
+        - "review"
+        - "old_metric"
+        - "metric retirement"
+
+- name: merge_retire_with_existing_review_node_no_resynthesis
+  files:
+    prog.json: '{"graph":{"nodes":[{"id":"n1","kind":"identity","ref":null,"params":{}},{"id":"user-review","kind":"review","ref":null,"params":{"author_provided":true}}],"edges":[]},"prompts":[],"eval_suite":null,"provenance":null}'
+    .morph/evals/e.json: '{"cases":[],"metrics":[{"name":"acc","aggregation":"mean","threshold":0.0},{"name":"old_metric","aggregation":"mean","threshold":0.0}]}'
+    a.txt: "aaa"
+  steps:
+    - morph: [pipeline, create, prog.json]
+      capture: prog_hash
+    - morph: [add, .morph/evals/e.json]
+      capture_first_line: suite_hash
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "main commit", --pipeline, "${prog_hash}", --eval-suite, "${suite_hash}", --metrics, '{"acc": 0.9, "old_metric": 0.8}']
+    - morph: [branch, feature]
+    - morph: [checkout, feature]
+    - write_file:
+        path: b.txt
+        content: "bbb"
+    - morph: [add, b.txt]
+    - morph: [commit, -m, "feature commit", --pipeline, "${prog_hash}", --eval-suite, "${suite_hash}", --metrics, '{"acc": 0.85, "old_metric": 0.7}']
+    - morph: [checkout, main]
+    - morph: [merge, feature, -m, "retired merge", --pipeline, "${prog_hash}", --metrics, '{"acc": 0.92}', --retire, old_metric]
+      capture: merge_hash
+      assert_hash: true
+    - morph: [show, "${merge_hash}"]
+      stdout_contains: "\"pipeline\": \"${prog_hash}\""
+    - morph: [pipeline, show, "${prog_hash}"]
+      stdout_contains:
+        - "user-review"
+        - "author_provided"
+      stdout_not_contains: "review-retirement"

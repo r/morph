@@ -119,9 +119,19 @@ pub enum Command {
         /// Comma-separated acceptance-case ids this commit
         /// introduces. Stored as an `introduces_cases`
         /// annotation; surfaced by merge plans for case
-        /// provenance.
+        /// provenance. Pass `""` to suppress auto-detection
+        /// (which otherwise diffs the new suite against HEAD's).
         #[arg(long)]
         new_cases: Option<String>,
+        /// Disable automatic pickup of the most recent
+        /// `morph eval run` (the `.morph/LAST_RUN.json` breadcrumb).
+        /// With this flag the commit behaves exactly as if no
+        /// breadcrumb existed: metrics + evidence_refs are populated
+        /// only from `--metrics` / `--from-run`. Use to record an
+        /// audited metrics-less commit even when a fresh run is
+        /// available.
+        #[arg(long)]
+        no_auto_run: bool,
         /// Output structured JSON instead of human-readable summary
         #[arg(long)]
         json: bool,
@@ -193,7 +203,7 @@ pub enum Command {
         /// Discard an in-progress merge. Restores the working tree
         /// to `ORIG_HEAD` and clears `MERGE_*` state. Errors when
         /// no merge is in progress.
-        #[arg(long, conflicts_with_all = ["cont", "branch", "message", "pipeline", "metrics", "eval_suite", "retire"])]
+        #[arg(long, conflicts_with_all = ["cont", "branch", "message", "pipeline", "metrics", "eval_suite", "retire", "retire_reason"])]
         abort: bool,
 
         /// Optional commit message. Required for the single-shot
@@ -223,6 +233,12 @@ pub enum Command {
         /// genuinely changed.
         #[arg(long)]
         retire: Option<String>,
+        /// Reason for retiring metrics (paper §4.3 attribution). Recorded
+        /// on the auto-injected `review` node. Ignored without `--retire`.
+        /// When omitted, a generic placeholder is used; supplying a real
+        /// reason makes the retirement auditable later.
+        #[arg(long)]
+        retire_reason: Option<String>,
 
         /// Subcommand-style operations on an in-progress merge.
         #[command(subcommand)]

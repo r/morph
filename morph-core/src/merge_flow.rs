@@ -33,11 +33,26 @@ pub struct StartMergeOpts<'a> {
     /// Refuse to start when the working tree is dirty. Mirrors `git
     /// merge`'s default behavior. Default: `true`.
     pub require_clean_workdir: bool,
+    /// Optional metric names to retire from the merged eval suite (paper
+    /// §4.3). When non-empty, [`start_merge`] retires these from the
+    /// union suite before persisting `MERGE_SUITE` and writes a
+    /// `MERGE_RETIRED.json` breadcrumb so [`continue_merge`] injects a
+    /// `review` node attributed to the merge author. Empty = no
+    /// retirement (current behavior).
+    pub retired_metrics: &'a [String],
+    /// Optional human-readable reason recorded on the synthesized
+    /// `review` node. `None` falls back to a generic placeholder.
+    pub retire_reason: Option<&'a str>,
 }
 
 impl<'a> StartMergeOpts<'a> {
     pub fn new(other_branch: &'a str) -> Self {
-        Self { other_branch, require_clean_workdir: true }
+        Self {
+            other_branch,
+            require_clean_workdir: true,
+            retired_metrics: &[],
+            retire_reason: None,
+        }
     }
 }
 
@@ -250,10 +265,28 @@ pub fn start_merge(
 
         // Persist the unioned suite (if any) so `--continue` can attach
         // it to the merge commit's EvalContract without re-running
-        // reconcile_suites.
-        if let Some(s) = outcome.union_suite.clone() {
+        // reconcile_suites. When the user requested metric retirement
+        // we drop those metrics from the persisted suite here, so the
+        // merge commit's EvalContract.suite already reflects the user's
+        // intent and the dominance check in `continue_merge` skips
+        // retired metrics by construction.
+        if let Some(mut s) = outcome.union_suite.clone() {
+            if !opts.retired_metrics.is_empty() {
+                s = crate::metrics::retire_metrics(&s, opts.retired_metrics)?;
+            }
             let suite_hash = store.put(&crate::objects::MorphObject::EvalSuite(s))?;
             crate::merge_state::write_merge_suite(&morph_dir, &suite_hash)?;
+        }
+
+        // Persist retirement context so a long-running merge with
+        // conflicts ends with the same attributed `review` node a
+        // single-shot merge would have produced (paper §4.3).
+        if !opts.retired_metrics.is_empty() {
+            let retirement = crate::merge_state::MergeRetirement {
+                metrics: opts.retired_metrics.to_vec(),
+                reason: opts.retire_reason.map(String::from),
+            };
+            crate::merge_state::write_merge_retirement(&morph_dir, &retirement)?;
         }
     }
 
@@ -611,6 +644,24 @@ pub fn continue_merge(
         other_commit.evidence_refs.as_deref(),
     );
 
+    let morph_instance = crate::agent::read_instance_id(&morph_dir)?;
+
+    // Paper §4.3: when start_merge persisted a retirement breadcrumb,
+    // inject the attributed `review` node into the merged pipeline
+    // before constructing the commit so the stateful path produces the
+    // same audit trail a single-shot `morph merge --retire` would.
+    let pipeline_hash = match crate::merge_state::read_merge_retirement(&morph_dir)? {
+        Some(r) if !r.metrics.is_empty() => crate::merge::ensure_review_node_for_retirement(
+            store,
+            &pipeline_hash,
+            &r.metrics,
+            r.reason.as_deref(),
+            &author,
+            morph_instance.as_deref(),
+        )?,
+        _ => pipeline_hash,
+    };
+
     let merge_commit = MorphObject::Commit(Commit {
         tree: Some(tree_hash.to_string()),
         pipeline: pipeline_hash.to_string(),
@@ -629,7 +680,7 @@ pub fn continue_merge(
             .morph_version
             .clone()
             .or_else(|| other_commit.morph_version.clone()),
-        morph_instance: crate::agent::read_instance_id(&morph_dir)?,
+        morph_instance,
     });
     let merge_hash = store.put(&merge_commit)?;
 
@@ -1299,6 +1350,234 @@ mod tests {
         }
     }
 
+    /// Build divergent main/feature with disjoint file edits sharing
+    /// a suite that includes a retirement candidate. Each side records
+    /// the same metric set so the union suite covers both. Returns
+    /// (base, main_tip, feature_tip); HEAD on main.
+    fn divergent_branches_with_retirement_candidate(
+        store: &dyn Store,
+        root: &Path,
+    ) -> (Hash, Hash, Hash) {
+        use crate::objects::{
+            EvalMetric, Pipeline, PipelineGraph, PipelineNode,
+        };
+
+        let pipeline_obj = Pipeline {
+            graph: PipelineGraph {
+                nodes: vec![PipelineNode {
+                    id: "n1".into(),
+                    kind: "identity".into(),
+                    ref_: None,
+                    params: BTreeMap::new(),
+                    env: None,
+                }],
+                edges: vec![],
+            },
+            prompts: vec![],
+            eval_suite: None,
+            attribution: None,
+            provenance: None,
+        };
+        let prog_hash = store.put(&MorphObject::Pipeline(pipeline_obj)).unwrap();
+        let suite_obj = MorphObject::EvalSuite(EvalSuite {
+            cases: vec![],
+            metrics: vec![
+                EvalMetric::new("acc", "mean", 0.0),
+                EvalMetric::new("old_metric", "mean", 0.0),
+            ],
+        });
+        let suite_hash = store.put(&suite_obj).unwrap();
+
+        let mut metrics = BTreeMap::new();
+        metrics.insert("acc".into(), 0.9);
+        metrics.insert("old_metric".into(), 0.8);
+
+        std::fs::write(root.join("shared.txt"), "shared").unwrap();
+        crate::add_paths(store, root, &[PathBuf::from(".")]).unwrap();
+        create_tree_commit(
+            store,
+            root,
+            Some(&prog_hash),
+            Some(&suite_hash),
+            metrics.clone(),
+            "base".into(),
+            None,
+            Some("0.5"),
+        )
+        .unwrap();
+        let base = resolve_head(store).unwrap().unwrap();
+
+        store.ref_write("heads/feature", &base).unwrap();
+        crate::checkout_tree(store, root, "feature").unwrap();
+        std::fs::write(root.join("feature_only.txt"), "feature").unwrap();
+        crate::add_paths(store, root, &[PathBuf::from(".")]).unwrap();
+        create_tree_commit(
+            store,
+            root,
+            Some(&prog_hash),
+            Some(&suite_hash),
+            metrics.clone(),
+            "feature commit".into(),
+            None,
+            Some("0.5"),
+        )
+        .unwrap();
+        let feature_tip = resolve_head(store).unwrap().unwrap();
+
+        crate::checkout_tree(store, root, "main").unwrap();
+        std::fs::write(root.join("main_only.txt"), "main").unwrap();
+        crate::add_paths(store, root, &[PathBuf::from(".")]).unwrap();
+        create_tree_commit(
+            store,
+            root,
+            Some(&prog_hash),
+            Some(&suite_hash),
+            metrics,
+            "main commit".into(),
+            None,
+            Some("0.5"),
+        )
+        .unwrap();
+        let main_tip = resolve_head(store).unwrap().unwrap();
+
+        (base, main_tip, feature_tip)
+    }
+
+    #[test]
+    fn start_merge_persists_retirement_breadcrumb_and_retires_union_suite() {
+        // Paper §4.3: when start_merge is called with retired_metrics,
+        // it must (a) persist a MERGE_RETIRED.json breadcrumb so a
+        // later --continue can attribute the retirement, and
+        // (b) drop the retired metric from the suite stored in
+        // MERGE_SUITE so the merge commit's eval_contract.suite
+        // reflects the user's intent (and dominance gating skips it).
+        let (dir, store) = setup_repo();
+        let (_base, _main_tip, _feature_tip) =
+            divergent_branches_with_retirement_candidate(store.as_ref(), dir.path());
+
+        let retired = vec!["old_metric".to_string()];
+        let mut opts = StartMergeOpts::new("feature");
+        opts.retired_metrics = &retired;
+        opts.retire_reason = Some("switching retrieval strategy");
+
+        let out = start_merge(store.as_ref(), dir.path(), opts)
+            .expect("start_merge with retirement should succeed for clean three-way");
+        assert!(
+            !out.needs_resolution,
+            "clean three-way must not need resolution"
+        );
+
+        let morph_dir = dir.path().join(".morph");
+
+        let breadcrumb = crate::merge_state::read_merge_retirement(&morph_dir)
+            .unwrap()
+            .expect("MERGE_RETIRED.json must be persisted when retired_metrics is non-empty");
+        assert_eq!(breadcrumb.metrics, vec!["old_metric"]);
+        assert_eq!(
+            breadcrumb.reason.as_deref(),
+            Some("switching retrieval strategy"),
+            "retire_reason must round-trip through MERGE_RETIRED.json"
+        );
+
+        let suite_hash = crate::merge_state::read_merge_suite(&morph_dir)
+            .unwrap()
+            .expect("MERGE_SUITE must be written for resolved union");
+        let suite = match store.get(&suite_hash).unwrap() {
+            crate::objects::MorphObject::EvalSuite(s) => s,
+            other => panic!("expected EvalSuite, got {:?}", other),
+        };
+        assert!(
+            !suite.metrics.iter().any(|m| m.name == "old_metric"),
+            "retired metric must be dropped from MERGE_SUITE; got: {:?}",
+            suite.metrics.iter().map(|m| &m.name).collect::<Vec<_>>()
+        );
+        assert!(
+            suite.metrics.iter().any(|m| m.name == "acc"),
+            "non-retired metrics must remain in MERGE_SUITE; got: {:?}",
+            suite.metrics.iter().map(|m| &m.name).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn continue_merge_injects_review_node_when_breadcrumb_present() {
+        // Paper §4.3: continue_merge must read MERGE_RETIRED.json and
+        // attribute the retirement on the merged pipeline by appending
+        // a `review` node, mirroring single-shot `morph merge --retire`.
+        let (dir, store) = setup_repo();
+        let (_base, _main_tip, _feature_tip) =
+            divergent_branches_with_retirement_candidate(store.as_ref(), dir.path());
+
+        let retired = vec!["old_metric".to_string()];
+        let mut opts = StartMergeOpts::new("feature");
+        opts.retired_metrics = &retired;
+        opts.retire_reason = Some("model swap dropped this metric");
+
+        let out = start_merge(store.as_ref(), dir.path(), opts).unwrap();
+        assert!(!out.needs_resolution);
+
+        let cont = continue_merge(
+            store.as_ref(),
+            dir.path(),
+            ContinueMergeOpts {
+                message: Some("merged with retirement".into()),
+                author: Some("test-author".into()),
+            },
+        )
+        .expect("continue_merge with retirement breadcrumb should succeed");
+
+        let merge_commit = match store.get(&cont.merge_commit).unwrap() {
+            MorphObject::Commit(c) => c,
+            other => panic!("expected Commit, got {:?}", other),
+        };
+        let merged_pipeline = match store
+            .get(&Hash::from_hex(&merge_commit.pipeline).unwrap())
+            .unwrap()
+        {
+            MorphObject::Pipeline(p) => p,
+            other => panic!("expected Pipeline, got {:?}", other),
+        };
+
+        let review = merged_pipeline
+            .graph
+            .nodes
+            .iter()
+            .find(|n| n.kind == "review")
+            .expect("merged pipeline must carry a review node when breadcrumb is set");
+        assert!(
+            review.id.starts_with("review-retirement-"),
+            "review node id should be deterministic; got {:?}",
+            review.id
+        );
+        let reason = review
+            .params
+            .get("reason")
+            .and_then(|v| v.as_str())
+            .expect("review node must have params.reason");
+        assert_eq!(reason, "model swap dropped this metric");
+
+        let attribution = merged_pipeline
+            .attribution
+            .as_ref()
+            .expect("attribution must be set when synthesizing a review node");
+        let entry = attribution
+            .get(&review.id)
+            .expect("attribution map must include the synthesized review node id");
+        assert_eq!(
+            entry.agent_id, "test-author",
+            "review-node attribution must point at the merge author"
+        );
+
+        // Breadcrumb (and all merge state) cleared after a successful
+        // continue_merge.
+        let morph_dir = dir.path().join(".morph");
+        assert!(
+            crate::merge_state::read_merge_retirement(&morph_dir)
+                .unwrap()
+                .is_none(),
+            "MERGE_RETIRED.json must be cleared after continue_merge succeeds"
+        );
+    }
+
     #[test]
     fn start_merge_marks_unmerged_index_entries_for_textual_conflicts() {
         // Cycle 10: each textual conflict path is recorded in the
@@ -1454,6 +1733,8 @@ mod tests {
         let opts = StartMergeOpts {
             other_branch: "feature",
             require_clean_workdir: false,
+            retired_metrics: &[],
+            retire_reason: None,
         };
         let _ = start_merge(store.as_ref(), dir.path(), opts).unwrap();
     }

@@ -7,13 +7,118 @@
 //! - `DominanceResult` / `DominanceViolation`: per-metric dominance failure explanations
 
 use crate::commit::{current_branch, resolve_head};
-use crate::objects::{Commit, EvalContract, EvalSuite, MorphObject};
+use crate::objects::{
+    ActorRef, AttributionEntry, Commit, EvalContract, EvalSuite, MorphObject, PipelineNode,
+};
 use crate::policy::read_policy;
 use crate::store::{MorphError, ObjectType, Store};
 use crate::Hash;
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::path::Path;
+
+/// Default reason text used when the user did not supply one via
+/// `--retire-reason`. Kept short so the synthesized review node still
+/// reads cleanly in `morph pipeline show`.
+const DEFAULT_RETIRE_REASON: &str = "metric retirement requested at merge time";
+
+/// Ensure the pipeline at `pipeline_hash` carries a `review` node when
+/// `retired_metrics` is non-empty (paper §4.3 attribution requirement).
+///
+/// The user-supplied pipeline is used unchanged when:
+/// - no metrics are being retired, or
+/// - the pipeline already contains at least one `review` node, or
+/// - the hash does not point to a [`MorphObject::Pipeline`] (legacy or
+///   mismatched callers — we don't synthesize blindly).
+///
+/// Otherwise we append a deterministic review node (`id` derived from
+/// the retirement context so identical retirements collapse to the same
+/// id but different retirements don't collide), record the merge author
+/// and `morph_instance` in `attribution`, store the new pipeline, and
+/// return its hash. This keeps backward compatibility with pipelines
+/// whose authors already hand-wrote a review node and surfaces a
+/// machine-readable retirement record for everyone else.
+pub(crate) fn ensure_review_node_for_retirement(
+    store: &dyn Store,
+    pipeline_hash: &Hash,
+    retired_metrics: &[String],
+    retire_reason: Option<&str>,
+    author: &str,
+    morph_instance: Option<&str>,
+) -> Result<Hash, MorphError> {
+    if retired_metrics.is_empty() {
+        return Ok(pipeline_hash.clone());
+    }
+    let mut pipeline = match store.get(pipeline_hash) {
+        Ok(MorphObject::Pipeline(p)) => p,
+        // Either a non-pipeline object (legacy callers occasionally
+        // pass a blob hash) or a missing object — either way, leave
+        // the merge alone rather than failing on an opaque hash.
+        _ => return Ok(pipeline_hash.clone()),
+    };
+    if pipeline.graph.nodes.iter().any(|n| n.kind == "review") {
+        return Ok(pipeline_hash.clone());
+    }
+
+    let mut sorted: Vec<&str> = retired_metrics.iter().map(|s| s.as_str()).collect();
+    sorted.sort();
+    let reason = retire_reason.unwrap_or(DEFAULT_RETIRE_REASON);
+
+    let mut hasher = Sha256::new();
+    hasher.update(b"review-retirement\0");
+    hasher.update(sorted.join(",").as_bytes());
+    hasher.update(b"\0");
+    hasher.update(reason.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(author.as_bytes());
+    let digest = hasher.finalize();
+    let id_suffix = digest
+        .iter()
+        .take(4)
+        .map(|b| format!("{:02x}", b))
+        .collect::<String>();
+    let node_id = format!("review-retirement-{}", id_suffix);
+
+    let mut params: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+    params.insert(
+        "retired_metrics".into(),
+        serde_json::Value::Array(
+            sorted
+                .iter()
+                .map(|s| serde_json::Value::String((*s).to_string()))
+                .collect(),
+        ),
+    );
+    params.insert(
+        "reason".into(),
+        serde_json::Value::String(reason.to_string()),
+    );
+
+    pipeline.graph.nodes.push(PipelineNode {
+        id: node_id.clone(),
+        kind: "review".into(),
+        ref_: None,
+        params,
+        env: None,
+    });
+
+    let entry = AttributionEntry {
+        agent_id: author.to_string(),
+        agent_version: None,
+        instance_id: morph_instance.map(String::from),
+        actors: Some(vec![ActorRef {
+            id: author.to_string(),
+            actor_type: "agent".to_string(),
+            env_config: None,
+        }]),
+    };
+    let mut attribution = pipeline.attribution.unwrap_or_default();
+    attribution.insert(node_id, entry);
+    pipeline.attribution = Some(attribution);
+
+    store.put(&MorphObject::Pipeline(pipeline))
+}
 
 /// Whether `RepoPolicy.merge_policy` requires dominance for the
 /// repo at `repo_root`. Returns `true` when no policy is reachable
@@ -84,6 +189,11 @@ pub struct MergePlan {
     /// The strictest bar from either parent that the merged candidate must meet.
     pub reference_bar: BTreeMap<String, f64>,
     pub retired_metrics: Vec<String>,
+    /// Optional human-readable reason for retiring metrics. Recorded in
+    /// the auto-injected `review` node's `params.reason` (paper §4.3).
+    /// `None` falls back to a generic placeholder message at injection
+    /// time. Set via `morph merge --retire-reason "..."`.
+    pub retire_reason: Option<String>,
     /// PR 6 stage C: deduped union of both parents' `evidence_refs`.
     /// `None` when neither parent had any (don't churn hashes by
     /// emitting an empty array on legacy / suite-free histories).
@@ -376,6 +486,7 @@ pub fn prepare_merge(
         union_suite: union,
         reference_bar,
         retired_metrics: retired.to_vec(),
+        retire_reason: None,
         evidence_refs,
         head_introduces_cases,
         other_introduces_cases,
@@ -510,6 +621,21 @@ pub fn execute_merge(
     let parents = vec![plan.head_hash.to_string(), plan.other_hash.to_string()];
     let timestamp = chrono::Utc::now().to_rfc3339();
     let author = author.unwrap_or_else(|| "morph".to_string());
+    let morph_instance = repo_root
+        .and_then(|r| crate::agent::read_instance_id(&r.join(".morph")).ok().flatten());
+    // Paper §4.3: enforce review-node attribution for any retirement.
+    // Auto-injection happens after the dominance check (so we don't
+    // mutate the pipeline on a doomed merge) and before commit
+    // construction (so the commit's pipeline hash points at the
+    // version that includes the review node).
+    let merged_pipeline_hash = ensure_review_node_for_retirement(
+        store,
+        merged_pipeline_hash,
+        &plan.retired_metrics,
+        plan.retire_reason.as_deref(),
+        &author,
+        morph_instance.as_deref(),
+    )?;
     let commit = MorphObject::Commit(Commit {
         tree: tree_hash,
         pipeline: merged_pipeline_hash.to_string(),
@@ -525,8 +651,7 @@ pub fn execute_merge(
         env_constraints: None,
         evidence_refs: plan.evidence_refs.clone(),
         morph_version: morph_version.map(String::from),
-        morph_instance: repo_root
-            .and_then(|r| crate::agent::read_instance_id(&r.join(".morph")).ok().flatten()),
+        morph_instance,
     });
     let hash = store.put(&commit)?;
 

@@ -1,0 +1,126 @@
+# Phase 7: `morph commit` without `--new-cases` auto-detects newly
+# introduced acceptance cases by diffing the about-to-commit eval suite
+# against HEAD's eval suite. Cases present in the new suite but not in
+# HEAD's are recorded via an `introduces_cases` annotation so merge
+# planning can attribute them to this commit.
+
+# Happy path: a fresh case added to the default suite between commits is
+# recorded as an `introduces_cases` annotation pointing at the new
+# commit.
+- name: commit_auto_detects_new_cases_added_to_default_suite
+  files:
+    specs/alpha.yaml: |
+      - name: alpha
+        steps:
+          - morph: [status]
+    specs/beta.yaml: |
+      - name: beta
+        steps:
+          - morph: [status]
+    foo.txt: "seed"
+    bar.txt: "seed"
+  steps:
+    - morph: [eval, add-case, specs/alpha.yaml]
+    - morph: [add, foo.txt]
+    - morph: [commit, -m, "introduce alpha", --metrics, '{"tests_passed":1}', --json]
+      capture_json_field:
+        var: c1_hash
+        field: hash
+
+    # Add beta to the default suite; subsequent commit must annotate
+    # itself with [beta] only — alpha is shared history.
+    - morph: [eval, add-case, specs/beta.yaml]
+    - morph: [add, bar.txt]
+    - morph: [commit, -m, "introduce beta", --metrics, '{"tests_passed":1}', --json]
+      capture_json_field:
+        var: c2_hash
+        field: hash
+
+    - morph: [annotations, "${c2_hash}"]
+      stdout_contains:
+        - "introduces_cases"
+        - "beta"
+      stdout_not_contains:
+        - "alpha"
+
+# Explicit --new-cases beats auto-detection: the diff is ignored and
+# only the user-supplied case ids land in the annotation.
+- name: commit_auto_new_cases_explicit_flag_wins_over_diff
+  files:
+    specs/alpha.yaml: |
+      - name: alpha
+        steps:
+          - morph: [status]
+    specs/beta.yaml: |
+      - name: beta
+        steps:
+          - morph: [status]
+    foo.txt: "seed"
+    bar.txt: "seed"
+  steps:
+    - morph: [eval, add-case, specs/alpha.yaml]
+    - morph: [add, foo.txt]
+    - morph: [commit, -m, "alpha", --metrics, '{"tests_passed":1}']
+    - morph: [eval, add-case, specs/beta.yaml]
+    - morph: [add, bar.txt]
+    - morph: [commit, -m, "beta-explicit", --metrics, '{"tests_passed":1}', --new-cases, "manual:override", --json]
+      capture_json_field:
+        var: c2_hash
+        field: hash
+    - morph: [annotations, "${c2_hash}"]
+      stdout_contains:
+        - "manual:override"
+      stdout_not_contains:
+        - "beta"
+
+# Empty --new-cases "" opts out of auto-detection without setting any
+# manual cases; the commit gets no `introduces_cases` annotation.
+- name: commit_auto_new_cases_empty_flag_disables_diff
+  files:
+    specs/alpha.yaml: |
+      - name: alpha
+        steps:
+          - morph: [status]
+    specs/beta.yaml: |
+      - name: beta
+        steps:
+          - morph: [status]
+    foo.txt: "seed"
+    bar.txt: "seed"
+  steps:
+    - morph: [eval, add-case, specs/alpha.yaml]
+    - morph: [add, foo.txt]
+    - morph: [commit, -m, "alpha", --metrics, '{"tests_passed":1}']
+    - morph: [eval, add-case, specs/beta.yaml]
+    - morph: [add, bar.txt]
+    - morph: [commit, -m, "beta-suppressed", --metrics, '{"tests_passed":1}', --new-cases, "", --json]
+      capture_json_field:
+        var: c2_hash
+        field: hash
+    - morph: [annotations, "${c2_hash}"]
+      stdout_not_contains:
+        - "introduces_cases"
+        - "beta"
+
+# When the suite hasn't changed, no annotation is written — auto-detect
+# is a true no-op rather than a placeholder.
+- name: commit_auto_new_cases_no_op_when_suite_unchanged
+  files:
+    specs/alpha.yaml: |
+      - name: alpha
+        steps:
+          - morph: [status]
+    foo.txt: "seed"
+    bar.txt: "seed"
+  steps:
+    - morph: [eval, add-case, specs/alpha.yaml]
+    - morph: [add, foo.txt]
+    - morph: [commit, -m, "alpha", --metrics, '{"tests_passed":1}']
+    - morph: [add, bar.txt]
+    - morph: [commit, -m, "no new cases", --metrics, '{"tests_passed":1}', --json]
+      capture_json_field:
+        var: c2_hash
+        field: hash
+    - morph: [annotations, "${c2_hash}"]
+      stdout_not_contains:
+        - "introduces_cases"

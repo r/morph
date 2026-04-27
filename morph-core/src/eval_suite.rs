@@ -149,6 +149,53 @@ pub fn add_cases_from_paths(paths: &[PathBuf]) -> Result<Vec<EvalCase>, MorphErr
     Ok(cases)
 }
 
+/// Return the sorted list of case ids present in `new_suite` but not
+/// in `old_suite`. Used by `morph commit` to auto-detect newly
+/// introduced acceptance cases when the user hasn't passed
+/// `--new-cases` explicitly.
+///
+/// `None` for either argument is treated as "no suite" (empty case
+/// set):
+///
+/// * `old_suite = None, new_suite = Some(s)` — every case in `s` is
+///   "new" (typical for a root commit).
+/// * `old_suite = Some(s), new_suite = None` — returns `vec![]`
+///   (cases were retired, but that's not a *new-cases* event).
+/// * Both `None` — returns `vec![]`.
+///
+/// Hashes that don't resolve to an `EvalSuite` object are also
+/// treated as empty case sets so that a corrupt or never-stored
+/// suite reference doesn't crash the commit path.
+pub fn diff_suite_case_ids(
+    store: &dyn Store,
+    new_suite: Option<&Hash>,
+    old_suite: Option<&Hash>,
+) -> Result<Vec<String>, MorphError> {
+    let new_ids = load_case_ids(store, new_suite)?;
+    let old_ids = load_case_ids(store, old_suite)?;
+    let old_set: std::collections::BTreeSet<&String> = old_ids.iter().collect();
+    let mut diff: Vec<String> = new_ids
+        .into_iter()
+        .filter(|id| !old_set.contains(id))
+        .collect();
+    diff.sort();
+    diff.dedup();
+    Ok(diff)
+}
+
+fn load_case_ids(
+    store: &dyn Store,
+    suite: Option<&Hash>,
+) -> Result<Vec<String>, MorphError> {
+    let Some(h) = suite else { return Ok(vec![]); };
+    match store.get(h) {
+        Ok(MorphObject::EvalSuite(s)) => Ok(s.cases.into_iter().map(|c| c.id).collect()),
+        // Non-suite or missing → treat as empty so callers don't
+        // need to distinguish "no suite" from "suite had no cases".
+        _ => Ok(vec![]),
+    }
+}
+
 /// Build a suite from `new_cases`, optionally extending the suite
 /// stored at `prev`. Cases dedupe by `id`; the *new* version wins so
 /// a re-ingest picks up edits.
@@ -473,6 +520,67 @@ mod tests {
             suite.cases.iter().map(|c| (c.id.clone(), c.clone())).collect();
         assert_eq!(by_id["x:case"].input["v"], json!(2), "v1 should be replaced by v2");
         assert!(by_id.contains_key("x:other"));
+    }
+
+    #[test]
+    fn diff_suite_case_ids_returns_only_new_ids() {
+        let (_dir, store) = make_store();
+        let case_a = EvalCase {
+            id: "a".into(),
+            input: json!({}),
+            expected: json!({}),
+            metric: "pass".into(),
+            fixture_source: "candidate".into(),
+        };
+        let case_b = EvalCase { id: "b".into(), ..case_a.clone() };
+        let case_c = EvalCase { id: "c".into(), ..case_a.clone() };
+        let old = build_or_extend_suite(store.as_ref(), None, &[case_a.clone(), case_b.clone()]).unwrap();
+        let new = build_or_extend_suite(store.as_ref(), Some(old), std::slice::from_ref(&case_c)).unwrap();
+        let diff = diff_suite_case_ids(store.as_ref(), Some(&new), Some(&old)).unwrap();
+        assert_eq!(diff, vec!["c".to_string()]);
+    }
+
+    #[test]
+    fn diff_suite_case_ids_treats_no_old_suite_as_all_new() {
+        let (_dir, store) = make_store();
+        let case_a = EvalCase {
+            id: "a".into(),
+            input: json!({}),
+            expected: json!({}),
+            metric: "pass".into(),
+            fixture_source: "candidate".into(),
+        };
+        let case_b = EvalCase { id: "b".into(), ..case_a.clone() };
+        let new = build_or_extend_suite(store.as_ref(), None, &[case_a, case_b]).unwrap();
+        let diff = diff_suite_case_ids(store.as_ref(), Some(&new), None).unwrap();
+        assert_eq!(diff, vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[test]
+    fn diff_suite_case_ids_returns_empty_when_unchanged() {
+        let (_dir, store) = make_store();
+        let case_a = EvalCase {
+            id: "a".into(),
+            input: json!({}),
+            expected: json!({}),
+            metric: "pass".into(),
+            fixture_source: "candidate".into(),
+        };
+        let h = build_or_extend_suite(store.as_ref(), None, &[case_a]).unwrap();
+        let diff = diff_suite_case_ids(store.as_ref(), Some(&h), Some(&h)).unwrap();
+        assert!(diff.is_empty());
+    }
+
+    #[test]
+    fn diff_suite_case_ids_tolerates_non_suite_hash() {
+        let (_dir, store) = make_store();
+        let blob = MorphObject::Blob(crate::objects::Blob {
+            kind: "x".into(),
+            content: json!({}),
+        });
+        let blob_hash = store.put(&blob).unwrap();
+        let diff = diff_suite_case_ids(store.as_ref(), Some(&blob_hash), None).unwrap();
+        assert!(diff.is_empty(), "non-suite hash must be treated as empty");
     }
 
     #[test]

@@ -64,6 +64,19 @@ fn short_hash(h: &str) -> String {
     h.chars().take(8).collect()
 }
 
+/// After `morph eval run` (or `eval from-output --record`) persists
+/// a metric-bearing Run, drop a `LAST_RUN.json` breadcrumb under
+/// `.morph/` so the next `morph commit` (without explicit
+/// `--from-run`/`--metrics`) can auto-attach the run's metrics +
+/// provenance. Failures are demoted to a stderr warning so a slow
+/// disk or read-only `.morph/` never breaks the eval flow itself.
+fn write_last_run_breadcrumb(store: &dyn Store, repo_root: &std::path::Path, run_hash: &Hash) {
+    let morph_dir = repo_root.join(".morph");
+    if let Err(e) = morph_core::record_last_run(store, &morph_dir, run_hash) {
+        eprintln!("warning: could not write LAST_RUN breadcrumb: {}", e);
+    }
+}
+
 /// Structured version output for `morph version --json`. Stable
 /// shape (additive only): release pipelines and downstream tooling
 /// rely on the field names below to verify the binary's identity
@@ -173,6 +186,7 @@ fn run_merge(
     metrics: Option<String>,
     author: Option<String>,
     retire: Option<String>,
+    retire_reason: Option<String>,
     sub: Option<MergeCmd>,
 ) -> anyhow::Result<()> {
     let (repo_root, store) = get_store(verbose)?;
@@ -222,12 +236,13 @@ fn run_merge(
         .map_err(|e| anyhow::anyhow!("invalid --metrics JSON: {}", e))?;
         let retired: Option<Vec<String>> = retire
             .map(|s| s.split(',').map(|m| m.trim().to_string()).collect());
-        let plan = morph_core::prepare_merge(
+        let mut plan = morph_core::prepare_merge(
             store.as_ref(),
             &branch,
             suite_hash_opt.as_ref(),
             retired.as_deref(),
         )?;
+        plan.retire_reason = retire_reason;
         let resolved_author =
             morph_core::resolve_author_for_repo(&morph_dir, author.as_deref())?;
         let hash = morph_core::execute_merge(
@@ -247,11 +262,14 @@ fn run_merge(
     // Stateful flow: kick off the structural merge, then either
     // surface the conflicts (so the user can resolve and run
     // `--continue`) or auto-finalize a clean three-way merge.
-    let outcome = morph_core::start_merge(
-        store.as_ref(),
-        &repo_root,
-        morph_core::StartMergeOpts::new(&branch),
-    )?;
+    let retired_metrics: Vec<String> = retire
+        .as_deref()
+        .map(|s| s.split(',').map(|m| m.trim().to_string()).collect())
+        .unwrap_or_default();
+    let mut start_opts = morph_core::StartMergeOpts::new(&branch);
+    start_opts.retired_metrics = &retired_metrics;
+    start_opts.retire_reason = retire_reason.as_deref();
+    let outcome = morph_core::start_merge(store.as_ref(), &repo_root, start_opts)?;
 
     if outcome.needs_resolution {
         if !outcome.textual_conflicts.is_empty() {
@@ -769,7 +787,7 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        Command::Commit { message, pipeline, eval_suite, metrics, author, from_run, allow_empty_metrics, new_cases, json } => {
+        Command::Commit { message, pipeline, eval_suite, metrics, author, from_run, allow_empty_metrics, new_cases, no_auto_run, json } => {
             let (repo_root, store) = get_store(verbose)?;
             let morph_dir = repo_root.join(".morph");
             let version = read_repo_version(&morph_dir)?;
@@ -785,11 +803,81 @@ fn main() -> anyhow::Result<()> {
                     None => None,
                 },
             };
-            let observed_metrics: std::collections::BTreeMap<String, f64> = metrics.as_deref()
+
+            // Phase 7 step 1: when neither `--from-run` nor `--metrics`
+            // is supplied (and `--no-auto-run` isn't set), pick up the
+            // most recent `morph eval run` from `.morph/LAST_RUN.json`
+            // — but only if HEAD and the staging index still match
+            // what they were when the run was recorded. Stale
+            // breadcrumbs are skipped with a stderr nudge so the user
+            // can see why their evidence wasn't attached.
+            let auto_run_hash: Option<Hash> = if no_auto_run || from_run.is_some() {
+                None
+            } else {
+                match morph_core::resolve_fresh_last_run(store.as_ref(), &morph_dir) {
+                    Ok((Some(last), _)) => match Hash::from_hex(&last.run) {
+                        Ok(h) => Some(h),
+                        Err(e) => {
+                            eprintln!("warning: ignoring LAST_RUN breadcrumb (bad hash): {}", e);
+                            None
+                        }
+                    },
+                    Ok((None, Some(reason))) => {
+                        eprintln!(
+                            "warning: ignoring stale `morph eval run` evidence ({}). \
+                             Re-run `morph eval run` to refresh, or pass \
+                             --metrics / --from-run / --no-auto-run.",
+                            reason.as_human(),
+                        );
+                        None
+                    }
+                    Ok((None, None)) => None,
+                    Err(e) => {
+                        eprintln!("warning: could not read LAST_RUN breadcrumb: {}", e);
+                        None
+                    }
+                }
+            };
+
+            let mut observed_metrics: std::collections::BTreeMap<String, f64> = metrics.as_deref()
                 .map(serde_json::from_str)
                 .transpose()
                 .map_err(|e| anyhow::anyhow!("invalid --metrics JSON: {}", e))?
                 .unwrap_or_default();
+            // Auto-attach the run's metrics only when the user didn't
+            // pass `--metrics`. Explicit metrics always win so CI
+            // scripts retain deterministic, repeatable input even
+            // when a stale breadcrumb is sitting on disk.
+            if metrics.is_none() {
+                if let Some(ref run_hash) = auto_run_hash {
+                    match store.get(run_hash) {
+                        Ok(MorphObject::Run(run)) => {
+                            if !run.metrics.is_empty() {
+                                let preview: Vec<String> = run
+                                    .metrics
+                                    .iter()
+                                    .map(|(k, v)| format!("{}={}", k, v))
+                                    .collect();
+                                eprintln!(
+                                    "attaching evidence from run {}: {}",
+                                    short_hash(&run_hash.to_string()),
+                                    preview.join(", "),
+                                );
+                                observed_metrics = run.metrics.clone();
+                            }
+                        }
+                        Ok(_) => {
+                            eprintln!(
+                                "warning: LAST_RUN breadcrumb points at non-Run object {}; ignoring",
+                                short_hash(&run_hash.to_string()),
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!("warning: could not load run from LAST_RUN breadcrumb: {}", e);
+                        }
+                    }
+                }
+            }
 
             // Phase 2: enforce required_metrics from policy unless escape hatch is set.
             if !allow_empty_metrics {
@@ -804,19 +892,42 @@ fn main() -> anyhow::Result<()> {
                     ));
                 }
             }
-            let provenance = match from_run {
-                Some(ref run_hash_str) => {
-                    let run_hash = resolve_obj_hash(store.as_ref(), run_hash_str)?;
-                    Some(morph_core::resolve_provenance_from_run(&store, &run_hash)?)
-                }
-                None => None,
+            let provenance = match from_run.as_ref().map(|s| resolve_obj_hash(store.as_ref(), s)).transpose()? {
+                Some(run_hash) => Some(morph_core::resolve_provenance_from_run(&store, &run_hash)?),
+                None => match &auto_run_hash {
+                    Some(h) => Some(morph_core::resolve_provenance_from_run(&store, h)?),
+                    None => None,
+                },
             };
 
             let branch = morph_core::current_branch(&store)?.unwrap_or_else(|| "main".to_string());
             let is_root = morph_core::resolve_head(&store)?.is_none();
+            let head_before_commit = morph_core::resolve_head(&store)?;
             let index = morph_core::read_index(&morph_dir)?;
             let file_count = index.entries.len();
             let metrics_were_empty = observed_metrics.is_empty();
+
+            // Phase 7 step 3: when `--new-cases` is unset, auto-detect
+            // newly introduced acceptance cases by diffing the
+            // about-to-commit suite against HEAD's suite. Pass
+            // `--new-cases ""` to opt out without listing manual ids.
+            let auto_new_cases: Option<Vec<String>> = if new_cases.is_some() {
+                None
+            } else {
+                let head_suite_hash: Option<Hash> = match head_before_commit.as_ref() {
+                    Some(h) => match store.get(h) {
+                        Ok(MorphObject::Commit(c)) => Hash::from_hex(&c.eval_contract.suite).ok(),
+                        _ => None,
+                    },
+                    None => None,
+                };
+                let diff = morph_core::diff_suite_case_ids(
+                    store.as_ref(),
+                    suite_hash.as_ref(),
+                    head_suite_hash.as_ref(),
+                )?;
+                if diff.is_empty() { None } else { Some(diff) }
+            };
 
             let resolved_author = morph_core::resolve_author_for_repo(
                 &morph_dir,
@@ -832,13 +943,27 @@ fn main() -> anyhow::Result<()> {
             // introduces via an `introduces_cases` annotation. The
             // case ids are caller-defined; we just split, trim, and
             // store them so merge planning can show provenance.
-            if let Some(cases_arg) = new_cases.as_deref() {
-                let cases = morph_core::parse_introduces_cases_arg(cases_arg);
+            // Phase 7 step 3 extension: when `--new-cases` is unset
+            // we substitute the suite-diff result.
+            let cases_for_annotation: Option<Vec<String>> = match new_cases.as_deref() {
+                Some(arg) => Some(morph_core::parse_introduces_cases_arg(arg)),
+                None => auto_new_cases,
+            };
+            if let Some(cases) = cases_for_annotation {
                 if let Some(ann) = morph_core::build_introduces_cases_annotation(
                     &hash, &cases, Some(branch.clone()),
                 ) {
                     store.put(&ann)?;
                 }
+            }
+
+            // Phase 7 step 1 cleanup: clear the breadcrumb after a
+            // successful commit so a follow-up `morph commit` doesn't
+            // silently re-attach the same run. The breadcrumb is
+            // single-use by design — its job is to bridge the
+            // `eval run` → `commit` boundary, not to persist evidence.
+            if let Err(e) = morph_core::clear_last_run(&morph_dir) {
+                eprintln!("warning: could not clear LAST_RUN breadcrumb after commit: {}", e);
             }
 
             // Phase 1a: warn when committing without observed_metrics.
@@ -1270,7 +1395,7 @@ fn main() -> anyhow::Result<()> {
                 };
                 let metrics = morph_core::parse_with_runner(&runner, &stdout_text, None);
                 if record {
-                    let (_repo_root, store) = get_store(verbose)?;
+                    let (repo_root, store) = get_store(verbose)?;
                     let hash = morph_core::record_eval_run(
                         store.as_ref(),
                         &metrics,
@@ -1279,6 +1404,7 @@ fn main() -> anyhow::Result<()> {
                         Some(&stdout_text),
                         None,
                     )?;
+                    write_last_run_breadcrumb(&store, &repo_root, &hash);
                     println!("{}", hash);
                 } else {
                     println!("{}", serde_json::to_string_pretty(&metrics)?);
@@ -1468,6 +1594,7 @@ fn main() -> anyhow::Result<()> {
                         runner,
                     );
                 }
+                write_last_run_breadcrumb(&store, &repo_root, &outcome.run_hash);
                 println!("{}", outcome.run_hash);
                 if let Some(code) = outcome.exit_code {
                     if code != 0 {
@@ -1484,8 +1611,8 @@ fn main() -> anyhow::Result<()> {
             print!("{}", plan.format_plan());
         }
 
-        Command::Merge { branch, cont, abort, message, pipeline, eval_suite, metrics, author, retire, sub } => {
-            run_merge(verbose, branch, cont, abort, message, pipeline, eval_suite, metrics, author, retire, sub)?;
+        Command::Merge { branch, cont, abort, message, pipeline, eval_suite, metrics, author, retire, retire_reason, sub } => {
+            run_merge(verbose, branch, cont, abort, message, pipeline, eval_suite, metrics, author, retire, retire_reason, sub)?;
         }
 
         Command::Rollup { base_ref, tip_ref, message } => {

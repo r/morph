@@ -705,7 +705,7 @@ impl MorphServer {
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
-    #[tool(description = "Merge a branch into the current branch (requires behavioral dominance)")]
+    #[tool(description = "Merge a branch into the current branch (requires behavioral dominance). When `retire` is set, an attributed `review` node is auto-injected into the merged pipeline; supply `retire_reason` to record why.")]
     async fn morph_merge(&self, params: Parameters<MergeParams>) -> Result<CallToolResult, McpError> {
         let (repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
         let pipeline = Hash::from_hex(&params.0.pipeline).map_err(mcp_err)?;
@@ -714,7 +714,8 @@ impl MorphServer {
             .map(|s| s.split(',').map(|r| r.trim().to_string()).collect());
         let morph_dir = repo_root.join(".morph");
         let version = morph_core::read_repo_version(&morph_dir).map_err(mcp_err)?;
-        let plan = morph_core::prepare_merge(&store, &params.0.branch, suite.as_ref(), retired.as_deref()).map_err(mcp_err)?;
+        let mut plan = morph_core::prepare_merge(&store, &params.0.branch, suite.as_ref(), retired.as_deref()).map_err(mcp_err)?;
+        plan.retire_reason = params.0.retire_reason.clone();
         let hash = morph_core::execute_merge(&store, &plan, &pipeline, params.0.metrics, params.0.message, params.0.author, Some(&repo_root), Some(&version)).map_err(mcp_err)?;
         Ok(CallToolResult::success(vec![Content::text(hash.to_string())]))
     }
@@ -1597,5 +1598,204 @@ mod tests {
         let result = server.morph_diff(Parameters(DiffParams { old_ref: c1, new_ref: c2, workspace_path: Some(ws) })).await.unwrap();
         assert!(extract_text(&result).contains("A"));
         assert!(extract_text(&result).contains("b.txt"));
+    }
+
+    /// Paper §4.3: when `morph_merge` is called with `retire` and a
+    /// `retire_reason`, the merged pipeline must carry an attributed
+    /// `review` node whose `params.reason` matches the supplied text.
+    /// Mirrors the CLI acceptance specs but exercises the MCP plumbing
+    /// directly so agent-driven retirements stay auditable.
+    #[tokio::test]
+    async fn merge_with_retire_reason_synthesizes_attributed_review_node() {
+        use morph_core::objects::{
+            EvalMetric, EvalSuite, MorphObject, Pipeline, PipelineGraph, PipelineNode,
+        };
+
+        let (dir, server) = setup_repo();
+        let ws = dir.path().to_str().unwrap().to_string();
+        let morph_dir = dir.path().join(".morph");
+
+        let store = morph_core::open_store(&morph_dir).unwrap();
+        let pipeline_obj = Pipeline {
+            graph: PipelineGraph {
+                nodes: vec![PipelineNode {
+                    id: "n1".into(),
+                    kind: "identity".into(),
+                    ref_: None,
+                    params: std::collections::BTreeMap::new(),
+                    env: None,
+                }],
+                edges: vec![],
+            },
+            prompts: vec![],
+            eval_suite: None,
+            attribution: None,
+            provenance: None,
+        };
+        let pipeline_hash = store
+            .put(&MorphObject::Pipeline(pipeline_obj))
+            .unwrap()
+            .to_string();
+
+        let suite_obj = EvalSuite {
+            cases: vec![],
+            metrics: vec![
+                EvalMetric::new("acc", "mean", 0.0),
+                EvalMetric::new("old_metric", "mean", 0.0),
+            ],
+        };
+        let suite_hash = store
+            .put(&MorphObject::EvalSuite(suite_obj))
+            .unwrap()
+            .to_string();
+
+        std::fs::write(dir.path().join("a.txt"), "aaa").unwrap();
+        server
+            .morph_stage(Parameters(StageParams {
+                workspace_path: Some(ws.clone()),
+                paths: Some(vec![".".into()]),
+            }))
+            .await
+            .unwrap();
+        let mut head_metrics = std::collections::BTreeMap::new();
+        head_metrics.insert("acc".into(), 0.9);
+        head_metrics.insert("old_metric".into(), 0.8);
+        server
+            .morph_commit(Parameters(CommitParams {
+                message: "main commit".into(),
+                workspace_path: Some(ws.clone()),
+                pipeline: Some(pipeline_hash.clone()),
+                eval_suite: Some(suite_hash.clone()),
+                metrics: Some(head_metrics),
+                allow_empty_metrics: Some(true),
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
+
+        server
+            .morph_branch(Parameters(BranchParams {
+                name: "feature".into(),
+                workspace_path: Some(ws.clone()),
+            }))
+            .await
+            .unwrap();
+        server
+            .morph_checkout(Parameters(CheckoutParams {
+                ref_name: "feature".into(),
+                workspace_path: Some(ws.clone()),
+            }))
+            .await
+            .unwrap();
+        std::fs::write(dir.path().join("b.txt"), "bbb").unwrap();
+        server
+            .morph_stage(Parameters(StageParams {
+                workspace_path: Some(ws.clone()),
+                paths: Some(vec![".".into()]),
+            }))
+            .await
+            .unwrap();
+        let mut feat_metrics = std::collections::BTreeMap::new();
+        feat_metrics.insert("acc".into(), 0.85);
+        feat_metrics.insert("old_metric".into(), 0.7);
+        server
+            .morph_commit(Parameters(CommitParams {
+                message: "feature commit".into(),
+                workspace_path: Some(ws.clone()),
+                pipeline: Some(pipeline_hash.clone()),
+                eval_suite: Some(suite_hash.clone()),
+                metrics: Some(feat_metrics),
+                allow_empty_metrics: Some(true),
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
+
+        server
+            .morph_checkout(Parameters(CheckoutParams {
+                ref_name: "main".into(),
+                workspace_path: Some(ws.clone()),
+            }))
+            .await
+            .unwrap();
+
+        let mut merged_metrics = std::collections::BTreeMap::new();
+        merged_metrics.insert("acc".into(), 0.92);
+        let merge_result = server
+            .morph_merge(Parameters(MergeParams {
+                branch: "feature".into(),
+                message: "retired merge via mcp".into(),
+                pipeline: pipeline_hash.clone(),
+                metrics: merged_metrics,
+                eval_suite: None,
+                author: Some("mcp-agent".into()),
+                retire: Some("old_metric".into()),
+                retire_reason: Some("model swap dropped this metric".into()),
+                workspace_path: Some(ws.clone()),
+            }))
+            .await
+            .unwrap();
+        let merge_hash = extract_text(&merge_result).trim().to_string();
+        assert_eq!(merge_hash.len(), 64, "merge should return a 64-hex hash");
+
+        let store = morph_core::open_store(&morph_dir).unwrap();
+        let merge_obj = store.get(&Hash::from_hex(&merge_hash).unwrap()).unwrap();
+        let merge_commit = match merge_obj {
+            MorphObject::Commit(c) => c,
+            _ => panic!("merge hash did not resolve to a Commit"),
+        };
+        assert_ne!(
+            merge_commit.pipeline, pipeline_hash,
+            "merge pipeline must differ from input (review node was injected)"
+        );
+
+        let merged_pipeline = match store
+            .get(&Hash::from_hex(&merge_commit.pipeline).unwrap())
+            .unwrap()
+        {
+            MorphObject::Pipeline(p) => p,
+            _ => panic!("merge commit's pipeline did not resolve to a Pipeline"),
+        };
+
+        let review = merged_pipeline
+            .graph
+            .nodes
+            .iter()
+            .find(|n| n.kind == "review")
+            .expect("merged pipeline must have a review node when --retire is set");
+        assert!(
+            review.id.starts_with("review-retirement-"),
+            "synthesized review node should have a deterministic id, got {:?}",
+            review.id
+        );
+        let reason = review
+            .params
+            .get("reason")
+            .and_then(|v| v.as_str())
+            .expect("review node should carry params.reason");
+        assert_eq!(
+            reason, "model swap dropped this metric",
+            "retire_reason from the MCP request must reach params.reason"
+        );
+        let retired_param = review
+            .params
+            .get("retired_metrics")
+            .and_then(|v| v.as_array())
+            .expect("review node should carry params.retired_metrics");
+        let retired_names: Vec<&str> =
+            retired_param.iter().filter_map(|v| v.as_str()).collect();
+        assert_eq!(retired_names, vec!["old_metric"]);
+
+        let attribution = merged_pipeline
+            .attribution
+            .as_ref()
+            .expect("attribution map must be set when injecting a review node");
+        let entry = attribution
+            .get(&review.id)
+            .expect("attribution map must include the synthesized review node id");
+        assert_eq!(
+            entry.agent_id, "mcp-agent",
+            "attribution must record the merge author from the MCP `author` field"
+        );
     }
 }

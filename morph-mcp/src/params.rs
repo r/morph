@@ -45,6 +45,12 @@ pub struct MergeParams {
     pub author: Option<String>,
     #[serde(default)]
     pub retire: Option<String>,
+    /// Human-readable reason for retiring metrics (paper §4.3
+    /// attribution). Recorded on the auto-injected `review` node in the
+    /// merged pipeline. Ignored when `retire` is empty; defaults to a
+    /// generic placeholder when omitted alongside a non-empty `retire`.
+    #[serde(default)]
+    pub retire_reason: Option<String>,
     #[serde(default)]
     pub workspace_path: Option<String>,
 }

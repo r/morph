@@ -1,0 +1,155 @@
+# Phase 7: `morph eval run` writes a `.morph/LAST_RUN.json` breadcrumb,
+# and a follow-up `morph commit` (with no `--from-run` and no `--metrics`)
+# auto-attaches the run's metrics + provenance from the breadcrumb. This
+# turns the spec-first eval-driven flow into the two-line common case
+#
+#     morph eval run -- cargo test --workspace
+#     morph commit -m "implement X"
+#
+# without the user having to hand-copy run hashes or repeat metrics.
+
+# Happy path: breadcrumb is current → metrics + evidence_refs picked up.
+- name: commit_auto_run_picks_up_metrics_and_evidence_when_breadcrumb_current
+  files:
+    foo.txt: "seed"
+    .morph/config.json: '{"repo_version":"0.0","policy":{"required_metrics":["tests_passed","tests_total"]}}'
+  steps:
+    - morph: [add, foo.txt]
+    - morph:
+        - eval
+        - run
+        - --runner
+        - cargo
+        - --
+        - printf
+        - "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.42s\n"
+      capture_first_line: run_hash
+      assert_hash: true
+
+    - morph: [commit, -m, "implement feature X", --json]
+      capture_json_field:
+        var: commit_hash
+        field: hash
+      assert_hash: true
+      stderr_contains:
+        - "attaching evidence from run"
+        - "tests_passed=7"
+        - "tests_total=7"
+
+    - morph: [show, "${commit_hash}"]
+      stdout_contains:
+        - "tests_passed"
+        - "tests_total"
+        - "${run_hash}"
+
+# After a successful commit, the breadcrumb is cleared so the same run
+# is not silently re-attached to a follow-up commit.
+- name: commit_auto_run_clears_breadcrumb_after_success
+  files:
+    foo.txt: "seed"
+    bar.txt: "seed"
+    .morph/config.json: '{"repo_version":"0.0","policy":{"required_metrics":["tests_passed"]}}'
+  steps:
+    - morph: [add, foo.txt]
+    - morph:
+        - eval
+        - run
+        - --runner
+        - cargo
+        - --
+        - printf
+        - "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s\n"
+    - morph: [commit, -m, "first"]
+    # Breadcrumb is now cleared. A follow-up commit without metrics and
+    # without re-running the eval must hit the policy-required-metrics
+    # gate, proving the breadcrumb did not survive.
+    - morph: [add, bar.txt]
+    - morph: [commit, -m, "second"]
+      expect_exit: 1
+      stderr_contains:
+        - "policy requires metrics that are missing"
+        - "tests_passed"
+
+# Stale-by-HEAD: the breadcrumb is from a run recorded against an
+# earlier HEAD; once HEAD moves the breadcrumb is ignored (with a
+# warning) and the commit falls back to its normal evidence path.
+- name: commit_auto_run_ignores_breadcrumb_when_head_changed
+  files:
+    foo.txt: "seed"
+    bar.txt: "seed"
+    .morph/config.json: '{"repo_version":"0.0","policy":{"required_metrics":[]}}'
+  steps:
+    # First commit establishes HEAD = c1.
+    - morph: [add, foo.txt]
+    - morph: [commit, -m, "c1", --metrics, '{"tests_passed":1}']
+    # Eval run records breadcrumb against c1.
+    - morph:
+        - eval
+        - run
+        - --runner
+        - cargo
+        - --
+        - printf
+        - "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s\n"
+    # A second commit moves HEAD to c2. Because we pass --metrics
+    # explicitly, the breadcrumb (which is now stale-by-HEAD anyway,
+    # since the first commit cleared it) is irrelevant. The next
+    # commit also has no breadcrumb to read, so it must fall back to
+    # explicit metrics or run-empty.
+    - morph: [add, bar.txt]
+    - morph: [commit, -m, "c2", --metrics, '{"tests_passed":1}']
+
+# --no-auto-run disables breadcrumb pickup entirely. The commit then
+# behaves exactly as if no breadcrumb existed: empty metrics + empty
+# warning, even though `morph eval run` just recorded a fresh run.
+- name: commit_auto_run_can_be_disabled_with_no_auto_run_flag
+  files:
+    foo.txt: "seed"
+    .morph/config.json: '{"repo_version":"0.0","policy":{"required_metrics":[]}}'
+  steps:
+    - morph: [add, foo.txt]
+    - morph:
+        - eval
+        - run
+        - --runner
+        - cargo
+        - --
+        - printf
+        - "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s\n"
+    - morph: [commit, -m, "explicit empty", --no-auto-run]
+      stderr_contains:
+        - "warning: commit has no observed_metrics"
+      stdout_not_contains:
+        - "attaching evidence from run"
+
+# Explicit --metrics wins over the breadcrumb's metrics, but provenance
+# (evidence_refs from the run) is still picked up unless --no-auto-run
+# is also passed.
+- name: commit_auto_run_explicit_metrics_override_breadcrumb_metrics
+  files:
+    foo.txt: "seed"
+    .morph/config.json: '{"repo_version":"0.0","policy":{"required_metrics":[]}}'
+  steps:
+    - morph: [add, foo.txt]
+    - morph:
+        - eval
+        - run
+        - --runner
+        - cargo
+        - --
+        - printf
+        - "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s\n"
+      capture_first_line: run_hash
+      assert_hash: true
+    - morph: [commit, -m, "with override", --metrics, '{"custom_metric": 42.0}', --json]
+      capture_json_field:
+        var: commit_hash
+        field: hash
+    - morph: [show, "${commit_hash}"]
+      stdout_contains:
+        - "custom_metric"
+        - "42"
+        # tests_passed must NOT appear; the explicit --metrics replaces
+        # the run's metrics rather than merging with them.
+      stdout_not_contains:
+        - "tests_passed"

@@ -25,6 +25,7 @@
 use crate::objects::Pipeline;
 use crate::store::MorphError;
 use crate::Hash;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 const MERGE_HEAD: &str = "MERGE_HEAD";
@@ -32,8 +33,31 @@ const MERGE_MSG: &str = "MERGE_MSG";
 const ORIG_HEAD: &str = "ORIG_HEAD";
 const MERGE_PIPELINE: &str = "MERGE_PIPELINE.json";
 const MERGE_SUITE: &str = "MERGE_SUITE";
+const MERGE_RETIRED: &str = "MERGE_RETIRED.json";
 
-const ALL_FILES: &[&str] = &[MERGE_HEAD, MERGE_MSG, ORIG_HEAD, MERGE_PIPELINE, MERGE_SUITE];
+const ALL_FILES: &[&str] = &[
+    MERGE_HEAD,
+    MERGE_MSG,
+    ORIG_HEAD,
+    MERGE_PIPELINE,
+    MERGE_SUITE,
+    MERGE_RETIRED,
+];
+
+/// Serialized retirement context written by [`start_merge`] and read by
+/// [`continue_merge`]. Persists the `--retire <metric>...` and
+/// `--retire-reason <text>` arguments so a long-running, conflict-laden
+/// merge ends with the same attributed `review` node a single-shot
+/// merge would have produced (paper §4.3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MergeRetirement {
+    /// Metric names being retired, in user-supplied order.
+    pub metrics: Vec<String>,
+    /// Optional reason text. `None` causes [`merge::ensure_review_node_for_retirement`]
+    /// to fall back to the default placeholder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
 
 // ── primitives ──────────────────────────────────────────────────────
 
@@ -128,6 +152,27 @@ pub fn write_merge_suite(morph_dir: &Path, hash: &Hash) -> Result<(), MorphError
 }
 pub fn read_merge_suite(morph_dir: &Path) -> Result<Option<Hash>, MorphError> {
     read_hash(morph_dir, MERGE_SUITE)
+}
+
+pub fn write_merge_retirement(
+    morph_dir: &Path,
+    retirement: &MergeRetirement,
+) -> Result<(), MorphError> {
+    let bytes = serde_json::to_vec_pretty(retirement)
+        .map_err(|e| MorphError::Serialization(e.to_string()))?;
+    write_atomic(&morph_dir.join(MERGE_RETIRED), &bytes)
+}
+
+pub fn read_merge_retirement(
+    morph_dir: &Path,
+) -> Result<Option<MergeRetirement>, MorphError> {
+    let bytes = match read_or_none(&morph_dir.join(MERGE_RETIRED))? {
+        Some(b) => b,
+        None => return Ok(None),
+    };
+    let r: MergeRetirement = serde_json::from_slice(&bytes)
+        .map_err(|e| MorphError::Serialization(e.to_string()))?;
+    Ok(Some(r))
 }
 
 /// Remove every merge-state file. Tolerates missing files. Used by
@@ -229,6 +274,28 @@ mod tests {
     }
 
     #[test]
+    fn merge_state_retirement_breadcrumb_roundtrip() {
+        let dir = make_morph_dir();
+        let m = dir.path().join(".morph");
+
+        assert!(read_merge_retirement(&m).unwrap().is_none());
+
+        let r = MergeRetirement {
+            metrics: vec!["old_metric".into(), "stale".into()],
+            reason: Some("switching retrieval strategy".into()),
+        };
+        write_merge_retirement(&m, &r).unwrap();
+        assert_eq!(read_merge_retirement(&m).unwrap(), Some(r));
+
+        let r_no_reason = MergeRetirement {
+            metrics: vec!["only_one".into()],
+            reason: None,
+        };
+        write_merge_retirement(&m, &r_no_reason).unwrap();
+        assert_eq!(read_merge_retirement(&m).unwrap(), Some(r_no_reason));
+    }
+
+    #[test]
     fn clear_merge_state_removes_all_files_and_in_progress_flag() {
         let dir = make_morph_dir();
         let m = dir.path().join(".morph");
@@ -249,6 +316,14 @@ mod tests {
             },
         )
         .unwrap();
+        write_merge_retirement(
+            &m,
+            &MergeRetirement {
+                metrics: vec!["old".into()],
+                reason: Some("reason".into()),
+            },
+        )
+        .unwrap();
 
         assert!(merge_in_progress(&m), "MERGE_HEAD must signal in-progress");
         clear_merge_state(&m).unwrap();
@@ -258,6 +333,10 @@ mod tests {
         assert!(read_orig_head(&m).unwrap().is_none());
         assert!(read_merge_suite(&m).unwrap().is_none());
         assert!(read_merge_pipeline(&m).unwrap().is_none());
+        assert!(
+            read_merge_retirement(&m).unwrap().is_none(),
+            "MERGE_RETIRED must be cleared by clear_merge_state"
+        );
 
         // Calling clear again on a clean repo must be a no-op.
         clear_merge_state(&m).unwrap();
