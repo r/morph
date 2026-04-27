@@ -37,6 +37,16 @@ pub enum Command {
         #[arg(long)]
         bare: bool,
     },
+    /// Print version + build metadata. Like `--version` but also
+    /// supports `--json` for scripts and CI smoke tests.
+    Version {
+        /// Emit a JSON object with `version`, `build_date`,
+        /// `protocol_version`, and the supported repo schema
+        /// versions. Useful for release pipelines that need to
+        /// confirm the binary's identity programmatically.
+        #[arg(long)]
+        json: bool,
+    },
     /// Clone a Morph repository from a local path or SSH URL.
     ///
     /// Initializes a fresh repo at `destination`, configures the

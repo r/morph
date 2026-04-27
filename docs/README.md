@@ -79,6 +79,7 @@ THEORY.md defines the algebra. v0-spec.md projects that algebra into a buildable
 | **[MERGE.md](MERGE.md)** | Users | How `morph merge` works: 3-way structural merge, behavioral dominance, evidence union, conflict resolution. |
 | **[SERVER-SETUP.md](SERVER-SETUP.md)** | Admins | Standing up a Morph SSH server: bare repos, SSH access, push-gate policy, schema handshake. |
 | **[TESTING.md](TESTING.md)** | Contributors | Test architecture, running tests, coverage, known gaps. |
+| **[RELEASING.md](RELEASING.md)** | Maintainers | Cutting a stable release: version bump, tag, Homebrew tap update, smoke tests. |
 
 ### Academic
 

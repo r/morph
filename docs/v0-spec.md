@@ -1233,7 +1233,7 @@ Every SSH session begins with a `Hello` exchange. The server's `Hello` response 
 
 ```json
 {
-  "version": "0.15.0",
+  "version": "0.16.0",
   "protocol_version": 1,
   "repo_version": "0.5"
 }

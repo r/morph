@@ -64,6 +64,28 @@ fn short_hash(h: &str) -> String {
     h.chars().take(8).collect()
 }
 
+/// Structured version output for `morph version --json`. Stable
+/// shape (additive only): release pipelines and downstream tooling
+/// rely on the field names below to verify the binary's identity
+/// without parsing the human-readable line.
+fn version_json() -> String {
+    let supported: Vec<&str> = vec![
+        STORE_VERSION_INIT,
+        STORE_VERSION_0_2,
+        STORE_VERSION_0_3,
+        STORE_VERSION_0_4,
+        STORE_VERSION_0_5,
+    ];
+    let value = serde_json::json!({
+        "name": "morph",
+        "version": env!("CARGO_PKG_VERSION"),
+        "build_date": env!("MORPH_BUILD_DATE"),
+        "protocol_version": morph_core::ssh_proto::MORPH_PROTOCOL_VERSION,
+        "supported_repo_versions": supported,
+    });
+    serde_json::to_string(&value).expect("version json serializes")
+}
+
 fn print_tap_task(task: &morph_core::TapTask) {
     println!("=== Run {} ===", &task.run_hash[..12]);
     println!("  model: {}  agent: {}  events: {}  steps: {}",
@@ -159,6 +181,18 @@ fn main() -> anyhow::Result<()> {
     let verbose = cli.verbose;
 
     match cli.command {
+        Command::Version { json } => {
+            if json {
+                println!("{}", version_json());
+            } else {
+                println!(
+                    "morph {} (built {})",
+                    env!("CARGO_PKG_VERSION"),
+                    env!("MORPH_BUILD_DATE"),
+                );
+            }
+        }
+
         Command::Init { path, bare } => {
             verbose_msg(
                 verbose,
@@ -1505,5 +1539,38 @@ mod tests {
         assert_eq!(short_hash("abcdef0123456789abcdef0123456789"), "abcdef01");
         assert_eq!(short_hash("abc"), "abc");
         assert_eq!(short_hash(""), "");
+    }
+
+    /// PR 10: `morph version --json` is the documented machine-
+    /// readable handshake for release pipelines and downstream
+    /// tooling. The shape is stable (additive only) and pinned by
+    /// this test — adding fields is fine, removing or renaming is
+    /// a breaking change.
+    #[test]
+    fn version_json_has_stable_field_set() {
+        let body = version_json();
+        let value: serde_json::Value =
+            serde_json::from_str(&body).expect("version_json must emit valid JSON");
+        assert_eq!(value["name"], "morph");
+        assert_eq!(value["version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(value["build_date"], env!("MORPH_BUILD_DATE"));
+        assert!(
+            value["protocol_version"].is_number(),
+            "protocol_version must be a number, got: {}",
+            value["protocol_version"]
+        );
+        let supported = value["supported_repo_versions"]
+            .as_array()
+            .expect("supported_repo_versions must be an array");
+        assert!(
+            supported.iter().any(|v| v == "0.5"),
+            "current schema 0.5 must be in supported_repo_versions: {:?}",
+            supported
+        );
+        assert!(
+            supported.iter().any(|v| v == "0.0"),
+            "the legacy 0.0 schema must remain supported: {:?}",
+            supported
+        );
     }
 }

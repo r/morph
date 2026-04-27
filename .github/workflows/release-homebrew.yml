@@ -1,25 +1,53 @@
 name: release-homebrew
 
+# Triggers:
+#   - push of a `v*` tag         → cuts a stable release, updates the tap.
+#   - workflow_dispatch          → manual stable-release rerun.
+#   - push to main               → builds + uploads artifacts only
+#                                  (no formula update, lets us catch
+#                                  regressions in the release flow
+#                                  without churning the tap).
 on:
   push:
     branches:
       - main
+    tags:
+      - "v*"
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  test:
+    # Refuse to ship binaries from a workspace that fails its own
+    # tests. The release flow is what gives downstream users a
+    # behavioral guarantee — running the full suite first is the
+    # cheapest way to honor it.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test --workspace --locked
+        shell: bash
+        run: cargo test --workspace --locked
+
   metadata:
+    needs: test
     runs-on: ubuntu-latest
     outputs:
       workspace_version: ${{ steps.meta.outputs.workspace_version }}
       timestamp: ${{ steps.meta.outputs.timestamp }}
+      is_tag_release: ${{ steps.meta.outputs.is_tag_release }}
+      publish_version: ${{ steps.meta.outputs.publish_version }}
+      release_tag: ${{ steps.meta.outputs.release_tag }}
     steps:
       - uses: actions/checkout@v4
       - id: meta
         shell: bash
         run: |
+          set -euo pipefail
           workspace_version="$(python - <<'PY'
           import tomllib
           with open("Cargo.toml", "rb") as f:
@@ -28,8 +56,29 @@ jobs:
           PY
           )"
           timestamp="$(date -u +%Y%m%d%H%M%S)"
+
+          # `v0.16.0` -> tag release; everything else (commit pushes,
+          # manual dispatch from main) -> nightly-style commit build.
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            is_tag_release=true
+            tag_version="${GITHUB_REF#refs/tags/v}"
+            if [[ "${tag_version}" != "${workspace_version}" ]]; then
+              echo "::error::tag ${GITHUB_REF} does not match workspace version ${workspace_version}"
+              exit 1
+            fi
+            release_tag="v${workspace_version}"
+            publish_version="${workspace_version}"
+          else
+            is_tag_release=false
+            release_tag="commit-${GITHUB_SHA::12}"
+            publish_version="${workspace_version}.${timestamp}"
+          fi
+
           echo "workspace_version=${workspace_version}" >> "$GITHUB_OUTPUT"
           echo "timestamp=${timestamp}" >> "$GITHUB_OUTPUT"
+          echo "is_tag_release=${is_tag_release}" >> "$GITHUB_OUTPUT"
+          echo "publish_version=${publish_version}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
 
   build-artifacts:
     needs: metadata
@@ -39,23 +88,79 @@ jobs:
         include:
           - os: macos-13
             target: x86_64-apple-darwin
+            strip: strip
           - os: macos-14
             target: aarch64-apple-darwin
+            strip: strip
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            strip: strip
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            strip: aarch64-linux-gnu-strip
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Build morph binaries
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Install cross-compile toolchain
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
         shell: bash
-        run: cargo build --release -p morph-cli -p morph-mcp
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+          mkdir -p .cargo
+          cat >> .cargo/config.toml <<'CFG'
+          [target.aarch64-unknown-linux-gnu]
+          linker = "aarch64-linux-gnu-gcc"
+          CFG
+      - name: cargo build --release --locked
+        shell: bash
+        run: |
+          cargo build --release --locked --target ${{ matrix.target }} \
+            -p morph-cli -p morph-mcp
+      - name: Strip binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin_dir="target/${{ matrix.target }}/release"
+          ${{ matrix.strip }} "${bin_dir}/morph" || true
+          ${{ matrix.strip }} "${bin_dir}/morph-mcp" || true
+      - name: Smoke-test built morph (native targets only)
+        if: |
+          matrix.target == 'x86_64-apple-darwin' && runner.arch == 'X64' ||
+          matrix.target == 'aarch64-apple-darwin' && runner.arch == 'ARM64' ||
+          matrix.target == 'x86_64-unknown-linux-gnu' && runner.arch == 'X64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin_dir="target/${{ matrix.target }}/release"
+          # `morph version --json` is the documented machine-readable
+          # handshake; if any of these checks fail the binary won't
+          # be honest about what it is and we should not ship it.
+          out="$("${bin_dir}/morph" version --json)"
+          echo "${out}" | python -c "
+          import json, sys
+          v = json.loads(sys.stdin.read())
+          assert v['name'] == 'morph', v
+          assert v['version'] == '${{ needs.metadata.outputs.workspace_version }}', v
+          assert v['protocol_version'] >= 1, v
+          assert '0.5' in v['supported_repo_versions'], v
+          print('smoke ok:', v['version'])
+          "
       - name: Package binaries
         shell: bash
         run: |
+          set -euo pipefail
           archive_name="morph-${{ matrix.target }}.tar.gz"
           package_dir="package/${{ matrix.target }}"
           mkdir -p "${package_dir}"
-          cp target/release/morph "${package_dir}/morph"
-          cp target/release/morph-mcp "${package_dir}/morph-mcp"
+          cp "target/${{ matrix.target }}/release/morph" "${package_dir}/morph"
+          cp "target/${{ matrix.target }}/release/morph-mcp" "${package_dir}/morph-mcp"
           tar -C "${package_dir}" -czf "${archive_name}" morph morph-mcp
           shasum -a 256 "${archive_name}" > "${archive_name}.sha256"
       - uses: actions/upload-artifact@v4
@@ -65,13 +170,57 @@ jobs:
             morph-${{ matrix.target }}.tar.gz
             morph-${{ matrix.target }}.tar.gz.sha256
 
-  publish-and-update-tap:
+  publish:
+    # Publish artifacts to a GitHub release on every run. This is
+    # deliberately separate from `update-tap`: nightly commit
+    # builds are still uploaded so users can pin a specific SHA via
+    # `--HEAD` or by hand, but the tap only follows tag releases.
     needs:
       - metadata
       - build-artifacts
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+      - name: Publish release
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ needs.metadata.outputs.release_tag }}"
+          publish_version="${{ needs.metadata.outputs.publish_version }}"
+          if [[ "${{ needs.metadata.outputs.is_tag_release }}" == "true" ]]; then
+            title="Morph ${publish_version}"
+            notes="Stable release ${publish_version} (${GITHUB_SHA})."
+          else
+            title="Morph commit ${GITHUB_SHA::12}"
+            notes="Automated build for ${GITHUB_SHA} (version ${publish_version})."
+          fi
+
+          if gh release view "${tag}" > /dev/null 2>&1; then
+            gh release upload "${tag}" dist/*.tar.gz dist/*.sha256 --clobber
+          else
+            gh release create "${tag}" dist/*.tar.gz dist/*.sha256 \
+              --title "${title}" \
+              --notes "${notes}"
+          fi
+
+  update-tap:
+    # Updates the Homebrew tap formula. Runs only for tag releases
+    # so the tap doesn't churn on every commit. Manual dispatch
+    # from a tag also works; manual dispatch from main does not
+    # update the tap (`is_tag_release` is false).
+    if: needs.metadata.outputs.is_tag_release == 'true'
+    needs:
+      - metadata
+      - publish
+    runs-on: ubuntu-latest
+    env:
       HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
       HOMEBREW_TAP_REPO: ${{ vars.HOMEBREW_TAP_REPO }}
     steps:
@@ -81,42 +230,34 @@ jobs:
           pattern: release-*
           merge-multiple: true
           path: dist
-      - name: Publish commit release
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          tag="commit-${GITHUB_SHA::12}"
-          publish_version="${{ needs.metadata.outputs.workspace_version }}.${{ needs.metadata.outputs.timestamp }}"
-
-          if gh release view "${tag}" > /dev/null 2>&1; then
-            gh release upload "${tag}" dist/*.tar.gz dist/*.sha256 --clobber
-          else
-            gh release create "${tag}" dist/*.tar.gz dist/*.sha256 \
-              --title "Morph commit ${GITHUB_SHA::12}" \
-              --notes "Automated build for ${GITHUB_SHA} (version ${publish_version})."
-          fi
-
-          echo "TAG=${tag}" >> "$GITHUB_ENV"
-          echo "PUBLISH_VERSION=${publish_version}" >> "$GITHUB_ENV"
       - name: Update Homebrew tap formula
         shell: bash
         run: |
           set -euo pipefail
-
           if [ -z "${HOMEBREW_TAP_TOKEN:-}" ]; then
-            echo "HOMEBREW_TAP_TOKEN secret is required to push formula updates."
+            echo "::error::HOMEBREW_TAP_TOKEN secret is required."
+            exit 1
+          fi
+          if [ -z "${HOMEBREW_TAP_REPO:-}" ]; then
+            echo "::error::HOMEBREW_TAP_REPO repo variable is required (e.g. owner/homebrew-morph)."
             exit 1
           fi
 
-          tap_repo="${HOMEBREW_TAP_REPO:-r/homebrew-morph}"
-          arm_file="morph-aarch64-apple-darwin.tar.gz"
-          intel_file="morph-x86_64-apple-darwin.tar.gz"
-          arm_sha="$(cut -d' ' -f1 < "dist/${arm_file}.sha256")"
-          intel_sha="$(cut -d' ' -f1 < "dist/${intel_file}.sha256")"
+          tag="${{ needs.metadata.outputs.release_tag }}"
+          publish_version="${{ needs.metadata.outputs.publish_version }}"
 
-          release_base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
-          tap_remote="https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${tap_repo}.git"
+          arm_mac="morph-aarch64-apple-darwin.tar.gz"
+          intel_mac="morph-x86_64-apple-darwin.tar.gz"
+          arm_linux="morph-aarch64-unknown-linux-gnu.tar.gz"
+          intel_linux="morph-x86_64-unknown-linux-gnu.tar.gz"
+
+          arm_mac_sha="$(cut -d' ' -f1 < "dist/${arm_mac}.sha256")"
+          intel_mac_sha="$(cut -d' ' -f1 < "dist/${intel_mac}.sha256")"
+          arm_linux_sha="$(cut -d' ' -f1 < "dist/${arm_linux}.sha256")"
+          intel_linux_sha="$(cut -d' ' -f1 < "dist/${intel_linux}.sha256")"
+
+          release_base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}"
+          tap_remote="https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${HOMEBREW_TAP_REPO}.git"
 
           rm -rf tap-repo
           git clone "${tap_remote}" tap-repo
@@ -124,18 +265,28 @@ jobs:
 
           cat > tap-repo/Formula/morph.rb <<EOF
           class Morph < Formula
-            desc "Git for AI-assisted development"
+            desc "Behavioral version control for AI-assisted development"
             homepage "https://github.com/${GITHUB_REPOSITORY}"
-            version "${PUBLISH_VERSION}"
+            version "${publish_version}"
             license "MIT"
 
             on_macos do
               if Hardware::CPU.arm?
-                url "${release_base}/${arm_file}"
-                sha256 "${arm_sha}"
+                url "${release_base}/${arm_mac}"
+                sha256 "${arm_mac_sha}"
               else
-                url "${release_base}/${intel_file}"
-                sha256 "${intel_sha}"
+                url "${release_base}/${intel_mac}"
+                sha256 "${intel_mac_sha}"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.arm?
+                url "${release_base}/${arm_linux}"
+                sha256 "${arm_linux_sha}"
+              else
+                url "${release_base}/${intel_linux}"
+                sha256 "${intel_linux_sha}"
               end
             end
 
@@ -146,8 +297,18 @@ jobs:
             end
 
             test do
-              assert_match "morph", shell_output("#{bin}/morph --version")
-              assert_match "morph-mcp", shell_output("#{bin}/morph-mcp --version")
+              version_line = shell_output("#{bin}/morph --version")
+              assert_match "morph #{version}", version_line
+              assert_match "morph-mcp #{version}",
+                shell_output("#{bin}/morph-mcp --version")
+
+              # \`morph version --json\` is a documented contract
+              # exercised by the upstream release pipeline. If this
+              # round-trips on the user's machine the tarball was
+              # not corrupted in transit.
+              json = shell_output("#{bin}/morph version --json")
+              assert_match version.to_s, json
+              assert_match "supported_repo_versions", json
             end
           end
           EOF
@@ -160,5 +321,5 @@ jobs:
 
           git -C tap-repo config user.name "github-actions[bot]"
           git -C tap-repo config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C tap-repo commit -m "Update morph formula for ${TAG}"
+          git -C tap-repo commit -m "Update morph formula for ${tag}"
           git -C tap-repo push
