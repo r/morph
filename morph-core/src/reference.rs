@@ -976,6 +976,33 @@ fn check_pre_merge_dominance(
     }
 }
 
+/// PR 11: resolve a git branch name to its current tip SHA. Used by
+/// `morph merge` (reference mode) when a conflict halts the merge —
+/// we capture the *other* branch's git SHA in the breadcrumb so
+/// `--continue` can re-resolve the morph mirror after the merge
+/// commit lands. Returns `Ok(None)` for a missing branch.
+pub fn lookup_branch_git_sha(
+    repo_root: &Path,
+    branch: &str,
+) -> Result<Option<String>, MorphError> {
+    let out = Command::new("git")
+        .arg("rev-parse")
+        .arg("--verify")
+        .arg(branch)
+        .current_dir(repo_root)
+        .output()
+        .map_err(|e| MorphError::Other(format!("git rev-parse {} failed: {}", branch, e)))?;
+    if !out.status.success() {
+        return Ok(None);
+    }
+    let sha = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if sha.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(sha))
+    }
+}
+
 /// PR 10: best-effort branch lookup for a git SHA. Walks `git
 /// for-each-ref refs/heads/` and returns the first branch whose tip
 /// matches. `None` when no local branch points at the SHA — in that
@@ -1005,6 +1032,103 @@ fn git_branch_name_for_sha(
         }
     }
     Ok(None)
+}
+
+/// PR 11: breadcrumb written to `.morph/MERGE_REF.json` while a
+/// reference-mode merge is mid-conflict. Captures everything
+/// `morph merge --continue` needs to finalize the merge after the
+/// user resolves conflicts in the working tree:
+///   - the original branch name (so PR 9's auto-mirror can re-resolve
+///     the morph mirror after conflict resolution moves the SHA),
+///   - both parents' git SHAs at the moment of the merge,
+///   - the merge message that should be reused on commit.
+///
+/// Stored next to morph state so it survives across CLI invocations
+/// and can be surfaced by `morph status`. Cleared by `--continue` or
+/// `--abort` — leftover breadcrumbs from a manually-aborted merge
+/// (`git merge --abort` without going through morph) are tolerated.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ReferenceMergeBreadcrumb {
+    pub other_branch: String,
+    pub other_git_sha: String,
+    pub head_git_sha: String,
+    pub message: String,
+}
+
+const MERGE_REF_FILE: &str = "MERGE_REF.json";
+
+/// Path to the merge breadcrumb. Lives directly under `.morph/` so
+/// it sits beside the rest of repo-local state (HEAD, refs, etc.)
+/// and is naturally excluded from git via `.git/info/exclude`.
+pub fn merge_ref_path(morph_dir: &Path) -> std::path::PathBuf {
+    morph_dir.join(MERGE_REF_FILE)
+}
+
+/// Write a `MERGE_REF.json` breadcrumb (PR 11). Idempotent — used
+/// by `morph merge` when `git merge` produces conflicts so
+/// `--continue` has everything it needs.
+pub fn write_merge_breadcrumb(
+    morph_dir: &Path,
+    breadcrumb: &ReferenceMergeBreadcrumb,
+) -> Result<(), MorphError> {
+    let path = merge_ref_path(morph_dir);
+    let s = serde_json::to_string_pretty(breadcrumb)
+        .map_err(|e| MorphError::Serialization(e.to_string()))?;
+    std::fs::write(&path, s)?;
+    Ok(())
+}
+
+/// Read the breadcrumb, if present. `Ok(None)` when no merge is in
+/// progress — used by `morph status` and the `--continue`/`--abort`
+/// guards.
+pub fn read_merge_breadcrumb(
+    morph_dir: &Path,
+) -> Result<Option<ReferenceMergeBreadcrumb>, MorphError> {
+    let path = merge_ref_path(morph_dir);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let s = std::fs::read_to_string(&path)?;
+    let bc = serde_json::from_str(&s).map_err(|e| MorphError::Serialization(e.to_string()))?;
+    Ok(Some(bc))
+}
+
+/// Remove the breadcrumb. Tolerant of missing files so `--abort`
+/// can be re-run without erroring even if the user already cleaned
+/// up manually.
+pub fn clear_merge_breadcrumb(morph_dir: &Path) -> Result<(), MorphError> {
+    let path = merge_ref_path(morph_dir);
+    if path.exists() {
+        std::fs::remove_file(&path)?;
+    }
+    Ok(())
+}
+
+/// PR 11: list git's currently-unmerged paths. Used by
+/// `morph merge --continue` to verify the user actually resolved
+/// the conflicts before finalizing the merge. Empty list = ready
+/// to commit.
+pub fn list_unmerged_paths(repo_root: &Path) -> Result<Vec<String>, MorphError> {
+    let out = Command::new("git")
+        .arg("ls-files")
+        .arg("--unmerged")
+        .current_dir(repo_root)
+        .output()
+        .map_err(|e| MorphError::Other(format!("git ls-files failed: {}", e)))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+        return Err(MorphError::Other(format!(
+            "git ls-files --unmerged failed: {}",
+            stderr.trim()
+        )));
+    }
+    let mut paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        if let Some(path) = line.split('\t').nth(1) {
+            paths.insert(path.to_string());
+        }
+    }
+    Ok(paths.into_iter().collect())
 }
 
 /// Best-effort `git merge --abort` driver. Used by

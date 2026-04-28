@@ -603,6 +603,27 @@ fn run_reference_merge(
             println!("{}", new_morph);
         }
         morph_core::GitMergeOutcome::Conflicts { paths } => {
+            // PR 11: write the breadcrumb so `morph merge --continue`
+            // / `--abort` know what to commit / abort. We need both
+            // parents' git SHAs and the synthesised merge message.
+            // `git rev-parse HEAD` still points at the OLD head here
+            // (the unfinished merge hasn't created a commit yet).
+            let head_git_sha = morph_core::git_head_sha(repo_root)?
+                .ok_or_else(|| anyhow::anyhow!("git HEAD missing during conflict path"))?;
+            let other_git_sha =
+                morph_core::lookup_branch_git_sha(repo_root, bare_branch)?.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "could not resolve git SHA for branch '{}' after conflict",
+                        bare_branch
+                    )
+                })?;
+            let breadcrumb = morph_core::ReferenceMergeBreadcrumb {
+                other_branch: bare_branch.to_string(),
+                other_git_sha,
+                head_git_sha,
+                message: merge_message.clone(),
+            };
+            morph_core::write_merge_breadcrumb(morph_dir, &breadcrumb)?;
             eprintln!(
                 "Auto-merging failed for {} path{}; conflict markers written to disk.",
                 paths.len(),
@@ -611,11 +632,117 @@ fn run_reference_merge(
             for p in &paths {
                 eprintln!("  conflict: {}", p);
             }
-            eprintln!("Resolve the conflicts, then run `morph merge --continue`.");
+            eprintln!(
+                "Resolve the conflicts (edit + `git add` each path), then run \
+                 `morph merge --continue` or `morph merge --abort`."
+            );
             anyhow::bail!("merge produced conflicts");
         }
     }
 
+    Ok(())
+}
+
+/// PR 11: reference-mode `morph merge --continue`. Reads the
+/// breadcrumb left by [`run_reference_merge`]'s Conflicts arm,
+/// verifies the user resolved every unmerged path, finalizes the
+/// git merge under `MORPH_INTERNAL=1` (so the post-merge hook
+/// short-circuits), mirrors into morph with `morph_origin = "cli"`,
+/// optionally attaches certification metrics, and clears the
+/// breadcrumb.
+fn run_reference_merge_continue(
+    store: &dyn morph_core::Store,
+    morph_dir: &std::path::Path,
+    repo_root: &std::path::Path,
+    message_override: Option<String>,
+    metrics: Option<String>,
+    _author: Option<String>,
+) -> anyhow::Result<()> {
+    let breadcrumb = morph_core::read_merge_breadcrumb(morph_dir)?
+        .ok_or_else(|| anyhow::anyhow!(
+            "no merge in progress (.morph/MERGE_REF.json missing). \
+             Did you mean to start a new merge with `morph merge <branch>`?"
+        ))?;
+
+    // Refuse to commit until git's index is clean — every unmerged
+    // path must be resolved AND staged.
+    let unmerged = morph_core::list_unmerged_paths(repo_root)?;
+    if !unmerged.is_empty() {
+        eprintln!(
+            "Cannot continue: {} path{} still unmerged.",
+            unmerged.len(),
+            if unmerged.len() == 1 { "" } else { "s" }
+        );
+        for p in &unmerged {
+            eprintln!("  unmerged: {}", p);
+        }
+        anyhow::bail!("resolve conflicts and `git add` each path, then re-run `morph merge --continue`");
+    }
+
+    let version = read_repo_version(morph_dir)?;
+    let message = message_override.unwrap_or_else(|| breadcrumb.message.clone());
+
+    // Drive `git commit -m <msg>` under MORPH_INTERNAL=1. Git will
+    // create the merge commit using `.git/MERGE_HEAD` (still in
+    // place since the original `git merge` left it), reusing the
+    // already-staged conflict resolutions.
+    let new_git_sha =
+        morph_core::run_git_commit_with_morph_internal(repo_root, &message, false, None)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    // Mirror the new merge commit into morph with origin = "cli".
+    let outcome =
+        morph_core::sync_to_head_with_origin(store, repo_root, "cli", Some(&version))?;
+    let new_morph = outcome
+        .new_commit
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "git merge {} did not produce a new morph commit",
+                &new_git_sha[..new_git_sha.len().min(12)]
+            )
+        })?;
+
+    // Optional certification — same code path as the single-shot
+    // merge in `run_reference_merge`.
+    if let Some(metrics_str) = metrics {
+        let observed: std::collections::BTreeMap<String, f64> =
+            serde_json::from_str(&metrics_str)
+                .map_err(|e| anyhow::anyhow!("invalid --metrics JSON: {}", e))?;
+        if !observed.is_empty() {
+            let cert =
+                morph_core::certify_commit(store, morph_dir, &new_morph, &observed, None, None)?;
+            if !cert.passed {
+                eprintln!("warning: certification failed for {}:", new_morph);
+                for f in &cert.failures {
+                    eprintln!("  {}", f);
+                }
+            }
+        }
+    }
+
+    morph_core::clear_merge_breadcrumb(morph_dir)?;
+    println!("{}", new_morph);
+    Ok(())
+}
+
+/// PR 11: reference-mode `morph merge --abort`. Best-effort: tolerate
+/// a missing breadcrumb (user manually ran `git merge --abort`) and a
+/// missing `.git/MERGE_HEAD` (already-aborted merge). Always clears
+/// the breadcrumb so a subsequent `morph merge` starts clean.
+fn run_reference_merge_abort(
+    morph_dir: &std::path::Path,
+    repo_root: &std::path::Path,
+) -> anyhow::Result<()> {
+    let breadcrumb = morph_core::read_merge_breadcrumb(morph_dir)?;
+    let aborted = morph_core::run_git_merge_abort_with_morph_internal(repo_root)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    morph_core::clear_merge_breadcrumb(morph_dir)?;
+    match (breadcrumb.is_some(), aborted) {
+        (true, true) => println!("Merge aborted; working tree restored."),
+        (true, false) => println!("Merge breadcrumb cleared; git was already in a clean state."),
+        (false, true) => println!("git merge --abort completed; no morph breadcrumb to clear."),
+        (false, false) => println!("Nothing to abort (no merge in progress)."),
+    }
     Ok(())
 }
 
@@ -741,13 +868,35 @@ fn run_merge(
         return Ok(());
     }
 
+    // PR 11: in reference mode, `--abort` and `--continue` route to
+    // their reference-mode handlers (which drive `git merge --abort`
+    // / `git commit -m <msg>` instead of touching morph's structural
+    // merge state). Standalone falls through to the existing flow.
+    let is_reference = matches!(
+        morph_core::read_repo_mode(&morph_dir)?,
+        morph_core::RepoMode::Reference
+    );
+
     if abort {
+        if is_reference {
+            return run_reference_merge_abort(&morph_dir, &repo_root);
+        }
         morph_core::abort_merge(store.as_ref(), &repo_root)?;
         println!("Merge aborted; working tree restored to ORIG_HEAD.");
         return Ok(());
     }
 
     if cont {
+        if is_reference {
+            return run_reference_merge_continue(
+                store.as_ref(),
+                &morph_dir,
+                &repo_root,
+                message,
+                metrics,
+                author,
+            );
+        }
         let cont_outcome = morph_core::continue_merge(
             store.as_ref(),
             &repo_root,
@@ -770,10 +919,7 @@ fn run_merge(
     // mirrors after the fact, exactly mirroring PR 5's `morph commit`
     // wrapper. Standalone repos keep the structural-merge code path
     // below unchanged.
-    if matches!(
-        morph_core::read_repo_mode(&morph_dir)?,
-        morph_core::RepoMode::Reference
-    ) {
+    if is_reference {
         return run_reference_merge(
             store.as_ref(),
             &morph_dir,
@@ -1583,6 +1729,16 @@ in a git repository first."
                             if pending.len() == 1 { "" } else { "s" },
                         );
                     }
+                }
+                // PR 11: surface a mid-merge state so the user knows
+                // they need to resolve conflicts and run --continue
+                // (or --abort to back out). The breadcrumb is written
+                // by `morph merge` when `git merge` returns conflicts.
+                if let Some(bc) = morph_core::read_merge_breadcrumb(&morph_dir)? {
+                    println!(
+                        "  merge in progress: '{}' → current branch (use `morph merge --continue` or `morph merge --abort`)",
+                        bc.other_branch
+                    );
                 }
             }
 

@@ -1,0 +1,211 @@
+# PR 11: stateful conflict resolution for reference-mode merges.
+#
+# When `morph merge X` produces git conflicts (PR 9 left this as
+# exit-1 with conflict markers in the working tree), morph writes a
+# `MERGE_REF.json` breadcrumb that captures everything the user needs
+# to drive the resolution to completion:
+#   - other branch name + git SHA,
+#   - head git SHA at merge time,
+#   - the merge message to reuse on commit.
+#
+# The user resolves conflicts (`git add` each path) then runs
+#   `morph merge --continue`  → finalizes git commit + morph mirror.
+#   `morph merge --abort`     → `git merge --abort` + clear breadcrumb.
+# `morph status` surfaces the in-progress merge so it never gets lost.
+
+# ── conflict path writes the breadcrumb and exits non-zero ──────────
+
+- name: stateful_merge_conflicts_write_breadcrumb_and_surface_in_status
+  init: false
+  steps:
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t"
+    - shell: "echo one > shared.txt && git add shared.txt && git commit -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    - shell: |
+        git checkout -q -b feature
+        echo feature > shared.txt
+        git commit -aq -m 'feature edit'
+        git checkout -q main
+        echo main > shared.txt
+        git commit -aq -m 'main edit'
+    # Run the merge; conflict triggers exit 1 and the breadcrumb.
+    - morph: [merge, feature]
+      expect_exit: 1
+      stderr_contains:
+        - "conflict"
+        - "morph merge --continue"
+    # Breadcrumb written.
+    - shell: "test -f .morph/MERGE_REF.json"
+    - shell: 'grep -q "\"other_branch\": *\"feature\"" .morph/MERGE_REF.json'
+    # Status surfaces the in-progress merge.
+    - morph: [status]
+      stdout_contains: "merge in progress: 'feature'"
+
+# ── --continue finalizes both stores after the user resolves ────────
+
+- name: stateful_merge_continue_after_conflict_resolution_finalizes_both_stores
+  init: false
+  steps:
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t"
+    - shell: "echo one > shared.txt && git add shared.txt && git commit -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    - shell: |
+        git checkout -q -b feature
+        echo feature > shared.txt
+        git commit -aq -m 'feature edit'
+        git checkout -q main
+        echo main > shared.txt
+        git commit -aq -m 'main edit'
+    - morph: [merge, feature]
+      expect_exit: 1
+    # Resolve the conflict by picking 'merged' content + staging.
+    - shell: 'echo merged > shared.txt && git add shared.txt'
+    - morph: [merge, --continue]
+    # Both stores advanced to a new merge commit.
+    - shell: 'parents=$(git rev-list --parents -n 1 HEAD | wc -w | tr -d " "); test "$parents" = "3"'
+    - shell: 'test "$(cat shared.txt)" = "merged"'
+    # Breadcrumb cleared.
+    - shell: "test ! -f .morph/MERGE_REF.json"
+    # Morph mirror has matching git_origin_sha and morph_origin = "cli".
+    - morph: [head, --json]
+      stdout_contains: '"morph_origin": "cli"'
+    - shell: |
+        GIT_HEAD=$(git rev-parse HEAD)
+        morph head --json | grep -q "\"git_origin_sha\": \"$GIT_HEAD\""
+
+# ── --continue refuses when paths are still unmerged ─────────────────
+
+- name: stateful_merge_continue_refuses_when_paths_unmerged
+  init: false
+  steps:
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t"
+    - shell: "echo one > shared.txt && git add shared.txt && git commit -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    - shell: |
+        git checkout -q -b feature
+        echo feature > shared.txt
+        git commit -aq -m 'feature edit'
+        git checkout -q main
+        echo main > shared.txt
+        git commit -aq -m 'main edit'
+    - morph: [merge, feature]
+      expect_exit: 1
+    # Don't resolve — try to continue immediately.
+    - morph: [merge, --continue]
+      expect_exit: 1
+      stderr_contains: "still unmerged"
+    # Breadcrumb still present (user hasn't given up yet).
+    - shell: "test -f .morph/MERGE_REF.json"
+
+# ── --abort restores git and clears the breadcrumb ───────────────────
+
+- name: stateful_merge_abort_resets_both_stores
+  init: false
+  steps:
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t"
+    - shell: "echo one > shared.txt && git add shared.txt && git commit -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    - shell: |
+        git checkout -q -b feature
+        echo feature > shared.txt
+        git commit -aq -m 'feature edit'
+        git checkout -q main
+        echo main > shared.txt
+        git commit -aq -m 'main edit'
+    # Capture pre-merge HEAD so we can verify --abort restores it.
+    - shell: "git rev-parse HEAD > .morph/pre_merge.txt"
+    - morph: [merge, feature]
+      expect_exit: 1
+    - morph: [merge, --abort]
+      stdout_contains: "Merge aborted"
+    # git is back at the pre-merge HEAD.
+    - shell: 'test "$(git rev-parse HEAD)" = "$(cat .morph/pre_merge.txt)"'
+    - shell: "test ! -f .git/MERGE_HEAD"
+    - shell: "test ! -f .morph/MERGE_REF.json"
+
+# ── --abort tolerates a missing breadcrumb (manual git abort path) ──
+
+- name: stateful_merge_abort_is_idempotent_when_no_merge_in_progress
+  init: false
+  steps:
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    - morph: [merge, --abort]
+      stdout_contains: "Nothing to abort"
+
+# ── Solo end-to-end smoke: clean → conflict → continue → certified ───
+#
+# Pins a realistic 3-merge workflow on a Solo repo so any regression
+# in the merge driver, the pre-merge gate, or the breadcrumb shows
+# up here even if the targeted specs above pass.
+
+- name: solo_smoke_clean_then_conflict_then_continue_then_certified
+  init: false
+  files:
+    .morph/evals/suite.json: '{"cases":[],"metrics":[{"name":"tests_passed","aggregation":"mean","threshold":0.0,"direction":"maximize"}]}'
+  steps:
+    # Day 1: init Solo, set up suite, certify head.
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t"
+    - shell: "echo a > a.txt && git add a.txt && git commit -q -m 'first'"
+    - morph: [init, --reference, --solo, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    - morph: [add, .morph/evals/suite.json]
+      capture_first_line: suite_hash
+    - morph: [certify, --commit, HEAD, --eval-suite, "${suite_hash}", --metrics, '{"tests_passed":10.0}']
+    # Day 2: clean merge of a no-claim branch (warns, doesn't block).
+    # Force a merge commit with -m so we verify both stores advance
+    # to a real two-parent commit, not a fast-forward.
+    - shell: |
+        git checkout -q -b feature1
+        echo b > b.txt
+        git add b.txt
+        git commit -q -m 'add b'
+        git checkout -q main
+    - morph: [show, HEAD]
+      capture_json_field:
+        var: pipe1
+        field: pipeline
+    - morph: [merge, feature1, --pipeline, "${pipe1}", --eval-suite, "${suite_hash}", --metrics, '{"tests_passed":10.0}', "-m", "merge feature1"]
+    - shell: 'parents=$(git rev-list --parents -n 1 HEAD | wc -w | tr -d " "); test "$parents" = "3"'
+    - shell: 'test "$(cat b.txt)" = "b"'
+    # Day 3: conflict merge on shared.txt — resolve and continue.
+    - shell: |
+        echo one > shared.txt
+        git add shared.txt
+        git commit -q -m 'add shared'
+        git checkout -q -b feature2
+        echo branch2 > shared.txt
+        git commit -aq -m 'feature2 edits shared'
+        git checkout -q main
+        echo main2 > shared.txt
+        git commit -aq -m 'main edits shared'
+    - morph: [merge, feature2]
+      expect_exit: 1
+      stderr_contains: "conflict"
+    - morph: [status]
+      stdout_contains: "merge in progress: 'feature2'"
+    - shell: 'echo resolved > shared.txt && git add shared.txt'
+    - morph: [merge, --continue]
+    - shell: 'test "$(cat shared.txt)" = "resolved"'
+    - shell: "test ! -f .morph/MERGE_REF.json"
+    # Day 4: certified merge — pre-merge gate sees suite + cert and
+    # the merge lands cleanly because we pass dominating metrics.
+    - morph: [certify, --commit, HEAD, --eval-suite, "${suite_hash}", --metrics, '{"tests_passed":10.0}']
+    - shell: |
+        git checkout -q -b feature3
+        echo c > c.txt
+        git add c.txt
+        git commit -q -m 'add c'
+        git checkout -q main
+    - morph: [certify, --commit, "heads/feature3", --eval-suite, "${suite_hash}", --metrics, '{"tests_passed":10.0}']
+    - morph: [show, HEAD]
+      capture_json_field:
+        var: pipe
+        field: pipeline
+    - morph: [merge, feature3, --pipeline, "${pipe}", --eval-suite, "${suite_hash}", --metrics, '{"tests_passed":10.0}', "-m", "merge feature3"]
+    - shell: 'parents=$(git rev-list --parents -n 1 HEAD | wc -w | tr -d " "); test "$parents" = "3"'

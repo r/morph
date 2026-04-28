@@ -10,31 +10,73 @@ This document explains the contract that makes this work, the two
 adoption shapes morph supports, and exactly what morph does (and does
 not) do to your git repo.
 
-## Two adoption shapes
+## Two adoption shapes (submodes)
 
 When you run `morph init --reference` in a git working tree, you're
-opting into one of two shapes:
+opting into one of two **submodes**, recorded in
+`.morph/config.json` as `repo_submode`. The submode is local to the
+clone — it never travels with git, so a teammate flipping their own
+clone to Solo cannot surprise anyone else.
 
-### Solo mode
-
-Every committer on the repo uses morph. You commit with `morph
-commit`, you merge with `morph merge`, and you trust the merge gate
-to enforce behavioral dominance. The team has bought in to morph
-semantics for branching and merging.
-
-This is what morph is *primarily* designed for, and where the
-behavioral version control story is at its strongest.
-
-### Stowaway mode
+### Stowaway submode (default)
 
 You install morph because you want to use it for your own workflow,
 but the rest of the team is on plain git. They will keep
 `git pull`/`git push`/`git rebase`-ing. **Your morph install must not
-disrupt that.** This document focuses on what morph guarantees for
-this case.
+disrupt that.** Stowaway is the default for `morph init --reference`
+and installs only the four passive observer hooks below.
 
-You may move between the two shapes over time — for example, by
-introducing morph to one teammate at a time.
+```sh
+$ morph init --reference .       # Stowaway is the default
+```
+
+### Solo submode (opt-in)
+
+Every committer on the repo uses morph. You commit with `morph
+commit`, you merge with `morph merge`, and the merge gate is
+authoritative for both — including for plain `git merge`, which
+Solo's `pre-merge-commit` hook gates against the same dominance
+contract. The team has bought in to morph semantics for branching
+and merging.
+
+```sh
+$ morph init --reference --solo .   # opt into Solo
+$ morph install-hooks --solo        # flip an existing repo to Solo
+$ morph install-hooks --stowaway    # flip back
+```
+
+You may move between the two submodes over time — for example, by
+adopting morph one teammate at a time and only flipping your own
+clone to Solo once everyone has it installed.
+
+### Hooks by submode
+
+The two submodes differ in exactly one hook:
+
+| Hook                | When it fires                               | Stowaway | Solo |
+| ------------------- | ------------------------------------------- | :------: | :--: |
+| `post-commit`       | After every `git commit`                    |    ✓     |  ✓   |
+| `post-checkout`     | After `git checkout <branch>`               |    ✓     |  ✓   |
+| `post-rewrite`      | After `git commit --amend`/`rebase`         |    ✓     |  ✓   |
+| `post-merge`        | After `git merge` (incl. non-FF `git pull`) |    ✓     |  ✓   |
+| `pre-merge-commit`  | **Before** `git merge` records its commit   |          |  ✓   |
+
+The first four are passive: they observe git, mirror into morph, and
+never fail. The fifth — Solo only — is active: it runs the
+dominance gate on the *worse-of-parents bar* and aborts the merge
+when the resulting commit would regress on a parent's certified
+metrics.
+
+Two environment-variable escapes are honored:
+
+- `MORPH_INTERNAL=1` — short-circuits *every* morph hook, including
+  `pre-merge-commit`. `morph merge` and `morph commit` set this when
+  they shell out to git so the wrapper's own gate runs once, not
+  twice.
+- `MORPH_NO_GATE=1` — Solo-only. Lets a single `git merge` through
+  with a stderr warning. Use this for emergency merges where the
+  human has explicitly accepted the regression. Subsequent merges
+  are gated again.
 
 ## What morph never does to your git repo
 
@@ -58,22 +100,20 @@ In reference mode, morph holds itself to four hard rules:
    (`morph_origin`, `git_origin_sha`, certification annotations)
    lives in `.morph/objects/` and never leaks into the git tree.
 
-## Lifecycle: what fires and when
+## Lifecycle: what each hook does
 
-Reference mode installs four git hooks. All of them follow the same
-shape — a thin shell stub that `exec`s `morph hook <event>` so the
-real handler can be upgraded with the binary.
+All hooks are thin shell stubs that `exec morph hook <event>` so the
+real handler can be upgraded with the binary. The submode table
+above shows which hooks each submode installs; the per-hook
+behavior is:
 
-| Hook            | When it fires                      | What morph does                                     |
-| --------------- | ---------------------------------- | --------------------------------------------------- |
-| `post-commit`   | After every `git commit`           | Mirror new git commit → morph commit (`morph_origin = "git-hook"`) |
-| `post-checkout` | After `git checkout <branch>`      | Move morph HEAD to the matching morph branch        |
-| `post-rewrite`  | After `git commit --amend`/`rebase` | Mirror new history; mark old morph commits as `rewritten` |
-| `post-merge`    | After `git merge` (incl. non-FF `git pull`) | Mirror the new merge commit                  |
-
-`MORPH_INTERNAL=1` suppresses all four hooks. `morph commit` (the
-morph→git wrapper) sets it before invoking git so the hook stays out
-of its way.
+| Hook                | What morph does                                                                                  |
+| ------------------- | ------------------------------------------------------------------------------------------------ |
+| `post-commit`       | Mirror new git commit → morph commit (`morph_origin = "git-hook"`).                              |
+| `post-checkout`     | Move morph HEAD to the matching morph branch.                                                    |
+| `post-rewrite`      | Mirror new history; mark old morph commits as `rewritten` and link to their successors.         |
+| `post-merge`        | Mirror the new merge commit (origin `"git-hook"`).                                               |
+| `pre-merge-commit`  | **(Solo only)** Run the merge dominance gate against the parents' effective metrics; exit 1 on regression. "No claim" parents pass with a warning. |
 
 ## Drift: when morph runs behind git
 
@@ -157,8 +197,14 @@ audit-only commits (e.g. a certification milestone with no diff).
 
 ## What `morph merge` does in reference mode
 
-When you run `morph merge <branch>` in reference mode, two things
-happen before the gate runs:
+`morph merge <branch>` is the **canonical merge driver** in
+reference mode. It wraps `git merge` end-to-end: it auto-mirrors,
+runs the dominance gate, drives `git merge`, and mirrors the result
+back into morph. Plain `git merge` keeps working unchanged for
+teammates not using morph; in Solo submode the `pre-merge-commit`
+hook applies the same gate to plain `git merge` as well.
+
+### Step-by-step
 
 1. **Auto-mirror the current branch.** `git HEAD` may be ahead of
    morph (you committed via plain `git commit` with the hook
@@ -166,13 +212,28 @@ happen before the gate runs:
    so the gate compares against your *actual* current state, not a
    stale mirror.
 2. **Auto-mirror the merge target.** If `refs/heads/<branch>` exists
-   in git but `heads/<branch>` doesn't exist in morph (or is behind),
-   morph mirrors the missing commits via `ensure_branch_synced`. This
-   is what makes `morph merge feature` work in Stowaway mode where
-   teammates' branches arrive via `git fetch` / `git pull` without
-   ever firing a morph hook.
+   in git but morph hasn't seen it (or is behind), morph mirrors the
+   missing commits via `ensure_branch_synced`. This is what makes
+   `morph merge feature` work in Stowaway submode where teammates'
+   branches arrive via `git fetch` / `git pull` without ever firing
+   a morph hook.
+3. **Run the dominance gate.** If you supplied `--metrics` (or
+   `--from-run`), morph checks them against each parent's effective
+   metrics *before* touching git. A doomed merge therefore never
+   produces a stranded git commit.
+4. **Drive `git merge`.** Morph shells out to `git merge` with
+   `MORPH_INTERNAL=1` set so its own hooks stay out of the way. The
+   git side does its normal thing: fast-forward, merge commit, or
+   conflict.
+5. **Mirror the outcome.** On fast-forward / clean merge, morph
+   mirrors the new git HEAD with `morph_origin = "cli"` so the
+   merge gate can later distinguish it from passive hook mirrors.
+6. **Attach certification.** If `--metrics` were supplied and the
+   gate passed, the resulting morph commit gets a
+   `kind: "certification"` annotation in the same step.
 
-Both steps print explicit messaging when work was performed:
+Both auto-mirror steps print explicit messaging when work was
+performed:
 
 ```text
 $ morph merge feature
@@ -180,16 +241,92 @@ morph: auto-mirroring 'feature' from git into morph (3 new commits, tip 7c91a2b)
 morph: no morph evidence on 'feature' — merge proceeds without behavioral assertion from this side
 ```
 
-After auto-mirror, the dominance gate runs as usual. **A parent with
-no morph evidence (no observed metrics, no certifications) yields no
-violations from that side** — there is nothing to dominate. Morph
-warns explicitly so you know the merge gate had nothing to enforce
-on that side. This is the "no morph claim" principle: absence of
-evidence is not absence of permission.
+**A parent with no morph evidence (no observed metrics, no
+certifications) yields no violations from that side** — there is
+nothing to dominate. Morph warns explicitly so you know the merge
+gate had nothing to enforce on that side. This is the "no morph
+claim" principle: absence of evidence is not absence of permission.
 
 If you want stricter behavior, run `morph certify` on each parent
 *before* the merge so the gate actually has metrics to compare. In
-Stowaway mode this is rare; in Solo mode it's the default flow.
+Stowaway submode this is rare; in Solo submode it's the default
+flow — and the `pre-merge-commit` hook backs it up for plain
+`git merge`.
+
+### Stateful flow: conflicts, `--continue`, `--abort`
+
+When step 4 produces a git conflict, morph keeps the merge
+*in progress* (the same way `git merge` does) and writes a
+breadcrumb at `.morph/MERGE_REF.json`:
+
+```json
+{
+  "other_branch": "feature",
+  "other_git_sha": "7c91a2b…",
+  "head_git_sha": "a1b2c3…",
+  "message": "Merge branch 'feature'"
+}
+```
+
+`morph status` surfaces this state explicitly:
+
+```text
+$ morph status
+...
+Reference mode (git ↔ morph)
+  merge in progress: resolve conflicts and run `morph merge --continue`
+                     (or `morph merge --abort`)
+```
+
+Once you've resolved the conflicts and `git add`-ed the files:
+
+```sh
+$ morph merge --continue
+```
+
+This runs `git ls-files --unmerged` to verify nothing is still
+unresolved, calls `git commit -m "<saved message>"` under
+`MORPH_INTERNAL=1`, mirrors the new merge commit into morph
+(`morph_origin = "cli"`), optionally attaches a certification if
+`--metrics` was passed, and clears the breadcrumb. If unmerged
+paths remain, `--continue` exits 1 with the list.
+
+To bail out instead:
+
+```sh
+$ morph merge --abort
+```
+
+This runs `git merge --abort` under `MORPH_INTERNAL=1` and clears
+the breadcrumb. No morph commit is created (none ever was), so
+there is nothing to roll back on the morph side. `--abort` is
+idempotent: running it without an in-progress merge is a no-op.
+
+### Migrating Stowaway → Solo
+
+If you started in Stowaway and the rest of the team has now
+adopted morph, you can flip a single clone to Solo without
+touching git or other clones:
+
+```sh
+$ morph install-hooks --solo
+hooks installed: post-commit, post-checkout, post-merge, post-rewrite, pre-merge-commit
+config: repo_submode = solo
+```
+
+This installs the missing `pre-merge-commit` hook. From this point
+on, plain `git merge` on this clone is also gated. Going back is
+symmetric:
+
+```sh
+$ morph install-hooks --stowaway
+hooks removed:   pre-merge-commit
+config: repo_submode = stowaway
+```
+
+Because submode is local to the clone, no teammate ever sees a
+sudden merge gate — they get one only if they explicitly opt in
+on their own clone.
 
 ## Policy carve-outs
 
@@ -218,7 +355,7 @@ $ git pull
 $ morph init --reference .
 Initialized morph reference-mode repository at .
   - .morph/ added to .git/info/exclude (local to this clone, never tracked)
-  - 4 git hooks installed in .git/hooks/
+  - 4 git hooks installed in .git/hooks/ (Stowaway submode)
 
 # Run your first eval and certify.
 $ morph eval run -- cargo test --workspace
@@ -276,16 +413,22 @@ If you want to remove the morph hooks without removing morph entirely:
 
 ```sh
 rm .git/hooks/post-commit .git/hooks/post-checkout \
-   .git/hooks/post-rewrite .git/hooks/post-merge
+   .git/hooks/post-rewrite .git/hooks/post-merge \
+   .git/hooks/pre-merge-commit  # only present in Solo submode
 ```
 
 Either is safe. Neither touches anything teammates can observe.
 
 ## See also
 
-- `morph init --help` — flags and defaults.
+- `morph init --help` — flags and defaults (`--reference`, `--solo`).
+- `morph install-hooks --help` — flip submode (`--solo` /
+  `--stowaway`) without re-initializing.
+- `morph merge --help` — `--continue` / `--abort` flags for stateful
+  conflict resolution.
 - `morph reference-sync --help` — manual mirror including
   `--backfill`.
-- `morph status` — drift and stale-certification surface.
+- `morph status` — drift, stale-certification, and merge-in-progress
+  surface.
 - `morph_eval_gaps` (MCP tool) — structured evidence-gap list,
   including `git_morph_drift`.
