@@ -8,10 +8,10 @@ mod setup;
 use clap::Parser;
 use cli::*;
 use morph_core::{
-    find_repo, migrate_0_0_to_0_2, migrate_0_2_to_0_3, migrate_0_3_to_0_4,
-    migrate_0_4_to_0_5, open_store,
+    find_repo, migrate_0_0_to_0_2, migrate_0_2_to_0_3, migrate_to_latest, open_store,
     read_repo_version, require_store_version, resolve_revision, Hash, MorphObject, ObjectType,
-    Store, STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_0_4, STORE_VERSION_0_5, STORE_VERSION_INIT,
+    Store, STORE_VERSION_INIT, STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_0_4,
+    SUPPORTED_REPO_VERSIONS,
 };
 use std::path::PathBuf;
 
@@ -22,7 +22,7 @@ fn get_store(verbose: bool) -> anyhow::Result<(PathBuf, Box<dyn Store>)> {
     let morph_dir = repo_root.join(".morph");
     let version = read_repo_version(&morph_dir)?;
     verbose_msg(verbose, &format!("repo {} (store version {})", repo_root.display(), version));
-    require_store_version(&morph_dir, &[STORE_VERSION_INIT, STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_0_4, STORE_VERSION_0_5])?;
+    require_store_version(&morph_dir, SUPPORTED_REPO_VERSIONS)?;
     let store = open_store(&morph_dir)?;
     Ok((repo_root, store))
 }
@@ -393,19 +393,12 @@ fn morph_object_type_str(obj: &MorphObject) -> &'static str {
 /// `staging`, and `eval_suite`. Additive only.
 
 fn version_json() -> String {
-    let supported: Vec<&str> = vec![
-        STORE_VERSION_INIT,
-        STORE_VERSION_0_2,
-        STORE_VERSION_0_3,
-        STORE_VERSION_0_4,
-        STORE_VERSION_0_5,
-    ];
     let value = serde_json::json!({
         "name": "morph",
         "version": env!("CARGO_PKG_VERSION"),
         "build_date": env!("MORPH_BUILD_DATE"),
         "protocol_version": morph_core::ssh_proto::MORPH_PROTOCOL_VERSION,
-        "supported_repo_versions": supported,
+        "supported_repo_versions": SUPPORTED_REPO_VERSIONS,
     });
     serde_json::to_string(&value).expect("version json serializes")
 }
@@ -1176,6 +1169,56 @@ Run `git init` first or pass a path that is already a git working tree.",
                     .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(&path))
                     .join(".morph");
                 println!("Initialized empty Morph repository in {}/", abs_morph.display());
+                // Standalone-in-git ergonomics: a bare `morph init` inside
+                // an existing git working tree silently created a .morph/
+                // that git would *also* track unless the user manually
+                // gitignored it. Two passes here:
+                //   1. Add `.morph/` to .git/info/exclude so morph state
+                //      stays local to this clone (same trick reference
+                //      mode uses; teammates' clones never see it).
+                //   2. Print a one-line nudge on stderr pointing at
+                //      `morph init --reference`, the more common path
+                //      for git users.
+                // This block intentionally runs only on the plain init
+                // branch — `--reference` already owns its own exclude
+                // write and prints richer guidance, and `--bare` has no
+                // .morph/ to exclude.
+                if morph_core::is_git_working_tree(&path) {
+                    match morph_core::ensure_morph_in_git_info_exclude(&path) {
+                        Ok(true) => {
+                            eprintln!(
+                                "morph: detected an existing git repository here."
+                            );
+                            eprintln!(
+                                "       added '.morph/' to .git/info/exclude (local to this clone)."
+                            );
+                            eprintln!(
+                                "       to mirror every git commit into morph instead, run:"
+                            );
+                            eprintln!("         morph init --reference");
+                        }
+                        Ok(false) => {
+                            // Already excluded — silent on the exclude
+                            // line, but still nudge toward --reference
+                            // since the user is in a git repo.
+                            eprintln!(
+                                "morph: detected an existing git repository here."
+                            );
+                            eprintln!(
+                                "       to mirror every git commit into morph, run:"
+                            );
+                            eprintln!("         morph init --reference");
+                        }
+                        Err(e) => {
+                            // Best-effort: if we can't write
+                            // .git/info/exclude (permissions, etc.),
+                            // surface a warning but don't fail init.
+                            eprintln!(
+                                "warning: could not update .git/info/exclude: {}", e
+                            );
+                        }
+                    }
+                }
             }
             // Phase 2a: clear the default policy when the test harness
             // asks for a permissive repo. Production users never pass
@@ -1378,30 +1421,39 @@ in a git repository first."
             let repo_root = find_repo(&cwd)
                 .ok_or_else(|| anyhow::anyhow!("not a morph repository (or any parent)"))?;
             let morph_dir = repo_root.join(".morph");
-            let version = read_repo_version(&morph_dir)?;
-            verbose_msg(verbose, &format!("store version {}", version));
-            if version == STORE_VERSION_0_5 {
-                println!("Store version is {} (latest). No upgrade needed.", version);
-            } else if version == STORE_VERSION_0_4 {
-                migrate_0_4_to_0_5(&morph_dir)?;
-                println!("Migrated store from {} to {} (merge state).", STORE_VERSION_0_4, STORE_VERSION_0_5);
-            } else if version == STORE_VERSION_0_3 {
-                migrate_0_3_to_0_4(&morph_dir)?;
-                migrate_0_4_to_0_5(&morph_dir)?;
-                println!("Migrated store from {} to {}.", STORE_VERSION_0_3, STORE_VERSION_0_5);
-            } else if version == STORE_VERSION_0_2 {
-                migrate_0_2_to_0_3(&morph_dir)?;
-                migrate_0_3_to_0_4(&morph_dir)?;
-                migrate_0_4_to_0_5(&morph_dir)?;
-                println!("Migrated store from {} to {}.", STORE_VERSION_0_2, STORE_VERSION_0_5);
-            } else if version == STORE_VERSION_INIT {
-                migrate_0_0_to_0_2(&morph_dir)?;
-                migrate_0_2_to_0_3(&morph_dir)?;
-                migrate_0_3_to_0_4(&morph_dir)?;
-                migrate_0_4_to_0_5(&morph_dir)?;
-                println!("Migrated store from {} to {}.", STORE_VERSION_INIT, STORE_VERSION_0_5);
+            let report = migrate_to_latest(&morph_dir)?;
+            verbose_msg(
+                verbose,
+                &format!(
+                    "{} → {} ({} step(s))",
+                    report.initial_version,
+                    report.final_version,
+                    report.steps.len()
+                ),
+            );
+            if report.is_noop() {
+                println!(
+                    "Store version is {} (latest). No upgrade needed.",
+                    report.final_version
+                );
+            } else if report.steps.len() == 1 {
+                let s = &report.steps[0];
+                println!(
+                    "Migrated store from {} to {} ({}).",
+                    s.from, s.to, s.description
+                );
             } else {
-                println!("Store version is {}. No upgrade path.", version);
+                let detail: Vec<String> = report
+                    .steps
+                    .iter()
+                    .map(|s| format!("{}→{} ({})", s.from, s.to, s.description))
+                    .collect();
+                println!(
+                    "Migrated store from {} to {} via {}.",
+                    report.initial_version,
+                    report.final_version,
+                    detail.join(", ")
+                );
             }
         }
 

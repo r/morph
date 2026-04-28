@@ -1,0 +1,94 @@
+# When `morph init` runs inside an existing git working tree (i.e.
+# `.git` exists) without `--reference` or `--bare`, two things happen:
+#
+#   1. A short note is printed pointing the user at `morph init
+#      --reference` — the most common path for git users.
+#   2. `.morph/` is added to `.git/info/exclude` so the user's morph
+#      state (config, refs, runs, traces, MERGE_*) doesn't leak into
+#      `git status`. This exclude is local to the user's clone, so
+#      teammates without morph are unaffected.
+#
+# Outside a git repo, neither happens. With `--reference`, the
+# init flow already owns this exclude write; we don't double up.
+
+# ── nudge + auto-exclude on plain `morph init` inside `.git` ────────
+
+- name: init_in_git_dir_prints_reference_nudge
+  init: false
+  steps:
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m first"
+    - morph: [init, "${repo}"]
+      stderr_contains:
+        - "git repository"
+        - "morph init --reference"
+
+- name: init_in_git_dir_adds_morph_to_info_exclude
+  init: false
+  steps:
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m first"
+    - morph: [init, "${repo}"]
+  assert:
+    - kind: file_contains
+      path: .git/info/exclude
+      contents: ".morph/"
+
+# Re-running plain init in the same dir is a hard error today
+# ("already a morph repository"), so idempotency of the exclude
+# write only matters once: the file must contain exactly one
+# `.morph/` line, never accumulating duplicates if a future
+# upgrade flow re-runs the helper. Verify by counting.
+
+- name: init_in_git_dir_exclude_entry_is_idempotent
+  init: false
+  steps:
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m first"
+    # Plant a pre-existing exclude already containing `.morph/`.
+    - shell: "mkdir -p .git/info && printf '%s\\n' '.morph/' > .git/info/exclude"
+    - morph: [init, "${repo}"]
+    - shell: 'test "$(grep -c "^\.morph/$" .git/info/exclude)" = "1"'
+
+# ── outside a `.git` tree, no nudge and no exclude file ─────────────
+
+- name: init_outside_git_repo_no_nudge_no_exclude
+  init: false
+  steps:
+    - morph: [init, "${repo}"]
+      stdout_contains: "Initialized empty Morph repository"
+  assert:
+    - kind: file_not_exists
+      path: .git/info/exclude
+
+# ── `morph init --reference` keeps owning its own exclude write ─────
+
+# Reference-mode init prints its own messaging ("Initialized Morph
+# repository in reference mode" + hook count + Stowaway/Solo line)
+# and already calls `ensure_morph_in_git_info_exclude`. The plain
+# nudge ("did you mean --reference?") would be tautological in this
+# branch, so we make sure it's *not* emitted.
+
+- name: init_reference_does_not_print_plain_nudge
+  init: false
+  steps:
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m first"
+    - morph: [init, --reference, "${repo}"]
+      stdout_contains: "reference mode"
+      stderr_not_contains: "morph init --reference"
+  assert:
+    - kind: file_contains
+      path: .git/info/exclude
+      contents: ".morph/"
+
+# ── `morph init --bare` is unaffected (no `.morph/` to exclude) ─────
+
+- name: init_bare_in_git_dir_no_nudge_no_exclude_change
+  # A bare repo lives at `path` directly with no `.morph/` wrapper,
+  # so the standalone-in-git footgun doesn't apply. The nudge
+  # would be misleading; suppress it. We also don't write any
+  # `.git/info/exclude` since a bare server doesn't ship its
+  # objects via someone's checkout.
+  init: false
+  steps:
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m first"
+    - morph: [init, --bare, "${repo}"]
+      stdout_contains: "bare Morph repository"
+      stderr_not_contains: "morph init --reference"

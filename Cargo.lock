@@ -1087,7 +1087,7 @@ dependencies = [
 
 [[package]]
 name = "morph-cli"
-version = "0.34.0"
+version = "0.36.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1104,7 +1104,7 @@ dependencies = [
 
 [[package]]
 name = "morph-core"
-version = "0.34.0"
+version = "0.36.0"
 dependencies = [
  "base64",
  "chrono",
@@ -1122,7 +1122,7 @@ dependencies = [
 
 [[package]]
 name = "morph-e2e"
-version = "0.34.0"
+version = "0.36.0"
 dependencies = [
  "assert_cmd",
  "cucumber",
@@ -1134,7 +1134,7 @@ dependencies = [
 
 [[package]]
 name = "morph-mcp"
-version = "0.34.0"
+version = "0.36.0"
 dependencies = [
  "anyhow",
  "morph-core",
@@ -1148,7 +1148,7 @@ dependencies = [
 
 [[package]]
 name = "morph-serve"
-version = "0.34.0"
+version = "0.36.0"
 dependencies = [
  "axum",
  "http-body-util",

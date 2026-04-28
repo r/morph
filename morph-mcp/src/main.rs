@@ -4,8 +4,8 @@
 mod params;
 
 use morph_core::{
-    build_status_json, find_repo, open_store, read_repo_version, require_store_version, resolve_revision,
-    Hash, MorphObject, Store, STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_0_4, STORE_VERSION_0_5, STORE_VERSION_INIT,
+    build_status_json, find_repo, open_store, read_repo_version, require_store_version,
+    resolve_revision, Hash, MorphObject, Store, SUPPORTED_REPO_VERSIONS,
 };
 use params::*;
 use rmcp::{
@@ -93,7 +93,7 @@ impl MorphServer {
             )
         })?;
         let morph_dir = repo_root.join(".morph");
-        require_store_version(&morph_dir, &[STORE_VERSION_INIT, STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_0_4, STORE_VERSION_0_5]).map_err(|e| e.to_string())?;
+        require_store_version(&morph_dir, SUPPORTED_REPO_VERSIONS).map_err(|e| e.to_string())?;
         let store = open_store(&morph_dir).map_err(|e| e.to_string())?;
         Ok((repo_root, store))
     }
@@ -908,6 +908,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use morph_core::{STORE_VERSION_0_4, STORE_VERSION_0_5};
     use rmcp::handler::server::wrapper::Parameters;
     use rmcp::model::RawContent;
 

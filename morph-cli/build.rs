@@ -63,6 +63,8 @@ struct Step {
     #[serde(default)]
     stderr_contains: Option<StringOrVec>,
     #[serde(default)]
+    stderr_not_contains: Option<StringOrVec>,
+    #[serde(default)]
     assert_hash_length: Option<String>,
     #[serde(default)]
     assert_line_count_gte: Option<AssertLineCount>,
@@ -204,6 +206,12 @@ fn emit_test(spec: &TestSpec) -> String {
 
 fn emit_step(code: &mut String, step: &Step, idx: usize) {
     if let Some(ch) = &step.compute_hash {
+        // Fresh `morph init` lands at the latest store format, which uses
+        // git-format hashing (`content_hash_git`). Specs that pre-compute
+        // an expected hash and then plant it in a fixture (e.g. a Run
+        // referencing a Trace by hash) must agree with what the store
+        // computes when it persists the object — otherwise `morph run
+        // record` reports `trace hash mismatch`.
         writeln!(code, "    let {} = {{", ch.var).unwrap();
         writeln!(
             code,
@@ -211,7 +219,7 @@ fn emit_step(code: &mut String, step: &Step, idx: usize) {
             ch.json
         )
         .unwrap();
-        writeln!(code, "        morph_core::content_hash(&obj).unwrap()").unwrap();
+        writeln!(code, "        morph_core::content_hash_git(&obj).unwrap()").unwrap();
         writeln!(code, "    }};").unwrap();
         return;
     }
@@ -444,6 +452,24 @@ fn emit_step(code: &mut String, step: &Step, idx: usize) {
                 write!(
                     code,
                     "\n            .stderr(predicates::prelude::predicate::str::contains({s:?}))",
+                )
+                .unwrap();
+            }
+        }
+    }
+    if let Some(ref not_contains) = step.stderr_not_contains {
+        for s in not_contains.items() {
+            if s.contains("${") {
+                let fmt_str = escape_braces_for_format(s);
+                write!(
+                    code,
+                    "\n            .stderr(predicates::prelude::predicate::str::contains(format!({fmt_str:?})).not())",
+                )
+                .unwrap();
+            } else {
+                write!(
+                    code,
+                    "\n            .stderr(predicates::prelude::predicate::str::contains({s:?}).not())",
                 )
                 .unwrap();
             }

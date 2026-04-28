@@ -1,13 +1,124 @@
-//! One-time migration from store 0.0 (or 0.1) to 0.2 (Git-format hashes).
+//! Store-version migrations. Per-step logic plus the single
+//! `migrate_to_latest` chain walker that callers (the CLI's
+//! `Command::Upgrade`, tests, scripts) use to bring a repo from any
+//! supported prior version straight to [`crate::STORE_VERSION_LATEST`].
 //!
-//! Loads all objects from the old store, rewrites hash references in dependency order,
-//! writes to FsStore (Git-format hashing), updates refs and repo_version.
+//! Adding a new store version is two edits:
+//!   1. Append the constant to [`crate::SUPPORTED_REPO_VERSIONS`] and
+//!      bump [`crate::STORE_VERSION_LATEST`] in `repo.rs`.
+//!   2. Implement `migrate_X_to_Y` in this module and append a step
+//!      to [`migrate_to_latest`]'s match arm.
 
 use crate::objects::*;
+use crate::repo::{
+    STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_0_4, STORE_VERSION_0_5,
+    STORE_VERSION_INIT, STORE_VERSION_LATEST,
+};
 use crate::store::{FsStore, MorphError, Store};
 use crate::Hash;
 use std::collections::HashMap;
 use std::path::Path;
+
+/// One step of a [`migrate_to_latest`] walk. Surfaced so the CLI can
+/// emit a faithful "migrated 0.4 → 0.5 (merge state)" line and so
+/// callers can audit the chain.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MigrationStep {
+    /// Source version (e.g. `"0.4"`).
+    pub from: &'static str,
+    /// Destination version (e.g. `"0.5"`).
+    pub to: &'static str,
+    /// Short human label for the change this step represents
+    /// (e.g. `"merge state"`, `"fan-out objects"`). Stable across
+    /// releases — used in CLI output that scripts may grep for.
+    pub description: &'static str,
+}
+
+/// Result of [`migrate_to_latest`]. `steps` is empty when the repo was
+/// already at [`crate::STORE_VERSION_LATEST`] (no-op call).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MigrateReport {
+    /// Version the repo reported when `migrate_to_latest` was called.
+    pub initial_version: String,
+    /// Version the repo is at when `migrate_to_latest` returns. Always
+    /// equals [`crate::STORE_VERSION_LATEST`] on success.
+    pub final_version: String,
+    /// Ordered list of migration steps that ran. Empty for a no-op.
+    pub steps: Vec<MigrationStep>,
+}
+
+impl MigrateReport {
+    pub fn is_noop(&self) -> bool {
+        self.steps.is_empty()
+    }
+}
+
+/// Walk the migration chain from the repo's current `repo_version` up
+/// to [`crate::STORE_VERSION_LATEST`], applying each step in order.
+/// Idempotent: a repo already at `STORE_VERSION_LATEST` returns a
+/// report with `steps: []` and the same `initial_version` /
+/// `final_version`.
+///
+/// Errors with [`MorphError::Other`] when the repo's `repo_version`
+/// isn't on the supported chain — typically a future format from a
+/// newer binary, in which case the user should update `morph` rather
+/// than try to migrate.
+pub fn migrate_to_latest(morph_dir: &Path) -> Result<MigrateReport, MorphError> {
+    let initial_version = crate::repo::read_repo_version(morph_dir)?;
+    let mut steps = Vec::new();
+    loop {
+        let v = crate::repo::read_repo_version(morph_dir)?;
+        if v == STORE_VERSION_LATEST {
+            break;
+        }
+        let step = match v.as_str() {
+            STORE_VERSION_INIT => {
+                migrate_0_0_to_0_2(morph_dir)?;
+                MigrationStep {
+                    from: STORE_VERSION_INIT,
+                    to: STORE_VERSION_0_2,
+                    description: "git-format hashing",
+                }
+            }
+            STORE_VERSION_0_2 => {
+                migrate_0_2_to_0_3(morph_dir)?;
+                MigrationStep {
+                    from: STORE_VERSION_0_2,
+                    to: STORE_VERSION_0_3,
+                    description: "tree commits",
+                }
+            }
+            STORE_VERSION_0_3 => {
+                migrate_0_3_to_0_4(morph_dir)?;
+                MigrationStep {
+                    from: STORE_VERSION_0_3,
+                    to: STORE_VERSION_0_4,
+                    description: "fan-out objects",
+                }
+            }
+            STORE_VERSION_0_4 => {
+                migrate_0_4_to_0_5(morph_dir)?;
+                MigrationStep {
+                    from: STORE_VERSION_0_4,
+                    to: STORE_VERSION_0_5,
+                    description: "merge state",
+                }
+            }
+            other => {
+                return Err(MorphError::Other(format!(
+                    "unknown repo_version {} — update `morph` and retry",
+                    other
+                )));
+            }
+        };
+        steps.push(step);
+    }
+    Ok(MigrateReport {
+        initial_version,
+        final_version: STORE_VERSION_LATEST.to_string(),
+        steps,
+    })
+}
 
 /// Migrate a 0.0 repo at `morph_dir` to 0.2. Objects are rewritten with new hashes; refs updated.
 pub fn migrate_0_0_to_0_2(morph_dir: &Path) -> Result<(), MorphError> {
@@ -237,6 +348,7 @@ fn rewrite_object(obj: &MorphObject, map: &HashMap<String, Hash>) -> Result<Morp
             morph_instance: c.morph_instance.clone(),
             morph_origin: c.morph_origin.clone(),
             git_origin_sha: c.git_origin_sha.clone(),
+            human_edits: c.human_edits.clone(),
         }),
         MorphObject::Run(r) => MorphObject::Run(Run {
             pipeline: subst(map, &r.pipeline),
@@ -320,6 +432,7 @@ mod tests {
             morph_instance: None,
             morph_origin: None,
             git_origin_sha: None,
+            human_edits: None,
         });
         let commit_hash = store.put(&commit).unwrap();
         store.ref_write_raw("HEAD", "ref: heads/main").unwrap();

@@ -1,45 +1,89 @@
-- name: upgrade_latest_no_op
+# `morph upgrade` walks the migration chain from any supported prior
+# version straight to the latest store version. The CLI's job is a
+# thin wrapper around `morph_core::migrate_to_latest`; the chain
+# logic lives in core so the CLI, the MCP server, and tests all
+# agree on what "latest" means.
+#
+# These cases pin the user-visible contract:
+#   1. legacy 0.0 repo bumps in one go to the latest version.
+#   2. an intermediate (0.4) repo bumps to latest with one final step.
+#   3. a repo already at latest is a no-op.
+#   4. fresh `morph init` is already at latest — `morph upgrade`
+#      reports "no upgrade needed" without running any migration.
+#   5. `morph version --json` exposes the same supported list the
+#      CLI's read path uses (so docs / scripts can pin it).
+
+# ── chain walk from legacy ────────────────────────────────────────────
+
+- name: upgrade_legacy_0_0_walks_chain_to_latest
+  init: false
+  files:
+    .morph/config.json: '{"repo_version":"0.0"}'
+  dirs:
+    - .morph/objects
+    - .morph/refs/heads
   steps:
     - morph: [upgrade]
-      stdout_contains: "Migrated"
+      stdout_contains:
+        - "0.0"
+        - "0.5"
     - morph: [upgrade]
       stdout_contains: "No upgrade needed"
+  assert:
+    - kind: file_contains
+      path: .morph/config.json
+      contents: '"repo_version": "0.5"'
 
-- name: upgrade_from_repo_root
-  steps:
-    - morph: [upgrade]
-
-- name: upgrade_bumps_to_0_5
-  # Cycle 32: a fresh `morph init` writes 0.0; a single `morph upgrade`
-  # must walk the chain all the way to 0.5 (the new latest).
-  steps:
-    - morph: [upgrade]
-      stdout_contains:
-        - "Migrated"
-        - "0.5"
-    - morph: [upgrade]
-      stdout_contains:
-        - "0.5"
-        - "No upgrade needed"
-
-- name: upgrade_from_0_4_runs_only_final_step
-  # Cycle 33: a repo at 0.4 (post-PR3 binary) bumps directly to 0.5
-  # with the descriptive "merge state" message.
+- name: upgrade_intermediate_0_4_jumps_to_latest_in_one_call
+  init: false
   files:
     .morph/config.json: '{"repo_version":"0.4"}'
+  dirs:
+    - .morph/objects
+    - .morph/refs/heads
   steps:
     - morph: [upgrade]
       stdout_contains:
         - "0.4"
         - "0.5"
-        - "merge state"
+  assert:
+    - kind: file_contains
+      path: .morph/config.json
+      contents: '"repo_version": "0.5"'
 
-- name: upgrade_idempotent_at_0_5
-  # Cycle 34: re-running upgrade on a 0.5 repo is a no-op message.
+- name: upgrade_at_latest_is_noop
+  init: false
   files:
     .morph/config.json: '{"repo_version":"0.5"}'
+  dirs:
+    - .morph/objects
+    - .morph/refs/heads
   steps:
     - morph: [upgrade]
+      stdout_contains: "No upgrade needed"
+
+# ── fresh init is already at latest ──────────────────────────────────
+
+- name: fresh_init_is_already_at_latest_so_upgrade_is_noop
+  # New repos write `repo_version: "0.5"` directly; `morph upgrade`
+  # only has work to do when adopting an existing repo authored by
+  # an older binary.
+  init: false
+  steps:
+    - morph: [init, "${repo}"]
+    - morph: [upgrade]
+      stdout_contains: "No upgrade needed"
+
+# ── version surface mirrors core's supported list ────────────────────
+
+- name: version_json_lists_every_supported_repo_version
+  init: false
+  steps:
+    - morph: [version, --json]
       stdout_contains:
-        - "0.5"
-        - "No upgrade needed"
+        - '"supported_repo_versions":'
+        - '"0.0"'
+        - '"0.2"'
+        - '"0.3"'
+        - '"0.4"'
+        - '"0.5"'

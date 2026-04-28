@@ -1,0 +1,60 @@
+# Fresh `morph init` writes the repo at the *latest* supported store
+# version (0.5) and uses the modern fan-out object layout from the
+# first commit. Pre-change, init wrote `repo_version: "0.0"` (legacy
+# FsStore: flat layout, legacy hashing) and every new repo was
+# implicitly a candidate for `morph upgrade`. The new contract:
+# `morph init` is the latest format end-to-end, and `morph upgrade`
+# is *only* for adopting repos authored by an older binary.
+
+- name: init_writes_repo_version_at_latest
+  init: false
+  steps:
+    - morph: [init, "${repo}"]
+  assert:
+    - kind: file_contains
+      path: .morph/config.json
+      contents: '"repo_version": "0.5"'
+
+- name: init_bare_writes_repo_version_at_latest
+  init: false
+  steps:
+    - morph: [init, --bare, "${repo}"]
+  assert:
+    - kind: file_contains
+      path: config.json
+      contents: '"repo_version": "0.5"'
+    - kind: file_contains
+      path: config.json
+      contents: '"bare": true'
+
+- name: init_then_commit_uses_fanout_object_layout
+  # Fan-out layout means objects live under `.morph/objects/<2-char>/<rest>.json`
+  # rather than the legacy flat `.morph/objects/<full>.json`. We can't
+  # predict the hash, but we *can* ensure the parent isn't `objects/`
+  # directly. After staging+committing, the prompt blob and at least
+  # the commit object must exist under a 2-char prefix dir.
+  init: false
+  files:
+    .morph/prompts/p.txt: "hello"
+  steps:
+    - morph: [init, "${repo}"]
+    - shell: "echo hello > note.txt"
+    - morph: [add, note.txt]
+    - morph: [commit, -m, "first", --allow-empty-metrics]
+    # No flat top-level <hash>.json file should exist at all — every
+    # object went through the fan-out path. We sample two-char dirs
+    # to confirm the layout is in use.
+    - shell: 'test "$(find .morph/objects -maxdepth 1 -type f -name "*.json" | wc -l | tr -d " ")" = "0"'
+    - shell: 'test "$(find .morph/objects -mindepth 2 -maxdepth 2 -type f -name "*.json" | wc -l | tr -d " ")" -ge 1'
+
+- name: init_at_latest_does_not_warn_about_upgrade_in_status
+  # A subtle sanity check: a fresh repo should be operational with no
+  # store-version warnings. `morph status` opens the store, which
+  # calls require_store_version; if init wrote an unsupported
+  # version this would error. We assert the happy path explicitly so
+  # any future regression is caught at the spec level.
+  init: false
+  steps:
+    - morph: [init, "${repo}"]
+    - morph: [status]
+      stdout_contains: "nothing to commit"

@@ -23,6 +23,29 @@ pub const STORE_VERSION_0_4: &str = "0.4";
 /// "0.5" = same FsStore layout as 0.4 + multi-machine merge primitives (PR 3).
 pub const STORE_VERSION_0_5: &str = "0.5";
 
+/// The latest store version this binary writes for fresh repos and
+/// targets for `morph upgrade`. Bumping the latest is a single edit
+/// here plus appending the new constant + its migration step.
+pub const STORE_VERSION_LATEST: &str = STORE_VERSION_0_5;
+
+/// Every store version this binary recognizes, in chronological order.
+/// Used by:
+///   - `require_store_version` to gate read-path commands,
+///   - `version_json` (`morph version --json`) so consumers can pin
+///     a binary to a known schema range,
+///   - the migration chain walker (`migrate_to_latest`).
+///
+/// Adding a new store version means appending its constant here and
+/// adding the corresponding `migrate_X_to_Y` to the chain — nothing
+/// else, by design.
+pub const SUPPORTED_REPO_VERSIONS: &[&str] = &[
+    STORE_VERSION_INIT,
+    STORE_VERSION_0_2,
+    STORE_VERSION_0_3,
+    STORE_VERSION_0_4,
+    STORE_VERSION_0_5,
+];
+
 /// Directory names under .morph/
 const OBJECTS_DIR: &str = "objects";
 const REFS_HEADS_DIR: &str = "refs/heads";
@@ -41,6 +64,13 @@ const REPO_VERSION_KEY: &str = "repo_version";
 ///   - `bare = true` → no `.gitignore`, `bare: true` in config.
 ///   - `bare = false` → `.gitignore` ignoring `objects/`, no
 ///     `bare` flag (treated as false on read).
+///
+/// Fresh repos are written at [`STORE_VERSION_LATEST`] and the
+/// returned [`FsStore`] uses the modern fan-out + git-format hashing
+/// backend ([`FsStore::new_git_fanout`]). Older binaries that open a
+/// repo authored by this binary will get a clear `RepoTooNew` error;
+/// callers needing a legacy-format repo for migration testing must
+/// downgrade [`crate::repo::write_repo_version`] explicitly.
 fn init_morph_dir_at(morph_dir: &Path, bare: bool) -> Result<FsStore, MorphError> {
     if morph_dir.exists() {
         let meta = std::fs::metadata(morph_dir).map_err(MorphError::Io)?;
@@ -69,7 +99,7 @@ fn init_morph_dir_at(morph_dir: &Path, bare: bool) -> Result<FsStore, MorphError
     std::fs::create_dir_all(morph_dir.join(PROMPTS_DIR))?;
     std::fs::create_dir_all(morph_dir.join(EVALS_DIR))?;
 
-    let mut config = serde_json::json!({ REPO_VERSION_KEY: STORE_VERSION_INIT });
+    let mut config = serde_json::json!({ REPO_VERSION_KEY: STORE_VERSION_LATEST });
     if bare {
         config["bare"] = serde_json::Value::Bool(true);
     }
@@ -97,7 +127,7 @@ fn init_morph_dir_at(morph_dir: &Path, bare: bool) -> Result<FsStore, MorphError
         std::fs::write(morph_dir.join(".gitignore"), "/objects/\n")?;
     }
 
-    Ok(FsStore::new(morph_dir))
+    Ok(FsStore::new_git_fanout(morph_dir))
 }
 
 /// Initialize a Morph repository at `root`. Creates only `.morph/` — the
@@ -343,6 +373,28 @@ pub fn write_repo_submode(
     Ok(())
 }
 
+/// Overwrite (or create) the `repo_version` field in
+/// `<morph_dir>/config.json`. Used by migrations and by test fixtures
+/// that need to plant a specific legacy version after `init_repo`.
+/// Idempotent — preserves every other config key.
+pub fn write_repo_version(morph_dir: &Path, version: &str) -> Result<(), MorphError> {
+    let config_path = morph_dir.join(CONFIG_FILE);
+    let mut config: serde_json::Value = if config_path.exists() {
+        let data = std::fs::read_to_string(&config_path)?;
+        serde_json::from_str(&data).map_err(|e| MorphError::Serialization(e.to_string()))?
+    } else {
+        serde_json::json!({})
+    };
+    if !config.is_object() {
+        return Err(MorphError::Serialization(
+            "config.json is not a JSON object".into(),
+        ));
+    }
+    config[REPO_VERSION_KEY] = serde_json::Value::String(version.to_string());
+    std::fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap())?;
+    Ok(())
+}
+
 /// Read the store version from `.morph/config.json`. Returns `"0.0"` if the file or key is missing (legacy repos).
 pub fn read_repo_version(morph_dir: &Path) -> Result<String, MorphError> {
     let config_path = morph_dir.join(CONFIG_FILE);
@@ -480,7 +532,7 @@ mod tests {
         let raw = std::fs::read_to_string(root.join(CONFIG_FILE)).unwrap();
         let cfg: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(cfg["bare"], true);
-        assert_eq!(cfg[REPO_VERSION_KEY], STORE_VERSION_INIT);
+        assert_eq!(cfg[REPO_VERSION_KEY], STORE_VERSION_LATEST);
     }
 
     #[test]
@@ -643,21 +695,39 @@ mod tests {
     }
 
     #[test]
-    fn init_writes_repo_version_0_0() {
+    fn init_writes_repo_version_at_latest() {
+        // Fresh repos land at STORE_VERSION_LATEST so `morph upgrade`
+        // is a no-op until adopted from an older binary.
         let dir = tempfile::tempdir().unwrap();
         let _ = init_repo(dir.path()).unwrap();
         let config_path = dir.path().join(".morph/config.json");
         let data = std::fs::read_to_string(&config_path).unwrap();
         let config: serde_json::Value = serde_json::from_str(&data).unwrap();
-        assert_eq!(config.get("repo_version").and_then(|v| v.as_str()), Some("0.0"));
+        assert_eq!(
+            config.get("repo_version").and_then(|v| v.as_str()),
+            Some(STORE_VERSION_LATEST)
+        );
     }
 
     #[test]
-    fn read_repo_version_returns_0_0_after_init() {
+    fn read_repo_version_returns_latest_after_init() {
         let dir = tempfile::tempdir().unwrap();
         let _ = init_repo(dir.path()).unwrap();
         let v = read_repo_version(&dir.path().join(".morph")).unwrap();
-        assert_eq!(v, "0.0");
+        assert_eq!(v, STORE_VERSION_LATEST);
+    }
+
+    #[test]
+    fn write_repo_version_round_trips() {
+        // Test fixtures that need a legacy starting point (e.g.
+        // migration tests) can downgrade via `write_repo_version`.
+        let dir = tempfile::tempdir().unwrap();
+        let _ = init_repo(dir.path()).unwrap();
+        let morph_dir = dir.path().join(".morph");
+        write_repo_version(&morph_dir, STORE_VERSION_INIT).unwrap();
+        assert_eq!(read_repo_version(&morph_dir).unwrap(), STORE_VERSION_INIT);
+        write_repo_version(&morph_dir, "0.3").unwrap();
+        assert_eq!(read_repo_version(&morph_dir).unwrap(), "0.3");
     }
 
     /// Phase 2a: every fresh `morph init` ships an opinionated
@@ -709,17 +779,19 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let _ = init_repo(dir.path()).unwrap();
         let morph_dir = dir.path().join(".morph");
-        assert!(require_store_version(&morph_dir, &["0.0"]).is_ok());
+        // Fresh init lands at STORE_VERSION_LATEST.
+        assert!(require_store_version(&morph_dir, &[STORE_VERSION_LATEST]).is_ok());
     }
 
     #[test]
-    fn require_store_version_err_when_not_allowed() {
-        // Repo is at 0.0 (legacy), allowed is 0.1. 0.0 is a known prior
-        // version → RepoTooOld.
+    fn require_store_version_err_when_repo_is_legacy() {
+        // Plant a legacy 0.0 config explicitly, then ensure the gate
+        // surfaces RepoTooOld with a `morph upgrade` hint.
         let dir = tempfile::tempdir().unwrap();
         let _ = init_repo(dir.path()).unwrap();
         let morph_dir = dir.path().join(".morph");
-        let err = require_store_version(&morph_dir, &["0.1"]).unwrap_err();
+        write_repo_version(&morph_dir, STORE_VERSION_INIT).unwrap();
+        let err = require_store_version(&morph_dir, &[STORE_VERSION_LATEST]).unwrap_err();
         assert!(
             matches!(err, MorphError::RepoTooOld(_)),
             "expected RepoTooOld for legacy repo, got: {:?}",
@@ -802,9 +874,13 @@ mod tests {
 
     #[test]
     fn open_store_0_0_returns_fs_store_behavior() {
+        // Plant a legacy 0.0 repo explicitly — `init_repo` no longer
+        // produces this layout — and confirm `open_store` routes to
+        // the legacy backend.
         let dir = tempfile::tempdir().unwrap();
         let _ = init_repo(dir.path()).unwrap();
         let morph_dir = dir.path().join(".morph");
+        write_repo_version(&morph_dir, STORE_VERSION_INIT).unwrap();
         let store = open_store(&morph_dir).unwrap();
         let blob = crate::objects::MorphObject::Blob(crate::objects::Blob {
             kind: "x".into(),
@@ -819,6 +895,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let _ = init_repo(dir.path()).unwrap();
         let morph_dir = dir.path().join(".morph");
+        // Downgrade to 0.0 so `migrate_0_0_to_0_2` has work to do.
+        write_repo_version(&morph_dir, STORE_VERSION_INIT).unwrap();
         let fs = FsStore::new(&morph_dir);
         let blob = crate::objects::MorphObject::Blob(crate::objects::Blob {
             kind: "p".into(),
@@ -848,6 +926,7 @@ mod tests {
             morph_instance: None,
             morph_origin: None,
             git_origin_sha: None,
+            human_edits: None,
         });
         let commit_hash = fs.put(&commit).unwrap();
         fs.ref_write_raw("HEAD", "ref: heads/main").unwrap();

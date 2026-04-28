@@ -677,10 +677,14 @@ mod tests {
         let (dir, _) = setup_repo();
         let morph_dir = dir.path().join(".morph");
 
+        let initial = crate::repo::read_repo_version(&morph_dir).unwrap();
         add_remote(&morph_dir, "origin", "/tmp/remote").unwrap();
 
         let version = crate::repo::read_repo_version(&morph_dir).unwrap();
-        assert_eq!(version, "0.0");
+        assert_eq!(
+            version, initial,
+            "add_remote must not change the repo's store version"
+        );
     }
 
     #[test]

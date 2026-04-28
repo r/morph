@@ -47,8 +47,9 @@ pub use repo::{
     init_repo, init_bare, is_bare, open_store, read_repo_version, require_store_version,
     resolve_morph_dir,
     read_repo_mode, read_init_at_git_sha, read_repo_submode, write_reference_mode,
-    write_repo_submode, RepoMode, RepoSubmode,
+    write_repo_submode, write_repo_version, RepoMode, RepoSubmode,
     STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_0_4, STORE_VERSION_0_5, STORE_VERSION_INIT,
+    STORE_VERSION_LATEST, SUPPORTED_REPO_VERSIONS,
 };
 pub use identity::identity_pipeline;
 pub use author::{
@@ -58,7 +59,7 @@ pub use agent::{
     generate_instance_id, read_instance_id, ensure_instance_id, write_instance_id,
 };
 pub use working::{find_repo, blob_from_prompt_file, blob_from_file, materialize_blob, pipeline_from_file, eval_suite_from_file, status, add_paths, StatusEntry, working_status, activity_summary, ActivitySummary, build_status_json};
-pub use commit::{create_commit, create_tree_commit, create_tree_commit_with_provenance, create_merge_commit, create_merge_commit_full, create_merge_commit_with_retirement, rollup, resolve_head, current_branch, set_head_branch, set_head_detached, checkout_tree, log_from, CommitProvenance, resolve_provenance_from_run};
+pub use commit::{create_commit, create_tree_commit, create_tree_commit_with_provenance, create_merge_commit, create_merge_commit_full, create_merge_commit_with_retirement, rollup, resolve_head, current_branch, set_head_branch, set_head_detached, checkout_tree, log_from, CommitProvenance, resolve_provenance_from_run, compute_human_edits};
 pub use metrics::{aggregate, check_thresholds, check_dominance, check_dominance_with_suite, aggregate_suite, union_suites, retire_metrics};
 pub use merge::{MergePlan, DominanceResult, DominanceViolation, prepare_merge, execute_merge};
 pub use objmerge::{
@@ -104,7 +105,10 @@ pub use annotate::{
 };
 pub use index::{read_index, write_index, clear_index, update_index, StagingIndex};
 pub use tree::{build_tree, flatten_tree, restore_tree, empty_tree_hash};
-pub use migrate::{migrate_0_0_to_0_2, migrate_0_2_to_0_3, migrate_0_3_to_0_4, migrate_0_4_to_0_5};
+pub use migrate::{
+    migrate_0_0_to_0_2, migrate_0_2_to_0_3, migrate_0_3_to_0_4, migrate_0_4_to_0_5,
+    migrate_to_latest, MigrateReport, MigrationStep,
+};
 pub use sync::{
     RemoteSpec, read_remotes, write_remotes, add_remote,
     BranchUpstream, read_branch_upstreams, get_branch_upstream, set_branch_upstream,

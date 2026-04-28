@@ -1,0 +1,142 @@
+# Mixed-authorship attribution: when an agent run is attached to a
+# commit (`morph commit --from-run <hash>`), the commit must record
+# *both* the human author (who actually ran `morph commit` and may
+# have edited the agent's output before staging) and the agent. It
+# must also surface `human_edits` whenever the staged tree diverges
+# from what the trace claims the agent produced — so a downstream
+# tool reading the commit can tell that a human modified the agent's
+# output between the run and the commit.
+#
+# Three variants exercised here, mapping to the discussion in chat:
+#   A. agent writes F=X    → human edits F=Y → commit
+#       expect human_edits records F as "post-agent-edit"
+#   B. agent writes F1     → human writes F2  → commit (F2 not in trace)
+#       expect human_edits records F2 as "no-trace-record"
+#   D. agent writes F=X    → human reverts to F=Y → commit
+#       expect human_edits records F (same as A)
+# Variant C ("pure human, no agent") and E ("breadcrumb staleness")
+# are already covered by record_session.yaml / commit_auto_run.yaml.
+
+# ── Contributor: human-author always present alongside agent ────────────
+
+- name: mixed_authorship_human_author_in_contributors_when_run_attached
+  files:
+    .morph/config.json: '{"repo_version":"0.0","policy":{"required_metrics":[]},"user":{"name":"Raffi","email":"r@example.com"}}'
+    code.txt: "fn main() {}"
+  steps:
+    - morph: [run, record-session, --prompt, "write a stub", --response, "ok"]
+      capture: run_hash
+      assert_hash: true
+
+    - morph: [add, code.txt]
+
+    - morph: [commit, -m, "stub commit", --from-run, "${run_hash}", --json]
+      capture_json_field:
+        var: commit_hash
+        field: hash
+
+    - morph: [show, "${commit_hash}"]
+      stdout_contains:
+        # The commit's author is the human (resolved from config).
+        - '"author": "Raffi <r@example.com>"'
+        # The contributors list now includes BOTH the agent and the
+        # human (role = human-author). Pre-fix, only the agent was
+        # listed and the human was misattributed away.
+        - '"role": "human-author"'
+        - '"role": "primary"'
+        - '"id": "Raffi <r@example.com>"'
+
+# ── Variant A: agent wrote F, human edited F, commit reflects mismatch ──
+
+- name: mixed_authorship_variant_a_post_agent_edit_recorded
+  files:
+    .morph/config.json: '{"repo_version":"0.5","policy":{"required_metrics":[]},"user":{"name":"Raffi","email":"r@example.com"}}'
+    # Synthesize a trace where the agent claims to have written src/auth.rs
+    # to "AGENT VERSION". We use the `new_content` metadata field, which is
+    # the canonical content carrier (OpenCode plugin and updated IDE hooks
+    # both emit it).
+    trace.json: '{"type":"trace","events":[{"id":"e0","seq":0,"ts":"2026-04-28T10:00:00Z","kind":"user","payload":{"text":"fix auth"}},{"id":"e1","seq":1,"ts":"2026-04-28T10:00:01Z","kind":"file_edit","payload":{"text":"AGENT VERSION","name":"write","path":"src/auth.rs","new_content":"AGENT VERSION"}},{"id":"e2","seq":2,"ts":"2026-04-28T10:00:02Z","kind":"assistant","payload":{"text":"done"}}]}'
+    src/auth.rs: "HUMAN VERSION (after editing the agent's output)"
+  steps:
+    - compute_hash:
+        var: trace_hash
+        json: '{"type":"trace","events":[{"id":"e0","seq":0,"ts":"2026-04-28T10:00:00Z","kind":"user","payload":{"text":"fix auth"}},{"id":"e1","seq":1,"ts":"2026-04-28T10:00:01Z","kind":"file_edit","payload":{"text":"AGENT VERSION","name":"write","path":"src/auth.rs","new_content":"AGENT VERSION"}},{"id":"e2","seq":2,"ts":"2026-04-28T10:00:02Z","kind":"assistant","payload":{"text":"done"}}]}'
+
+    - write_file:
+        path: run.json
+        content: '{"type":"run","pipeline":"0000000000000000000000000000000000000000000000000000000000000000","commit":null,"environment":{"model":"claude-opus-4","version":"1","parameters":{},"toolchain":{}},"input_state_hash":"0000000000000000000000000000000000000000000000000000000000000000","output_artifacts":[],"metrics":{},"trace":"${trace_hash}","agent":{"id":"cursor","version":"1.0","policy":null}}'
+
+    - morph: [run, record, run.json, --trace, trace.json]
+      capture: run_hash
+      assert_hash: true
+
+    - morph: [add, src/auth.rs]
+    - morph: [commit, -m, "auth fix (with human polish)", --from-run, "${run_hash}", --json]
+      capture_json_field:
+        var: commit_hash
+        field: hash
+
+    - morph: [show, "${commit_hash}"]
+      stdout_contains:
+        - '"human_edits"'
+        - '"path": "src/auth.rs"'
+        - '"reason": "post-agent-edit"'
+
+# ── Variant B: agent touched F1, human authored F2; F2 → no-trace-record ─
+
+- name: mixed_authorship_variant_b_no_trace_record_recorded
+  files:
+    .morph/config.json: '{"repo_version":"0.5","policy":{"required_metrics":[]},"user":{"name":"Raffi","email":"r@example.com"}}'
+    # Agent's trace: it edited only src/foo.rs.
+    trace.json: '{"type":"trace","events":[{"id":"e0","seq":0,"ts":"2026-04-28T10:00:00Z","kind":"user","payload":{"text":"add foo"}},{"id":"e1","seq":1,"ts":"2026-04-28T10:00:01Z","kind":"file_edit","payload":{"text":"foo content","name":"write","path":"src/foo.rs","new_content":"foo content"}},{"id":"e2","seq":2,"ts":"2026-04-28T10:00:02Z","kind":"assistant","payload":{"text":"done"}}]}'
+    src/foo.rs: "foo content"
+    # Human-authored, never touched by the agent.
+    src/bar.rs: "bar content (human authored)"
+  steps:
+    - compute_hash:
+        var: trace_hash
+        json: '{"type":"trace","events":[{"id":"e0","seq":0,"ts":"2026-04-28T10:00:00Z","kind":"user","payload":{"text":"add foo"}},{"id":"e1","seq":1,"ts":"2026-04-28T10:00:01Z","kind":"file_edit","payload":{"text":"foo content","name":"write","path":"src/foo.rs","new_content":"foo content"}},{"id":"e2","seq":2,"ts":"2026-04-28T10:00:02Z","kind":"assistant","payload":{"text":"done"}}]}'
+
+    - write_file:
+        path: run.json
+        content: '{"type":"run","pipeline":"0000000000000000000000000000000000000000000000000000000000000000","commit":null,"environment":{"model":"claude-opus-4","version":"1","parameters":{},"toolchain":{}},"input_state_hash":"0000000000000000000000000000000000000000000000000000000000000000","output_artifacts":[],"metrics":{},"trace":"${trace_hash}","agent":{"id":"cursor","version":"1.0","policy":null}}'
+
+    - morph: [run, record, run.json, --trace, trace.json]
+      capture: run_hash
+      assert_hash: true
+
+    - morph: [add, "."]
+    - morph: [commit, -m, "foo + bar", --from-run, "${run_hash}", --json]
+      capture_json_field:
+        var: commit_hash
+        field: hash
+
+    - morph: [show, "${commit_hash}"]
+      stdout_contains:
+        - '"human_edits"'
+        - '"path": "src/bar.rs"'
+        - '"reason": "no-trace-record"'
+      # The agent's claimed file is NOT in human_edits — its content
+      # matches the trace.
+      stdout_not_contains:
+        - '"path": "src/foo.rs"'
+
+# ── Plain commit without --from-run keeps schema clean ──────────────────
+
+- name: mixed_authorship_no_human_edits_when_no_run_attached
+  files:
+    .morph/config.json: '{"repo_version":"0.0","policy":{"required_metrics":[]},"user":{"name":"Raffi","email":"r@example.com"}}'
+    code.txt: "hand-written"
+  steps:
+    - morph: [add, code.txt]
+    - morph: [commit, -m, "plain", --json]
+      capture_json_field:
+        var: commit_hash
+        field: hash
+
+    - morph: [show, "${commit_hash}"]
+      # Without a Run attached, the commit-time diff isn't computed
+      # and the field stays absent. No misattribution risk because
+      # the trace simply doesn't exist.
+      stdout_not_contains:
+        - '"human_edits"'
