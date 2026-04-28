@@ -634,6 +634,137 @@ pub fn list_stale_certifications(store: &dyn Store) -> Result<Vec<Hash>, MorphEr
     Ok(out)
 }
 
+/// Outcome of [`ensure_branch_synced`]. `created` is the number of new
+/// Morph commits the call wrote; `branch_moved` is true when the
+/// `heads/<branch>` morph ref had to be updated to point at a fresh
+/// tip; `already_synced` is true when nothing changed (the morph
+/// branch already pointed at the matching morph commit).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BranchSyncOutcome {
+    /// Number of new morph commits created during the sync.
+    pub created: usize,
+    /// `true` when `heads/<branch>` was advanced (or freshly written).
+    pub branch_moved: bool,
+    /// Git tip SHA the morph branch now mirrors. `None` when the git
+    /// branch does not exist (caller falls back to "branch not found").
+    pub git_tip: Option<String>,
+    /// Morph hash the branch ref now points to. `None` when the git
+    /// branch does not exist.
+    pub morph_tip: Option<Hash>,
+    /// `true` when the morph branch already matched the git tip and no
+    /// work was performed. Implies `created == 0 && !branch_moved`.
+    pub already_synced: bool,
+}
+
+impl BranchSyncOutcome {
+    /// `true` when the git branch did not exist (no auto-sync possible).
+    /// Lets callers distinguish "git has the branch and we mirrored it"
+    /// from "git doesn't have the branch either" without inspecting
+    /// `git_tip`.
+    pub fn missing_in_git(&self) -> bool {
+        self.git_tip.is_none()
+    }
+}
+
+/// Mirror git's `refs/heads/<branch>` into morph's `heads/<branch>`,
+/// creating any missing morph commits in topological (parents-first)
+/// order. Used by [`crate::merge::prepare_merge`] / `morph merge` in
+/// reference mode so a teammate's git-only branch can still flow
+/// through the merge gate without the user manually running
+/// `morph reference-sync` first (PR 7, Stowaway mode).
+///
+/// Behavior:
+/// - Returns an outcome with `git_tip = None` (no error) when the git
+///   branch doesn't exist. Callers should fall through to whatever
+///   "branch not found" handling already exists for the morph store.
+/// - When the git branch tip is already mirrored, simply points the
+///   morph branch ref at the existing morph commit (creating a fresh
+///   `heads/<branch>` ref when needed).
+/// - When unmirrored ancestors exist, walks `git log --reverse
+///   --topo-order <tip>` and creates morph commits via the same
+///   [`sync_one_commit`] path used by `sync_to_head`. New commits
+///   carry `morph_origin = "git-hook"` so the policy carve-out
+///   exempts them from required-metrics enforcement.
+/// - Idempotent: a second call when nothing changed returns
+///   `already_synced = true`.
+pub fn ensure_branch_synced(
+    store: &dyn Store,
+    repo_root: &Path,
+    branch_name: &str,
+    morph_version: Option<&str>,
+) -> Result<BranchSyncOutcome, MorphError> {
+    if !is_git_working_tree(repo_root) {
+        return Ok(BranchSyncOutcome::default());
+    }
+
+    let out = Command::new("git")
+        .arg("rev-parse")
+        .arg("--verify")
+        .arg("--quiet")
+        .arg(format!("refs/heads/{}", branch_name))
+        .current_dir(repo_root)
+        .output()
+        .map_err(|e| MorphError::Other(format!("git rev-parse failed to spawn: {}", e)))?;
+    if !out.status.success() {
+        return Ok(BranchSyncOutcome::default());
+    }
+    let git_tip = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if git_tip.is_empty() {
+        return Ok(BranchSyncOutcome::default());
+    }
+
+    let mut cache = build_git_to_morph_cache(store)?;
+    let morph_ref = format!("heads/{}", branch_name);
+    let current_morph_branch = store.ref_read(&morph_ref)?;
+
+    if let Some(&existing_morph_tip) = cache.get(&git_tip) {
+        let already_pointing = current_morph_branch == Some(existing_morph_tip);
+        if !already_pointing {
+            store.ref_write(&morph_ref, &existing_morph_tip)?;
+        }
+        return Ok(BranchSyncOutcome {
+            created: 0,
+            branch_moved: !already_pointing,
+            git_tip: Some(git_tip),
+            morph_tip: Some(existing_morph_tip),
+            already_synced: already_pointing,
+        });
+    }
+
+    let range = git_log_range(repo_root, None, &git_tip)?;
+    let mut last_hash: Option<Hash> = None;
+    let mut created = 0usize;
+    for sha in &range {
+        if let Some(&h) = cache.get(sha) {
+            last_hash = Some(h);
+            continue;
+        }
+        let hash = sync_one_commit(store, repo_root, sha, "git-hook", morph_version, &mut cache)?;
+        last_hash = Some(hash);
+        created += 1;
+    }
+
+    let morph_tip = last_hash.ok_or_else(|| {
+        MorphError::Other(format!(
+            "git log produced no commits for branch '{}' (tip {})",
+            branch_name, git_tip
+        ))
+    })?;
+
+    let branch_moved = current_morph_branch != Some(morph_tip);
+    if branch_moved {
+        store.ref_write(&morph_ref, &morph_tip)?;
+    }
+
+    Ok(BranchSyncOutcome {
+        created,
+        branch_moved,
+        git_tip: Some(git_tip),
+        morph_tip: Some(morph_tip),
+        already_synced: created == 0 && !branch_moved,
+    })
+}
+
 /// Backfill morph commits from `init_at_git_sha` (inclusive) up to the
 /// current git HEAD. Skips git commits already mirrored. This is the
 /// late-adoption path: a user who turned off the post-commit hook (or

@@ -451,6 +451,97 @@ fn print_trace_events(trace: &morph_core::objects::Trace) {
     }
 }
 
+/// PR 7: Stowaway-mode pre-flight for `morph merge`. In reference
+/// mode, mirror any unmirrored git history for both the current
+/// branch (in case the user committed via plain `git commit` with
+/// `MORPH_INTERNAL=1` or hooks were uninstalled) and the merge
+/// target (a teammate's branch that may exist only in git). Also
+/// surface a warning when either side has no morph evidence so the
+/// user knows the gate has nothing to enforce on that side. Bails
+/// out cheaply (`Ok(())`) for non-reference repos and for git tips
+/// already mirrored.
+fn ensure_reference_synced_for_merge(
+    store: &dyn morph_core::Store,
+    morph_dir: &std::path::Path,
+    repo_root: &std::path::Path,
+    branch: &str,
+) -> anyhow::Result<()> {
+    if morph_core::read_repo_mode(morph_dir)? != morph_core::RepoMode::Reference {
+        return Ok(());
+    }
+    let version = read_repo_version(morph_dir)?;
+
+    // Mirror current branch (HEAD) so the merge gate sees the user's
+    // latest git commits even if they bypassed the post-commit hook.
+    let head = morph_core::sync_to_head(store, repo_root, Some(&version))?;
+    if let Some(_new) = head.new_commit {
+        let sha = head
+            .git_sha
+            .as_deref()
+            .map(|s| &s[..s.len().min(7)])
+            .unwrap_or("?");
+        eprintln!(
+            "morph: auto-mirroring current branch — git HEAD ({}) was ahead of morph",
+            sha
+        );
+    }
+
+    // Mirror the merge target. Strip a leading `heads/` so callers
+    // can pass either form (matches `prepare_merge`'s rules).
+    let bare = branch.strip_prefix("heads/").unwrap_or(branch);
+    let other = morph_core::ensure_branch_synced(store, repo_root, bare, Some(&version))?;
+    if other.missing_in_git() {
+        // No git branch by that name either. Fall through and let
+        // `prepare_merge` / `start_merge` produce the canonical
+        // "branch not found" error.
+        return Ok(());
+    }
+    if other.created > 0 {
+        let tip = other
+            .git_tip
+            .as_deref()
+            .map(|s| &s[..s.len().min(7)])
+            .unwrap_or("?");
+        eprintln!(
+            "morph: auto-mirroring '{}' from git into morph ({} new commit{}, tip {})",
+            bare,
+            other.created,
+            if other.created == 1 { "" } else { "s" },
+            tip
+        );
+    } else if other.branch_moved {
+        eprintln!("morph: pointing morph branch '{}' at the existing mirror", bare);
+    }
+
+    Ok(())
+}
+
+/// PR 7: emit a "no morph claim from <side>" warning when a parent
+/// commit has no observed metrics and no certification annotations.
+/// In reference / Stowaway mode this is the common case (a teammate's
+/// branch never ran `morph eval run`), and we want the user to know
+/// the merge gate has nothing to enforce on that side rather than
+/// quietly blessing an evidence-free commit.
+fn warn_when_no_morph_claim(
+    store: &dyn morph_core::Store,
+    plan: &morph_core::MergePlan,
+) {
+    if plan.head_metrics.is_empty() {
+        let label = plan.head_branch.as_deref().unwrap_or("HEAD");
+        eprintln!(
+            "morph: no morph evidence on '{}' — merge proceeds without behavioral assertion from this side",
+            label
+        );
+    }
+    if plan.other_metrics.is_empty() {
+        eprintln!(
+            "morph: no morph evidence on '{}' — merge proceeds without behavioral assertion from this side",
+            plan.other_branch
+        );
+    }
+    let _ = store;
+}
+
 /// Dispatch for `morph merge`. Maps the flag combo onto the four
 /// merge-flow entry points: `start_merge` (positional `<branch>`),
 /// `continue_merge` (`--continue`), `abort_merge` (`--abort`), and
@@ -506,6 +597,8 @@ fn run_merge(
         )
     })?;
 
+    ensure_reference_synced_for_merge(store.as_ref(), &morph_dir, &repo_root, &branch)?;
+
     let single_shot = pipeline.is_some() && metrics.is_some() && message.is_some();
     if single_shot {
         let version = read_repo_version(&morph_dir)?;
@@ -526,6 +619,7 @@ fn run_merge(
             suite_hash_opt.as_ref(),
             retired.as_deref(),
         )?;
+        warn_when_no_morph_claim(store.as_ref(), &plan);
         plan.retire_reason = retire_reason;
         let resolved_author =
             morph_core::resolve_author_for_repo(&morph_dir, author.as_deref())?;

@@ -1,0 +1,199 @@
+# PR 7: graceful merge gate degradation in reference mode (Stowaway).
+#
+# Stowaway scenario: only one developer on the team uses morph, while
+# teammates use plain git. When the morph user wants to merge a
+# teammate's branch:
+#   - The morph branch ref may not exist yet (the teammate's commits
+#     never went through a morph hook).
+#   - Even if mirrored, the resulting morph commit has no observed
+#     metrics and no certifications — there's no behavioral claim to
+#     gate against on that side.
+#
+# PR 7 makes `morph merge`:
+#   1. Auto-mirror missing morph branches from git so the merge gate
+#      has both parents to inspect.
+#   2. Treat "no morph evidence" as "no morph claim" — the dominance
+#      gate already passes when a parent has zero metrics; PR 7 just
+#      makes that explicit by surfacing a warning so the user knows
+#      the merge proceeded without a behavioral assertion from one
+#      side.
+#   3. Auto-mirror the current branch too, in case the user committed
+#      via plain `git commit` while the post-commit hook was off.
+
+# ── auto-mirror the merge target when only git knows about it ────────
+#
+# Without this, `morph merge feature` in stowaway mode immediately
+# fails with "branch not found" because morph never observed the
+# teammate's branch. The auto-mirror keeps `morph merge` usable in
+# Stowaway mode.
+
+- name: merge_in_reference_mode_auto_mirrors_other_branch_from_git
+  init: false
+  steps:
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    # Teammate workflow: every git operation runs with MORPH_INTERNAL=1
+    # so morph never observes the branch via hooks. This is the
+    # canonical Stowaway shape — only the merging user runs morph,
+    # other contributors just `git commit` and `git push`.
+    - shell: |
+        MORPH_INTERNAL=1 git checkout -q -b feature
+        MORPH_INTERNAL=1 git commit --allow-empty -q -m 'teammate work'
+        MORPH_INTERNAL=1 git checkout -q main
+    # Confirm morph has no `feature` ref yet.
+    - shell: "test ! -f .morph/refs/heads/feature"
+    # Capture HEAD's pipeline hash so single-shot merge has a target.
+    - morph: [show, HEAD]
+      capture_json_field:
+        var: pipe
+        field: pipeline
+    - morph: [merge, feature, --pipeline, "${pipe}", --metrics, '{}', "-m", "merge feature"]
+      stderr_contains: "auto-mirroring 'feature' from git into morph"
+    # And `feature` now exists in morph.
+    - shell: "test -f .morph/refs/heads/feature"
+
+# ── point morph branch at existing mirror when already synced ────────
+#
+# When the post-checkout / post-commit hook already mirrored the git
+# branch but the morph branch ref hasn't been written yet (rare but
+# possible: the user `git switch`-ed without firing post-checkout, or
+# manually deleted the morph ref), `ensure_branch_synced` should just
+# point the ref at the existing mirror without re-creating any
+# commits.
+
+- name: merge_in_reference_mode_advances_existing_morph_branch_incrementally
+  init: false
+  steps:
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    # First mirror the feature branch fully (hooks on) so morph has
+    # the commit in objects and `heads/feature` points at it.
+    - shell: |
+        git checkout -q -b feature
+        git commit --allow-empty -q -m 'feature v1'
+        git checkout -q main
+    - shell: "test -f .morph/refs/heads/feature"
+    # Teammate then adds a commit to feature with the hooks
+    # suppressed, simulating a stowaway state where morph is one
+    # commit behind git on that branch.
+    - shell: |
+        MORPH_INTERNAL=1 git checkout -q feature
+        MORPH_INTERNAL=1 git commit --allow-empty -q -m 'feature v2 (teammate)'
+        MORPH_INTERNAL=1 git checkout -q main
+    - morph: [show, HEAD]
+      capture_json_field:
+        var: pipe
+        field: pipeline
+    # ensure_branch_synced should mirror just the new commit (1 new),
+    # not the whole branch from scratch.
+    - morph: [merge, feature, --pipeline, "${pipe}", --metrics, '{}', "-m", "merge feature"]
+      stderr_contains: "auto-mirroring 'feature' from git into morph (1 new commit"
+
+# ── warn when other branch has no morph evidence ─────────────────────
+#
+# After auto-mirroring, the teammate's commit has empty observed
+# metrics and no certifications, so the dominance gate has nothing to
+# enforce on that side. This is the expected stowaway outcome — the
+# warning makes it explicit so the user isn't surprised that an
+# evidence-free commit slipped through the gate.
+
+- name: merge_in_reference_mode_warns_when_other_has_no_morph_evidence
+  init: false
+  steps:
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    - shell: |
+        MORPH_INTERNAL=1 git checkout -q -b feature
+        MORPH_INTERNAL=1 git commit --allow-empty -q -m 'teammate work'
+        MORPH_INTERNAL=1 git checkout -q main
+    - morph: [show, HEAD]
+      capture_json_field:
+        var: pipe
+        field: pipeline
+    - morph: [merge, feature, --pipeline, "${pipe}", --metrics, '{}', "-m", "merge feature"]
+      stderr_contains:
+        - "no morph evidence on 'feature'"
+        - "merge proceeds without behavioral assertion"
+
+# ── still warns about head when head has no claim either ─────────────
+#
+# Symmetric warning: when the user's own branch has no claim, the
+# warning should point that out too. In stowaway mode this means the
+# user hasn't certified their own work yet; it's worth telling them.
+
+- name: merge_in_reference_mode_warns_when_head_has_no_morph_evidence
+  init: false
+  steps:
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    - shell: |
+        MORPH_INTERNAL=1 git checkout -q -b feature
+        MORPH_INTERNAL=1 git commit --allow-empty -q -m 'teammate work'
+        MORPH_INTERNAL=1 git checkout -q main
+    - morph: [show, HEAD]
+      capture_json_field:
+        var: pipe
+        field: pipeline
+    - morph: [merge, feature, --pipeline, "${pipe}", --metrics, '{}', "-m", "merge feature"]
+      stderr_contains: "no morph evidence on 'main'"
+
+# ── one-sided certification still allows merge ───────────────────────
+#
+# When head has a certification but other does not, the merge should
+# proceed (no head-side violation if merged metrics meet head's bar,
+# no other-side violation because other has nothing to claim). The
+# user gets a warning about the missing other-side evidence.
+
+- name: merge_in_reference_mode_passes_when_only_head_is_certified
+  init: false
+  steps:
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    - morph: [certify, --commit, HEAD, --metrics, '{"tests_passed":1.0,"tests_total":1.0}']
+    - shell: |
+        MORPH_INTERNAL=1 git checkout -q -b feature
+        MORPH_INTERNAL=1 git commit --allow-empty -q -m 'teammate work'
+        MORPH_INTERNAL=1 git checkout -q main
+    - morph: [show, HEAD]
+      capture_json_field:
+        var: pipe
+        field: pipeline
+    # Merged metrics match head's certification, so dominance from
+    # head passes; other has no claim so dominance trivially passes.
+    # The warning still surfaces.
+    - morph: [merge, feature, --pipeline, "${pipe}", --metrics, '{"tests_passed":1.0,"tests_total":1.0}', "-m", "merge feature"]
+      stderr_contains: "no morph evidence on 'feature'"
+
+# ── auto-mirror current branch when git HEAD is ahead ────────────────
+#
+# Stowaway: the user committed via plain `git commit` with the morph
+# hook bypassed (or hooks not installed). Morph HEAD is now stale.
+# Before running the gate, `morph merge` should sync the current
+# branch up to git HEAD so the comparison is honest.
+
+- name: merge_in_reference_mode_auto_mirrors_current_branch_when_git_ahead
+  init: false
+  steps:
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    # User commits twice via plain git with the hook suppressed.
+    # Morph HEAD stays at 'first' until merge time.
+    - shell: |
+        MORPH_INTERNAL=1 git commit --allow-empty -q -m 'wip 1'
+        MORPH_INTERNAL=1 git commit --allow-empty -q -m 'wip 2'
+    - shell: |
+        MORPH_INTERNAL=1 git checkout -q -b feature
+        MORPH_INTERNAL=1 git commit --allow-empty -q -m 'feature work'
+        MORPH_INTERNAL=1 git checkout -q main
+    - morph: [show, HEAD]
+      capture_json_field:
+        var: pipe
+        field: pipeline
+    - morph: [merge, feature, --pipeline, "${pipe}", --metrics, '{}', "-m", "merge feature"]
+      stderr_contains: "auto-mirroring current branch"
