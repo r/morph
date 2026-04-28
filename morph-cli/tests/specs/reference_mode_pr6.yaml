@@ -1,0 +1,219 @@
+# PR 6: partial-morph hardening (a.k.a. "Stowaway mode").
+#
+# Reference mode supports two real-world adoption shapes:
+#   - Solo: every committer uses morph; merge gating is authoritative.
+#   - Stowaway: one developer installs morph in a repo whose other
+#     committers are git-only. Morph must never leak into git
+#     history or interfere with the team's git workflow, and it
+#     must degrade gracefully when its own state is partial / behind.
+#
+# PR 6 closes the Stowaway gaps surfaced after PR 5:
+#   1. `.morph/` was not auto-excluded — `git add .` could leak
+#      morph state into the repo's tracked tree.
+#   2. Fast-forward and non-fast-forward `git pull`s left morph
+#      silently behind git with no `morph status` signal.
+#   3. `morph certify` evidence on commits that were later rewritten
+#      via `amend`/`rebase` was not surfaced as stale.
+#   4. `morph_eval_gaps` had no notion of git/morph drift, so agents
+#      could not detect when manual `morph reference-sync` was needed.
+
+# ── .git/info/exclude protects against accidental `git add` ──────────
+#
+# `.git/info/exclude` is a per-clone, untracked excludes file. Writing
+# `.morph/` there bulletproofs the Stowaway scenario: the morph user's
+# clone never tracks `.morph/`, regardless of what's in `.gitignore`,
+# while teammates' clones are unaffected (they never receive
+# `.git/info/exclude`).
+
+- name: init_reference_writes_morph_to_git_info_exclude
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+  assert:
+    - kind: file_exists
+      path: .git/info/exclude
+    - kind: file_contains
+      path: .git/info/exclude
+      contents: ".morph/"
+
+- name: init_reference_info_exclude_idempotent_when_already_present
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    # Pre-seed the exclude file with the same line — init must not
+    # duplicate it.
+    - shell: "mkdir -p .git/info && printf '.morph/\\n' > .git/info/exclude"
+    - morph: [init, --reference, "${repo}"]
+    - shell: "test \"$(grep -c '^\\.morph/$' .git/info/exclude)\" = 1"
+
+- name: install_hooks_writes_morph_to_git_info_exclude_when_missing
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    # Wipe the exclude so install-hooks has work to do.
+    - shell: "rm -f .git/info/exclude"
+    - morph: [install-hooks]
+    - shell: "grep -q '^\\.morph/$' .git/info/exclude"
+
+# ── stowaway messaging on init / install-hooks ───────────────────────
+#
+# The init output must explicitly tell the user that morph is local to
+# their clone and does not leak into git. Without this, the morph user
+# can't reason about whether teammates will be affected.
+
+- name: init_reference_human_output_describes_stowaway_contract
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+      stdout_contains:
+        - "local to this clone"
+
+# ── post-merge hook + handler ────────────────────────────────────────
+#
+# `git merge --no-ff` and non-fast-forward `git pull`s create a merge
+# commit that fires `post-merge`. Without this hook, those merge
+# commits never reach morph until the user manually
+# `morph reference-sync`s. (Pure fast-forward `git pull --ff-only`
+# fires no hooks at all — that gap is surfaced by the drift display
+# below.)
+
+- name: install_hooks_writes_post_merge_hook_in_reference_mode
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+  assert:
+    - kind: file_exists
+      path: .git/hooks/post-merge
+    - kind: file_contains
+      path: .git/hooks/post-merge
+      contents: "morph hook post-merge"
+
+- name: hook_command_post_merge_mirrors_head
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - shell: "MORPH_INTERNAL=1 git commit --allow-empty -q -m 'second'"
+    # Calling the dispatcher directly is what `git merge` does after
+    # the post-merge hook is wired. Should mirror the new HEAD.
+    - morph: [hook, post-merge]
+    - morph: [head, --json]
+      stdout_contains:
+        - '"message": "second"'
+        - '"morph_origin": "git-hook"'
+
+- name: post_merge_hook_mirrors_after_non_ff_git_merge
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    # Build a divergent branch + merge it back with --no-ff so a
+    # merge commit is produced. The installed post-merge hook should
+    # mirror that merge commit into morph automatically.
+    - shell: "git checkout -q -b feature && MORPH_INTERNAL=1 git commit --allow-empty -q -m 'feature work'"
+    - shell: "git checkout -q main && git merge --no-ff -q -m 'merge feature' feature"
+    - morph: [head, --json]
+      stdout_contains: "merge feature"
+
+# ── drift display in `morph status` ──────────────────────────────────
+#
+# The morph user's compass: how far behind git are we? `morph status`
+# in reference mode prints a "Reference mode" block with git HEAD,
+# the last-mirrored git SHA, and the unmirrored commit count.
+
+- name: status_in_reference_mode_shows_up_to_date_when_synced
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    - morph: [status]
+      stdout_contains:
+        - "Reference mode"
+        - "up to date"
+
+- name: status_in_reference_mode_shows_drift_when_behind
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    # Add two git commits with the hook suppressed so morph stays
+    # behind. This is the shape of a fast-forward pull from
+    # teammates.
+    - shell: "MORPH_INTERNAL=1 git commit --allow-empty -q -m 'teammate 1' && MORPH_INTERNAL=1 git commit --allow-empty -q -m 'teammate 2'"
+    - morph: [status]
+      stdout_contains:
+        - "2 unmirrored git commit"
+        - "morph reference-sync"
+
+# ── stale certification surfacing ────────────────────────────────────
+#
+# When a certified commit gets rewritten (amend / rebase), the
+# post-rewrite hook attaches a `kind: "rewritten"` annotation pointing
+# at the successor. The certification annotation on the old commit is
+# now misleading. `morph status` must surface this so the user knows
+# to re-certify.
+
+- name: status_flags_stale_certification_after_amend
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    # Capture both the original git SHA and the original morph commit
+    # hash so we can drive `morph hook post-rewrite` manually below.
+    # Driving the dispatcher directly (instead of relying on git's
+    # implicit firing) avoids the test-harness footgun where a
+    # different `morph` on PATH would silently swallow the call.
+    - shell: "git rev-parse HEAD > .morph/old_git_sha.txt"
+    - morph: [head, --json]
+      capture_json_field:
+        var: original_morph_hash
+        field: hash
+    - morph: [certify, --metrics, '{"tests_total":3,"tests_passed":3,"pass_rate":1.0}']
+    - shell: "MORPH_INTERNAL=1 git commit --amend --allow-empty -q -m 'first (amended)'"
+    # Feed the post-rewrite handler the rewrite line `<old> <new>` on
+    # stdin, exactly the way git would.
+    - shell: |
+        OLD=$(cat .morph/old_git_sha.txt)
+        NEW=$(git rev-parse HEAD)
+        printf '%s %s\n' "$OLD" "$NEW" | morph hook post-rewrite amend
+    - morph: [annotations, "${original_morph_hash}"]
+      stdout_contains:
+        - "rewritten"
+    - morph: [status]
+      stdout_contains:
+        - "stale certification"
+
+# ── morph_eval_gaps gains git_morph_drift ────────────────────────────
+#
+# Agents (and `morph status`) can ask `morph eval gaps` for a
+# structured list of evidence problems. PR 6 adds a `git_morph_drift`
+# entry whenever git is ahead of morph in reference mode.
+
+- name: eval_gaps_reports_git_morph_drift_when_behind
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    - shell: "MORPH_INTERNAL=1 git commit --allow-empty -q -m 'teammate'"
+    - morph: [eval, gaps, --json]
+      stdout_contains: "git_morph_drift"
+
+- name: eval_gaps_clears_drift_after_reference_sync
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    - shell: "MORPH_INTERNAL=1 git commit --allow-empty -q -m 'teammate'"
+    - morph: [reference-sync]
+    - morph: [eval, gaps, --json]
+      stdout_not_contains: "git_morph_drift"

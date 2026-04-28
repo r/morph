@@ -73,6 +73,17 @@ pub const POST_REWRITE_HOOK_SCRIPT: &str = r#"#!/bin/sh
 exec morph hook post-rewrite "$@" >/dev/null 2>&1 || true
 "#;
 
+/// Embedded post-merge hook script. Fires after `git merge` (incl. a
+/// non-fast-forward `git pull`) once the merge commit has been
+/// recorded. Pure fast-forward pulls fire no git hook at all — that
+/// drift is surfaced separately by `morph status` in reference mode.
+pub const POST_MERGE_HOOK_SCRIPT: &str = r#"#!/bin/sh
+# Installed by morph. Mirrors merge commits into morph history so the
+# morph branch ref keeps pace with `git merge` / non-FF `git pull`.
+[ "$MORPH_INTERNAL" = "1" ] && exit 0
+exec morph hook post-merge "$@" >/dev/null 2>&1 || true
+"#;
+
 /// Filename → contents for every reference-mode hook this binary
 /// installs. Iterating this list keeps `install_reference_hooks`,
 /// `morph init --reference`, and the spec-test assertions in lock-step
@@ -82,7 +93,52 @@ pub fn reference_mode_hooks() -> &'static [(&'static str, &'static str)] {
         ("post-commit", POST_COMMIT_HOOK_SCRIPT),
         ("post-checkout", POST_CHECKOUT_HOOK_SCRIPT),
         ("post-rewrite", POST_REWRITE_HOOK_SCRIPT),
+        ("post-merge", POST_MERGE_HOOK_SCRIPT),
     ]
+}
+
+/// Append `.morph/` to `.git/info/exclude` (creating the file when
+/// missing) so a stray `git add .` can't pull morph state into the
+/// shared repo. This is the Stowaway-mode safety net: the morph user's
+/// clone gains a *local* exclude that teammates' clones never receive,
+/// so their git workflow is unaffected.
+///
+/// Idempotent. Returns `true` if a new line was written; `false` when
+/// `.morph/` was already present.
+pub fn ensure_morph_in_git_info_exclude(repo_root: &Path) -> Result<bool, MorphError> {
+    let info_dir = repo_root.join(".git").join("info");
+    if !info_dir.exists() {
+        std::fs::create_dir_all(&info_dir).map_err(|e| {
+            MorphError::Other(format!("create .git/info: {}", e))
+        })?;
+    }
+    let exclude_path = info_dir.join("exclude");
+    let existing = if exclude_path.exists() {
+        std::fs::read_to_string(&exclude_path)
+            .map_err(|e| MorphError::Other(format!("read .git/info/exclude: {}", e)))?
+    } else {
+        String::new()
+    };
+    let target = ".morph/";
+    let already = existing.lines().any(|l| l.trim() == target);
+    if already {
+        return Ok(false);
+    }
+    let mut new_content = existing.clone();
+    if !new_content.is_empty() && !new_content.ends_with('\n') {
+        new_content.push('\n');
+    }
+    if existing.is_empty() {
+        new_content
+            .push_str("# Local-only excludes managed by morph (Stowaway mode):\n");
+        new_content
+            .push_str("# teammates' clones never see this file, so their git workflow is unaffected.\n");
+    }
+    new_content.push_str(target);
+    new_content.push('\n');
+    std::fs::write(&exclude_path, new_content)
+        .map_err(|e| MorphError::Other(format!("write .git/info/exclude: {}", e)))?;
+    Ok(true)
 }
 
 /// True when the path is the working tree of a git repository (a `.git`
@@ -469,6 +525,113 @@ pub fn run_git_commit_with_morph_internal(
     }
     git_head_sha(repo_root)?
         .ok_or_else(|| MorphError::Other("git HEAD missing after successful commit".into()))
+}
+
+/// Snapshot of the git/morph relationship in reference mode. Used by
+/// `morph status`, `morph_eval_gaps`, and the merge gate (PR 7) to
+/// answer "is morph in sync with git?"
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DriftSummary {
+    /// `git rev-parse HEAD` at the moment of the call. `None` when the
+    /// repo has no commits yet.
+    pub git_head: Option<String>,
+    /// Most recent ancestor of `git_head` that already has a morph
+    /// counterpart. `None` when no ancestor is mirrored (a fresh
+    /// `morph init --reference` with `init_at_git_sha` set but no sync
+    /// yet — common for late adoption).
+    pub last_mirrored_git_sha: Option<String>,
+    /// Number of git commits between `last_mirrored_git_sha` and
+    /// `git_head` (exclusive of the mirrored ancestor, inclusive of
+    /// the unmirrored tip). `0` means morph is up to date with git.
+    pub unmirrored_count: usize,
+}
+
+impl DriftSummary {
+    pub fn is_up_to_date(&self) -> bool {
+        self.unmirrored_count == 0
+    }
+}
+
+/// Walk first-parent ancestry from `git HEAD` until we hit a commit
+/// already mirrored into morph; the count of intervening commits is
+/// the drift. Returns `unmirrored_count = 0` when git HEAD is itself
+/// mirrored.
+///
+/// Hard-caps the walk at 10 000 commits to keep the call cheap on huge
+/// histories. For typical Stowaway scenarios drift is < 100.
+pub fn drift_summary(store: &dyn Store, repo_root: &Path) -> Result<DriftSummary, MorphError> {
+    let git_head = git_head_sha(repo_root)?;
+    let head = match git_head {
+        Some(h) => h,
+        None => {
+            return Ok(DriftSummary {
+                git_head: None,
+                last_mirrored_git_sha: None,
+                unmirrored_count: 0,
+            });
+        }
+    };
+    let cache = build_git_to_morph_cache(store)?;
+    if cache.contains_key(&head) {
+        return Ok(DriftSummary {
+            git_head: Some(head.clone()),
+            last_mirrored_git_sha: Some(head),
+            unmirrored_count: 0,
+        });
+    }
+    let mut count = 0usize;
+    let mut current = head.clone();
+    let mut last_mirrored: Option<String> = None;
+    while count < 10_000 {
+        count += 1;
+        let parents = git_parents(repo_root, &current)?;
+        let next = match parents.first() {
+            Some(p) => p.clone(),
+            None => break,
+        };
+        if cache.contains_key(&next) {
+            last_mirrored = Some(next);
+            break;
+        }
+        current = next;
+    }
+    Ok(DriftSummary {
+        git_head: Some(head),
+        last_mirrored_git_sha: last_mirrored,
+        unmirrored_count: count,
+    })
+}
+
+/// List morph commit hashes whose `kind: "certification"` annotations
+/// have been invalidated by a subsequent `kind: "rewritten"`
+/// annotation. PR 4 attaches `rewritten` whenever `git commit --amend`
+/// or `git rebase` supersedes a commit; PR 6 surfaces the resulting
+/// stale certifications in `morph status` and `morph_eval_gaps`.
+pub fn list_stale_certifications(store: &dyn Store) -> Result<Vec<Hash>, MorphError> {
+    use std::collections::HashSet;
+    let annotation_hashes = store.list(crate::store::ObjectType::Annotation)?;
+    let mut rewritten: HashSet<String> = HashSet::new();
+    let mut certified: HashSet<String> = HashSet::new();
+    for h in &annotation_hashes {
+        if let Ok(MorphObject::Annotation(ann)) = store.get(h) {
+            match ann.kind.as_str() {
+                "rewritten" => {
+                    rewritten.insert(ann.target.clone());
+                }
+                "certification" => {
+                    certified.insert(ann.target.clone());
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut intersected: Vec<&String> = rewritten.intersection(&certified).collect();
+    intersected.sort();
+    let out: Vec<Hash> = intersected
+        .iter()
+        .filter_map(|s| Hash::from_hex(s).ok())
+        .collect();
+    Ok(out)
 }
 
 /// Backfill morph commits from `init_at_git_sha` (inclusive) up to the
@@ -1084,9 +1247,9 @@ mod tests {
         run_git(dir.path(), &["init", "-q", "-b", "main"]);
         let _ = std::fs::remove_dir_all(dir.path().join(".git").join("hooks"));
         let report = install_reference_hooks(dir.path()).unwrap();
-        assert_eq!(report.installed.len(), 3);
+        assert_eq!(report.installed.len(), 4);
         assert!(report.already_present.is_empty());
-        for hook in &["post-commit", "post-checkout", "post-rewrite"] {
+        for hook in &["post-commit", "post-checkout", "post-rewrite", "post-merge"] {
             let hook_path = dir.path().join(format!(".git/hooks/{}", hook));
             assert!(hook_path.is_file(), "{} missing", hook);
             let content = std::fs::read_to_string(&hook_path).unwrap();
@@ -1100,7 +1263,7 @@ mod tests {
         }
         let report2 = install_reference_hooks(dir.path()).unwrap();
         assert_eq!(report2.installed.len(), 0);
-        assert_eq!(report2.already_present.len(), 3);
+        assert_eq!(report2.already_present.len(), 4);
         assert!(!report2.changed());
     }
 

@@ -156,9 +156,22 @@ fn run_hook(event: &str, args: &[String]) -> anyhow::Result<()> {
                 outcome.annotated
             );
         }
+        "post-merge" => {
+            // git passes <is_squash> as $1 (we ignore it; sync_to_head
+            // is idempotent either way).
+            let outcome = morph_core::sync_to_head(store.as_ref(), &repo_root, version)?;
+            if outcome.already_synced {
+                println!("Already up to date.");
+            } else if let Some(sha) = outcome.git_sha.as_deref() {
+                println!(
+                    "Mirrored merge commit ({}).",
+                    &sha[..sha.len().min(8)]
+                );
+            }
+        }
         other => {
             anyhow::bail!(
-                "unknown hook event '{}': expected one of post-commit, post-checkout, post-rewrite",
+                "unknown hook event '{}': expected one of post-commit, post-checkout, post-rewrite, post-merge",
                 other
             );
         }
@@ -667,6 +680,7 @@ Run `git init` first or pass a path that is already a git working tree.",
                 };
                 morph_core::write_policy(&morph_dir, &policy)?;
                 let hook_report = morph_core::install_reference_hooks(&path)?;
+                let exclude_added = morph_core::ensure_morph_in_git_info_exclude(&path)?;
                 let abs_morph = path
                     .canonicalize()
                     .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(&path))
@@ -686,6 +700,18 @@ Run `git init` first or pass a path that is already a git working tree.",
                     total,
                     hook_report.installed.len(),
                     hook_report.already_present.len()
+                );
+                if exclude_added {
+                    println!(
+                        "  morph state is local to this clone (.morph/ added to .git/info/exclude)"
+                    );
+                } else {
+                    println!(
+                        "  morph state is local to this clone (.git/info/exclude already excludes .morph/)"
+                    );
+                }
+                println!(
+                    "  teammates not using morph are unaffected — your git workflow is unchanged"
                 );
             } else if bare {
                 morph_core::init_bare(&path)?;
@@ -778,6 +804,7 @@ in a git repository first."
                 std::process::exit(1);
             }
             let report = morph_core::install_reference_hooks(&repo_root)?;
+            let exclude_added = morph_core::ensure_morph_in_git_info_exclude(&repo_root)?;
             if report.changed() {
                 println!(
                     "Installed {} hook(s) at .git/hooks/: {}.",
@@ -796,6 +823,9 @@ in a git repository first."
                     "All {} reference-mode hooks already installed (no changes).",
                     report.already_present.len()
                 );
+            }
+            if exclude_added {
+                println!("Added .morph/ to .git/info/exclude (local to this clone).");
             }
         }
 
@@ -1175,11 +1205,40 @@ in a git repository first."
                 }
             }
 
-            // PR 2 (reference mode): surface the count of git-hook
-            // commits that haven't been certified yet. Standalone
-            // repos never produce git-hook commits, so this branch
-            // is a no-op there.
+            // PR 2 / PR 6 (reference mode): the user's compass for
+            // the git ↔ morph relationship. Surfaces:
+            //   - drift count (git ahead of morph),
+            //   - uncertified git-hook commits,
+            //   - stale certifications from amend/rebase rewrites.
+            // Standalone repos skip this entire block.
             if morph_core::read_repo_mode(&morph_dir)? == morph_core::RepoMode::Reference {
+                let drift = morph_core::drift_summary(store.as_ref(), &repo_root)?;
+                println!("Reference mode (git ↔ morph)");
+                if let Some(sha) = drift.git_head.as_deref() {
+                    println!("  git HEAD:        {}", &sha[..sha.len().min(12)]);
+                }
+                if drift.is_up_to_date() {
+                    println!("  drift:           up to date");
+                } else {
+                    println!(
+                        "  drift:           {} unmirrored git commit{} — run `morph reference-sync`",
+                        drift.unmirrored_count,
+                        if drift.unmirrored_count == 1 { "" } else { "s" },
+                    );
+                    if let Some(last) = drift.last_mirrored_git_sha.as_deref() {
+                        println!("  last mirrored:   {}", &last[..last.len().min(12)]);
+                    } else {
+                        println!("  last mirrored:   (none — run `morph reference-sync --backfill`)");
+                    }
+                }
+                let stale = morph_core::list_stale_certifications(store.as_ref())?;
+                if !stale.is_empty() {
+                    println!(
+                        "  stale certification{}: {} (a rewritten commit had certification evidence — re-certify the successor)",
+                        if stale.len() == 1 { "" } else { "s" },
+                        stale.len(),
+                    );
+                }
                 if let Some(head) = morph_core::resolve_head(&store)? {
                     let pending = morph_core::pending_certifications(store.as_ref(), &head)?;
                     if !pending.is_empty() {

@@ -79,6 +79,32 @@ pub fn compute_eval_gaps(
             "hint": "Working tree has changes but no metric-bearing run was recorded. Run `morph eval run`.",
         }));
     }
+
+    // PR 6 (Stowaway hardening): in reference mode, drift between
+    // git HEAD and the last-mirrored morph commit is a real evidence
+    // gap — uncertified git commits are invisible to the merge gate
+    // until they're synced. Standalone repos skip this check.
+    if let Some(repo_root) = morph_dir.parent() {
+        if crate::reference::is_git_working_tree(repo_root)
+            && crate::repo::read_repo_mode(morph_dir).unwrap_or(crate::repo::RepoMode::Standalone)
+                == crate::repo::RepoMode::Reference
+        {
+            let drift = crate::reference::drift_summary(store, repo_root)?;
+            if !drift.is_up_to_date() {
+                gaps.push(json!({
+                    "kind": "git_morph_drift",
+                    "unmirrored_count": drift.unmirrored_count,
+                    "git_head": drift.git_head,
+                    "last_mirrored_git_sha": drift.last_mirrored_git_sha,
+                    "hint": format!(
+                        "morph is {} commit(s) behind git — run `morph reference-sync` (or `--backfill` for late adoption).",
+                        drift.unmirrored_count
+                    ),
+                }));
+            }
+        }
+    }
+
     Ok(gaps)
 }
 

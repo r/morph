@@ -178,8 +178,9 @@
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
     - morph: [init, --reference, "${repo}"]
-    # Wipe so install-hooks has work to do.
-    - shell: "rm -f .git/hooks/post-commit .git/hooks/post-checkout .git/hooks/post-rewrite"
+    # Wipe so install-hooks has work to do. PR 6 adds post-merge to
+    # the lifecycle hook set; this test now covers all four.
+    - shell: "rm -f .git/hooks/post-commit .git/hooks/post-checkout .git/hooks/post-rewrite .git/hooks/post-merge"
     - morph: [install-hooks]
       stdout_contains: "Installed"
   assert:
@@ -189,6 +190,8 @@
       path: .git/hooks/post-checkout
     - kind: file_exists
       path: .git/hooks/post-rewrite
+    - kind: file_exists
+      path: .git/hooks/post-merge
     - kind: file_contains
       path: .git/hooks/post-commit
       contents: "morph hook post-commit"
@@ -198,6 +201,9 @@
     - kind: file_contains
       path: .git/hooks/post-rewrite
       contents: "morph hook post-rewrite"
+    - kind: file_contains
+      path: .git/hooks/post-merge
+      contents: "morph hook post-merge"
 
 - name: install_hooks_idempotent_for_trio
   init: false
