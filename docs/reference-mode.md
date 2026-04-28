@@ -155,6 +155,42 @@ git commits.
 `--allow-empty-commit` maps to `git commit --allow-empty` for
 audit-only commits (e.g. a certification milestone with no diff).
 
+## What `morph merge` does in reference mode
+
+When you run `morph merge <branch>` in reference mode, two things
+happen before the gate runs:
+
+1. **Auto-mirror the current branch.** `git HEAD` may be ahead of
+   morph (you committed via plain `git commit` with the hook
+   suppressed, or pulled a fast-forward). Morph runs `sync_to_head`
+   so the gate compares against your *actual* current state, not a
+   stale mirror.
+2. **Auto-mirror the merge target.** If `refs/heads/<branch>` exists
+   in git but `heads/<branch>` doesn't exist in morph (or is behind),
+   morph mirrors the missing commits via `ensure_branch_synced`. This
+   is what makes `morph merge feature` work in Stowaway mode where
+   teammates' branches arrive via `git fetch` / `git pull` without
+   ever firing a morph hook.
+
+Both steps print explicit messaging when work was performed:
+
+```text
+$ morph merge feature
+morph: auto-mirroring 'feature' from git into morph (3 new commits, tip 7c91a2b)
+morph: no morph evidence on 'feature' — merge proceeds without behavioral assertion from this side
+```
+
+After auto-mirror, the dominance gate runs as usual. **A parent with
+no morph evidence (no observed metrics, no certifications) yields no
+violations from that side** — there is nothing to dominate. Morph
+warns explicitly so you know the merge gate had nothing to enforce
+on that side. This is the "no morph claim" principle: absence of
+evidence is not absence of permission.
+
+If you want stricter behavior, run `morph certify` on each parent
+*before* the merge so the gate actually has metrics to compare. In
+Stowaway mode this is rare; in Solo mode it's the default flow.
+
 ## Policy carve-outs
 
 The default reference-mode policy includes
@@ -168,8 +204,48 @@ The default reference-mode policy includes
 
 This carve-out only applies to the manual `morph gate` check.
 The merge gate (`morph merge`) still requires evidence on each parent
-before letting them combine; reference-mode commits accumulate that
-evidence over time via `morph certify`.
+when both have claims; the "no morph evidence" path above describes
+what happens when one or both don't.
+
+## Worked example: Stowaway end-to-end
+
+A complete day-in-the-life trace of a single morph user in a repo
+where everyone else is on plain git.
+
+```sh
+# Day 1: adopt morph in an existing repo.
+$ git pull
+$ morph init --reference .
+Initialized morph reference-mode repository at .
+  - .morph/ added to .git/info/exclude (local to this clone, never tracked)
+  - 4 git hooks installed in .git/hooks/
+
+# Run your first eval and certify.
+$ morph eval run -- cargo test --workspace
+9abe1f67…
+$ morph certify --commit HEAD --metrics '{"tests_passed":42,"tests_total":42,"pass_rate":1.0}'
+
+# Day 2: teammate pushed to feature; pull and merge.
+$ git fetch origin
+$ git checkout main
+$ git pull origin main      # fast-forward; no hooks fire
+$ morph status
+... drift: 5 unmirrored git commits — run `morph reference-sync`
+$ morph reference-sync
+Mirrored 5 commits.
+
+# Now merge teammate's branch. Auto-mirror does the rest.
+$ morph merge origin/feature -p <pipeline-hash> --metrics '{...}' -m "merge feature"
+morph: auto-mirroring 'origin/feature' from git into morph (3 new commits, tip 7c91a2b)
+morph: no morph evidence on 'origin/feature' — merge proceeds without behavioral assertion from this side
+<merge-commit-hash>
+
+# Day 3: amend a commit; certifications get flagged stale.
+$ git commit --amend -m "tweak message"
+$ morph status
+... stale certification: 1 (a rewritten commit had certification evidence — re-certify the successor)
+$ morph certify --commit HEAD --metrics '{"tests_passed":42,"tests_total":42,"pass_rate":1.0}'
+```
 
 ## What you give up in Stowaway mode
 

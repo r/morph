@@ -1,0 +1,159 @@
+# PR 8: end-to-end Stowaway smoke tests.
+#
+# These specs walk a single morph user through realistic flows that
+# combine PRs 2–7. Where earlier specs each pinned one feature in
+# isolation, these chain features so a regression in any one stage
+# breaks the smoke test. Think of them as the "would I bet $20 that
+# Stowaway mode actually works?" checks.
+
+# ── Day 1: adopt morph in an existing git repo ───────────────────────
+#
+# Confirms the full init lifecycle in one go: init --reference creates
+# .morph/, writes the exclude rule, installs all four hooks, and the
+# subsequent `morph commit` produces a paired git+morph commit
+# stamped with origin = "cli".
+
+- name: stowaway_smoke_day1_init_then_first_certified_commit
+  init: false
+  steps:
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'initial'"
+    - morph: [init, --reference, "${repo}"]
+      stdout_contains:
+        - "local to this clone"
+    # All four hooks installed.
+    - shell: "test -x .git/hooks/post-commit && test -x .git/hooks/post-checkout && test -x .git/hooks/post-rewrite && test -x .git/hooks/post-merge"
+    # Exclude rule in place.
+    - shell: "grep -q '^\\.morph/$' .git/info/exclude"
+    # First morph commit. Wraps git commit + mirrors + (no metrics yet).
+    - morph: [commit, --allow-empty-commit, "-m", "morph-driven commit"]
+    - morph: [head, --json]
+      stdout_contains:
+        - '"morph_origin": "cli"'
+        - "morph-driven commit"
+    # Certification annotation lands cleanly.
+    - morph: [certify, --commit, HEAD, --metrics, '{"tests_passed":1.0,"tests_total":1.0,"pass_rate":1.0}']
+      stdout_contains:
+        - "tests_passed = 1"
+    - morph: [head, --json]
+      stdout_contains:
+        - '"tests_passed": 1.0'
+    # Eval gaps shouldn't report git_morph_drift — morph is in step
+    # with git. (The empty default suite is a separate gap that's
+    # expected for a brand-new repo and is unrelated to drift.)
+    - morph: [eval, gaps, --json]
+      stdout_not_contains: "git_morph_drift"
+
+# ── Day 2: teammate fast-forward pulls + drift recovery ──────────────
+#
+# Plain `git commit` with MORPH_INTERNAL=1 simulates teammate work
+# arriving via `git pull --ff-only`. That fires no morph hook, so
+# morph stays behind. `morph status` and `morph eval gaps` must
+# surface the drift; `morph reference-sync` must clear it idempotently.
+
+- name: stowaway_smoke_day2_drift_recovery_via_reference_sync
+  init: false
+  steps:
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'initial'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    # Teammate work arrives, no hooks fire (simulated via MORPH_INTERNAL=1).
+    - shell: |
+        MORPH_INTERNAL=1 git commit --allow-empty -q -m 'teammate 1'
+        MORPH_INTERNAL=1 git commit --allow-empty -q -m 'teammate 2'
+        MORPH_INTERNAL=1 git commit --allow-empty -q -m 'teammate 3'
+    # Drift signals: status, eval gaps.
+    - morph: [status]
+      stdout_contains:
+        - "Reference mode"
+        - "3 unmirrored git commit"
+    - morph: [eval, gaps, --json]
+      stdout_contains: "git_morph_drift"
+    # One sync clears everything.
+    - morph: [reference-sync]
+    - morph: [status]
+      stdout_contains: "up to date"
+    - morph: [eval, gaps, --json]
+      stdout_not_contains: "git_morph_drift"
+    # Idempotency: a second sync is a no-op.
+    - morph: [reference-sync]
+    - morph: [status]
+      stdout_contains: "up to date"
+
+# ── Day 3: amend invalidates a certification, then re-certify ────────
+#
+# Certification → amend → status flags stale → re-certify successor.
+# Drives the post-rewrite handler explicitly (matches how `git
+# rebase` would trigger it in production) so the test isn't dependent
+# on the test-harness PATH wiring for nested hook invocations.
+
+- name: stowaway_smoke_day3_certification_survives_amend_via_recertify
+  init: false
+  steps:
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'initial'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    - morph: [certify, --commit, HEAD, --metrics, '{"tests_passed":3.0,"tests_total":3.0,"pass_rate":1.0}']
+    # Capture both the original git SHA and the original morph hash
+    # before the amend, so we can manually drive post-rewrite.
+    - shell: "git rev-parse HEAD > .morph/old_git_sha.txt"
+    - morph: [head, --json]
+      capture_json_field:
+        var: original_morph_hash
+        field: hash
+    # Amend the commit. MORPH_INTERNAL=1 keeps the git side clean.
+    - shell: "MORPH_INTERNAL=1 git commit --amend --allow-empty -q -m 'initial (refined)'"
+    # Drive post-rewrite directly — it does its own mirror via
+    # sync_one_commit while the old morph commit is still on the
+    # branch tip and reachable from `build_git_to_morph_cache`.
+    - shell: |
+        OLD=$(cat .morph/old_git_sha.txt)
+        NEW=$(git rev-parse HEAD)
+        printf '%s %s\n' "$OLD" "$NEW" | morph hook post-rewrite amend
+    # The original morph hash now carries both certification AND a
+    # rewritten annotation, surfacing as "stale certification".
+    - morph: [annotations, "${original_morph_hash}"]
+      stdout_contains:
+        - "rewritten"
+        - "certification"
+    - morph: [status]
+      stdout_contains: "stale certification"
+    # Re-certify the successor and re-check.
+    - morph: [certify, --commit, HEAD, --metrics, '{"tests_passed":3.0,"tests_total":3.0,"pass_rate":1.0}']
+    - morph: [head, --json]
+      stdout_contains:
+        - '"tests_passed": 3.0'
+
+# ── Day 4: merge a teammate's branch with auto-mirror + no-claim warn
+#
+# Final scenario: teammate's `feature` branch only exists in git.
+# `morph merge` auto-mirrors and surfaces the no-claim warning,
+# producing a merge commit even though the other side carried no
+# morph evidence.
+
+- name: stowaway_smoke_day4_merge_teammate_branch_auto_mirrors_and_warns
+  init: false
+  steps:
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'initial'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    - morph: [certify, --commit, HEAD, --metrics, '{"tests_passed":2.0,"tests_total":2.0,"pass_rate":1.0}']
+    # Teammate creates a branch and commits with hooks suppressed
+    # everywhere (the canonical Stowaway shape: morph never observes
+    # them).
+    - shell: |
+        MORPH_INTERNAL=1 git checkout -q -b feature
+        MORPH_INTERNAL=1 git commit --allow-empty -q -m 'teammate feature work'
+        MORPH_INTERNAL=1 git checkout -q main
+    # Capture HEAD's pipeline for single-shot merge.
+    - morph: [show, HEAD]
+      capture_json_field:
+        var: pipe
+        field: pipeline
+    # Merge: auto-mirror + no-claim warning, but the merge lands.
+    - morph: [merge, feature, --pipeline, "${pipe}", --metrics, '{"tests_passed":2.0,"tests_total":2.0,"pass_rate":1.0}', "-m", "merge feature"]
+      stderr_contains:
+        - "auto-mirroring 'feature' from git into morph"
+        - "no morph evidence on 'feature'"
+    # Morph HEAD is now the merge commit with two parents.
+    - morph: [head, --json]
+      stdout_contains: "merge feature"

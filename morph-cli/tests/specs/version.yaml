@@ -3,7 +3,7 @@
   steps:
     - morph: ["--version"]
       stdout_contains:
-        - "morph 0.30.0 (built"
+        - "morph 0.31.0 (built"
         - "Z)"
 
 # PR 10: a real `morph version` subcommand that mirrors `--version`
@@ -13,7 +13,7 @@
   steps:
     - morph: [version]
       stdout_contains:
-        - "morph 0.30.0 (built"
+        - "morph 0.31.0 (built"
         - "Z)"
 
 - name: version_subcommand_json_emits_machine_readable_body
@@ -22,7 +22,7 @@
     - morph: [version, --json]
       stdout_contains:
         - '"name":"morph"'
-        - '"version":"0.30.0"'
+        - '"version":"0.31.0"'
         - '"build_date":"'
         - '"protocol_version":'
         - '"supported_repo_versions":'
