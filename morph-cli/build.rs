@@ -381,6 +381,22 @@ fn emit_step(code: &mut String, step: &Step, idx: usize) {
         writeln!(code, "        cmd.current_dir(path);").unwrap();
     }
 
+    // Mirror the GIT_AUTHOR_*/GIT_COMMITTER_* env vars we set on
+    // shell steps. Reference-mode `morph commit` shells out to
+    // `git commit` as a subprocess; without these, fresh CI
+    // runners (no global git config) fail with "Author identity
+    // unknown". Specs typically set repo-local `git config user.*`
+    // in their shell setup, but treating this as a harness-level
+    // default keeps a missing config from being a silent foot-gun.
+    writeln!(
+        code,
+        "        cmd.env(\"GIT_AUTHOR_NAME\", \"morph-test\")\n            \
+                  .env(\"GIT_AUTHOR_EMAIL\", \"morph-test@example.com\")\n            \
+                  .env(\"GIT_COMMITTER_NAME\", \"morph-test\")\n            \
+                  .env(\"GIT_COMMITTER_EMAIL\", \"morph-test@example.com\");"
+    )
+    .unwrap();
+
     for arg in args {
         if arg.contains("${") {
             let fmt_str = escape_braces_for_format(arg);

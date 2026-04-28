@@ -24,7 +24,7 @@
 - name: morph_commit_in_reference_mode_creates_paired_git_commit
   init: false
   steps:
-    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
     - morph: [init, --reference, "${repo}"]
     - shell: "echo hi > a.txt && git add a.txt"
     # Without --metrics, default policy is required_metrics=[tests_total,tests_passed].
@@ -41,7 +41,7 @@
 - name: morph_commit_in_reference_mode_records_git_origin_sha
   init: false
   steps:
-    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
     - morph: [init, --reference, "${repo}"]
     - shell: "echo hi > a.txt && git add a.txt"
     - morph: [commit, -m, "add a", --allow-empty-metrics]
@@ -61,7 +61,7 @@
 - name: morph_commit_in_reference_mode_does_not_recurse_via_post_commit_hook
   init: false
   steps:
-    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
     - morph: [init, --reference, "${repo}"]
     - morph: [reference-sync, --backfill]
     - shell: "echo hi > a.txt && git add a.txt"
@@ -85,7 +85,7 @@
 - name: morph_commit_in_reference_mode_attaches_metrics_via_certification
   init: false
   steps:
-    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
     - morph: [init, --reference, "${repo}"]
     - shell: "echo hi > a.txt && git add a.txt"
     - morph: [commit, -m, "add a", --metrics, '{"tests_total":10,"tests_passed":10,"pass_rate":1.0}']
@@ -107,7 +107,7 @@
 - name: morph_commit_in_reference_mode_fails_if_no_staged_changes
   init: false
   steps:
-    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
     - morph: [init, --reference, "${repo}"]
     - morph: [reference-sync, --backfill]
     # Capture the morph head before the failed attempt.
@@ -133,7 +133,7 @@
 - name: morph_commit_in_reference_mode_with_allow_empty_commit_creates_empty
   init: false
   steps:
-    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
     - morph: [init, --reference, "${repo}"]
     - morph: [commit, -m, "milestone", --allow-empty-commit, --allow-empty-metrics]
     # One new git commit (now 2 total).
@@ -152,7 +152,7 @@
 - name: morph_commit_in_reference_mode_records_introduces_cases_annotation
   init: false
   steps:
-    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
     - morph: [init, --reference, "${repo}"]
     - morph: [commit, -m, "milestone", --allow-empty-commit, --allow-empty-metrics, "--new-cases", "demo:case_a"]
     - morph: [annotations, HEAD]
@@ -189,7 +189,7 @@
 - name: morph_commit_in_reference_mode_enforces_required_metrics_without_escape_hatch
   init: false
   steps:
-    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
     - morph: [init, --reference, "${repo}"]
     # Build harness auto-injects `--no-default-policy` into in-spec
     # `morph init` calls, leaving required_metrics empty. Set them
