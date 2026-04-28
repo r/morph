@@ -109,10 +109,15 @@ fn init_morph_dir_at(morph_dir: &Path, bare: bool) -> Result<FsStore, MorphError
     // so commits without test results fail loudly. Existing repos
     // are unaffected; they have no `policy` key and the default
     // remains empty when no `policy` block is found.
-    let mut policy = crate::policy::RepoPolicy::default();
-    policy.required_metrics = vec!["tests_total".into(), "tests_passed".into()];
-    config["policy"] = serde_json::to_value(&policy).expect("RepoPolicy serializes");
-    std::fs::write(morph_dir.join(CONFIG_FILE), serde_json::to_string_pretty(&config).unwrap())?;
+    let policy = crate::policy::RepoPolicy {
+        required_metrics: vec!["tests_total".into(), "tests_passed".into()],
+        ..crate::policy::RepoPolicy::default()
+    };
+    config["policy"] = serde_json::to_value(&policy)
+        .map_err(|e| MorphError::Serialization(e.to_string()))?;
+    let pretty = serde_json::to_string_pretty(&config)
+        .map_err(|e| MorphError::Serialization(e.to_string()))?;
+    std::fs::write(morph_dir.join(CONFIG_FILE), pretty)?;
 
     // Every fresh repo (bare or working) gets a stable
     // `agent.instance_id` (PR 6 stage B). Bare repos get one too —

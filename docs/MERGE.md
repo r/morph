@@ -28,7 +28,7 @@ Two commits that diverged from a common ancestor differ in *all* of these. A nai
 | Two `evidence_refs` lists | Deduped sorted union | `morph-core/src/merge.rs` (`union_evidence_refs`) |
 | Two trees with file conflicts | `git merge-file` line-level | `morph-core/src/treemerge.rs` |
 
-The common ancestor used everywhere is the **lowest common ancestor** (LCA) of the two commits in the parent DAG. It's computed once by `merge_base` in `morph-core/src/merge.rs` and threaded through every layer below.
+The common ancestor used everywhere is the **lowest common ancestor** (LCA) of the two commits in the parent DAG. It's computed once by `merge_base` in `morph-core/src/objmerge.rs` (re-exported from the crate root) and threaded through every layer below.
 
 ---
 
@@ -272,13 +272,13 @@ In other words, **the same merge engine handles local merges, cross-branch merge
 
 | File | Role |
 |---|---|
-| `morph-core/src/merge.rs` | `merge_base`, `prepare_merge`, `execute_merge`, `check_dominance`, `union_evidence_refs` |
+| `morph-core/src/merge.rs` | `prepare_merge`, `execute_merge`, `check_dominance`, `union_evidence_refs` |
+| `morph-core/src/objmerge.rs` | `merge_base` (LCA), commit-level `merge_commits`, `TrivialOutcome` (`AlreadyMerged` / `AlreadyAhead` / `FastForward` / `Diverged`), EvalSuite case/metric merge |
 | `morph-core/src/merge_flow.rs` | `start_merge`, `continue_merge`, `abort_merge`, `resolve_node`, `MergeProgress` |
 | `morph-core/src/merge_state.rs` | `read_*` / `write_*` / `clear_merge_state` for the `.morph/MERGE_*` files |
 | `morph-core/src/treemerge.rs` | 3-way Tree merge, `WorkdirOp`, `apply_workdir_ops`, textual fallback |
 | `morph-core/src/text3way.rs` | Wrapper around `git merge-file` (the diff3 textual fallback) |
 | `morph-core/src/pipemerge.rs` | Pipeline DAG merge |
-| `morph-core/src/objmerge.rs` | EvalSuite case/metric merge, `TrivialOutcome` (`AlreadyMerged` / `AlreadyAhead` / `FastForward` / `Diverged`) |
 | `morph-core/src/index.rs` | `StagingIndex.unmerged_entries`, `UnmergedEntry` |
 | `morph-core/src/workdir.rs` | `working_tree_clean`, `checkout_tree` (used by `--abort` and fast-forward) |
 | `morph-cli/src/main.rs` | `run_merge` dispatch (start / single-shot / `--continue` / `--abort` / `resolve-node`) |

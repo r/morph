@@ -16,6 +16,8 @@ walkdir = "2.4"
 ignore = "0.4"
 base64 = "0.22"
 tempfile = "3.10"
+uuid = { version = "1", features = ["v4"] }
+strip-ansi-escapes = "0.2"
 
 [dev-dependencies]
 proptest = "1.4"

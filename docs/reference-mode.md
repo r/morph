@@ -89,11 +89,20 @@ In reference mode, morph holds itself to four hard rules:
 2. **Hooks live in `.git/hooks/`, which git never tracks.** Teammates
    pulling your branches do not receive the hooks. Their git client
    behaves exactly as it always has.
-3. **Hooks always exit zero.** Every hook morph installs ends with
+3. **Passive hooks (Stowaway) always exit zero.** The `post-commit`,
+   `post-merge`, `post-checkout`, and `post-rewrite` hooks end with
    `>/dev/null 2>&1 || true`. If morph is uninstalled, broken, or
-   missing from `PATH`, your `git commit` still succeeds.
-   `MORPH_INTERNAL=1` short-circuits the hooks entirely so morph's
+   missing from `PATH`, your `git commit` / `git merge` / `git
+   checkout` still succeeds. `MORPH_INTERNAL=1` (and
+   `MORPH_NO_GATE=1`) short-circuit the hooks entirely so morph's
    own CLI wrappers (e.g. `morph commit`) cannot recurse into them.
+
+   The one exception is **Solo's `pre-merge-commit` hook**: it
+   intentionally *can* exit non-zero so a `git merge` that would
+   regress on a parent's certified metrics is blocked. Solo is
+   opt-in (`morph init --reference --solo`); choose it only when
+   every developer on the project uses morph and you want the
+   behavioral gate enforced at git-time.
 4. **Git commits produced by `morph commit` are byte-identical to
    ones a non-morph user would produce.** The wrapper just runs
    `git commit -m <message>`; the morph-only metadata

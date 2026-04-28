@@ -38,9 +38,11 @@ Morph v0 will NOT include:
 - Advanced policy pack enforcement
 - Distributed run deduplication
 - Advanced statistical merge proofs
-- Remote protocol (content-addressed store is designed for future distribution)
+- Cryptographic content-blob replication / signed transparency log
 
-Those can come later.
+Those can come later. (A line-oriented JSON-RPC remote protocol over
+SSH **is** in v0 — see §10 — but the cross-fleet content-blob
+replication + auditing layer is out of scope.)
 
 ### Morph is pure VCS (v0)
 
@@ -719,9 +721,11 @@ morph eval gaps [--json] [--fail-on-gap]       # report missing behavioral evide
 - `suite-show` — Inspect the registered default suite (or any suite by
   hash). `--json` is provided for tooling.
 - `gaps` — Returns a structured list of unaddressed evidence gaps:
-  `empty_head_metrics`, `empty_default_suite`, `no_recent_run`. The
-  Cursor stop-hook (`morph-record-checks.sh`, installed by `morph
-  setup cursor`) shells out to this command.
+  `empty_head_metrics`, `empty_default_suite`, `no_recent_run`, and
+  (in reference mode) `git_morph_drift` when the latest git HEAD
+  has no mirrored Morph commit. The Cursor stop-hook
+  (`morph-record-checks.sh`, installed by `morph setup cursor`)
+  shells out to this command.
 
 The same surface is exposed over MCP as `morph_record_eval`,
 `morph_eval_from_output`, `morph_eval_run`, `morph_add_eval_case`,
@@ -845,9 +849,10 @@ morph serve [--repo <name>=<path>] [--port <port>] [--interface <addr>] [--org-p
 ## 6.13 Tags
 
 ```
-morph tag <name>           # tag the current HEAD commit
-morph tag --list           # list all tags
-morph tag --delete <name>  # delete a tag
+morph tag <name>            # tag the current HEAD commit
+morph tag                   # list all tags (`<name> <hash>` per line)
+morph tag --json            # list all tags as a JSON envelope
+morph tag --delete <name>   # delete a tag
 ```
 
 Tags are named pointers to commits, stored under `.morph/refs/tags/`. Creating a tag on a non-existent branch or empty repo fails with a clear error.
@@ -1314,7 +1319,7 @@ Every SSH session begins with a `Hello` exchange. The server's `Hello` response 
 
 ```json
 {
-  "version": "0.17.0",
+  "version": "X.Y.Z",
   "protocol_version": 1,
   "repo_version": "0.5"
 }

@@ -4,17 +4,17 @@
 
 | Crate | Tests | Location |
 |-------|-------|----------|
-| **morph-core** | 575 unit tests across the lib's modules | `#[cfg(test)]` blocks in each source file |
-| **morph-cli** | 207 YAML-driven integration tests + 21 unit tests + 20 dedicated integration tests (`remote_helper_integration`, `ssh_fetch_integration`, `status_merge_integration`) | YAML specs in `morph-cli/tests/specs/*.yaml`, compiled by `build.rs`; unit tests in `setup.rs`; dedicated integration files under `morph-cli/tests/`. |
+| **morph-core** | 633 unit tests across the lib's modules | `#[cfg(test)]` blocks in each source file |
+| **morph-cli** | 365 YAML-driven CLI specs + 22 unit tests + 20 dedicated integration tests (`remote_helper_integration`, `ssh_fetch_integration`, `status_merge_integration`) | YAML specs in `morph-cli/tests/specs/*.yaml`, compiled by `build.rs`; unit tests in `main.rs` + `setup.rs`; dedicated integration files under `morph-cli/tests/`. |
 | **morph-e2e** | Cucumber scenarios (16 features, 37 scenarios) | `morph-e2e/features/*.feature`, step defs in `morph-e2e/tests/cucumber.rs` |
-| **morph-mcp** | 28 integration tests | `#[cfg(test)]` in `morph-mcp/src/main.rs` |
+| **morph-mcp** | 29 integration tests | `#[cfg(test)]` in `morph-mcp/src/main.rs` |
 | **morph-serve** | 37 unit/API tests (views, service, handlers, org policy, multi-repo) | `morph-serve/src/tests.rs` + `org_policy::tests` |
 
-Totals: **878 Rust tests** (575 + 21 + 207 + 28 + 2 + 8 + 37) plus the Cucumber suite (34 scenarios, 3 skipped), all green.
+Totals: **1106 Rust tests** plus the Cucumber suite (37 scenarios, 3 skipped under server-binding constraints), all green. Reproduce the count locally with `cargo test --workspace 2>&1 | rg "^test result:" | rg "passed" | awk '{s+=$4} END {print s}'`.
 
 ### morph-core unit test highlights
 
-The lib's 575 unit tests cover the core object/storage/merge layers. Notable areas (non-exhaustive):
+The lib's 633 unit tests cover the core object/storage/merge layers. Notable areas (non-exhaustive):
 
 - **Object model**: hash determinism, paper-aligned commit fields (review nodes, per-node `env`, set-valued attribution, `morph_instance`, `morph_version`), legacy compatibility (`from-run` provenance, `pipeline`/`program` aliases).
 - **Storage**: `FsStore` in legacy, Git-format flat, and Git-format fan-out modes; ref read/write/delete; type-index directories; collision detection.
@@ -34,11 +34,11 @@ The lib's 575 unit tests cover the core object/storage/merge layers. Notable are
 
 ### morph-cli integration tests
 
-YAML specs in `morph-cli/tests/specs/` cover every user-facing CLI command. Categories: repository lifecycle (`init`, `status`, `add`), prompts/pipelines (`prompt create/materialize/show`, `pipeline create/show/extract`), commits (`commit`, `log`, `--from-run` provenance), evidence (`run record`, `run list`, `run show`, `trace show`, `tap`, `traces`), branching (`branch`, `checkout`, `tag`, `stash`, `revert`, `diff`, `rollup`), merging (`merge_plan`, `merge` single-shot, `merge --continue`, `merge --abort`, `merge resolve-node`, textual conflict drop-into-continue flow), remotes (`remote`, `push_pull`, `clone`, `sync`, `branch --set-upstream`), policy (`policy`, `certify_gate`, push-gated branches), and misc (`upgrade`, `morphignore`, error paths). Three dedicated Rust integration files exercise the SSH server (`remote_helper_integration`, `ssh_fetch_integration`) and the merge state machine surfaced in `status` (`status_merge_integration`).
+YAML specs in `morph-cli/tests/specs/` cover every user-facing CLI command. Categories: repository lifecycle (`init`, `status`, `add`, `gc`), prompts/pipelines (`prompt create/materialize/show`, `pipeline create/show/extract`), commits (`commit`, `log`, `--from-run` provenance), evidence (`run record`, `run list`, `run show`, `trace show`, `tap`, `traces`), branching (`branch`, `checkout`, `tag`, `stash`, `revert`, `diff`, `rollup`), merging (`merge_plan`, `merge` single-shot, `merge --continue`, `merge --abort`, `merge resolve-node`, textual conflict drop-into-continue flow), remotes (`remote`, `push_pull`, `clone`, `sync`, `branch --set-upstream`), policy (`policy`, `certify_gate`, push-gated branches), reference mode (init/sync/install-hooks/post-commit/post-merge/post-checkout/post-rewrite/pre-merge-commit), and misc (`upgrade`, `morphignore`, error paths). Three dedicated Rust integration files exercise the SSH server (`remote_helper_integration`, `ssh_fetch_integration`) and the merge state machine surfaced in `status` (`status_merge_integration`).
 
 ### morph-mcp integration tests
 
-All MCP tools have integration coverage: **init**, **record_session**, **record_run**, **record_eval**, **eval_from_output**, **eval_run**, **add_eval_case**, **eval_suite_from_specs**, **eval_suite_show**, **eval_gaps**, **stage**, **commit** (basic, with metrics, with `--from-run` provenance, `--new-cases` annotation, `--allow-empty-metrics` policy bypass), **branch**, **checkout**, **annotate**, **status** (with the Evidence summary block), **log**, **show**, **diff**, **merge** (behavioral dominance), the `get_trace_*` family, and **repo_store** (not-found errors, store version compatibility).
+All primary MCP tools have integration coverage: **init**, **record_session**, **record_eval**, **eval_from_output**, **eval_run**, **add_eval_case**, **eval_suite_from_specs**, **eval_suite_show**, **eval_gaps**, **stage**, **commit** (basic, with metrics, with `--from-run` provenance, `--new-cases` annotation, `--allow-empty-metrics` policy bypass), **branch**, **checkout**, **annotate**, **status** (with the Evidence summary block), **log**, **show**, **diff**, **merge** (behavioral dominance), the `get_trace_*` family, and **repo_store** (not-found errors, store version compatibility). Read-only inspection helpers (`record_run`, `head`, `identify`, `annotations`, `run_list`, `branch_list`, `refs`, `remote_list`, `reference_sync`) are exercised primarily via the CLI YAML specs since the wire format is identical.
 
 ---
 

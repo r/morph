@@ -120,7 +120,14 @@ pub fn set_branch_upstream(
     } else {
         serde_json::json!({})
     };
-    let mut branches = read_branch_upstreams(morph_dir)?;
+    // Read branches from the value we already loaded (avoids a
+    // redundant disk read + parse and prevents stale-merge under
+    // concurrent writers).
+    let mut branches: BTreeMap<String, BranchUpstream> = match config.get("branches") {
+        Some(b) => serde_json::from_value(b.clone())
+            .map_err(|e| MorphError::Serialization(e.to_string()))?,
+        None => BTreeMap::new(),
+    };
     branches.insert(branch.to_string(), upstream);
     config["branches"] = serde_json::to_value(branches)
         .map_err(|e| MorphError::Serialization(e.to_string()))?;

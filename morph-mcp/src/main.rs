@@ -1942,4 +1942,168 @@ mod tests {
             "attribution must record the merge author from the MCP `author` field"
         );
     }
+
+    /// Smoke test for the read-only inspection handlers — `morph_head`,
+    /// `morph_identify`, `morph_run_list`, `morph_branch_list`,
+    /// `morph_refs`, `morph_annotations`, `morph_remote_list`. They
+    /// previously had no direct MCP coverage; this test exercises each
+    /// against a single seeded repo so a regression in any of them
+    /// fails the suite.
+    #[tokio::test]
+    async fn read_only_inspection_handlers_return_documented_shapes() {
+        let (dir, server) = setup_repo();
+        let ws = dir.path().to_str().unwrap().to_string();
+        let workspace_only = || params::WorkspaceOnlyParams {
+            workspace_path: Some(ws.clone()),
+        };
+
+        std::fs::write(dir.path().join("hello.txt"), "hi").unwrap();
+        server
+            .morph_stage(Parameters(StageParams {
+                workspace_path: Some(ws.clone()),
+                paths: Some(vec!["hello.txt".into()]),
+            }))
+            .await
+            .unwrap();
+
+        let commit_result = server
+            .morph_commit(Parameters(CommitParams {
+                workspace_path: Some(ws.clone()),
+                message: "first commit".into(),
+                metrics: None,
+                pipeline: None,
+                eval_suite: None,
+                from_run: None,
+                allow_empty_metrics: Some(true),
+                new_cases: None,
+                author: None,
+            }))
+            .await
+            .unwrap();
+        // The commit handler emits the hash on the first line and may
+        // append a `warning:` block when no metrics were supplied.
+        let commit_hash = extract_text(&commit_result)
+            .lines()
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        assert_eq!(commit_hash.len(), 64);
+
+        // Add a remote so morph_remote_list has something to return.
+        let remote_dst = tempfile::tempdir().unwrap();
+        morph_core::init_repo(remote_dst.path()).unwrap();
+        morph_core::add_remote(
+            &dir.path().join(".morph"),
+            "origin",
+            remote_dst.path().to_str().unwrap(),
+        )
+        .unwrap();
+
+        // morph_head: documented to return at least hash, branch, message.
+        let head = server.morph_head(Parameters(workspace_only())).await.unwrap();
+        let head_v: serde_json::Value =
+            serde_json::from_str(extract_text(&head)).expect("morph_head returns JSON");
+        assert_eq!(head_v["hash"], commit_hash);
+        assert_eq!(head_v["branch"], "main");
+        assert_eq!(head_v["message"], "first commit");
+
+        // morph_identify: HEAD is a commit.
+        let ident = server
+            .morph_identify(Parameters(IdentifyParams {
+                revision: "HEAD".into(),
+                workspace_path: Some(ws.clone()),
+            }))
+            .await
+            .unwrap();
+        let ident_v: serde_json::Value = serde_json::from_str(extract_text(&ident)).unwrap();
+        assert_eq!(ident_v["hash"], commit_hash);
+        assert_eq!(ident_v["type"], "commit");
+
+        // morph_run_list: empty repo had no runs; record one to prove
+        // shape, then list.
+        server
+            .morph_record_session(Parameters(RecordSessionParams {
+                prompt: Some("ping".into()),
+                response: Some("pong".into()),
+                messages: None,
+                workspace_path: Some(ws.clone()),
+                model_name: Some("test-model".into()),
+                agent_id: Some("test-agent".into()),
+            }))
+            .await
+            .unwrap();
+        let runs = server
+            .morph_run_list(Parameters(workspace_only()))
+            .await
+            .unwrap();
+        let runs_v: serde_json::Value = serde_json::from_str(extract_text(&runs)).unwrap();
+        assert_eq!(runs_v["count"], 1);
+        assert_eq!(runs_v["runs"][0]["agent_id"], "test-agent");
+
+        // morph_branch_list: at least the `main` branch with our commit.
+        let branches = server
+            .morph_branch_list(Parameters(workspace_only()))
+            .await
+            .unwrap();
+        let bv: serde_json::Value = serde_json::from_str(extract_text(&branches)).unwrap();
+        assert_eq!(bv["current"], "main");
+        let names: Vec<&str> = bv["branches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|b| b["name"].as_str().unwrap())
+            .collect();
+        assert!(names.contains(&"main"));
+
+        // morph_refs: same data, broader scope (heads/main, HEAD, …).
+        let refs = server
+            .morph_refs(Parameters(workspace_only()))
+            .await
+            .unwrap();
+        let rv: serde_json::Value = serde_json::from_str(extract_text(&refs)).unwrap();
+        assert!(rv["count"].as_u64().unwrap() >= 1);
+
+        // morph_annotations: HEAD has none; the empty list is the contract.
+        let anns = server
+            .morph_annotations(Parameters(AnnotationsParams {
+                target_hash: "HEAD".into(),
+                target_sub: None,
+                workspace_path: Some(ws.clone()),
+            }))
+            .await
+            .unwrap();
+        let av: serde_json::Value = serde_json::from_str(extract_text(&anns)).unwrap();
+        assert_eq!(av["count"], 0);
+
+        // morph_remote_list: returns the `origin` we added above.
+        let remotes = server
+            .morph_remote_list(Parameters(workspace_only()))
+            .await
+            .unwrap();
+        let remv: serde_json::Value = serde_json::from_str(extract_text(&remotes)).unwrap();
+        assert_eq!(remv["count"], 1);
+        assert_eq!(remv["remotes"][0]["name"], "origin");
+    }
+
+    /// `morph_reference_sync` must refuse to run on a standalone repo.
+    /// The error string is part of the IDE-facing UX so we pin it.
+    #[tokio::test]
+    async fn reference_sync_on_standalone_repo_errors() {
+        let (dir, server) = setup_repo();
+        let ws = dir.path().to_str().unwrap().to_string();
+        let result = server
+            .morph_reference_sync(Parameters(params::ReferenceSyncParams {
+                backfill: None,
+                workspace_path: Some(ws),
+            }))
+            .await;
+        let err = result.expect_err("standalone repo must reject reference_sync");
+        let msg = format!("{}", err);
+        assert!(
+            msg.contains("not in reference mode") || msg.contains("reference"),
+            "expected reference-mode rejection, got: {}",
+            msg
+        );
+    }
 }

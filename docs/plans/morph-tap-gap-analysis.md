@@ -1,5 +1,12 @@
 # Morph ↔ Tap Gap Analysis
 
+> **Status:** historical snapshot from 2026-04-17. Some gaps have
+> since been closed; treat the conclusions as a starting point and
+> cross-check against the current code (and the spec-first workflow
+> in `docs/EVAL-DRIVEN.md`) before acting on them. Kept here so the
+> reasoning that motivated a stretch of recording-fidelity work
+> remains discoverable.
+
 Evidence-driven audit of what Morph records, what tap extracts, and what remains missing for high-quality coding-agent evaluation.
 
 **Date:** 2026-04-17

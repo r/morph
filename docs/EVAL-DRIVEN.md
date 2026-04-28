@@ -86,10 +86,13 @@ morph eval run -- cargo test --workspace
 A red run is a healthy starting point — it proves the spec is real.
 
 If you already have captured stdout (e.g. from CI logs), parse it without
-re-running:
+re-running. `from-output` takes a positional file argument; pass `-` to
+read from stdin:
 
 ```bash
-cat ci-output.txt | morph eval from-output --runner pytest --record
+morph eval from-output --runner pytest --record ci-output.txt
+# or
+morph eval from-output --runner pytest --record - < ci-output.txt
 ```
 
 ## 4. Implement until it goes green

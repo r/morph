@@ -74,17 +74,33 @@ morph merge-plan <branch>        # preview merge: parents, union suite, bar, cas
 morph tag <name>                 # tag the current commit
 morph stash save | pop | list    # save/restore staged work
 morph revert <hash>              # undo a commit
-morph remote add | push | pull   # named remotes (local path or ssh://user@host/path)
+morph remote add <name> <url>    # register a named remote (path or ssh://user@host/path)
+morph push <remote> [branch]     # push branch to a remote
 morph fetch <remote>             # update remote-tracking refs without merging
+morph pull <remote> [branch]     # fetch + fast-forward (or `--merge` for behavioral merge)
 morph branch --set-upstream origin/main   # configure per-branch upstream
 morph sync [branch]              # fetch + pull --merge against the configured upstream
 morph init --bare /srv/repo      # create a bare server repo (for `morph push`)
 morph clone <url> [dest]         # one-shot init + remote add + fetch + checkout
 morph certify --metrics-file f   # certify a commit against policy metrics
 morph gate                       # check if HEAD passes policy (exit 1 on fail)
-morph policy init|show|set|require-metrics ...   # manage repository policy
+morph policy init|show|set|require-metrics|set-default-eval ...   # manage repo policy
 morph upgrade                    # migrate the store to the latest version
 morph gc                         # remove unreachable objects
+```
+
+### Reference mode (sit alongside Git)
+
+If you already use Git, run Morph in *reference mode*: Git owns file
+storage, Morph stores only behavioral metadata and mirrors every git
+commit into a Morph commit via installed git hooks. See
+[docs/reference-mode.md](docs/reference-mode.md) for the details.
+
+```bash
+morph init --reference            # alongside an existing git repo (Stowaway: passive)
+morph init --reference --solo     # Solo submode: install pre-merge-commit gate
+morph install-hooks               # (re-)install the reference-mode git hooks
+morph reference-sync [--backfill] # rebuild Morph commits from git history
 ```
 
 ### Eval-driven workflow
@@ -146,8 +162,10 @@ Stable JSON API and browser UI for inspecting commits (with certification/gate s
 ## Develop Morph (this repo)
 
 ```bash
-cargo test --workspace                    # 800+ unit + CLI integration tests
-cargo test -p morph-e2e --test cucumber   # e2e scenarios (Cucumber)
+cargo test --workspace                    # ~1100 unit + YAML acceptance tests
+cargo test -p morph-e2e --test cucumber   # end-to-end Cucumber scenarios
 ```
 
-See [docs/TESTING.md](docs/TESTING.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
+See [docs/TESTING.md](docs/TESTING.md) for the test inventory, layout, and
+the spec-first development loop, and [CONTRIBUTING.md](CONTRIBUTING.md) for
+contributor workflow.

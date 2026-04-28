@@ -133,53 +133,82 @@ impl SshUrl {
     /// Returns `None` for a string that is plainly a local path
     /// (so callers can fall back to the filesystem branch of
     /// `open_remote_store`).
+    ///
+    /// `ssh://` form supports IPv6 literals in RFC-3986 bracket
+    /// notation (`ssh://user@[::1]:22/repo`); the legacy scp form
+    /// does not (it's ambiguous with `:` inside the host).
     pub fn parse(s: &str) -> Option<Self> {
-        // ssh://user@host:port/path
         if let Some(rest) = s.strip_prefix("ssh://") {
-            let (host_part, path) = rest.split_once('/')?;
-            let path = format!("/{}", path);
-            let (user, host_port) = match host_part.split_once('@') {
-                Some((u, h)) => (Some(u.to_string()), h),
-                None => (None, host_part),
-            };
-            let (host, port) = match host_port.rsplit_once(':') {
-                Some((h, p)) => (h.to_string(), p.parse::<u16>().ok()),
-                None => (host_port.to_string(), None),
-            };
-            if host.is_empty() {
-                return None;
-            }
-            return Some(SshUrl { user, host, port, path });
+            return parse_ssh_scheme(rest);
         }
-        // scp-style: user@host:path  — distinguishable from a path
-        // by an `@` BEFORE the first `:`. We refuse Windows drive
-        // letters (single-letter "host" before `:`) by requiring at
-        // least two characters before the colon.
-        if let Some((head, path)) = s.split_once(':') {
-            if head.len() < 2 || path.is_empty() {
-                return None;
-            }
-            // Distinguish `./path:foo` (which is a local path) from
-            // `host:path`: a `/` in `head` means "local path".
-            if head.contains('/') {
-                return None;
-            }
-            let (user, host) = match head.split_once('@') {
-                Some((u, h)) => (Some(u.to_string()), h.to_string()),
-                None => (None, head.to_string()),
-            };
-            if host.is_empty() {
-                return None;
-            }
-            return Some(SshUrl {
-                user,
-                host,
-                port: None,
-                path: path.to_string(),
-            });
-        }
-        None
+        parse_scp_form(s)
     }
+}
+
+/// Body of `ssh://...`: `[user@]host[:port]/path`. Supports IPv6
+/// literals in `[...]` brackets per RFC 3986.
+fn parse_ssh_scheme(rest: &str) -> Option<SshUrl> {
+    let (host_part, raw_path) = rest.split_once('/')?;
+    let path = format!("/{}", raw_path);
+
+    let (user, host_port) = match host_part.split_once('@') {
+        Some((u, h)) => (Some(u.to_string()), h),
+        None => (None, host_part),
+    };
+
+    let (host, port) = if let Some(stripped) = host_port.strip_prefix('[') {
+        // Bracketed IPv6: `[::1]` or `[::1]:22`.
+        let (host_in_brackets, after) = stripped.split_once(']')?;
+        if host_in_brackets.is_empty() {
+            return None;
+        }
+        let port = if after.is_empty() {
+            None
+        } else {
+            after.strip_prefix(':')?.parse::<u16>().ok()
+        };
+        (host_in_brackets.to_string(), port)
+    } else {
+        // Bare host: `example.com` or `example.com:22`.
+        // A bare host containing a `:` is ambiguous with IPv6 — reject
+        // it; users must bracket IPv6 literals.
+        if host_port.matches(':').count() > 1 {
+            return None;
+        }
+        match host_port.rsplit_once(':') {
+            Some((h, p)) => (h.to_string(), Some(p.parse::<u16>().ok()?)),
+            None => (host_port.to_string(), None),
+        }
+    };
+    if host.is_empty() {
+        return None;
+    }
+    Some(SshUrl { user, host, port, path })
+}
+
+/// Body of legacy scp form: `[user@]host:path`. We refuse:
+/// - empty path,
+/// - `head` shorter than 2 chars (Windows drive letter `C:` etc.),
+/// - `head` containing `/` (then it's a local path like `./foo:bar`),
+/// - empty host.
+fn parse_scp_form(s: &str) -> Option<SshUrl> {
+    let (head, path) = s.split_once(':')?;
+    if head.len() < 2 || path.is_empty() || head.contains('/') {
+        return None;
+    }
+    let (user, host) = match head.split_once('@') {
+        Some((u, h)) => (Some(u.to_string()), h.to_string()),
+        None => (None, head.to_string()),
+    };
+    if host.is_empty() {
+        return None;
+    }
+    Some(SshUrl {
+        user,
+        host,
+        port: None,
+        path: path.to_string(),
+    })
 }
 
 // ── RemoteSpawn ──────────────────────────────────────────────────────
@@ -553,6 +582,50 @@ mod tests {
         assert!(SshUrl::parse("./relative/repo").is_none());
         assert!(SshUrl::parse("relative/repo").is_none());
         assert!(SshUrl::parse("path/with:colon").is_none());
+    }
+
+    #[test]
+    fn ssh_url_parses_ipv6_literal() {
+        let u = SshUrl::parse("ssh://alice@[::1]/srv/repo").unwrap();
+        assert_eq!(u.user.as_deref(), Some("alice"));
+        assert_eq!(u.host, "::1");
+        assert_eq!(u.port, None);
+        assert_eq!(u.path, "/srv/repo");
+    }
+
+    #[test]
+    fn ssh_url_parses_ipv6_literal_with_port() {
+        let u = SshUrl::parse("ssh://[2001:db8::1]:2222/repo").unwrap();
+        assert_eq!(u.user, None);
+        assert_eq!(u.host, "2001:db8::1");
+        assert_eq!(u.port, Some(2222));
+        assert_eq!(u.path, "/repo");
+    }
+
+    #[test]
+    fn ssh_url_rejects_unbracketed_ipv6() {
+        // Without brackets, `::1:22` is ambiguous (port? part of
+        // the address?). We refuse it rather than guess.
+        assert!(SshUrl::parse("ssh://::1/repo").is_none());
+        assert!(SshUrl::parse("ssh://::1:22/repo").is_none());
+    }
+
+    #[test]
+    fn ssh_url_rejects_malformed_ssh_scheme() {
+        // No path at all.
+        assert!(SshUrl::parse("ssh://example.com").is_none());
+        // Empty host.
+        assert!(SshUrl::parse("ssh:///path").is_none());
+        // Empty bracket pair.
+        assert!(SshUrl::parse("ssh://[]/repo").is_none());
+        // Garbage port.
+        assert!(SshUrl::parse("ssh://example.com:notaport/repo").is_none());
+    }
+
+    #[test]
+    fn ssh_url_scp_style_rejects_windows_drive_letter() {
+        // `C:foo` looks like scp form but is a Windows drive.
+        assert!(SshUrl::parse("C:foo").is_none());
     }
 
     // ── Schema handshake (PR 6 stage E, cycle 22) ────────────────

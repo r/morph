@@ -47,10 +47,17 @@ fn verbose_msg(on: bool, msg: &str) {
 /// Default destination directory for `morph clone`. Mirrors git:
 /// the basename of the URL, minus a trailing `.morph` if present.
 /// e.g. `you@host:repos/myproject.morph` → `myproject`.
+///
+/// We delegate URL discrimination to `SshUrl::parse` so this stays
+/// in sync with the rest of the SSH plumbing (IPv6 brackets, SCP
+/// form, etc.). Local paths fall through to plain basename logic.
 fn default_clone_dest(url: &str) -> String {
-    let trimmed = url.trim_end_matches('/');
-    let after_colon = trimmed.rsplit_once(':').map(|(_, p)| p).unwrap_or(trimmed);
-    let after_slash = after_colon.rsplit('/').next().unwrap_or(after_colon);
+    let path = match morph_core::ssh_store::SshUrl::parse(url) {
+        Some(parsed) => parsed.path,
+        None => url.to_string(),
+    };
+    let trimmed = path.trim_end_matches('/');
+    let after_slash = trimmed.rsplit('/').next().unwrap_or(trimmed);
     let base = after_slash.trim_end_matches(".morph");
     if base.is_empty() {
         "morph-clone".to_string()
@@ -351,7 +358,7 @@ fn run_reference_commit(
             "morph_origin": "cli",
             "message": message,
         });
-        println!("{}", serde_json::to_string(&out).unwrap());
+        println!("{}", serde_json::to_string(&out)?);
     } else {
         println!(
             "[{} (cli)] {}",
@@ -930,18 +937,22 @@ fn run_merge(
 
     ensure_reference_synced_for_merge(store.as_ref(), &morph_dir, &repo_root, &branch)?;
 
-    let single_shot = pipeline.is_some() && metrics.is_some() && message.is_some();
-    if single_shot {
+    // Single-shot path: caller supplied pipeline + metrics + message
+    // up front, so we skip the stateful start/continue dance. Bind
+    // them as a tuple so any future addition to the trio is caught
+    // by exhaustiveness instead of three coupled `unwrap`s.
+    if let (Some(pipeline_ref), Some(metrics_json), Some(commit_message)) =
+        (pipeline.as_deref(), metrics.as_deref(), message.as_ref())
+    {
         let version = read_repo_version(&morph_dir)?;
-        let prog_hash = resolve_obj_hash(store.as_ref(), pipeline.as_deref().unwrap())?;
+        let prog_hash = resolve_obj_hash(store.as_ref(), pipeline_ref)?;
         let suite_hash_opt = eval_suite
             .as_deref()
             .map(|s| resolve_obj_hash(store.as_ref(), s))
             .transpose()?;
-        let observed: std::collections::BTreeMap<String, f64> = serde_json::from_str(
-            metrics.as_deref().unwrap(),
-        )
-        .map_err(|e| anyhow::anyhow!("invalid --metrics JSON: {}", e))?;
+        let observed: std::collections::BTreeMap<String, f64> =
+            serde_json::from_str(metrics_json)
+                .map_err(|e| anyhow::anyhow!("invalid --metrics JSON: {}", e))?;
         let retired: Option<Vec<String>> = retire
             .map(|s| s.split(',').map(|m| m.trim().to_string()).collect());
         let mut plan = morph_core::prepare_merge(
@@ -959,7 +970,7 @@ fn run_merge(
             &plan,
             &prog_hash,
             observed,
-            message.unwrap(),
+            commit_message.clone(),
             Some(resolved_author),
             Some(&repo_root),
             Some(&version),
@@ -2084,7 +2095,7 @@ in a git repository first."
                     "message": message,
                     "files_committed": file_count,
                 });
-                println!("{}", serde_json::to_string(&out).unwrap());
+                println!("{}", serde_json::to_string(&out)?);
             } else {
                 let short = &hash.to_string()[..8];
                 let root_tag = if is_root { " (root-commit)" } else { "" };
@@ -3473,6 +3484,14 @@ mod tests {
         assert_eq!(default_clone_dest("/tmp/bar/"), "bar");
         assert_eq!(default_clone_dest("plain"), "plain");
         assert_eq!(default_clone_dest(""), "morph-clone");
+    }
+
+    /// IPv6 SSH URLs land us in the bracketed-host branch of
+    /// `SshUrl::parse`; we still want a sensible basename.
+    #[test]
+    fn default_clone_dest_handles_ipv6_ssh_url() {
+        assert_eq!(default_clone_dest("ssh://you@[::1]:2222/srv/repo.morph"), "repo");
+        assert_eq!(default_clone_dest("ssh://[::1]/srv/proj"), "proj");
     }
 
     #[test]

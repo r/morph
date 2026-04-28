@@ -1,0 +1,76 @@
+# Tests for `morph traces`. The `traces` family is the structured
+# (replayable) view of recorded agent work, parallel to MCP
+# `morph_get_trace_*`. Each subcommand prints pretty JSON; we just
+# assert that the documented top-level fields are present so the
+# CLI stays in shape with the MCP / library views.
+
+- name: traces_summary_empty_repo
+  steps:
+    - morph: [traces, summary]
+      stdout_contains: "Recent Traces"
+
+- name: traces_summary_after_record_session
+  steps:
+    - morph: [run, record-session, --prompt, "Add caching", --response, "Done", --model-name, gpt-4o, --agent-id, cursor]
+      capture: run_hash
+      assert_hash: true
+    - morph: [traces, summary]
+      stdout_contains:
+        - "Recent Traces"
+        - "phase="
+        - "Add caching"
+
+- name: traces_summary_json_envelope
+  steps:
+    - morph: [run, record-session, --prompt, "Refactor parser", --response, "Refactored", --model-name, gpt-4o, --agent-id, cursor]
+      capture: run_hash
+      assert_hash: true
+    - morph: [traces, summary, --json]
+      stdout_contains:
+        - "run_hash"
+        - "task_phase"
+        - "Refactor parser"
+
+- name: traces_task_structure_returns_documented_fields
+  steps:
+    - morph: [run, record-session, --prompt, "Fix the auth bug in login.py", --response, "Fixed", --model-name, gpt-4o, --agent-id, cursor]
+      capture: run_hash
+      assert_hash: true
+    - morph: [traces, task-structure, "${run_hash}"]
+      stdout_contains:
+        - "task_phase"
+        - "task_scope"
+
+- name: traces_target_context_includes_scope_block
+  steps:
+    - morph: [run, record-session, --prompt, "Look at parser.rs", --response, "Done", --model-name, gpt-4o, --agent-id, cursor]
+      capture: run_hash
+      assert_hash: true
+    - morph: [traces, target-context, "${run_hash}"]
+      stdout_contains:
+        - "trace_id"
+        - "run_hash"
+        - "task_scope"
+
+- name: traces_final_artifact
+  steps:
+    - morph: [run, record-session, --prompt, "Write hello world", --response, "print('hi')", --model-name, gpt-4o, --agent-id, cursor]
+      capture: run_hash
+      assert_hash: true
+    - morph: [traces, final-artifact, "${run_hash}"]
+      stdout_contains: "artifact_type"
+
+- name: traces_semantics_and_verification
+  steps:
+    - morph: [run, record-session, --prompt, "Add a unit test", --response, "Test added; ran cargo test", --model-name, gpt-4o, --agent-id, cursor]
+      capture: run_hash
+      assert_hash: true
+    - morph: [traces, semantics, "${run_hash}"]
+      stdout_contains: "{"
+    - morph: [traces, verification, "${run_hash}"]
+      stdout_contains: "{"
+
+- name: traces_unknown_run_hash_fails
+  steps:
+    - morph: [traces, task-structure, "0000000000000000000000000000000000000000000000000000000000000000"]
+      expect_exit: 1

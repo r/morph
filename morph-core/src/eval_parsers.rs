@@ -17,28 +17,18 @@
 use std::collections::BTreeMap;
 
 /// Strip ANSI color escape sequences. Lots of CI output is colored,
-/// and our regexes are simpler if we kill those up front.
+/// and our matchers are simpler if we kill those up front.
+///
+/// Backed by `strip-ansi-escapes`, which understands the full
+/// terminal-escape grammar (CSI, OSC, …) instead of just `ESC [ ...`.
 fn strip_ansi(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    let bytes = input.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'[' {
-            i += 2;
-            while i < bytes.len()
-                && !(bytes[i] >= 0x40 && bytes[i] <= 0x7e)
-            {
-                i += 1;
-            }
-            if i < bytes.len() {
-                i += 1;
-            }
-        } else {
-            out.push(bytes[i] as char);
-            i += 1;
-        }
-    }
-    out
+    let bytes = strip_ansi_escapes::strip(input);
+    // The crate guarantees byte-equivalent output for valid UTF-8 input,
+    // but we belt-and-suspenders the conversion to avoid panicking on
+    // exotic test fixtures.
+    String::from_utf8(bytes).unwrap_or_else(|e| {
+        String::from_utf8_lossy(&e.into_bytes()).into_owned()
+    })
 }
 
 fn pass_rate(passed: u64, total: u64) -> Option<f64> {

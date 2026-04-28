@@ -21,22 +21,12 @@ use std::path::Path;
 
 const CONFIG_FILE: &str = "config.json";
 
-/// Generate a fresh instance ID. Format: `morph-<6-hex>`. Six hex
-/// chars give us 16M possible IDs — collision-resistant enough for
-/// per-developer machines, short enough to render inline in logs.
+/// Generate a fresh instance ID. Format: `morph-<12-hex>`, derived
+/// from a v4 UUID — collision-resistant across CI fleets, short
+/// enough to render inline in logs. Not a security primitive.
 pub fn generate_instance_id() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    // Mix nanos with a bit of process-id entropy. Not security-grade,
-    // but the goal is uniqueness across two laptops, not adversarial
-    // resistance — those concerns belong in PR 7+ signing work.
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let pid = std::process::id() as u128;
-    let mixed = nanos.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(pid);
-    let hex = (mixed & 0xFFFFFF) as u32;
-    format!("morph-{:06x}", hex)
+    let raw = uuid::Uuid::new_v4().simple().to_string();
+    format!("morph-{}", &raw[..12])
 }
 
 /// Read `agent.instance_id` from `<morph_dir>/config.json`. Returns
@@ -81,14 +71,11 @@ pub fn write_instance_id(morph_dir: &Path, id: &str) -> Result<(), MorphError> {
     } else {
         serde_json::json!({})
     };
-    if !config.is_object() {
-        return Err(MorphError::Serialization(
-            "config.json is not a JSON object".to_string(),
-        ));
-    }
     let agent = config
         .as_object_mut()
-        .unwrap()
+        .ok_or_else(|| {
+            MorphError::Serialization("config.json is not a JSON object".to_string())
+        })?
         .entry("agent".to_string())
         .or_insert_with(|| serde_json::json!({}));
     if !agent.is_object() {
@@ -113,8 +100,18 @@ mod tests {
         let id = generate_instance_id();
         assert!(id.starts_with("morph-"), "got {}", id);
         let suffix = &id["morph-".len()..];
-        assert_eq!(suffix.len(), 6, "got {}", id);
+        assert_eq!(suffix.len(), 12, "got {}", id);
         assert!(suffix.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn generated_ids_are_unique() {
+        // 1000 IDs is well under the v4 birthday-collision threshold
+        // and proves the new generator doesn't fold to a 24-bit space.
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..1000 {
+            assert!(seen.insert(generate_instance_id()));
+        }
     }
 
     #[test]
