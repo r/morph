@@ -665,6 +665,7 @@ pub fn execute_merge(
         morph_instance,
         morph_origin: None,
         git_origin_sha: None,
+        human_edits: None,
     });
     let hash = store.put(&commit)?;
 

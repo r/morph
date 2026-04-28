@@ -690,6 +690,7 @@ pub fn continue_merge(
         morph_instance,
         morph_origin: None,
         git_origin_sha: None,
+        human_edits: None,
     });
     let merge_hash = store.put(&merge_commit)?;
 
@@ -1257,6 +1258,7 @@ mod tests {
                 morph_instance: None,
                 morph_origin: None,
                 git_origin_sha: None,
+                human_edits: None,
             };
             store.put(&MorphObject::Commit(commit)).unwrap()
         };
@@ -1807,6 +1809,7 @@ mod tests {
                 morph_instance: None,
                 morph_origin: None,
                 git_origin_sha: None,
+                human_edits: None,
             };
             store.put(&MorphObject::Commit(commit)).unwrap()
         };

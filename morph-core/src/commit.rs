@@ -1,6 +1,6 @@
 //! Commit creation, HEAD resolution, and ref helpers.
 
-use crate::objects::{Commit, CommitContributor, EvalContract, EvalSuite, MorphObject};
+use crate::objects::{Blob, Commit, CommitContributor, EvalContract, EvalSuite, HumanEdit, MorphObject};
 use crate::store::{MorphError, Store};
 use crate::Hash;
 use chrono::Utc;
@@ -80,6 +80,163 @@ pub fn resolve_provenance_from_run(
     })
 }
 
+/// Extract the agent's claimed content for a `file_edit` trace event.
+///
+/// We look for `payload.new_content` (the canonical key, used by the
+/// OpenCode plugin and the updated IDE hooks), then fall back to
+/// `payload.content`. We deliberately do *not* look at `payload.text`:
+/// some recorders (e.g. the Cursor stop hook) put a JSON-encoded tool
+/// input there, which is not the file content and would produce
+/// false-positive mismatches. Recorders that want content-level
+/// attribution must emit `new_content` or `content` explicitly.
+fn agent_claimed_content(payload: &BTreeMap<String, serde_json::Value>) -> Option<String> {
+    if let Some(s) = payload.get("new_content").and_then(|v| v.as_str()) {
+        return Some(s.to_string());
+    }
+    if let Some(s) = payload.get("content").and_then(|v| v.as_str()) {
+        return Some(s.to_string());
+    }
+    None
+}
+
+/// Compute mixed-authorship attribution for a commit.
+///
+/// Walks the trace's `file_edit` events and compares each path's
+/// agent-claimed content against the staged blob. Paths whose blob
+/// differs from the agent's claim are recorded as
+/// `reason = "post-agent-edit"`. Paths in the staged tree that the
+/// trace never references *and* that differ from the parent commit's
+/// tree are recorded as `reason = "no-trace-record"`.
+///
+/// Returns an empty vector when the trace has no `file_edit` events
+/// or when nothing diverges. Callers store the vector verbatim into
+/// `commit.human_edits`; an empty result is normalized to `None` at
+/// the call site so the field stays absent in the on-disk JSON.
+pub fn compute_human_edits(
+    store: &dyn Store,
+    run_hash: &Hash,
+    staged_entries: &BTreeMap<String, String>,
+    parent_tree: Option<&BTreeMap<String, String>>,
+) -> Result<Vec<HumanEdit>, MorphError> {
+    let run = match store.get(run_hash)? {
+        MorphObject::Run(r) => r,
+        _ => return Ok(Vec::new()),
+    };
+    let trace_hash = match Hash::from_hex(&run.trace) {
+        Ok(h) => h,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let trace = match store.get(&trace_hash)? {
+        MorphObject::Trace(t) => t,
+        _ => return Ok(Vec::new()),
+    };
+
+    // Collect the agent's last claimed content per path. Later
+    // events overwrite earlier ones — the run's "final state" for
+    // a file is whatever the agent wrote most recently.
+    let mut agent_edits: BTreeMap<String, String> = BTreeMap::new();
+    for ev in &trace.events {
+        if !matches!(ev.kind.as_str(), "file_edit" | "edit_file" | "write_file" | "file_write") {
+            continue;
+        }
+        let path = match ev.payload.get("path").and_then(|v| v.as_str()) {
+            Some(p) => p.to_string(),
+            None => continue,
+        };
+        if let Some(content) = agent_claimed_content(&ev.payload) {
+            agent_edits.insert(path, content);
+        }
+    }
+
+    let mut out: Vec<HumanEdit> = Vec::new();
+    for (path, blob_hash) in staged_entries {
+        if let Some(claimed) = agent_edits.get(path) {
+            // Variant A/D: trace says the agent wrote this file —
+            // does the staged blob match what the agent claimed?
+            let claim_blob = MorphObject::Blob(Blob {
+                kind: "blob".into(),
+                content: serde_json::json!({ "body": claimed }),
+            });
+            let claim_hash = store.hash_object(&claim_blob)?;
+            if claim_hash.to_string() != *blob_hash {
+                out.push(HumanEdit {
+                    path: path.clone(),
+                    reason: "post-agent-edit".into(),
+                });
+            }
+        } else {
+            // Variant B: agent never recorded a write for this
+            // path. If it differs from the parent (or the parent
+            // doesn't have it), the human is the only plausible
+            // author.
+            let unchanged = parent_tree
+                .and_then(|pt| pt.get(path))
+                .map(|prev| prev == blob_hash)
+                .unwrap_or(false);
+            if !unchanged {
+                out.push(HumanEdit {
+                    path: path.clone(),
+                    reason: "no-trace-record".into(),
+                });
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Resolve a parent commit hash to its flattened tree, if it has
+/// one. Returns `None` for missing/invalid parents and for commits
+/// that pre-date the tree-bearing object schema.
+fn load_parent_tree(
+    store: &dyn Store,
+    parent_hash_str: Option<&str>,
+) -> Result<Option<BTreeMap<String, String>>, MorphError> {
+    let Some(parent_hex) = parent_hash_str else {
+        return Ok(None);
+    };
+    let parent_hash = Hash::from_hex(parent_hex)
+        .map_err(|_| MorphError::InvalidHash(parent_hex.to_string()))?;
+    let parent_commit = match store.get(&parent_hash)? {
+        MorphObject::Commit(c) => c,
+        _ => return Ok(None),
+    };
+    let Some(tree_hex) = parent_commit.tree else {
+        return Ok(None);
+    };
+    let tree_hash = Hash::from_hex(&tree_hex)
+        .map_err(|_| MorphError::InvalidHash(tree_hex.clone()))?;
+    Ok(Some(crate::tree::flatten_tree(store, &tree_hash)?))
+}
+
+/// Fold a resolved human author into a contributor list.
+///
+/// When a Run is attached to a commit, `resolve_provenance_from_run`
+/// stamps the agent as `role: "primary"`. Without this fold, the
+/// human who actually ran `morph commit` (and may have edited the
+/// agent's output) appears nowhere in `contributors` — only in
+/// `commit.author`. We add them here with `role: "human-author"` so
+/// downstream tools see a complete attribution list.
+fn fold_human_author_into_contributors(
+    contributors: Option<Vec<CommitContributor>>,
+    author: &str,
+) -> Option<Vec<CommitContributor>> {
+    let mut list = contributors.unwrap_or_default();
+    if list.iter().any(|c| c.id == author) {
+        if list.is_empty() {
+            return None;
+        }
+        return Some(list);
+    }
+    list.insert(
+        0,
+        CommitContributor {
+            id: author.to_string(),
+            role: Some("human-author".into()),
+        },
+    );
+    Some(list)
+}
+
 const HEAD_REF: &str = "HEAD";
 pub const DEFAULT_BRANCH: &str = "main";
 
@@ -145,6 +302,7 @@ pub fn create_commit(
         morph_instance: None,
         morph_origin: None,
         git_origin_sha: None,
+        human_edits: None,
     });
     let hash = store.put(&commit)?;
 
@@ -227,11 +385,31 @@ pub fn create_tree_commit_with_provenance(
 
     let (contributors, env_constraints, evidence_refs) = match provenance {
         Some(p) => (
-            Some(p.contributors.clone()),
+            Some(fold_human_author_into_contributors(
+                Some(p.contributors.clone()),
+                &author,
+            )),
             Some(p.env_constraints.clone()),
             Some(p.evidence_refs.clone()),
         ),
         None => (None, None, None),
+    };
+    // Flatten the Option<Option<...>> that the fold produces.
+    let contributors = contributors.and_then(|c| c);
+
+    // Mixed-authorship attribution: when a Run is attached, diff
+    // the trace's `file_edit` events against the staged tree. The
+    // first hash in `evidence_refs` is the run hash by construction
+    // (see `resolve_provenance_from_run`).
+    let human_edits = match evidence_refs.as_deref() {
+        Some(refs) if !refs.is_empty() => {
+            let run_hash = Hash::from_hex(&refs[0])
+                .map_err(|_| MorphError::InvalidHash(refs[0].clone()))?;
+            let parent_tree = load_parent_tree(store, parent_list.first().map(|s| s.as_str()))?;
+            let edits = compute_human_edits(store, &run_hash, &filtered, parent_tree.as_ref())?;
+            if edits.is_empty() { None } else { Some(edits) }
+        }
+        _ => None,
     };
 
     let commit = MorphObject::Commit(Commit {
@@ -252,6 +430,7 @@ pub fn create_tree_commit_with_provenance(
         morph_instance: crate::agent::read_instance_id(&morph_dir)?,
         morph_origin: None,
         git_origin_sha: None,
+        human_edits,
     });
     let hash = store.put(&commit)?;
 
@@ -501,6 +680,7 @@ pub fn create_merge_commit_with_retirement(
             .and_then(|r| crate::agent::read_instance_id(&r.join(".morph")).ok().flatten()),
         morph_origin: None,
         git_origin_sha: None,
+        human_edits: None,
     });
     let hash = store.put(&commit)?;
 
@@ -577,6 +757,7 @@ pub fn rollup(
         morph_instance: tip_commit.morph_instance.clone(),
         morph_origin: tip_commit.morph_origin.clone(),
         git_origin_sha: tip_commit.git_origin_sha.clone(),
+        human_edits: tip_commit.human_edits.clone(),
     });
     let hash = store.put(&commit)?;
 
@@ -1250,11 +1431,15 @@ mod tests {
             _ => panic!("expected commit"),
         };
         let contribs = commit.contributors.as_ref().expect("contributors should be present");
-        assert_eq!(contribs.len(), 2);
-        assert_eq!(contribs[0].id, "agent-1");
-        assert_eq!(contribs[0].role.as_deref(), Some("primary"));
-        assert_eq!(contribs[1].id, "agent-2");
-        assert_eq!(contribs[1].role.as_deref(), Some("review"));
+        // Human author is folded in first (role=human-author), then
+        // the agent (role=primary) and any extra Run.contributors.
+        assert_eq!(contribs.len(), 3);
+        assert_eq!(contribs[0].id, "morph"); // default author when none configured
+        assert_eq!(contribs[0].role.as_deref(), Some("human-author"));
+        assert_eq!(contribs[1].id, "agent-1");
+        assert_eq!(contribs[1].role.as_deref(), Some("primary"));
+        assert_eq!(contribs[2].id, "agent-2");
+        assert_eq!(contribs[2].role.as_deref(), Some("review"));
     }
 
     #[test]

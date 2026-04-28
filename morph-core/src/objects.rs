@@ -207,6 +207,36 @@ pub struct Commit {
     /// counts.
     #[serde(default)]
     pub git_origin_sha: Option<String>,
+    /// Mixed-authorship attribution: paths whose committed content
+    /// differs from what the attached Run's trace claims the agent
+    /// produced (`PostAgentEdit`), or paths absent from the trace
+    /// entirely (`NoTraceRecord`). Populated only when a commit is
+    /// created with `--from-run` (or its MCP equivalent); always
+    /// `None` for plain commits, merge commits, and reference-mode
+    /// mirrors. The schema is back-compatible — older repos and
+    /// older binaries see a missing field as `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub human_edits: Option<Vec<HumanEdit>>,
+}
+
+/// One entry in `Commit.human_edits`. Records that a path in the
+/// committed tree was *not* fully attributable to the attached Run's
+/// agent — either the agent's claimed content differs from the
+/// staged blob, or no trace event references the path.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HumanEdit {
+    /// Working-directory-relative path of the divergent file.
+    pub path: String,
+    /// Why the divergence was recorded:
+    /// - `"post-agent-edit"`: the trace contains a `file_edit` event
+    ///   for this path, but the staged blob's content does not match
+    ///   the agent's claimed content. The human edited it after the
+    ///   agent's last write.
+    /// - `"no-trace-record"`: the staged tree contains this path but
+    ///   the trace has no `file_edit` event referring to it. Either
+    ///   the human authored it directly, or the agent edited it
+    ///   without recording the action.
+    pub reason: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -396,6 +426,7 @@ mod tests {
             morph_instance: Some("morph-abc123".into()),
             morph_origin: None,
             git_origin_sha: None,
+            human_edits: None,
         });
         let s = serde_json::to_string(&original).unwrap();
         assert!(s.contains("\"morph_instance\":\"morph-abc123\""));
@@ -462,6 +493,7 @@ mod tests {
             morph_instance: None,
             morph_origin: Some("git-hook".into()),
             git_origin_sha: Some("a".repeat(40)),
+            human_edits: None,
         });
         let s = serde_json::to_string(&original).unwrap();
         assert!(s.contains("\"morph_origin\":\"git-hook\""));

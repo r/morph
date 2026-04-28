@@ -462,6 +462,7 @@ fn sync_one_commit(
         morph_instance: crate::agent::read_instance_id(&morph_dir)?,
         morph_origin: Some(origin.into()),
         git_origin_sha: Some(info.sha.clone()),
+        human_edits: None,
     });
     let hash = store.put(&commit)?;
     cache.insert(info.sha, hash);
@@ -2289,6 +2290,7 @@ mod tests {
             morph_instance: None,
             morph_origin: None,
             git_origin_sha: None,
+            human_edits: None,
         });
         let cli_hash = store.put(&cli_commit).unwrap();
         let hook_commit = MorphObject::Commit(Commit {
@@ -2309,6 +2311,7 @@ mod tests {
             morph_instance: None,
             morph_origin: Some("git-hook".into()),
             git_origin_sha: Some("a".repeat(40)),
+            human_edits: None,
         });
         let hook_hash = store.put(&hook_commit).unwrap();
         let pending = pending_certifications(store.as_ref(), &hook_hash).unwrap();

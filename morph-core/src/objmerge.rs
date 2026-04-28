@@ -539,6 +539,7 @@ mod tests {
             morph_instance: None,
             morph_origin: None,
             git_origin_sha: None,
+            human_edits: None,
         };
         store.put(&MorphObject::Commit(commit)).unwrap()
     }
