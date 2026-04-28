@@ -169,9 +169,36 @@ fn run_hook(event: &str, args: &[String]) -> anyhow::Result<()> {
                 );
             }
         }
+        "pre-merge-commit" => {
+            // PR 10: Solo-submode gate. Fires while git is mid-merge
+            // (`.git/MERGE_HEAD` exists). Resolves both parents'
+            // morph mirrors, runs dominance against the
+            // worse-of-parents bar, and exits 1 with explanation if
+            // the merge would regress. "No claim" stays a warning.
+            let outcome =
+                morph_core::handle_pre_merge_commit(store.as_ref(), &repo_root, version)?;
+            for side in &outcome.no_claim_sides {
+                eprintln!(
+                    "morph: no morph evidence on '{}' — pre-merge gate proceeds without behavioral assertion from this side",
+                    side
+                );
+            }
+            if !outcome.violations.is_empty() {
+                eprintln!(
+                    "morph: pre-merge gate blocked the merge — merged result would regress on certified parent metrics:"
+                );
+                for v in &outcome.violations {
+                    eprintln!("  {}", v);
+                }
+                eprintln!(
+                    "  resolve by re-running tests on the merged tree and using `morph merge` (which gates with the merged metrics) or set MORPH_NO_GATE=1 to override one-off"
+                );
+                std::process::exit(1);
+            }
+        }
         other => {
             anyhow::bail!(
-                "unknown hook event '{}': expected one of post-commit, post-checkout, post-rewrite, post-merge",
+                "unknown hook event '{}': expected one of post-commit, post-checkout, post-rewrite, post-merge, pre-merge-commit",
                 other
             );
         }
@@ -893,7 +920,7 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        Command::Init { path, bare, reference, no_default_policy } => {
+        Command::Init { path, bare, reference, no_default_policy, solo } => {
             verbose_msg(
                 verbose,
                 &format!(
@@ -921,6 +948,12 @@ Run `git init` first or pass a path that is already a git working tree.",
                 let init_at = morph_core::git_head_sha(&path)?;
                 let morph_dir = path.join(".morph");
                 morph_core::write_reference_mode(&morph_dir, init_at.as_deref())?;
+                let submode = if solo {
+                    morph_core::RepoSubmode::Solo
+                } else {
+                    morph_core::RepoSubmode::Stowaway
+                };
+                morph_core::write_repo_submode(&morph_dir, submode)?;
                 // Reference mode default policy: empty `required_metrics`
                 // (so direct CLI commits aren't blocked at commit time
                 // either, until the user opts in via `morph policy init`)
@@ -938,7 +971,7 @@ Run `git init` first or pass a path that is already a git working tree.",
                     ..Default::default()
                 };
                 morph_core::write_policy(&morph_dir, &policy)?;
-                let hook_report = morph_core::install_reference_hooks(&path)?;
+                let hook_report = morph_core::install_reference_hooks(&path, submode)?;
                 let exclude_added = morph_core::ensure_morph_in_git_info_exclude(&path)?;
                 let abs_morph = path
                     .canonicalize()
@@ -969,9 +1002,21 @@ Run `git init` first or pass a path that is already a git working tree.",
                         "  morph state is local to this clone (.git/info/exclude already excludes .morph/)"
                     );
                 }
-                println!(
-                    "  teammates not using morph are unaffected — your git workflow is unchanged"
-                );
+                match submode {
+                    morph_core::RepoSubmode::Stowaway => {
+                        println!(
+                            "  teammates not using morph are unaffected — your git workflow is unchanged"
+                        );
+                    }
+                    morph_core::RepoSubmode::Solo => {
+                        println!(
+                            "  Solo submode: pre-merge-commit hook is active — plain `git merge` is gated"
+                        );
+                        println!(
+                            "  bypass the gate one-off with MORPH_NO_GATE=1; flip back with `morph install-hooks --stowaway`"
+                        );
+                    }
+                }
             } else if bare {
                 morph_core::init_bare(&path)?;
                 let abs = path
@@ -1049,7 +1094,7 @@ in a git repository first."
             }
         }
 
-        Command::InstallHooks => {
+        Command::InstallHooks { solo, stowaway } => {
             let cwd = std::env::current_dir()?;
             let repo_root = morph_core::find_repo(&cwd)
                 .ok_or_else(|| anyhow::anyhow!("not in a morph repository"))?;
@@ -1062,14 +1107,36 @@ in a git repository first."
                 );
                 std::process::exit(1);
             }
-            let report = morph_core::install_reference_hooks(&repo_root)?;
+            // PR 10: `--solo` and `--stowaway` flip the submode and
+            // install/remove the pre-merge-commit gate accordingly.
+            // Without either flag, keep whatever submode is already
+            // recorded — reinstall is a pure idempotent rewrite.
+            let submode = if solo {
+                morph_core::write_repo_submode(&morph_dir, morph_core::RepoSubmode::Solo)?;
+                morph_core::RepoSubmode::Solo
+            } else if stowaway {
+                morph_core::write_repo_submode(&morph_dir, morph_core::RepoSubmode::Stowaway)?;
+                morph_core::RepoSubmode::Stowaway
+            } else {
+                morph_core::read_repo_submode(&morph_dir)?
+            };
+            let report = morph_core::install_reference_hooks(&repo_root, submode)?;
             let exclude_added = morph_core::ensure_morph_in_git_info_exclude(&repo_root)?;
             if report.changed() {
-                println!(
-                    "Installed {} hook(s) at .git/hooks/: {}.",
-                    report.installed.len(),
-                    report.installed.join(", ")
-                );
+                if !report.installed.is_empty() {
+                    println!(
+                        "Installed {} hook(s) at .git/hooks/: {}.",
+                        report.installed.len(),
+                        report.installed.join(", ")
+                    );
+                }
+                if !report.removed.is_empty() {
+                    println!(
+                        "Removed {} hook(s) (submode downgrade): {}.",
+                        report.removed.len(),
+                        report.removed.join(", ")
+                    );
+                }
                 if !report.already_present.is_empty() {
                     println!(
                         "  ({} already up to date: {})",
@@ -1082,6 +1149,15 @@ in a git repository first."
                     "All {} reference-mode hooks already installed (no changes).",
                     report.already_present.len()
                 );
+            }
+            match submode {
+                morph_core::RepoSubmode::Stowaway => println!("  submode: stowaway"),
+                morph_core::RepoSubmode::Solo => {
+                    println!("  submode: solo — `git merge` is gated by pre-merge-commit hook");
+                    println!(
+                        "  bypass once with MORPH_NO_GATE=1; flip back with `morph install-hooks --stowaway`"
+                    );
+                }
             }
             if exclude_added {
                 println!("Added .morph/ to .git/info/exclude (local to this clone).");

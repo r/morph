@@ -50,6 +50,15 @@ pub enum Command {
         /// require behavioral evidence by default.
         #[arg(long, hide = true)]
         no_default_policy: bool,
+        /// Initialize reference mode in *Solo submode* — a stronger
+        /// contract than the default Stowaway. Solo installs a
+        /// `pre-merge-commit` git hook that blocks plain `git merge`
+        /// when the merged result would regress on a parent's
+        /// certified metrics. Use this only when every developer on
+        /// the project uses morph; otherwise teammates' git workflows
+        /// can be surprised by a sudden gate. Requires `--reference`.
+        #[arg(long, requires = "reference")]
+        solo: bool,
     },
     /// Mirror the current Git HEAD into a Morph commit. In reference
     /// mode this is invoked by the installed post-commit hook after
@@ -67,12 +76,25 @@ pub enum Command {
         #[arg(long)]
         backfill: bool,
     },
-    /// Idempotently (re-)install reference-mode git hooks
-    /// (`post-commit`, `post-checkout`, `post-rewrite`). Skips hooks
-    /// that already match the canonical script; refuses to clobber a
-    /// hook with foreign content.
+    /// Idempotently (re-)install reference-mode git hooks. Skips
+    /// hooks that already match the canonical script; refuses to
+    /// clobber a hook with foreign content. The `--solo` /
+    /// `--stowaway` flags also flip the repo's submode (PR 10):
+    /// Stowaway (default) installs four passive observers, Solo adds
+    /// the active `pre-merge-commit` gate.
     #[command(name = "install-hooks")]
-    InstallHooks,
+    InstallHooks {
+        /// Switch to Solo submode and install the `pre-merge-commit`
+        /// hook so plain `git merge` is gated against dominance.
+        /// Mutually exclusive with `--stowaway`.
+        #[arg(long, conflicts_with = "stowaway")]
+        solo: bool,
+        /// Switch back to Stowaway submode (the default) and remove
+        /// the `pre-merge-commit` hook so plain `git merge` is no
+        /// longer gated. Mutually exclusive with `--solo`.
+        #[arg(long, conflicts_with = "solo")]
+        stowaway: bool,
+    },
     /// Internal: dispatch a git hook event into the corresponding
     /// morph handler. Installed hook stubs in `.git/hooks/` exec
     /// `morph hook <event>` so the per-event logic lives in the

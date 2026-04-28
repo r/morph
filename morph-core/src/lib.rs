@@ -46,7 +46,8 @@ pub use store::{resolve_hash_prefix, resolve_revision, FsStore, MorphError, Obje
 pub use repo::{
     init_repo, init_bare, is_bare, open_store, read_repo_version, require_store_version,
     resolve_morph_dir,
-    read_repo_mode, read_init_at_git_sha, write_reference_mode, RepoMode,
+    read_repo_mode, read_init_at_git_sha, read_repo_submode, write_reference_mode,
+    write_repo_submode, RepoMode, RepoSubmode,
     STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_0_4, STORE_VERSION_0_5, STORE_VERSION_INIT,
 };
 pub use identity::identity_pipeline;
@@ -139,14 +140,15 @@ pub use store::ObjectLayout;
 pub use reference::{
     backfill_from_init, current_git_branch, drift_summary, ensure_branch_synced,
     ensure_morph_in_git_info_exclude, git_head_sha, git_log_range, git_parents,
-    handle_post_checkout, handle_post_rewrite, install_post_commit_hook, install_reference_hooks,
-    is_git_working_tree, list_stale_certifications, lookup_morph_for_git_sha,
-    pending_certifications, read_git_commit, reference_mode_hooks,
-    run_git_commit_with_morph_internal, run_git_merge_abort_with_morph_internal,
-    run_git_merge_with_morph_internal, sync_to_head, sync_to_head_with_origin, BranchSyncOutcome,
-    CheckoutOutcome, DriftSummary, GitCommitInfo, GitMergeOutcome, HookInstallReport,
-    RewriteOutcome, SyncOutcome, POST_CHECKOUT_HOOK_SCRIPT, POST_COMMIT_HOOK_SCRIPT,
-    POST_MERGE_HOOK_SCRIPT, POST_REWRITE_HOOK_SCRIPT,
+    handle_post_checkout, handle_post_rewrite, handle_pre_merge_commit,
+    install_post_commit_hook, install_reference_hooks, is_git_working_tree,
+    list_stale_certifications, lookup_morph_for_git_sha, pending_certifications, read_git_commit,
+    reference_mode_hooks, run_git_commit_with_morph_internal,
+    run_git_merge_abort_with_morph_internal, run_git_merge_with_morph_internal, sync_to_head,
+    sync_to_head_with_origin, BranchSyncOutcome, CheckoutOutcome, DriftSummary, GitCommitInfo,
+    GitMergeOutcome, HookInstallReport, PreMergeOutcome, RewriteOutcome, SyncOutcome,
+    POST_CHECKOUT_HOOK_SCRIPT, POST_COMMIT_HOOK_SCRIPT, POST_MERGE_HOOK_SCRIPT,
+    PRE_MERGE_COMMIT_HOOK_SCRIPT, POST_REWRITE_HOOK_SCRIPT,
 };
 
 pub mod gc;

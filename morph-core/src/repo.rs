@@ -192,7 +192,50 @@ impl RepoMode {
 }
 
 const REPO_MODE_KEY: &str = "repo_mode";
+const REPO_SUBMODE_KEY: &str = "repo_submode";
 const INIT_AT_GIT_SHA_KEY: &str = "init_at_git_sha";
+
+/// PR 10: within `RepoMode::Reference`, distinguishes how aggressively
+/// Morph asserts authority over the local git workflow.
+///
+/// `Stowaway` (default) — Morph is one teammate's private layer on
+/// top of a shared git repo. The repo also produces git commits via
+/// other tools (the IDE, CI, hooks, plain `git commit` from
+/// teammates). Morph mirrors after the fact and never blocks git.
+/// The pre-merge-commit hook is **not** installed.
+///
+/// `Solo` — every developer on the project uses Morph. The user has
+/// opted in to behavioral merge gating: a `pre-merge-commit` hook is
+/// installed that blocks `git merge` (and merge commits in general)
+/// when dominance fails. `morph merge` and `morph commit` continue
+/// to work the same way; the difference is that *plain* `git merge`
+/// no longer bypasses the gate.
+///
+/// Submode is repo-local — it lives in `.morph/config.json`, never
+/// in git. A teammate flipping their own clone to Solo does not
+/// surprise anyone else.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RepoSubmode {
+    #[default]
+    Stowaway,
+    Solo,
+}
+
+impl RepoSubmode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RepoSubmode::Stowaway => "stowaway",
+            RepoSubmode::Solo => "solo",
+        }
+    }
+    pub fn from_config_str(s: &str) -> Option<Self> {
+        match s {
+            "stowaway" => Some(RepoSubmode::Stowaway),
+            "solo" => Some(RepoSubmode::Solo),
+            _ => None,
+        }
+    }
+}
 
 /// Read the repo mode from `<morph_dir>/config.json`. Returns
 /// `RepoMode::Standalone` when the field is missing or unrecognised so
@@ -252,6 +295,50 @@ pub fn write_reference_mode(
     if let Some(sha) = init_at_git_sha {
         config[INIT_AT_GIT_SHA_KEY] = serde_json::Value::String(sha.to_string());
     }
+    std::fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap())?;
+    Ok(())
+}
+
+/// PR 10: read the reference-mode submode from `<morph_dir>/config.json`.
+/// Returns `RepoSubmode::Stowaway` when the field is missing (the
+/// safe default — a private morph layer that never blocks git).
+pub fn read_repo_submode(morph_dir: &Path) -> Result<RepoSubmode, MorphError> {
+    let config_path = morph_dir.join(CONFIG_FILE);
+    if !config_path.exists() {
+        return Ok(RepoSubmode::default());
+    }
+    let data = std::fs::read_to_string(&config_path)?;
+    let config: serde_json::Value =
+        serde_json::from_str(&data).map_err(|e| MorphError::Serialization(e.to_string()))?;
+    Ok(config
+        .get(REPO_SUBMODE_KEY)
+        .and_then(|v| v.as_str())
+        .and_then(RepoSubmode::from_config_str)
+        .unwrap_or_default())
+}
+
+/// PR 10: write the reference-mode submode to `<morph_dir>/config.json`.
+/// Creates the config file if missing. Idempotent — overwrites prior
+/// values. Called by `morph init --reference --solo` and
+/// `morph install-hooks --solo`/`--stowaway` to flip between the two
+/// submodes after init.
+pub fn write_repo_submode(
+    morph_dir: &Path,
+    submode: RepoSubmode,
+) -> Result<(), MorphError> {
+    let config_path = morph_dir.join(CONFIG_FILE);
+    let mut config: serde_json::Value = if config_path.exists() {
+        let data = std::fs::read_to_string(&config_path)?;
+        serde_json::from_str(&data).map_err(|e| MorphError::Serialization(e.to_string()))?
+    } else {
+        serde_json::json!({})
+    };
+    if !config.is_object() {
+        return Err(MorphError::Serialization(
+            "config.json is not a JSON object".into(),
+        ));
+    }
+    config[REPO_SUBMODE_KEY] = serde_json::Value::String(submode.as_str().into());
     std::fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap())?;
     Ok(())
 }

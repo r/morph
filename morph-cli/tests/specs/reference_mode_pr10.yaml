@@ -1,0 +1,175 @@
+# PR 10: Solo / Stowaway submode + active pre-merge-commit gate.
+#
+# Stowaway (default) installs four passive observer hooks. Solo
+# additionally installs a `pre-merge-commit` hook that blocks plain
+# `git merge` when the merged result would regress on a parent's
+# certified metrics. `morph merge` already runs its own gate; the
+# Solo hook catches every *other* path into a merge commit (the IDE,
+# CI, plain `git merge`).
+#
+# These specs pin the contract:
+#   1. submode is recorded in `.morph/config.json` and read back.
+#   2. `morph install-hooks --solo` installs five hooks; `--stowaway`
+#      removes the fifth.
+#   3. The gate blocks regressing merges and lets no-claim merges
+#      through with a warning.
+#   4. `MORPH_INTERNAL=1` short-circuits the gate (so `morph merge`
+#      doesn't double-fire).
+
+# ── submode is persisted in config.json ──────────────────────────────
+
+- name: init_reference_solo_writes_submode_solo_to_config
+  init: false
+  steps:
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, --solo, "${repo}"]
+      stdout_contains: "Solo submode"
+    - shell: 'grep -q "\"repo_submode\": *\"solo\"" .morph/config.json'
+    # Five hooks installed, including pre-merge-commit.
+    - shell: "test -f .git/hooks/pre-merge-commit"
+    - shell: 'grep -q "morph hook pre-merge-commit" .git/hooks/pre-merge-commit'
+
+- name: init_reference_default_writes_submode_stowaway_to_config
+  init: false
+  steps:
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - shell: 'grep -q "\"repo_submode\": *\"stowaway\"" .morph/config.json'
+    # No pre-merge-commit hook in stowaway.
+    - shell: "test ! -f .git/hooks/pre-merge-commit"
+
+# ── install-hooks --solo / --stowaway flips the active gate ──────────
+
+- name: install_hooks_solo_installs_pre_merge_commit
+  init: false
+  steps:
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - shell: "test ! -f .git/hooks/pre-merge-commit"
+    - morph: [install-hooks, --solo]
+      stdout_contains: "submode: solo"
+    - shell: "test -f .git/hooks/pre-merge-commit"
+    - shell: 'grep -q "\"repo_submode\": *\"solo\"" .morph/config.json'
+
+- name: install_hooks_stowaway_removes_pre_merge_commit
+  init: false
+  steps:
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, --solo, "${repo}"]
+    - shell: "test -f .git/hooks/pre-merge-commit"
+    - morph: [install-hooks, --stowaway]
+      stdout_contains:
+        - "Removed"
+        - "submode: stowaway"
+    - shell: "test ! -f .git/hooks/pre-merge-commit"
+    - shell: 'grep -q "\"repo_submode\": *\"stowaway\"" .morph/config.json'
+
+# ── pre-merge-commit blocks regression and lets no-claim through ─────
+
+# Block path: head certified at 10, feature certified at 8. Plain
+# `git merge feature` triggers the hook, which detects that the
+# resulting merge commit would regress on `current` (head)'s bar of
+# 10 and exits 1 before git records the merge.
+
+- name: pre_merge_commit_blocks_when_merged_regresses_certification
+  init: false
+  files:
+    .morph/evals/suite.json: '{"cases":[],"metrics":[{"name":"tests_passed","aggregation":"mean","threshold":0.0,"direction":"maximize"}]}'
+  steps:
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, --solo, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    - morph: [add, .morph/evals/suite.json]
+      capture_first_line: suite_hash
+    - shell: |
+        git checkout -q -b feature
+        git commit --allow-empty -q -m 'feature work'
+        git checkout -q main
+        git commit --allow-empty -q -m 'main work'
+    # Head: tests_passed = 10. Feature: tests_passed = 8 (regression).
+    - morph: [certify, --commit, HEAD, --eval-suite, "${suite_hash}", --metrics, '{"tests_passed":10.0}']
+    - morph: [certify, --commit, "heads/feature", --eval-suite, "${suite_hash}", --metrics, '{"tests_passed":8.0}']
+    # Plain git merge with -m to force a merge commit. The
+    # pre-merge-commit hook fires, sees the regression, and aborts.
+    - shell: 'git merge --no-edit -q -m "merge feature" feature 2>&1 | tee /tmp/morph_pr10_block.log; test "$(cat /tmp/morph_pr10_block.log | grep -c "pre-merge gate blocked")" -ge 1'
+    # Git side: no merge commit landed (merge commit author is `t`,
+    # but the pre-merge gate aborted before git could record it).
+    # The hook's exit-1 leaves git mid-merge, but no merge commit on
+    # main. Use `git status` to confirm we're mid-merge with no commit.
+    - shell: "test -f .git/MERGE_HEAD"
+    - shell: 'test "$(git log --oneline -n 1 --format=%s)" = "main work"'
+    # Cleanup the abandoned merge state so subsequent steps work.
+    - shell: 'MORPH_INTERNAL=1 git merge --abort'
+
+# Pass path: head certified, feature has no claim. The hook treats
+# "no claim" as a warning, not a block — same contract as PR 7's
+# `morph merge` warning.
+
+- name: pre_merge_commit_lets_no_claim_through_with_warning
+  init: false
+  files:
+    .morph/evals/suite.json: '{"cases":[],"metrics":[{"name":"tests_passed","aggregation":"mean","threshold":0.0,"direction":"maximize"}]}'
+  steps:
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, --solo, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    - morph: [add, .morph/evals/suite.json]
+      capture_first_line: suite_hash
+    - shell: |
+        git checkout -q -b feature
+        git commit --allow-empty -q -m 'feature work'
+        git checkout -q main
+        git commit --allow-empty -q -m 'main work'
+    - morph: [certify, --commit, HEAD, --eval-suite, "${suite_hash}", --metrics, '{"tests_passed":10.0}']
+    # No certification on feature → "no claim".
+    - shell: 'git merge --no-edit -q -m "merge feature" feature 2>&1 | tee /tmp/morph_pr10_pass.log'
+    # Hook should have warned but not blocked — git landed the merge.
+    - shell: 'grep -q "no morph evidence" /tmp/morph_pr10_pass.log'
+    - shell: 'parents=$(git rev-list --parents -n 1 HEAD | wc -w | tr -d " "); test "$parents" = "3"'
+
+# ── MORPH_INTERNAL=1 bypasses the gate (so morph merge owns gating) ──
+
+- name: pre_merge_commit_short_circuits_when_morph_internal_set
+  init: false
+  files:
+    .morph/evals/suite.json: '{"cases":[],"metrics":[{"name":"tests_passed","aggregation":"mean","threshold":0.0,"direction":"maximize"}]}'
+  steps:
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, --solo, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    - morph: [add, .morph/evals/suite.json]
+      capture_first_line: suite_hash
+    - shell: |
+        git checkout -q -b feature
+        git commit --allow-empty -q -m 'feature work'
+        git checkout -q main
+        git commit --allow-empty -q -m 'main work'
+    # Head certified at 10, feature at 8 — would block via plain git merge.
+    - morph: [certify, --commit, HEAD, --eval-suite, "${suite_hash}", --metrics, '{"tests_passed":10.0}']
+    - morph: [certify, --commit, "heads/feature", --eval-suite, "${suite_hash}", --metrics, '{"tests_passed":8.0}']
+    # MORPH_INTERNAL=1 bypasses the hook; git merge succeeds.
+    - shell: 'MORPH_INTERNAL=1 git merge --no-edit -q -m "merge feature" feature'
+    - shell: 'parents=$(git rev-list --parents -n 1 HEAD | wc -w | tr -d " "); test "$parents" = "3"'
+
+# ── MORPH_NO_GATE=1 escape hatch lets the merge land with a warning ──
+
+- name: pre_merge_commit_morph_no_gate_bypasses_with_warning
+  init: false
+  files:
+    .morph/evals/suite.json: '{"cases":[],"metrics":[{"name":"tests_passed","aggregation":"mean","threshold":0.0,"direction":"maximize"}]}'
+  steps:
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, --solo, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    - morph: [add, .morph/evals/suite.json]
+      capture_first_line: suite_hash
+    - shell: |
+        git checkout -q -b feature
+        git commit --allow-empty -q -m 'feature work'
+        git checkout -q main
+        git commit --allow-empty -q -m 'main work'
+    - morph: [certify, --commit, HEAD, --eval-suite, "${suite_hash}", --metrics, '{"tests_passed":10.0}']
+    - morph: [certify, --commit, "heads/feature", --eval-suite, "${suite_hash}", --metrics, '{"tests_passed":8.0}']
+    # MORPH_NO_GATE=1 lets the merge land but warns to stderr.
+    - shell: 'MORPH_NO_GATE=1 git merge --no-edit -q -m "merge feature" feature 2>&1 | tee /tmp/morph_pr10_no_gate.log; grep -q "MORPH_NO_GATE" /tmp/morph_pr10_no_gate.log'
+    - shell: 'parents=$(git rev-list --parents -n 1 HEAD | wc -w | tr -d " "); test "$parents" = "3"'

@@ -84,17 +84,67 @@ pub const POST_MERGE_HOOK_SCRIPT: &str = r#"#!/bin/sh
 exec morph hook post-merge "$@" >/dev/null 2>&1 || true
 "#;
 
+/// PR 10: pre-merge-commit hook script. Fires *before* `git merge`
+/// records its merge commit, while `.git/MERGE_HEAD` exists and the
+/// working tree is mid-merge. Solo-mode submode installs this hook
+/// to gate plain `git merge` against the morph dominance contract;
+/// Stowaway repos do not install it because Morph mustn't surprise
+/// non-morph teammates' git workflows.
+///
+/// `MORPH_INTERNAL=1` short-circuits the gate so `morph merge`
+/// (which sets it for its own `git merge` invocation) handles
+/// dominance itself. `MORPH_NO_GATE=1` is a documented escape hatch
+/// for power users who need to land an emergency merge bypassing
+/// the gate — they get a warning, not a block.
+pub const PRE_MERGE_COMMIT_HOOK_SCRIPT: &str = r#"#!/bin/sh
+# Installed by morph in Solo submode. Blocks `git merge` when the
+# resulting merge commit would regress on a parent's certified
+# metrics. Bypassed by `morph merge` (sets MORPH_INTERNAL=1) and by
+# `MORPH_NO_GATE=1` for documented escapes.
+[ "$MORPH_INTERNAL" = "1" ] && exit 0
+if [ "$MORPH_NO_GATE" = "1" ]; then
+    echo "morph: pre-merge gate bypassed (MORPH_NO_GATE=1)" >&2
+    exit 0
+fi
+exec morph hook pre-merge-commit "$@"
+"#;
+
+/// Stowaway hooks: passive observers only. Mirror after the fact;
+/// never block git. Installed by default for `morph init --reference`.
+const STOWAWAY_HOOKS: &[(&str, &str)] = &[
+    ("post-commit", POST_COMMIT_HOOK_SCRIPT),
+    ("post-checkout", POST_CHECKOUT_HOOK_SCRIPT),
+    ("post-rewrite", POST_REWRITE_HOOK_SCRIPT),
+    ("post-merge", POST_MERGE_HOOK_SCRIPT),
+];
+
+/// Solo hooks: Stowaway plus an active `pre-merge-commit` gate that
+/// blocks regressing merges. Installed when the user opts into Solo
+/// submode via `morph init --reference --solo` or
+/// `morph install-hooks --solo`.
+const SOLO_HOOKS: &[(&str, &str)] = &[
+    ("post-commit", POST_COMMIT_HOOK_SCRIPT),
+    ("post-checkout", POST_CHECKOUT_HOOK_SCRIPT),
+    ("post-rewrite", POST_REWRITE_HOOK_SCRIPT),
+    ("post-merge", POST_MERGE_HOOK_SCRIPT),
+    ("pre-merge-commit", PRE_MERGE_COMMIT_HOOK_SCRIPT),
+];
+
 /// Filename → contents for every reference-mode hook this binary
-/// installs. Iterating this list keeps `install_reference_hooks`,
-/// `morph init --reference`, and the spec-test assertions in lock-step
-/// without copy/paste.
-pub fn reference_mode_hooks() -> &'static [(&'static str, &'static str)] {
-    &[
-        ("post-commit", POST_COMMIT_HOOK_SCRIPT),
-        ("post-checkout", POST_CHECKOUT_HOOK_SCRIPT),
-        ("post-rewrite", POST_REWRITE_HOOK_SCRIPT),
-        ("post-merge", POST_MERGE_HOOK_SCRIPT),
-    ]
+/// installs, scoped by submode. Iterating this list keeps
+/// `install_reference_hooks`, `morph init --reference`, and the
+/// spec-test assertions in lock-step without copy/paste.
+///
+/// Solo submode adds one extra hook (`pre-merge-commit`) on top of
+/// Stowaway's four passive observers. The active gate is exactly
+/// the difference between the two submodes from git's perspective.
+pub fn reference_mode_hooks(
+    submode: crate::repo::RepoSubmode,
+) -> &'static [(&'static str, &'static str)] {
+    match submode {
+        crate::repo::RepoSubmode::Stowaway => STOWAWAY_HOOKS,
+        crate::repo::RepoSubmode::Solo => SOLO_HOOKS,
+    }
 }
 
 /// Append `.morph/` to `.git/info/exclude` (creating the file when
@@ -667,6 +717,296 @@ pub fn run_git_merge_with_morph_internal(
     }
 }
 
+/// PR 10: outcome of [`handle_pre_merge_commit`]. The hook handler
+/// surfaces dominance violations as a structured value so the CLI
+/// can format the explanation, exit with the right code, and the
+/// no-claim warning behavior stays consistent with PR 7's contract.
+#[derive(Debug, Clone)]
+pub struct PreMergeOutcome {
+    /// Dominance violations against the parents' effective metrics.
+    /// Populated only when both parents have a morph claim and the
+    /// merged result would regress on the worse-of-parents bar.
+    /// Empty when the gate passes or when there's nothing to gate
+    /// against (no eval suite, no claim).
+    pub violations: Vec<crate::merge::DominanceViolation>,
+    /// Branch labels (e.g. `"current"`, `"other"`) for parents
+    /// without any morph evidence. Reported as warnings, never
+    /// blocks. Mirrors PR 7's `warn_when_no_morph_claim` contract.
+    pub no_claim_sides: Vec<String>,
+    /// Resolved morph hashes for the two parents, when found in the
+    /// cache. Used by the CLI to emit a precise "comparing X vs Y"
+    /// message and for downstream debugging.
+    pub head_morph: Option<Hash>,
+    pub other_morph: Option<Hash>,
+}
+
+/// PR 10: pre-merge-commit hook handler. Fires while git is mid-merge
+/// — `.git/MERGE_HEAD` exists and lists the other tip's git SHA, and
+/// `git rev-parse HEAD` still points at the user's current branch
+/// tip (not the new merge commit yet).
+///
+/// Walks both parents through `lookup_morph_for_git_sha` (auto-syncing
+/// the other branch via `ensure_branch_synced` when its morph mirror
+/// is stale or missing), then builds a synthetic [`crate::merge::MergePlan`]
+/// rooted at the *current* parent metrics — there is no merged
+/// outcome yet, since the merge commit is what the hook is about to
+/// block. Dominance against the worse-of-parents bar would mean a
+/// parent that has tests=10 trying to merge a parent at tests=8: the
+/// resulting merge commit can't claim 8 without violating the bar.
+///
+/// "No claim on either side" is *not* a block — same contract as PR 7.
+/// The hook handler returns the violations + no-claim sides; the CLI
+/// decides exit code and message.
+pub fn handle_pre_merge_commit(
+    store: &dyn Store,
+    repo_root: &Path,
+    morph_version: Option<&str>,
+) -> Result<PreMergeOutcome, MorphError> {
+    // For *clean* merges, git fires `pre-merge-commit` before
+    // writing `.git/MERGE_HEAD` — the merge tree is in
+    // `.git/AUTO_MERGE` and the other-parent SHA is exposed via
+    // `GITHEAD_<sha>=<branch>` env vars. For conflicting merges
+    // (which would route to `morph merge --continue` in PR 11),
+    // `MERGE_HEAD` exists. Read both signals and prefer
+    // `MERGE_HEAD` when available so the helper works in both
+    // paths.
+    let merge_head_path = repo_root.join(".git").join("MERGE_HEAD");
+    let other_git_sha = if let Ok(contents) = std::fs::read_to_string(&merge_head_path) {
+        contents
+            .lines()
+            .next()
+            .map(|s| s.trim().to_string())
+            .ok_or_else(|| {
+                MorphError::Other(".git/MERGE_HEAD is empty; cannot resolve other parent".into())
+            })?
+    } else {
+        // Walk env for `GITHEAD_<sha>=<branch>`; first match wins.
+        // Multi-parent octopus merges aren't supported by morph yet.
+        let mut found: Option<String> = None;
+        for (k, _) in std::env::vars() {
+            if let Some(rest) = k.strip_prefix("GITHEAD_") {
+                if rest.len() >= 4 && rest.chars().all(|c| c.is_ascii_hexdigit()) {
+                    found = Some(rest.to_string());
+                    break;
+                }
+            }
+        }
+        found.ok_or_else(|| {
+            MorphError::Other(
+                "pre-merge-commit fired without .git/MERGE_HEAD or GITHEAD_<sha> env; \
+                 cannot resolve other parent"
+                    .into(),
+            )
+        })?
+    };
+
+    // Current parent: ORIG_HEAD captures git HEAD as it was before
+    // the merge resolution. Use it when present (clean merge path);
+    // fall back to `git rev-parse HEAD` for the conflict path.
+    let orig_head_path = repo_root.join(".git").join("ORIG_HEAD");
+    let head_git_sha = if let Ok(contents) = std::fs::read_to_string(&orig_head_path) {
+        contents.lines().next().map(|s| s.trim().to_string())
+    } else {
+        None
+    }
+    .or(git_head_sha(repo_root)?)
+    .ok_or_else(|| MorphError::Other("git HEAD missing; cannot gate merge".into()))?;
+
+    // Pre-flight: make sure both parents have morph mirrors. The
+    // current branch is mirrored via `sync_to_head` (idempotent, no
+    // new commit if already synced); the other branch is mirrored
+    // via `ensure_branch_synced` when we know its branch name.
+    sync_to_head(store, repo_root, morph_version)?;
+    if let Some(other_branch_name) = git_branch_name_for_sha(repo_root, &other_git_sha)? {
+        ensure_branch_synced(store, repo_root, &other_branch_name, morph_version)?;
+    }
+
+    let head_morph = lookup_morph_for_git_sha(store, &head_git_sha)?;
+    let other_morph = lookup_morph_for_git_sha(store, &other_git_sha)?;
+
+    let mut no_claim_sides: Vec<String> = Vec::new();
+    let mut violations: Vec<crate::merge::DominanceViolation> = Vec::new();
+
+    // Build effective metrics for each parent. Missing parents
+    // (unmirrored) count as no-claim — never block.
+    let head_metrics = if let Some(ref h) = head_morph {
+        if let crate::objects::MorphObject::Commit(c) = store.get(h)? {
+            crate::policy::effective_metrics_for_commit(store, h, &c)?
+        } else {
+            std::collections::BTreeMap::new()
+        }
+    } else {
+        std::collections::BTreeMap::new()
+    };
+    let other_metrics = if let Some(ref h) = other_morph {
+        if let crate::objects::MorphObject::Commit(c) = store.get(h)? {
+            crate::policy::effective_metrics_for_commit(store, h, &c)?
+        } else {
+            std::collections::BTreeMap::new()
+        }
+    } else {
+        std::collections::BTreeMap::new()
+    };
+    if head_metrics.is_empty() {
+        no_claim_sides.push("current".into());
+    }
+    if other_metrics.is_empty() {
+        no_claim_sides.push("other".into());
+    }
+
+    // Check each parent's metrics against the OTHER parent's bar
+    // (worse-of-parents domination). If head has tests=10 and other
+    // has tests=8, the resulting merge commit must inherit 10 — but
+    // it can't, since the merge text comes from `other`. Block it.
+    //
+    // We synthesize the suite from the union of effective metric
+    // names so threshold/direction defaults are sane (maximize) and
+    // present in every key both parents declare.
+    let union_suite = synth_suite_from_metrics(&head_metrics, &other_metrics);
+    if !head_metrics.is_empty() && !other_metrics.is_empty() {
+        // The merge commit can't carry an existing observed_metrics
+        // before it lands, so we conservatively gate on the
+        // "worse-of-parents" bar: the merged outcome must be at least
+        // as good as the worse parent on every shared metric. If
+        // either parent regresses against this bar, block.
+        check_pre_merge_dominance(
+            &head_metrics,
+            &other_metrics,
+            &union_suite,
+            "current",
+            &mut violations,
+        );
+        check_pre_merge_dominance(
+            &other_metrics,
+            &head_metrics,
+            &union_suite,
+            "other",
+            &mut violations,
+        );
+    }
+
+    Ok(PreMergeOutcome {
+        violations,
+        no_claim_sides,
+        head_morph,
+        other_morph,
+    })
+}
+
+/// PR 10: synthesise an `EvalSuite` from the union of two effective
+/// metric maps. All metrics default to `aggregation = "mean"`,
+/// `threshold = 0.0`, `direction = "maximize"` — the same defaults
+/// `morph add` writes for files under `.morph/evals/`. The synthesised
+/// suite is *only* used by `handle_pre_merge_commit` to feed
+/// `check_parent_dominance`'s suite-bounded check; it is never
+/// stored.
+fn synth_suite_from_metrics(
+    a: &std::collections::BTreeMap<String, f64>,
+    b: &std::collections::BTreeMap<String, f64>,
+) -> crate::objects::EvalSuite {
+    let mut names: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    for k in a.keys().chain(b.keys()) {
+        names.insert(k.as_str());
+    }
+    let metrics = names
+        .into_iter()
+        .map(|n| crate::objects::EvalMetric {
+            name: n.to_string(),
+            aggregation: "mean".into(),
+            threshold: 0.0,
+            direction: "maximize".into(),
+        })
+        .collect();
+    crate::objects::EvalSuite {
+        cases: vec![],
+        metrics,
+    }
+}
+
+/// PR 10: same shape as `merge::check_parent_dominance` but local to
+/// the pre-merge-commit handler so we don't have to expose that
+/// function. Compares `merged` against `parent` for every metric in
+/// the suite.
+fn check_pre_merge_dominance(
+    merged: &std::collections::BTreeMap<String, f64>,
+    parent: &std::collections::BTreeMap<String, f64>,
+    suite: &crate::objects::EvalSuite,
+    parent_label: &str,
+    violations: &mut Vec<crate::merge::DominanceViolation>,
+) {
+    let suite_metrics: std::collections::BTreeSet<&str> =
+        suite.metrics.iter().map(|m| m.name.as_str()).collect();
+    let directions: std::collections::BTreeMap<&str, &str> = suite
+        .metrics
+        .iter()
+        .map(|m| (m.name.as_str(), m.direction.as_str()))
+        .collect();
+    for (k, &parent_val) in parent {
+        if !suite_metrics.contains(k.as_str()) {
+            continue;
+        }
+        let dir = directions.get(k.as_str()).copied().unwrap_or("maximize");
+        match merged.get(k) {
+            Some(&merged_val) => {
+                let ok = if dir == "minimize" {
+                    merged_val <= parent_val
+                } else {
+                    merged_val >= parent_val
+                };
+                if !ok {
+                    violations.push(crate::merge::DominanceViolation {
+                        metric: k.clone(),
+                        direction: dir.into(),
+                        merged_value: Some(merged_val),
+                        parent_value: parent_val,
+                        parent_label: parent_label.into(),
+                    });
+                }
+            }
+            None => {
+                violations.push(crate::merge::DominanceViolation {
+                    metric: k.clone(),
+                    direction: dir.into(),
+                    merged_value: None,
+                    parent_value: parent_val,
+                    parent_label: parent_label.into(),
+                });
+            }
+        }
+    }
+}
+
+/// PR 10: best-effort branch lookup for a git SHA. Walks `git
+/// for-each-ref refs/heads/` and returns the first branch whose tip
+/// matches. `None` when no local branch points at the SHA — in that
+/// case `handle_pre_merge_commit` skips `ensure_branch_synced` and
+/// relies on the existing cache, which still resolves the morph
+/// mirror if the tip is reachable from any branch.
+fn git_branch_name_for_sha(
+    repo_root: &Path,
+    sha: &str,
+) -> Result<Option<String>, MorphError> {
+    let out = Command::new("git")
+        .arg("for-each-ref")
+        .arg("--format=%(refname:short) %(objectname)")
+        .arg("refs/heads/")
+        .current_dir(repo_root)
+        .output()
+        .map_err(|e| MorphError::Other(format!("git for-each-ref failed: {}", e)))?;
+    if !out.status.success() {
+        return Ok(None);
+    }
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        let mut parts = line.splitn(2, ' ');
+        let name = parts.next().unwrap_or("").trim();
+        let obj = parts.next().unwrap_or("").trim();
+        if obj == sha && !name.is_empty() {
+            return Ok(Some(name.to_string()));
+        }
+    }
+    Ok(None)
+}
+
 /// Best-effort `git merge --abort` driver. Used by
 /// `morph merge --abort` (PR 11) to roll back a conflict-state merge.
 /// `MORPH_INTERNAL=1` is set so the post-merge hook stays out of the
@@ -987,11 +1327,16 @@ pub fn backfill_from_init(
 pub struct HookInstallReport {
     pub installed: Vec<String>,
     pub already_present: Vec<String>,
+    /// PR 10: hook scripts removed during a Solo→Stowaway downgrade.
+    /// Always empty during initial install or upgrade; populated only
+    /// when `install_reference_hooks` is called for Stowaway in a
+    /// directory that previously had Solo's `pre-merge-commit` script.
+    pub removed: Vec<String>,
 }
 
 impl HookInstallReport {
     pub fn changed(&self) -> bool {
-        !self.installed.is_empty()
+        !self.installed.is_empty() || !self.removed.is_empty()
     }
 }
 
@@ -1006,7 +1351,10 @@ impl HookInstallReport {
 /// PR-4-and-later marker (`morph hook`). That tolerance lets
 /// upgrades from older binaries succeed without forcing the user to
 /// delete their hooks first.
-pub fn install_reference_hooks(repo_root: &Path) -> Result<HookInstallReport, MorphError> {
+pub fn install_reference_hooks(
+    repo_root: &Path,
+    submode: crate::repo::RepoSubmode,
+) -> Result<HookInstallReport, MorphError> {
     if !is_git_working_tree(repo_root) {
         return Err(MorphError::Other(
             "not a git working tree (.git missing)".into(),
@@ -1015,8 +1363,24 @@ pub fn install_reference_hooks(repo_root: &Path) -> Result<HookInstallReport, Mo
     let hooks_dir = repo_root.join(".git").join("hooks");
     std::fs::create_dir_all(&hooks_dir)?;
 
+    // PR 10: when downgrading Solo → Stowaway, also remove the
+    // pre-merge-commit hook so plain `git merge` stops being gated.
+    // We only remove hooks we authored (substring marker check) so a
+    // user-authored pre-merge-commit script is never clobbered.
+    let active: std::collections::BTreeSet<&str> = reference_mode_hooks(submode)
+        .iter()
+        .map(|(n, _)| *n)
+        .collect();
+    let all_known: &[&str] = &[
+        "post-commit",
+        "post-checkout",
+        "post-rewrite",
+        "post-merge",
+        "pre-merge-commit",
+    ];
+
     let mut report = HookInstallReport::default();
-    for (name, canonical) in reference_mode_hooks() {
+    for (name, canonical) in reference_mode_hooks(submode) {
         let hook_path = hooks_dir.join(name);
         if hook_path.exists() {
             let existing = std::fs::read_to_string(&hook_path)?;
@@ -1049,16 +1413,35 @@ pub fn install_reference_hooks(repo_root: &Path) -> Result<HookInstallReport, Mo
         }
         report.installed.push((*name).into());
     }
+
+    // Remove any morph-authored hooks that aren't in the active set
+    // (Solo → Stowaway downgrade case). A user-authored hook is left
+    // alone — same marker check as above.
+    for name in all_known {
+        if active.contains(name) {
+            continue;
+        }
+        let hook_path = hooks_dir.join(name);
+        if !hook_path.exists() {
+            continue;
+        }
+        let existing = std::fs::read_to_string(&hook_path)?;
+        if existing.contains("morph hook") || existing.contains("morph reference-sync") {
+            std::fs::remove_file(&hook_path)?;
+            report.removed.push((*name).into());
+        }
+    }
+
     Ok(report)
 }
 
 /// Backwards-compatible thin wrapper kept so existing callers (and
 /// any external integrations from the PR-2/PR-3 era) keep working.
-/// Always installs the full hook trio under the hood — there's no
-/// reference-mode path that wants the post-commit hook in
-/// isolation.
+/// Always installs the Stowaway hook quartet under the hood — there's
+/// no reference-mode path that wants the post-commit hook in
+/// isolation, and pre-PR-10 callers can't yet name a submode.
 pub fn install_post_commit_hook(repo_root: &Path) -> Result<bool, MorphError> {
-    Ok(install_reference_hooks(repo_root)?.changed())
+    Ok(install_reference_hooks(repo_root, crate::repo::RepoSubmode::Stowaway)?.changed())
 }
 
 /// Resolve git's current branch name (the unqualified form, e.g.
@@ -1543,13 +1926,15 @@ mod tests {
     }
 
     #[test]
-    fn install_reference_hooks_writes_all_three() {
+    fn install_reference_hooks_writes_stowaway_quartet() {
         let dir = tempfile::tempdir().unwrap();
         run_git(dir.path(), &["init", "-q", "-b", "main"]);
         let _ = std::fs::remove_dir_all(dir.path().join(".git").join("hooks"));
-        let report = install_reference_hooks(dir.path()).unwrap();
+        let report =
+            install_reference_hooks(dir.path(), crate::repo::RepoSubmode::Stowaway).unwrap();
         assert_eq!(report.installed.len(), 4);
         assert!(report.already_present.is_empty());
+        assert!(report.removed.is_empty());
         for hook in &["post-commit", "post-checkout", "post-rewrite", "post-merge"] {
             let hook_path = dir.path().join(format!(".git/hooks/{}", hook));
             assert!(hook_path.is_file(), "{} missing", hook);
@@ -1562,10 +1947,49 @@ mod tests {
             );
             assert!(content.contains("MORPH_INTERNAL"));
         }
-        let report2 = install_reference_hooks(dir.path()).unwrap();
+        // Stowaway never installs pre-merge-commit.
+        assert!(!dir.path().join(".git/hooks/pre-merge-commit").exists());
+        let report2 =
+            install_reference_hooks(dir.path(), crate::repo::RepoSubmode::Stowaway).unwrap();
         assert_eq!(report2.installed.len(), 0);
         assert_eq!(report2.already_present.len(), 4);
         assert!(!report2.changed());
+    }
+
+    #[test]
+    fn install_reference_hooks_solo_adds_pre_merge_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        run_git(dir.path(), &["init", "-q", "-b", "main"]);
+        let _ = std::fs::remove_dir_all(dir.path().join(".git").join("hooks"));
+        let report =
+            install_reference_hooks(dir.path(), crate::repo::RepoSubmode::Solo).unwrap();
+        assert_eq!(report.installed.len(), 5);
+        assert!(report.removed.is_empty());
+        let pre_merge =
+            std::fs::read_to_string(dir.path().join(".git/hooks/pre-merge-commit")).unwrap();
+        assert!(pre_merge.contains("morph hook pre-merge-commit"));
+        assert!(pre_merge.contains("MORPH_INTERNAL"));
+        assert!(pre_merge.contains("MORPH_NO_GATE"));
+    }
+
+    #[test]
+    fn install_reference_hooks_solo_to_stowaway_removes_pre_merge() {
+        let dir = tempfile::tempdir().unwrap();
+        run_git(dir.path(), &["init", "-q", "-b", "main"]);
+        let _ = std::fs::remove_dir_all(dir.path().join(".git").join("hooks"));
+        // Install Solo first so pre-merge-commit exists.
+        install_reference_hooks(dir.path(), crate::repo::RepoSubmode::Solo).unwrap();
+        assert!(dir.path().join(".git/hooks/pre-merge-commit").exists());
+        // Downgrade to Stowaway: pre-merge-commit must be removed.
+        let report =
+            install_reference_hooks(dir.path(), crate::repo::RepoSubmode::Stowaway).unwrap();
+        assert_eq!(
+            report.removed,
+            vec!["pre-merge-commit".to_string()],
+            "Solo→Stowaway should remove pre-merge-commit"
+        );
+        assert!(!dir.path().join(".git/hooks/pre-merge-commit").exists());
+        assert!(report.changed());
     }
 
     #[test]
@@ -1590,7 +2014,8 @@ mod tests {
             "#!/bin/sh\nexec morph reference-sync >/dev/null 2>&1 || true\n",
         )
         .unwrap();
-        let report = install_reference_hooks(dir.path()).unwrap();
+        let report =
+            install_reference_hooks(dir.path(), crate::repo::RepoSubmode::Stowaway).unwrap();
         assert!(report.installed.contains(&"post-commit".to_string()));
         let content = std::fs::read_to_string(hooks_dir.join("post-commit")).unwrap();
         assert!(content.contains("morph hook post-commit"));
@@ -1603,7 +2028,7 @@ mod tests {
         let hooks_dir = dir.path().join(".git/hooks");
         std::fs::create_dir_all(&hooks_dir).unwrap();
         std::fs::write(hooks_dir.join("post-checkout"), "#!/bin/sh\necho hi\n").unwrap();
-        let err = install_reference_hooks(dir.path())
+        let err = install_reference_hooks(dir.path(), crate::repo::RepoSubmode::Stowaway)
             .expect_err("user-authored hook should be preserved");
         match err {
             MorphError::Other(msg) => {
