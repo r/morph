@@ -197,6 +197,12 @@ pub enum Command {
         /// Output structured JSON instead of human-readable summary
         #[arg(long)]
         json: bool,
+        /// Reference-mode only: pass `--allow-empty` to the underlying
+        /// `git commit`. Lets you record an audit-only morph commit
+        /// (e.g. a certification milestone) when there is no staged
+        /// diff. Ignored in standalone mode.
+        #[arg(long)]
+        allow_empty_commit: bool,
     },
     /// Show a stored Morph object (commit, run, trace, etc.) as pretty JSON.
     /// Accepts a full hash, hash prefix (≥4 hex chars), `HEAD`, a branch

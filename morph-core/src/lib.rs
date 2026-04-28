@@ -140,9 +140,9 @@ pub use reference::{
     backfill_from_init, current_git_branch, git_head_sha, git_log_range, git_parents,
     handle_post_checkout, handle_post_rewrite, install_post_commit_hook, install_reference_hooks,
     is_git_working_tree, lookup_morph_for_git_sha, pending_certifications, read_git_commit,
-    reference_mode_hooks, sync_to_head, CheckoutOutcome, GitCommitInfo, HookInstallReport,
-    RewriteOutcome, SyncOutcome, POST_CHECKOUT_HOOK_SCRIPT, POST_COMMIT_HOOK_SCRIPT,
-    POST_REWRITE_HOOK_SCRIPT,
+    reference_mode_hooks, run_git_commit_with_morph_internal, sync_to_head,
+    sync_to_head_with_origin, CheckoutOutcome, GitCommitInfo, HookInstallReport, RewriteOutcome,
+    SyncOutcome, POST_CHECKOUT_HOOK_SCRIPT, POST_COMMIT_HOOK_SCRIPT, POST_REWRITE_HOOK_SCRIPT,
 };
 
 pub mod gc;

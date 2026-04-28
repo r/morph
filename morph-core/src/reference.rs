@@ -304,6 +304,7 @@ fn sync_one_commit(
     store: &dyn Store,
     repo_root: &Path,
     git_sha: &str,
+    origin: &str,
     morph_version: Option<&str>,
     cache: &mut HashMap<String, Hash>,
 ) -> Result<Hash, MorphError> {
@@ -353,7 +354,7 @@ fn sync_one_commit(
         evidence_refs: None,
         morph_version: morph_version.map(String::from),
         morph_instance: crate::agent::read_instance_id(&morph_dir)?,
-        morph_origin: Some("git-hook".into()),
+        morph_origin: Some(origin.into()),
         git_origin_sha: Some(info.sha.clone()),
     });
     let hash = store.put(&commit)?;
@@ -373,6 +374,19 @@ fn sync_one_commit(
 pub fn sync_to_head(
     store: &dyn Store,
     repo_root: &Path,
+    morph_version: Option<&str>,
+) -> Result<SyncOutcome, MorphError> {
+    sync_to_head_with_origin(store, repo_root, "git-hook", morph_version)
+}
+
+/// Same as [`sync_to_head`] but lets the caller stamp a non-default
+/// `morph_origin` on the new commit. PR 5's `morph commit` wrapper uses
+/// `"cli"` so policy + audit can distinguish CLI-driven commits from
+/// passive post-commit hook mirrors.
+pub fn sync_to_head_with_origin(
+    store: &dyn Store,
+    repo_root: &Path,
+    origin: &str,
     morph_version: Option<&str>,
 ) -> Result<SyncOutcome, MorphError> {
     let git_sha = match git_head_sha(repo_root)? {
@@ -395,7 +409,7 @@ pub fn sync_to_head(
         });
     }
 
-    let hash = sync_one_commit(store, repo_root, &git_sha, morph_version, &mut cache)?;
+    let hash = sync_one_commit(store, repo_root, &git_sha, origin, morph_version, &mut cache)?;
     let branch = crate::commit::current_branch(store)?
         .unwrap_or_else(|| crate::commit::DEFAULT_BRANCH.to_string());
     store.ref_write(&format!("heads/{}", branch), &hash)?;
@@ -405,6 +419,56 @@ pub fn sync_to_head(
         git_sha: Some(git_sha),
         already_synced: false,
     })
+}
+
+/// Run `git commit -m <message>` inside `repo_root` with
+/// `MORPH_INTERNAL=1` exported so any installed Morph hooks
+/// short-circuit. Used by `morph commit` in reference mode to
+/// guarantee atomic git+morph creation: the wrapper runs git, then
+/// performs the morph mirror itself with `morph_origin = "cli"`.
+///
+/// Returns the new git HEAD SHA on success. Bubbles up git's stderr
+/// verbatim on failure so `nothing to commit`-style messages reach
+/// the user.
+///
+/// `allow_empty` maps to git's `--allow-empty`. `author`, when
+/// provided, maps to `git commit --author <author>`.
+pub fn run_git_commit_with_morph_internal(
+    repo_root: &Path,
+    message: &str,
+    allow_empty: bool,
+    author: Option<&str>,
+) -> Result<String, MorphError> {
+    let mut cmd = std::process::Command::new("git");
+    cmd.current_dir(repo_root)
+        .arg("commit")
+        .arg("-m")
+        .arg(message)
+        .env("MORPH_INTERNAL", "1");
+    if allow_empty {
+        cmd.arg("--allow-empty");
+    }
+    if let Some(a) = author {
+        cmd.arg(format!("--author={}", a));
+    }
+    let output = cmd
+        .output()
+        .map_err(|e| MorphError::Other(format!("failed to spawn git commit: {}", e)))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let combined = if stderr.trim().is_empty() {
+            stdout
+        } else {
+            stderr
+        };
+        return Err(MorphError::Other(format!(
+            "git commit failed: {}",
+            combined.trim()
+        )));
+    }
+    git_head_sha(repo_root)?
+        .ok_or_else(|| MorphError::Other("git HEAD missing after successful commit".into()))
 }
 
 /// Backfill morph commits from `init_at_git_sha` (inclusive) up to the
@@ -438,7 +502,7 @@ pub fn backfill_from_init(
         if cache.contains_key(sha) {
             continue;
         }
-        let hash = sync_one_commit(store, repo_root, sha, morph_version, &mut cache)?;
+        let hash = sync_one_commit(store, repo_root, sha, "git-hook", morph_version, &mut cache)?;
         last_hash = Some(hash);
         created += 1;
     }
@@ -687,7 +751,7 @@ pub fn handle_post_rewrite(
         let new_morph = if let Some(h) = cache.get(new_sha) {
             *h
         } else {
-            sync_one_commit(store, repo_root, new_sha, morph_version, &mut cache)?
+            sync_one_commit(store, repo_root, new_sha, "git-hook", morph_version, &mut cache)?
         };
 
         if let Some(old_morph) = cache.get(old_sha).copied() {

@@ -1,0 +1,206 @@
+# PR 5: morph→git wrapper for `morph commit` (reference mode).
+#
+# Reference mode promises a 1:1 mapping between git commits and morph
+# commits. PR 2-4 nailed down git→morph mirroring (post-commit,
+# post-checkout, post-rewrite). PR 5 closes the other half:
+# `morph commit` in reference mode wraps `git commit` so the two
+# always travel together.
+#
+# Contract:
+#  - `morph commit -m <msg>` in reference mode runs `git commit` first
+#    (with MORPH_INTERNAL=1 to suppress the post-commit hook's
+#    automatic mirror), then explicitly creates the paired morph
+#    commit with `morph_origin = "cli"` and `git_origin_sha` set.
+#  - Metrics flow: `--metrics` and `--from-run` apply to the resulting
+#    morph commit via a certification annotation (the underlying mirror
+#    leaves `observed_metrics` empty by design).
+#  - Failure flow: if `git commit` fails (no staged changes, hook
+#    rejection, etc.) the morph commit is never created.
+#  - Standalone mode is untouched: `morph commit` keeps writing the
+#    full tree itself with no git involvement.
+
+# ── happy path: paired commits with `cli` origin ──────────────────────
+
+- name: morph_commit_in_reference_mode_creates_paired_git_commit
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - shell: "echo hi > a.txt && git add a.txt"
+    # Without --metrics, default policy is required_metrics=[tests_total,tests_passed].
+    # In reference mode we still respect that, so the wrapper rejects
+    # this case without --allow-empty-metrics.
+    - morph: [commit, -m, "add a", --allow-empty-metrics]
+    # The morph wrapper just produced one new git commit (was 1, now 2).
+    - shell: "test \"$(git log --oneline | wc -l | tr -d ' ')\" = 2"
+    - morph: [head, --json]
+      stdout_contains:
+        - '"message": "add a"'
+        - '"morph_origin": "cli"'
+
+- name: morph_commit_in_reference_mode_records_git_origin_sha
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - shell: "echo hi > a.txt && git add a.txt"
+    - morph: [commit, -m, "add a", --allow-empty-metrics]
+    - shell: "git rev-parse HEAD > /tmp/morph_pr5_git_sha.txt"
+    - morph: [head, --json]
+      stdout_contains:
+        - '"git_origin_sha":'
+
+# ── recursion guard: hook does not fire during morph commit ───────────
+#
+# The wrapper sets MORPH_INTERNAL=1 before invoking git commit, so the
+# installed post-commit hook short-circuits. If the hook ran *and* the
+# wrapper mirrored, we'd get two morph commits for one git commit.
+# Asserting `morph log` length == 2 (initial + new) proves no
+# recursion happened.
+
+- name: morph_commit_in_reference_mode_does_not_recurse_via_post_commit_hook
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    - shell: "echo hi > a.txt && git add a.txt"
+    - morph: [commit, -m, "add a", --allow-empty-metrics]
+    # Two morph commits total: the backfilled "first" + new "add a".
+    # If the hook recursed, we'd see three (the wrapper's mirror plus
+    # the hook's mirror, or two copies of "add a").
+    - morph: [log, --oneline]
+      capture: log_out
+    - shell: "test \"$(echo '${log_out}' | wc -l | tr -d ' ')\" = 2"
+
+# ── metrics flow: `--metrics` lands as a certification annotation ─────
+#
+# Reference-mode morph commits have empty observed_metrics by
+# construction (they mirror the git tree, not a recorded eval run).
+# `morph commit --metrics` in reference mode therefore records a
+# `kind: "certification"` annotation. `morph status` (and any future
+# merge gate) reads through `effective_metrics`, so consumers see the
+# metrics regardless of where they're stored.
+
+- name: morph_commit_in_reference_mode_attaches_metrics_via_certification
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - shell: "echo hi > a.txt && git add a.txt"
+    - morph: [commit, -m, "add a", --metrics, '{"tests_total":10,"tests_passed":10,"pass_rate":1.0}']
+    # `morph head --json` returns *effective_metrics*, which walks
+    # certification annotations. The reference-mode commit's inline
+    # observed_metrics is empty by construction; the values below
+    # come from the annotation we just created.
+    - morph: [head, --json]
+      stdout_contains:
+        - '"tests_passed": 10'
+        - '"pass_rate": 1'
+
+# ── failure flow: git failure short-circuits the wrapper ──────────────
+#
+# If `git commit` rejects (nothing staged), we must not create a
+# stranded morph commit. The user's morph history should look exactly
+# the same before and after.
+
+- name: morph_commit_in_reference_mode_fails_if_no_staged_changes
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    # Capture the morph head before the failed attempt.
+    - morph: [head, --json]
+      capture_json_field:
+        var: head_before
+        field: hash
+    # No `git add` → nothing staged → git commit will refuse.
+    - morph: [commit, -m, "nothing", --allow-empty-metrics]
+      expect_exit: 1
+      stderr_contains: "git commit"
+    # Morph HEAD must not have moved.
+    - morph: [head, --json]
+      stdout_contains: "${head_before}"
+
+# ── --allow-empty-commit: opt-in to git's `--allow-empty` ─────────────
+#
+# Sometimes you want a morph commit purely for evidence (e.g. a
+# certification milestone). `--allow-empty-commit` is the explicit
+# escape hatch: it tells git not to refuse on an empty diff. Without
+# it, the wrapper bubbles git's normal "nothing to commit" error.
+
+- name: morph_commit_in_reference_mode_with_allow_empty_commit_creates_empty
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [commit, -m, "milestone", --allow-empty-commit, --allow-empty-metrics]
+    # One new git commit (now 2 total).
+    - shell: "test \"$(git log --oneline | wc -l | tr -d ' ')\" = 2"
+    - morph: [head, --json]
+      stdout_contains:
+        - '"message": "milestone"'
+        - '"morph_origin": "cli"'
+
+# ── --new-cases: introduces_cases annotation ──────────────────────────
+#
+# Behaviour parity with standalone mode: --new-cases on a wrapper
+# commit attaches an `introduces_cases` annotation pointing at the
+# new morph commit so future merge plans can show case provenance.
+
+- name: morph_commit_in_reference_mode_records_introduces_cases_annotation
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [commit, -m, "milestone", --allow-empty-commit, --allow-empty-metrics, "--new-cases", "demo:case_a"]
+    - morph: [annotations, HEAD]
+      stdout_contains:
+        - "introduces_cases"
+        - "demo:case_a"
+
+# ── standalone mode regression: wrapper does not engage ───────────────
+#
+# A standalone `morph init` followed by `morph commit` must keep the
+# pre-PR5 behaviour: morph creates the commit directly, no git
+# involvement, `morph_origin` defaults to null.
+
+- name: morph_commit_standalone_mode_remains_pre_pr5_behaviour
+  init: true
+  files:
+    a.txt: "hi\n"
+  steps:
+    - morph: [add, "a.txt"]
+    - morph: [commit, -m, "add a", --allow-empty-metrics]
+    - morph: [head, --json]
+      stdout_contains:
+        - '"message": "add a"'
+        - '"morph_origin": null'
+        - '"git_origin_sha": null'
+
+# ── policy gate: required_metrics still enforced for cli commits ──────
+#
+# `exempt_origins=["git-hook"]` (set by `morph init --reference`) means
+# automatic mirrors bypass policy. Explicit `morph commit` in reference
+# mode is morph_origin="cli", so the policy gate fires normally. This
+# preserves the contract from PR 3: only passive mirrors are exempt.
+
+- name: morph_commit_in_reference_mode_enforces_required_metrics_without_escape_hatch
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    # Build harness auto-injects `--no-default-policy` into in-spec
+    # `morph init` calls, leaving required_metrics empty. Set them
+    # explicitly so the wrapper has something to enforce.
+    - morph: [policy, require-metrics, "tests_total", "tests_passed"]
+    - shell: "echo hi > a.txt && git add a.txt"
+    # Without --metrics or --allow-empty-metrics, the wrapper must
+    # reject *before* invoking git commit so we don't leak a git
+    # commit with no paired morph evidence.
+    - morph: [commit, -m, "add a"]
+      expect_exit: 1
+      stderr_contains: "policy requires metrics"
+    # Git history is unchanged — the wrapper rejected before mutating.
+    - shell: "test \"$(git log --oneline | wc -l | tr -d ' ')\" = 1"

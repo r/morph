@@ -166,6 +166,166 @@ fn run_hook(event: &str, args: &[String]) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// PR 5: `morph commit` in reference mode wraps `git commit` so the
+/// two stay 1:1 by construction. The wrapper:
+///   1. resolves observed metrics from `--metrics` / `--from-run` /
+///      `LAST_RUN.json` (same precedence as standalone),
+///   2. enforces `policy.required_metrics` *before* running git so a
+///      policy reject doesn't leak a stranded git commit,
+///   3. shells out to `git commit -m <msg>` with `MORPH_INTERNAL=1` so
+///      the post-commit hook short-circuits,
+///   4. mirrors the new git HEAD into a morph commit with
+///      `morph_origin = "cli"` (distinct from passive hook commits),
+///   5. attaches a `kind: "certification"` annotation when metrics are
+///      present so the merge gate can read them via
+///      `effective_metrics`,
+///   6. attaches a `kind: "introduces_cases"` annotation when
+///      `--new-cases` is provided.
+#[allow(clippy::too_many_arguments)]
+fn run_reference_commit(
+    store: &dyn Store,
+    repo_root: &std::path::Path,
+    morph_dir: &std::path::Path,
+    version: &str,
+    message: &str,
+    metrics: Option<&str>,
+    from_run: Option<&str>,
+    new_cases: Option<&str>,
+    eval_suite: Option<&str>,
+    author: Option<&str>,
+    allow_empty_metrics: bool,
+    allow_empty_commit: bool,
+    no_auto_run: bool,
+    json: bool,
+) -> anyhow::Result<()> {
+    let policy = morph_core::read_policy(morph_dir)?;
+
+    let auto_run_hash: Option<Hash> = if no_auto_run || from_run.is_some() {
+        None
+    } else {
+        match morph_core::resolve_fresh_last_run(store, morph_dir) {
+            Ok((Some(last), _)) => Hash::from_hex(&last.run).ok(),
+            _ => None,
+        }
+    };
+
+    let mut observed_metrics: std::collections::BTreeMap<String, f64> = metrics
+        .map(serde_json::from_str)
+        .transpose()
+        .map_err(|e| anyhow::anyhow!("invalid --metrics JSON: {}", e))?
+        .unwrap_or_default();
+
+    if observed_metrics.is_empty() {
+        if let Some(s) = from_run {
+            let run_hash = resolve_obj_hash(store, s)?;
+            if let Ok(MorphObject::Run(run)) = store.get(&run_hash) {
+                observed_metrics = run.metrics.clone();
+            }
+        } else if let Some(ref run_hash) = auto_run_hash {
+            if let Ok(MorphObject::Run(run)) = store.get(run_hash) {
+                if !run.metrics.is_empty() {
+                    let preview: Vec<String> = run
+                        .metrics
+                        .iter()
+                        .map(|(k, v)| format!("{}={}", k, v))
+                        .collect();
+                    eprintln!(
+                        "attaching evidence from run {}: {}",
+                        short_hash(&run_hash.to_string()),
+                        preview.join(", "),
+                    );
+                    observed_metrics = run.metrics.clone();
+                }
+            }
+        }
+    }
+
+    if !allow_empty_metrics {
+        let missing = morph_core::missing_required_metrics(&policy, &observed_metrics);
+        if !missing.is_empty() {
+            return Err(anyhow::anyhow!(
+                "policy requires metrics that are missing: [{}]. \
+                 Pass --metrics with these keys, run `morph eval record`, \
+                 or override with --allow-empty-metrics.",
+                missing.join(", ")
+            ));
+        }
+    }
+
+    let new_git_sha = morph_core::run_git_commit_with_morph_internal(
+        repo_root,
+        message,
+        allow_empty_commit,
+        author,
+    )
+    .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    let outcome = morph_core::sync_to_head_with_origin(store, repo_root, "cli", Some(version))?;
+    let new_morph_hash = outcome.new_commit.ok_or_else(|| {
+        anyhow::anyhow!(
+            "git commit {} did not produce a new morph commit (already mirrored?)",
+            &new_git_sha[..new_git_sha.len().min(12)]
+        )
+    })?;
+
+    if !observed_metrics.is_empty() {
+        let cert = morph_core::certify_commit(
+            store,
+            morph_dir,
+            &new_morph_hash,
+            &observed_metrics,
+            None,
+            eval_suite,
+        )?;
+        if !cert.passed {
+            eprintln!("warning: certification failed for {}:", new_morph_hash);
+            for f in &cert.failures {
+                eprintln!("  {}", f);
+            }
+        }
+    }
+
+    if let Some(arg) = new_cases {
+        let cases = morph_core::parse_introduces_cases_arg(arg);
+        let branch = morph_core::current_branch(store)?;
+        if let Some(ann) =
+            morph_core::build_introduces_cases_annotation(&new_morph_hash, &cases, branch)
+        {
+            store.put(&ann)?;
+        }
+    }
+
+    if observed_metrics.is_empty() {
+        eprintln!(
+            "warning: commit has no observed_metrics. Morph cannot enforce \
+             behavioral merge gating without evidence. Pass --metrics, \
+             run `morph eval record` / `morph eval run`, or set a policy \
+             via `morph policy init`."
+        );
+    }
+
+    if json {
+        let out = serde_json::json!({
+            "hash": new_morph_hash.to_string(),
+            "git_origin_sha": new_git_sha,
+            "morph_origin": "cli",
+            "message": message,
+        });
+        println!("{}", serde_json::to_string(&out).unwrap());
+    } else {
+        println!(
+            "[{} (cli)] {}",
+            short_hash(&new_morph_hash.to_string()),
+            message
+        );
+        println!(
+            "  git: {}",
+            &new_git_sha[..new_git_sha.len().min(12)]
+        );
+    }
+    Ok(())
+}
+
 /// Structured version output for `morph version --json`. Stable
 /// shape (additive only): release pipelines and downstream tooling
 /// rely on the field names below to verify the binary's identity
@@ -1094,10 +1254,39 @@ in a git repository first."
             }
         }
 
-        Command::Commit { message, pipeline, eval_suite, metrics, author, from_run, allow_empty_metrics, new_cases, no_auto_run, json } => {
+        Command::Commit { message, pipeline, eval_suite, metrics, author, from_run, allow_empty_metrics, new_cases, no_auto_run, json, allow_empty_commit } => {
             let (repo_root, store) = get_store(verbose)?;
             let morph_dir = repo_root.join(".morph");
             let version = read_repo_version(&morph_dir)?;
+            // Reference mode: `morph commit` is a thin wrapper around
+            // `git commit` with `MORPH_INTERNAL=1` to suppress the
+            // post-commit hook, followed by an explicit morph mirror
+            // tagged `morph_origin = "cli"`. Standalone falls through.
+            if morph_core::read_repo_mode(&morph_dir)? == morph_core::RepoMode::Reference {
+                run_reference_commit(
+                    store.as_ref(),
+                    &repo_root,
+                    &morph_dir,
+                    &version,
+                    &message,
+                    metrics.as_deref(),
+                    from_run.as_deref(),
+                    new_cases.as_deref(),
+                    eval_suite.as_deref(),
+                    author.as_deref(),
+                    allow_empty_metrics,
+                    allow_empty_commit,
+                    no_auto_run,
+                    json,
+                )?;
+                if let Err(e) = morph_core::clear_last_run(&morph_dir) {
+                    eprintln!("warning: could not clear LAST_RUN breadcrumb after commit: {}", e);
+                }
+                return Ok(());
+            }
+            // Reference-mode-only flag: a no-op for standalone commits
+            // since we don't shell out to git here.
+            let _ = allow_empty_commit;
             let prog_hash = pipeline.as_deref().map(|s| resolve_obj_hash(store.as_ref(), s)).transpose()?;
             let policy = morph_core::read_policy(&morph_dir)?;
             // Resolve --eval-suite, falling back to the policy default
