@@ -142,10 +142,11 @@ pub use reference::{
     handle_post_checkout, handle_post_rewrite, install_post_commit_hook, install_reference_hooks,
     is_git_working_tree, list_stale_certifications, lookup_morph_for_git_sha,
     pending_certifications, read_git_commit, reference_mode_hooks,
-    run_git_commit_with_morph_internal, sync_to_head, sync_to_head_with_origin, BranchSyncOutcome,
-    CheckoutOutcome, DriftSummary, GitCommitInfo, HookInstallReport, RewriteOutcome, SyncOutcome,
-    POST_CHECKOUT_HOOK_SCRIPT, POST_COMMIT_HOOK_SCRIPT, POST_MERGE_HOOK_SCRIPT,
-    POST_REWRITE_HOOK_SCRIPT,
+    run_git_commit_with_morph_internal, run_git_merge_abort_with_morph_internal,
+    run_git_merge_with_morph_internal, sync_to_head, sync_to_head_with_origin, BranchSyncOutcome,
+    CheckoutOutcome, DriftSummary, GitCommitInfo, GitMergeOutcome, HookInstallReport,
+    RewriteOutcome, SyncOutcome, POST_CHECKOUT_HOOK_SCRIPT, POST_COMMIT_HOOK_SCRIPT,
+    POST_MERGE_HOOK_SCRIPT, POST_REWRITE_HOOK_SCRIPT,
 };
 
 pub mod gc;

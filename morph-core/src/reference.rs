@@ -457,7 +457,22 @@ pub fn sync_to_head_with_origin(
     };
 
     let mut cache = build_git_to_morph_cache(store)?;
-    if cache.contains_key(&git_sha) {
+    if let Some(existing_hash) = cache.get(&git_sha).cloned() {
+        // Already mirrored — but the morph branch ref might still
+        // point at an old morph commit (e.g. PR 9 fast-forward case:
+        // `git merge --ff` advanced git's HEAD to a commit the
+        // post-commit hook had already mirrored when the *other*
+        // branch was checked out). Advance the current branch ref so
+        // morph's view of "main" matches git's view. Idempotent for
+        // the post-commit path because that path always lands a new
+        // commit (cache miss).
+        let branch = crate::commit::current_branch(store)?
+            .unwrap_or_else(|| crate::commit::DEFAULT_BRANCH.to_string());
+        let branch_ref = format!("heads/{}", branch);
+        let current_ref = store.ref_read(&branch_ref)?.map(|h| h.to_string());
+        if current_ref.as_deref() != Some(existing_hash.to_string().as_str()) {
+            store.ref_write(&branch_ref, &existing_hash)?;
+        }
         return Ok(SyncOutcome {
             new_commit: None,
             git_sha: Some(git_sha),
@@ -525,6 +540,161 @@ pub fn run_git_commit_with_morph_internal(
     }
     git_head_sha(repo_root)?
         .ok_or_else(|| MorphError::Other("git HEAD missing after successful commit".into()))
+}
+
+/// Outcome of [`run_git_merge_with_morph_internal`]. The variants
+/// distinguish git's three trivial outcomes (`already_up_to_date`,
+/// `fast_forwarded`, `merge_committed`) from the conflict path so the
+/// CLI can route each to the right post-processing — mirror, exit
+/// silently, or surface conflict guidance.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GitMergeOutcome {
+    /// `feature` was already an ancestor of HEAD. Git printed
+    /// "Already up to date." and made no changes.
+    AlreadyUpToDate,
+    /// HEAD was an ancestor of `feature`. Git fast-forwarded the
+    /// branch ref. The new HEAD SHA is captured for mirroring.
+    FastForward { new_head: String },
+    /// Divergent histories merged cleanly. A new merge commit was
+    /// created with two parents. The new HEAD SHA is captured for
+    /// mirroring.
+    Merged { new_head: String },
+    /// `git merge` produced unmerged paths. The working tree carries
+    /// conflict markers; `.git/MERGE_HEAD` exists. PR 11 wires
+    /// `morph merge --continue` for this case.
+    Conflicts { paths: Vec<String> },
+}
+
+/// Run `git merge <branch> -m <message>` inside `repo_root` with
+/// `MORPH_INTERNAL=1` exported so morph hooks (post-merge,
+/// pre-merge-commit) short-circuit. Symmetric with
+/// [`run_git_commit_with_morph_internal`] (PR 5): `morph merge` in
+/// reference mode owns the merge atomically by driving git first,
+/// then mirroring.
+///
+/// `no_ff = true` forces a real merge commit even when a fast-forward
+/// is possible. `no_ff = false` lets git fast-forward when it can.
+///
+/// Distinguishes git's four outcomes via [`GitMergeOutcome`]:
+/// already-up-to-date, fast-forward, clean-merge, and conflicts. The
+/// caller is responsible for mirroring and for routing conflict
+/// outcomes to the stateful resolution flow (PR 11).
+pub fn run_git_merge_with_morph_internal(
+    repo_root: &Path,
+    branch: &str,
+    message: &str,
+    no_ff: bool,
+) -> Result<GitMergeOutcome, MorphError> {
+    let pre_head = git_head_sha(repo_root)?;
+
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo_root)
+        .arg("merge")
+        .arg("--no-edit")
+        .arg("-q")
+        .env("MORPH_INTERNAL", "1");
+    if no_ff {
+        cmd.arg("--no-ff");
+    }
+    cmd.arg("-m").arg(message).arg(branch);
+    let output = cmd
+        .output()
+        .map_err(|e| MorphError::Other(format!("failed to spawn git merge: {}", e)))?;
+
+    if !output.status.success() {
+        // Conflicts: `git merge` exits non-zero, leaves
+        // `.git/MERGE_HEAD` and unmerged paths. Detect via
+        // `git ls-files --unmerged` so we surface the actual paths.
+        let merge_head_path = repo_root.join(".git").join("MERGE_HEAD");
+        if merge_head_path.exists() {
+            let unmerged = Command::new("git")
+                .current_dir(repo_root)
+                .arg("ls-files")
+                .arg("--unmerged")
+                .output()
+                .map_err(|e| {
+                    MorphError::Other(format!("failed to spawn git ls-files: {}", e))
+                })?;
+            let mut paths: std::collections::BTreeSet<String> =
+                std::collections::BTreeSet::new();
+            for line in String::from_utf8_lossy(&unmerged.stdout).lines() {
+                if let Some(path) = line.split('\t').nth(1) {
+                    paths.insert(path.to_string());
+                }
+            }
+            return Ok(GitMergeOutcome::Conflicts {
+                paths: paths.into_iter().collect(),
+            });
+        }
+        // Anything else (malformed branch name, dirty tree, etc.) is
+        // a real error — surface git's stderr.
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let combined = if stderr.trim().is_empty() {
+            stdout
+        } else {
+            stderr
+        };
+        return Err(MorphError::Other(format!(
+            "git merge failed: {}",
+            combined.trim()
+        )));
+    }
+
+    // Success path. Distinguish already-up-to-date / FF / merge by
+    // comparing pre/post HEAD and whether HEAD has multiple parents.
+    let post_head = git_head_sha(repo_root)?;
+    let stdout_text = String::from_utf8_lossy(&output.stdout).to_string();
+    if pre_head == post_head {
+        return Ok(GitMergeOutcome::AlreadyUpToDate);
+    }
+    let post = post_head.ok_or_else(|| {
+        MorphError::Other("git HEAD missing after successful merge".into())
+    })?;
+
+    // A merge commit has >= 2 parents; a fast-forward leaves HEAD at
+    // a single-parent commit (whatever `feature` already was). git's
+    // own stdout helpfully says "Fast-forward" for FF, but parsing the
+    // parent count is more robust.
+    let parent_count = git_parents(repo_root, &post)?.len();
+    if parent_count >= 2 {
+        Ok(GitMergeOutcome::Merged { new_head: post })
+    } else {
+        // Fall back to stdout sniffing only as a tiebreaker — single-
+        // parent post-HEAD is essentially always a fast-forward.
+        let _ = stdout_text;
+        Ok(GitMergeOutcome::FastForward { new_head: post })
+    }
+}
+
+/// Best-effort `git merge --abort` driver. Used by
+/// `morph merge --abort` (PR 11) to roll back a conflict-state merge.
+/// `MORPH_INTERNAL=1` is set so the post-merge hook stays out of the
+/// way. Tolerant of "no merge in progress" (returns `Ok(false)`) so
+/// the caller can clear breadcrumbs even when git's side is already
+/// clean.
+pub fn run_git_merge_abort_with_morph_internal(
+    repo_root: &Path,
+) -> Result<bool, MorphError> {
+    let merge_head_path = repo_root.join(".git").join("MERGE_HEAD");
+    if !merge_head_path.exists() {
+        return Ok(false);
+    }
+    let output = Command::new("git")
+        .current_dir(repo_root)
+        .arg("merge")
+        .arg("--abort")
+        .env("MORPH_INTERNAL", "1")
+        .output()
+        .map_err(|e| MorphError::Other(format!("failed to spawn git merge --abort: {}", e)))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        return Err(MorphError::Other(format!(
+            "git merge --abort failed: {}",
+            stderr.trim()
+        )));
+    }
+    Ok(true)
 }
 
 /// Snapshot of the git/morph relationship in reference mode. Used by

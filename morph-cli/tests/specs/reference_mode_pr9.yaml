@@ -1,0 +1,168 @@
+# PR 9: `morph merge` wraps `git merge` in reference mode.
+#
+# Symmetric with PR 5's `morph commit` wrapper. In reference mode,
+# `morph merge X` becomes the canonical command that drives both
+# stores: it runs the gate first, then `git merge X` (with
+# MORPH_INTERNAL=1 so morph hooks don't double-fire), then mirrors
+# the new git HEAD into morph with morph_origin = "cli".
+#
+# Plain `git merge` keeps working unchanged for git-only teammates;
+# the post-merge hook continues to mirror after the fact (PR 6).
+#
+# This PR covers the clean-merge cases: divergent merge with no
+# conflicts, fast-forward, already-up-to-date, and gate-rejection.
+# Conflict resolution lands in PR 11.
+
+# ── morph merge drives git merge end-to-end ──────────────────────────
+#
+# The most important case: divergent histories without conflicts.
+# After `morph merge feature`, BOTH git HEAD and morph HEAD must
+# point at a fresh merge commit, with the morph commit's
+# git_origin_sha matching git HEAD and morph_origin = "cli".
+
+- name: merge_in_reference_mode_drives_git_merge_and_mirrors
+  init: false
+  steps:
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    # Build a divergent feature branch with the morph hooks live.
+    - shell: |
+        git checkout -q -b feature
+        git commit --allow-empty -q -m 'feature work'
+        git checkout -q main
+        git commit --allow-empty -q -m 'main work'
+    # Capture pre-merge git HEAD so we can prove it advanced.
+    - shell: "git rev-parse HEAD > .morph/pre_merge_main.txt"
+    # The merge: morph drives git, then mirrors. No --pipeline /
+    # --metrics / -m needed — `morph merge X` synthesizes the
+    # message and delegates the commit to git.
+    - morph: [merge, feature]
+    # Git side advanced.
+    - shell: 'test "$(git rev-parse HEAD)" != "$(cat .morph/pre_merge_main.txt)"'
+    # Git HEAD has two parents — it really is a merge commit.
+    - shell: 'parents=$(git rev-list --parents -n 1 HEAD | wc -w | tr -d " "); test "$parents" = "3"'
+    # Morph HEAD mirrors git HEAD.
+    - morph: [head, --json]
+      stdout_contains:
+        - '"morph_origin": "cli"'
+    - shell: |
+        GIT_HEAD=$(git rev-parse HEAD)
+        morph head --json | grep -q "\"git_origin_sha\": \"$GIT_HEAD\""
+
+# ── fast-forward case advances both stores ───────────────────────────
+#
+# When `feature` is strictly ahead of `main`, `morph merge feature`
+# should fast-forward git AND advance morph's branch ref to the
+# matching morph commit. No new commit is created.
+
+- name: merge_in_reference_mode_fast_forward_advances_both_stores
+  init: false
+  steps:
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    - shell: |
+        git checkout -q -b feature
+        git commit --allow-empty -q -m 'feature v1'
+        git commit --allow-empty -q -m 'feature v2'
+        git checkout -q main
+    - shell: "git rev-parse feature > .morph/feature_tip.txt"
+    - morph: [merge, feature]
+      stdout_contains: "Fast-forwarded"
+    # Git main now points at feature tip.
+    - shell: 'test "$(git rev-parse HEAD)" = "$(cat .morph/feature_tip.txt)"'
+    # Morph head's git_origin_sha matches.
+    - shell: |
+        GIT_HEAD=$(git rev-parse HEAD)
+        morph head --json | grep -q "\"git_origin_sha\": \"$GIT_HEAD\""
+
+# ── already-up-to-date is a no-op ────────────────────────────────────
+#
+# If `feature` is an ancestor of HEAD (already merged), morph merge
+# must short-circuit with the "Already up to date" message and not
+# create a new git or morph commit.
+
+- name: merge_in_reference_mode_already_up_to_date_is_noop
+  init: false
+  steps:
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    # `feature` points at the same commit as `main`.
+    - shell: "git branch feature"
+    - shell: "git rev-parse HEAD > .morph/pre_merge_main.txt"
+    - morph: [merge, feature]
+      stdout_contains: "Already up to date"
+    # Git HEAD didn't move.
+    - shell: 'test "$(git rev-parse HEAD)" = "$(cat .morph/pre_merge_main.txt)"'
+
+# ── gate runs BEFORE git merge ───────────────────────────────────────
+#
+# When the user supplies merged metrics that would fail dominance,
+# the gate must reject the merge BEFORE any git commit lands. This
+# guarantees we never produce a stranded git merge commit that
+# morph then has to roll back.
+
+- name: merge_in_reference_mode_aborts_before_git_when_dominance_fails
+  init: false
+  files:
+    .morph/evals/suite.json: '{"cases":[],"metrics":[{"name":"tests_passed","aggregation":"mean","threshold":0.0,"direction":"maximize"}]}'
+  steps:
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    # Build a real eval suite so dominance has a metric to gate on.
+    # `morph add` parses files under `.morph/evals/` as EvalSuite
+    # objects (not blobs), so the resulting hash resolves to a real
+    # suite that `prepare_merge` can consume as the union.
+    - morph: [add, .morph/evals/suite.json]
+      capture_first_line: suite_hash
+    - shell: |
+        git checkout -q -b feature
+        git commit --allow-empty -q -m 'feature work'
+        git checkout -q main
+        git commit --allow-empty -q -m 'main work'
+    # Certify each branch tip with the suite at tests_passed = 10.
+    - morph: [certify, --commit, HEAD, --eval-suite, "${suite_hash}", --metrics, '{"tests_passed":10.0}']
+    - morph: [certify, --commit, "heads/feature", --eval-suite, "${suite_hash}", --metrics, '{"tests_passed":10.0}']
+    - morph: [show, HEAD]
+      capture_json_field:
+        var: pipe
+        field: pipeline
+    - shell: "git rev-parse HEAD > .morph/pre_merge_main.txt"
+    # Merged metrics regress on tests_passed (8 < 10) — must fail
+    # *before* the git merge runs.
+    - morph: [merge, feature, --pipeline, "${pipe}", --eval-suite, "${suite_hash}", --metrics, '{"tests_passed":8.0}', "-m", "merge feature"]
+      expect_exit: 1
+      stderr_contains: "rejected"
+    # Git HEAD did NOT advance — gate rejected before git ran.
+    - shell: 'test "$(git rev-parse HEAD)" = "$(cat .morph/pre_merge_main.txt)"'
+    # And there's no in-progress merge.
+    - shell: "test ! -f .git/MERGE_HEAD"
+
+# ── conflicts surface a clear "resolve and continue" message ─────────
+#
+# When `git merge` produces conflicts, PR 9 surfaces the right error
+# message and exits non-zero. Full stateful resolution + --continue
+# lands in PR 11; this spec just pins the contract that the conflict
+# path doesn't silently succeed or panic.
+
+- name: merge_in_reference_mode_conflicts_exit_nonzero_with_guidance
+  init: false
+  steps:
+    - shell: "git init -q -b main && git config user.email t@t && git config user.name t"
+    - shell: "echo one > shared.txt && git add shared.txt && git commit -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    # Divergent edits to the same line — guaranteed conflict.
+    - shell: |
+        git checkout -q -b feature
+        echo feature > shared.txt
+        git commit -aq -m 'feature edit'
+        git checkout -q main
+        echo main > shared.txt
+        git commit -aq -m 'main edit'
+    - morph: [merge, feature]
+      expect_exit: 1
+      stderr_contains: "conflict"

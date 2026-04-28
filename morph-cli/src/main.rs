@@ -451,6 +451,147 @@ fn print_trace_events(trace: &morph_core::objects::Trace) {
     }
 }
 
+/// PR 9: reference-mode `morph merge` wrapper. Symmetric with PR 5's
+/// `run_reference_commit` — `morph merge X` becomes the canonical
+/// way to merge in reference mode, driving `git merge` first (with
+/// `MORPH_INTERNAL=1` so morph hooks short-circuit) and then
+/// mirroring the resulting git HEAD into morph with
+/// `morph_origin = "cli"`. Plain `git merge` keeps working for
+/// teammates via the post-merge hook (PR 6).
+///
+/// PR 9 covers the clean-merge cases: divergent merge with no
+/// conflicts, fast-forward, already-up-to-date, and gate-rejection
+/// (the gate runs *before* git merge so a doomed merge never
+/// produces a stranded git commit). Conflict resolution is wired
+/// in PR 11.
+#[allow(clippy::too_many_arguments)]
+fn run_reference_merge(
+    store: &dyn morph_core::Store,
+    morph_dir: &std::path::Path,
+    repo_root: &std::path::Path,
+    branch: &str,
+    pipeline: Option<String>,
+    eval_suite: Option<String>,
+    metrics: Option<String>,
+    message: Option<String>,
+    _author: Option<String>,
+    retire: Option<String>,
+    retire_reason: Option<String>,
+) -> anyhow::Result<()> {
+    let _ = pipeline;
+    let version = read_repo_version(morph_dir)?;
+    let bare_branch = branch.strip_prefix("heads/").unwrap_or(branch);
+
+    ensure_reference_synced_for_merge(store, morph_dir, repo_root, branch)?;
+
+    let observed: Option<std::collections::BTreeMap<String, f64>> = metrics
+        .as_deref()
+        .map(serde_json::from_str)
+        .transpose()
+        .map_err(|e| anyhow::anyhow!("invalid --metrics JSON: {}", e))?;
+
+    let suite_hash_opt = eval_suite
+        .as_deref()
+        .map(|s| resolve_obj_hash(store, s))
+        .transpose()?;
+    let retired: Option<Vec<String>> = retire
+        .as_deref()
+        .map(|s| s.split(',').map(|m| m.trim().to_string()).collect());
+    let mut plan = morph_core::prepare_merge(
+        store,
+        bare_branch,
+        suite_hash_opt.as_ref(),
+        retired.as_deref(),
+    )?;
+    plan.retire_reason = retire_reason;
+    warn_when_no_morph_claim(store, &plan);
+
+    if let Some(ref obs) = observed {
+        let dominance = plan.check_dominance(obs);
+        if !dominance.passed {
+            let mut msg = String::from(
+                "merge rejected: merged metrics do not dominate both parents\n",
+            );
+            for v in &dominance.violations {
+                msg.push_str(&format!("  {}\n", v));
+            }
+            anyhow::bail!(msg.trim().to_string());
+        }
+    }
+
+    let merge_message = message
+        .clone()
+        .unwrap_or_else(|| format!("Merge branch '{}'", bare_branch));
+    // When the user provided -m, they want a real merge commit
+    // (otherwise the message would have nowhere to go). Without -m,
+    // let git fast-forward when it can — that mirrors `git merge`'s
+    // own UX exactly.
+    let no_ff = message.is_some();
+
+    let outcome = morph_core::run_git_merge_with_morph_internal(
+        repo_root,
+        bare_branch,
+        &merge_message,
+        no_ff,
+    )?;
+
+    match outcome {
+        morph_core::GitMergeOutcome::AlreadyUpToDate => {
+            println!("Already up to date.");
+            // Be defensive: make sure morph branch ref matches git's
+            // current HEAD even if it already did. No new commit.
+            morph_core::sync_to_head_with_origin(store, repo_root, "cli", Some(&version))?;
+        }
+        morph_core::GitMergeOutcome::FastForward { new_head } => {
+            morph_core::sync_to_head_with_origin(store, repo_root, "cli", Some(&version))?;
+            println!(
+                "Fast-forwarded to {}.",
+                &new_head[..new_head.len().min(12)]
+            );
+        }
+        morph_core::GitMergeOutcome::Merged { new_head } => {
+            let sync_outcome = morph_core::sync_to_head_with_origin(
+                store,
+                repo_root,
+                "cli",
+                Some(&version),
+            )?;
+            let new_morph = sync_outcome.new_commit.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "git merge {} did not produce a new morph commit",
+                    &new_head[..new_head.len().min(12)]
+                )
+            })?;
+            if let Some(obs) = observed {
+                let cert = morph_core::certify_commit(
+                    store, morph_dir, &new_morph, &obs, None, None,
+                )?;
+                if !cert.passed {
+                    eprintln!("warning: certification failed for {}:", new_morph);
+                    for f in &cert.failures {
+                        eprintln!("  {}", f);
+                    }
+                }
+            }
+            println!("{}", new_morph);
+        }
+        morph_core::GitMergeOutcome::Conflicts { paths } => {
+            eprintln!(
+                "Auto-merging failed for {} path{}; conflict markers written to disk.",
+                paths.len(),
+                if paths.len() == 1 { "" } else { "s" }
+            );
+            for p in &paths {
+                eprintln!("  conflict: {}", p);
+            }
+            eprintln!("Resolve the conflicts, then run `morph merge --continue`.");
+            anyhow::bail!("merge produced conflicts");
+        }
+    }
+
+    Ok(())
+}
+
 /// PR 7: Stowaway-mode pre-flight for `morph merge`. In reference
 /// mode, mirror any unmirrored git history for both the current
 /// branch (in case the user committed via plain `git commit` with
@@ -596,6 +737,30 @@ fn run_merge(
              or `morph merge resolve-node <id> --pick ours|theirs|base`)"
         )
     })?;
+
+    // PR 9: in reference mode, `morph merge X` becomes the canonical
+    // merge driver. It calls `git merge` with MORPH_INTERNAL=1 and
+    // mirrors after the fact, exactly mirroring PR 5's `morph commit`
+    // wrapper. Standalone repos keep the structural-merge code path
+    // below unchanged.
+    if matches!(
+        morph_core::read_repo_mode(&morph_dir)?,
+        morph_core::RepoMode::Reference
+    ) {
+        return run_reference_merge(
+            store.as_ref(),
+            &morph_dir,
+            &repo_root,
+            &branch,
+            pipeline,
+            eval_suite,
+            metrics,
+            message,
+            author,
+            retire,
+            retire_reason,
+        );
+    }
 
     ensure_reference_synced_for_merge(store.as_ref(), &morph_dir, &repo_root, &branch)?;
 
