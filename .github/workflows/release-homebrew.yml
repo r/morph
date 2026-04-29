@@ -86,9 +86,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-13
-            target: x86_64-apple-darwin
-            strip: strip
+          # Intel macOS (`macos-13`) is intentionally absent: GitHub-hosted
+          # x86_64 macOS runners on free accounts queue for hours and routinely
+          # never schedule, blocking the whole release. ARM Macs cover ~all
+          # current Apple hardware; Intel Mac users can build from source.
           - os: macos-14
             target: aarch64-apple-darwin
             strip: strip
@@ -132,7 +133,6 @@ jobs:
           ${{ matrix.strip }} "${bin_dir}/morph-mcp" || true
       - name: Smoke-test built morph (native targets only)
         if: |
-          matrix.target == 'x86_64-apple-darwin' && runner.arch == 'X64' ||
           matrix.target == 'aarch64-apple-darwin' && runner.arch == 'ARM64' ||
           matrix.target == 'x86_64-unknown-linux-gnu' && runner.arch == 'X64'
         shell: bash
@@ -247,12 +247,10 @@ jobs:
           publish_version="${{ needs.metadata.outputs.publish_version }}"
 
           arm_mac="morph-aarch64-apple-darwin.tar.gz"
-          intel_mac="morph-x86_64-apple-darwin.tar.gz"
           arm_linux="morph-aarch64-unknown-linux-gnu.tar.gz"
           intel_linux="morph-x86_64-unknown-linux-gnu.tar.gz"
 
           arm_mac_sha="$(cut -d' ' -f1 < "dist/${arm_mac}.sha256")"
-          intel_mac_sha="$(cut -d' ' -f1 < "dist/${intel_mac}.sha256")"
           arm_linux_sha="$(cut -d' ' -f1 < "dist/${arm_linux}.sha256")"
           intel_linux_sha="$(cut -d' ' -f1 < "dist/${intel_linux}.sha256")"
 
@@ -275,8 +273,7 @@ jobs:
                 url "${release_base}/${arm_mac}"
                 sha256 "${arm_mac_sha}"
               else
-                url "${release_base}/${intel_mac}"
-                sha256 "${intel_mac_sha}"
+                odie "morph does not currently ship Intel macOS binaries; install from source via 'cargo install --path morph-cli && cargo install --path morph-mcp'."
               end
             end
 
