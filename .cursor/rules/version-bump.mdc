@@ -36,7 +36,17 @@ While pre-1.0, treat minor as "feature" and patch as "fix".
    [workspace.package]
    version = "0.3.0"  # was 0.2.0
    ```
-2. That's it. All crates pick it up automatically. The build date is embedded at compile time.
+2. Add a matching entry to `CHANGELOG.md` at the repo root, using
+   the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format
+   (`Added` / `Changed` / `Fixed` / `Removed` / `Deprecated` /
+   `Security` / `Tests`). Move anything from `[Unreleased]` into the
+   new section, set the date, and update the comparison links at the
+   bottom of the file.
+3. If the change is worth surfacing publicly, mirror the new entry
+   into `site/changelog.html` (the site shows the three most recent
+   releases — drop the oldest one off if you're now showing four).
+4. That's it. All crates pick the version up automatically. The build
+   date is embedded at compile time.
 
 ## Version output format
 
@@ -49,5 +59,8 @@ The MCP server also reports its version in the `ServerInfo` response to clients.
 ## Checklist
 
 - [ ] Version bumped in workspace `Cargo.toml` for user-visible changes
+- [ ] `CHANGELOG.md` updated with a section for the new version (move
+  `[Unreleased]` items into it; update the comparison links at the bottom)
+- [ ] `site/changelog.html` updated if the entry should be public-facing
 - [ ] `cargo build` succeeds after the bump
 - [ ] Version appears correct in `morph --version` output

@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Changelog — Morph</title>
+  <meta name="description" content="Recent user-visible changes to Morph. Behavioral commits, evaluation gating, IDE adapters, reference mode, and the bugs we fixed along the way.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #fafbfb;
+      --bg-alt: #f0f5f4;
+      --fg: #0f1a1a;
+      --fg-muted: #3d5250;
+      --fg-subtle: #8a9e9b;
+      --accent: #0f766e;
+      --accent-light: #14b8a6;
+      --accent-bg: #ecfdf8;
+      --border: #d5e0de;
+      --border-soft: #e6ecea;
+      --max-width: 1080px;
+      --content-width: 760px;
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-mono: 'IBM Plex Mono', 'SF Mono', 'Menlo', monospace;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html { font-size: 17px; scroll-behavior: smooth; }
+
+    body {
+      font-family: var(--font-sans);
+      color: var(--fg);
+      background: var(--bg);
+      line-height: 1.7;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    code {
+      font-family: var(--font-mono);
+      font-size: 0.85em;
+      background: var(--bg-alt);
+      border: 1px solid var(--border-soft);
+      border-radius: 4px;
+      padding: 0.08em 0.4em;
+      color: var(--fg);
+    }
+
+    /* — Top nav — */
+    .topnav-wrap {
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      backdrop-filter: blur(8px);
+    }
+
+    nav.topnav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      max-width: var(--max-width);
+      margin: 0 auto;
+      padding: 1rem 2rem;
+    }
+
+    nav.topnav .logo {
+      font-weight: 700;
+      font-size: 1.15rem;
+      letter-spacing: -0.02em;
+      color: var(--fg);
+    }
+    nav.topnav .logo .crumb {
+      color: var(--fg-subtle);
+      font-weight: 500;
+      margin-left: 0.5rem;
+    }
+
+    nav.topnav .links {
+      display: flex;
+      gap: 1.75rem;
+      list-style: none;
+    }
+    nav.topnav .links a {
+      color: var(--fg-muted);
+      font-size: 0.9rem;
+      font-weight: 500;
+    }
+    nav.topnav .links a:hover { color: var(--accent); }
+
+    /* — Hero — */
+    .hero {
+      max-width: var(--max-width);
+      margin: 0 auto;
+      padding: 4.5rem 2rem 2rem;
+    }
+
+    .hero .eyebrow {
+      display: inline-block;
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent);
+      background: var(--accent-bg);
+      padding: 0.3rem 0.85rem;
+      border-radius: 100px;
+      margin-bottom: 1.25rem;
+    }
+
+    .hero h1 {
+      font-size: 2.5rem;
+      font-weight: 700;
+      letter-spacing: -0.025em;
+      line-height: 1.15;
+      margin-bottom: 1rem;
+      max-width: var(--content-width);
+    }
+
+    .hero p.lede {
+      font-size: 1.05rem;
+      color: var(--fg-muted);
+      max-width: var(--content-width);
+      line-height: 1.65;
+    }
+
+    .hero p.lede a { font-weight: 600; }
+
+    /* — Releases — */
+    .releases {
+      max-width: var(--max-width);
+      margin: 0 auto;
+      padding: 1.5rem 2rem 4rem;
+    }
+
+    .release {
+      max-width: var(--content-width);
+      padding: 2rem 0 2.5rem;
+      border-bottom: 1px solid var(--border-soft);
+    }
+
+    .release:last-of-type { border-bottom: none; }
+
+    .release header {
+      display: flex;
+      align-items: baseline;
+      flex-wrap: wrap;
+      gap: 0.85rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .release .version {
+      font-size: 1.55rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      font-family: var(--font-mono);
+      color: var(--fg);
+    }
+
+    .release .version .latest {
+      font-family: var(--font-sans);
+      font-size: 0.65rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+      background: var(--accent-bg);
+      border: 1px solid #99f6e4;
+      padding: 0.18rem 0.55rem;
+      border-radius: 100px;
+      margin-left: 0.55rem;
+      vertical-align: 4px;
+      font-weight: 600;
+    }
+
+    .release .date {
+      font-size: 0.85rem;
+      color: var(--fg-subtle);
+      font-family: var(--font-mono);
+    }
+
+    .release .summary {
+      font-size: 1rem;
+      color: var(--fg-muted);
+      line-height: 1.65;
+      margin-bottom: 1.5rem;
+    }
+
+    .release h3 {
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin: 1.5rem 0 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+
+    .release h3 .marker {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 2px;
+    }
+    .release h3.added .marker { background: #14b8a6; }
+    .release h3.changed .marker { background: #6366f1; }
+    .release h3.fixed .marker { background: #f59e0b; }
+    .release h3.tests .marker { background: #8b5cf6; }
+
+    .release ul {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0.7rem;
+      margin-left: 0;
+    }
+
+    .release ul li {
+      color: var(--fg-muted);
+      font-size: 0.95rem;
+      line-height: 1.6;
+      padding-left: 1.4rem;
+      position: relative;
+    }
+
+    .release ul li::before {
+      content: '–';
+      position: absolute;
+      left: 0;
+      top: 0;
+      color: var(--fg-subtle);
+      font-family: var(--font-mono);
+      font-weight: 500;
+    }
+
+    .release ul li strong {
+      color: var(--fg);
+      font-weight: 600;
+    }
+
+    /* — Older versions callout — */
+    .older {
+      max-width: var(--content-width);
+      margin: 1.5rem auto 0;
+      padding: 1.5rem 1.75rem;
+      background: var(--bg-alt);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+
+    .older h2 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      margin-bottom: 0.5rem;
+    }
+
+    .older p {
+      color: var(--fg-muted);
+      font-size: 0.95rem;
+      line-height: 1.6;
+    }
+
+    /* — Footer — */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 2.5rem 2rem;
+      text-align: center;
+      color: var(--fg-subtle);
+      font-size: 0.85rem;
+    }
+    footer a { color: var(--fg-muted); }
+    footer a:hover { color: var(--accent); }
+
+    @media (max-width: 720px) {
+      .hero { padding: 3rem 1.5rem 1.5rem; }
+      .hero h1 { font-size: 1.85rem; }
+      .releases { padding: 1rem 1.5rem 3rem; }
+      .release { padding: 1.5rem 0 2rem; }
+      .release .version { font-size: 1.3rem; }
+      nav.topnav { padding: 0.85rem 1.25rem; }
+      nav.topnav .links { gap: 1.25rem; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="topnav-wrap">
+    <nav class="topnav">
+      <a href="./" class="logo">morph<span class="crumb">/ changelog</span></a>
+      <ul class="links">
+        <li><a href="./">Home</a></li>
+        <li><a href="./tutorials/">Tutorials</a></li>
+        <li><a href="./changelog.html">Changelog</a></li>
+        <li><a href="https://github.com/r/morph">GitHub</a></li>
+      </ul>
+    </nav>
+  </div>
+
+  <section class="hero">
+    <span class="eyebrow">Changelog</span>
+    <h1>What's changed in Morph</h1>
+    <p class="lede">
+      The three most recent releases. Morph is alpha — the on-disk format
+      and CLI surface still move. Full history lives in
+      <a href="https://github.com/r/morph/blob/main/CHANGELOG.md">CHANGELOG.md</a>
+      in the repo, and the unabridged record is the
+      <a href="https://github.com/r/morph/commits/main">git log</a> itself.
+    </p>
+  </section>
+
+  <div class="releases">
+
+    <article class="release">
+      <header>
+        <span class="version">0.37.2 <span class="latest">Latest</span></span>
+        <span class="date">2026-04-29</span>
+      </header>
+      <p class="summary">
+        Project gets a proper changelog — both <code>CHANGELOG.md</code> in
+        the repo and this page on the website. Three most recent versions
+        live here; the codebase file grows with every release.
+      </p>
+
+      <h3 class="added"><span class="marker"></span>Added</h3>
+      <ul>
+        <li><code>CHANGELOG.md</code> at the repo root, following the
+          <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>
+          format.</li>
+        <li>This <code>/changelog.html</code> page on the site, mirroring the
+          three most recent entries.</li>
+        <li>Reminder in the version-bump rule to update the changelog when
+          bumping the workspace version.</li>
+      </ul>
+
+      <h3 class="changed"><span class="marker"></span>Changed</h3>
+      <ul>
+        <li>Homepage version badge bumped to <code>v0.37.2</code>; nav now
+          links to the changelog.</li>
+      </ul>
+    </article>
+
+    <article class="release">
+      <header>
+        <span class="version">0.37.1</span>
+        <span class="date">2026-04-28</span>
+      </header>
+      <p class="summary">
+        Two reference-mode bugs that compounded each other: multi-commit
+        fast-forward pulls were collapsing into one Morph mirror, and drift
+        detection was hiding it.
+      </p>
+
+      <h3 class="fixed"><span class="marker"></span>Fixed</h3>
+      <ul>
+        <li><strong>Reference mode, multi-commit fast-forward pulls.</strong>
+          <code>sync_to_head</code> used to mirror only the tip of a
+          multi-commit <code>git pull</code>, collapsing N new commits into a
+          single Morph mirror with the wrong parent edge. It now walks
+          first-parent ancestry back to the last-mirrored commit (or root)
+          and mirrors the unmirrored span in topo-forward order via a shared
+          <code>sync_range</code> helper that <code>backfill_from_init</code>
+          also uses.</li>
+        <li><strong>Reference mode, drift detection.</strong>
+          <code>drift_summary</code> returned <code>unmirrored_count = 0</code>
+          whenever the git <code>HEAD</code> itself was mirrored, silently
+          masking the multi-commit-pull bug above. The early-return is gone;
+          the walk is uniform from <code>HEAD</code> until either a mirrored
+          ancestor or a root, with the 10k-commit cap preserved.</li>
+      </ul>
+
+      <h3 class="tests"><span class="marker"></span>Tests</h3>
+      <ul>
+        <li>New acceptance suites:
+          <code>reference_mode_multi_commit_pull.yaml</code> (4 cases) and
+          <code>reference_mode_drift_topo.yaml</code> (3 cases). Workspace:
+          1119 / 1119 passing.</li>
+      </ul>
+    </article>
+
+    <article class="release">
+      <header>
+        <span class="version">0.37.0</span>
+        <span class="date">2026-04-28</span>
+      </header>
+      <p class="summary">
+        A workspace-wide audit-and-repair pass. Correctness fixes,
+        well-tested crates replacing hand-rolled equivalents, +20 tests, and
+        a documentation rewrite.
+      </p>
+
+      <h3 class="added"><span class="marker"></span>Added</h3>
+      <ul>
+        <li>20 new tests, including five <code>SshUrl</code> edge cases
+          (IPv6 brackets ± port, unbracketed IPv6 rejection, malformed
+          schemes, Windows drive letters), an agent instance-id 1000-id
+          uniqueness test, three <code>morph gc</code> acceptance specs,
+          eight <code>morph traces</code> specs covering every
+          <code>TracesCmd</code>, an <code>morph-mcp</code> read-only handler
+          smoke test, and a <code>reference_sync</code> error path.</li>
+      </ul>
+
+      <h3 class="changed"><span class="marker"></span>Changed</h3>
+      <ul>
+        <li><code>uuid</code> v4 replaces the hand-rolled
+          <code>generate_instance_id</code> (the old scheme packed
+          <code>time × pid</code> into 24 bits, ~16M id space; now slices 12
+          hex chars from a v4 UUID).</li>
+        <li><code>strip-ansi-escapes</code> replaces the hand-rolled CSI
+          scanner in <code>eval_parsers</code> — full terminal-escape
+          grammar instead of <code>ESC[</code>-only.</li>
+        <li><code>default_clone_dest</code> delegates to
+          <code>SshUrl::parse</code> so SSH/SCP/IPv6 forms share one
+          authoritative parser.</li>
+        <li>README, <code>v0-spec.md</code>, <code>MERGE.md</code>,
+          <code>EVAL-DRIVEN.md</code>, <code>SERVER-SETUP.md</code>,
+          <code>MULTI-MACHINE.md</code>, <code>reference-mode.md</code>, and
+          <code>TESTING.md</code> rewritten (not patched) for current
+          behavior.</li>
+      </ul>
+
+      <h3 class="fixed"><span class="marker"></span>Fixed</h3>
+      <ul>
+        <li><code>SshUrl::parse</code> handles bracketed IPv6 literals
+          (<code>ssh://user@[::1]:22/repo</code>) and rejects unbracketed
+          IPv6 instead of silently mis-splitting on the colon.</li>
+        <li><code>set_branch_upstream</code> no longer reads
+          <code>config.json</code> twice (TOCTOU + redundant IO).</li>
+        <li><code>init_morph_dir_at</code> propagates serde failures as
+          <code>MorphError::Serialization</code> instead of panicking via
+          <code>expect()</code> / <code>unwrap()</code>.</li>
+        <li><code>cli::run_merge</code> single-shot path uses an exhaustive
+          if-let-tuple instead of three coupled <code>.unwrap()</code>s on
+          pipeline / metrics / message.</li>
+      </ul>
+    </article>
+
+    <div class="older">
+      <h2>Older versions</h2>
+      <p>
+        See <a href="https://github.com/r/morph/blob/main/CHANGELOG.md">CHANGELOG.md</a>
+        in the repo for the rolling, longer-form history, or
+        <code>git log --grep '(0\.\|v0\.'</code> for the full record back to
+        <code>0.3.0</code>.
+      </p>
+    </div>
+
+  </div>
+
+  <footer>
+    <p>
+      Morph is in alpha — file issues and feedback at
+      <a href="https://github.com/r/morph/issues">github.com/r/morph/issues</a>.
+      <br>
+      <a href="./">← Back to home</a>
+    </p>
+  </footer>
+
+</body>
+</html>
