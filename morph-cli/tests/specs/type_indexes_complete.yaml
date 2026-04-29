@@ -1,0 +1,93 @@
+# 0.37.4 fixed the certify-prefix hang. 0.37.5 fixed the
+# status/eval-gaps hang. Both were instances of a broader bug: any
+# call site of `Store::list(<unindexed type>)` walked the whole object
+# fanout and JSON-deserialized every object just to filter by type.
+# 0.37.6 closes the remaining surface area by giving every top-level
+# type a dedicated `.morph/<type>/` index dir, maintained by
+# `Store::put` and rebuilt lazily on first use for legacy stores.
+#
+# These cases pin the user-visible side of that contract: after a
+# normal init + add + commit cycle, the new index dirs (`blobs/`,
+# `trees/`, `pipelines/`, `commits/`, `artifacts/`, `trace_rollups/`)
+# all exist with at least their `.indexed` marker file. The
+# morph-core unit tests
+# (`list_every_type_uses_index_not_get`,
+#  `list_legacy_store_rebuilds_every_missing_type_index_in_one_walk`,
+#  `type_index_files_are_markers_for_new_types_full_content_for_legacy`,
+#  `prompt_blob_lands_in_both_blobs_and_prompts_indexes`)
+# cover the perf contract directly; this suite proves the dirs
+# actually materialize via the CLI happy path.
+
+- name: every_type_index_dir_materializes_on_first_use
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "initial", --allow-empty-metrics]
+    # Anything that calls `Store::list(t)` for any indexed type will
+    # trigger the lazy rebuild and drop `.indexed` markers in every
+    # type-index dir simultaneously. `morph status` always lists
+    # annotations (via `list_stale_certifications`), so it's a
+    # reliable trigger.
+    - morph: [status]
+    - shell: 'test -f .morph/blobs/.indexed'
+    - shell: 'test -f .morph/trees/.indexed'
+    - shell: 'test -f .morph/commits/.indexed'
+    - shell: 'test -f .morph/pipelines/.indexed'
+    - shell: 'test -f .morph/artifacts/.indexed'
+    - shell: 'test -f .morph/trace_rollups/.indexed'
+    # Pre-existing indexes also pick up the marker.
+    - shell: 'test -f .morph/runs/.indexed'
+    - shell: 'test -f .morph/traces/.indexed'
+    - shell: 'test -f .morph/evals/.indexed'
+    - shell: 'test -f .morph/annotations/.indexed'
+    # Blobs surface in the new `blobs/` index — at minimum the file
+    # we added (a.txt) plus its parent tree.
+    - shell: 'test "$(ls .morph/blobs/*.json 2>/dev/null | wc -l | tr -d " ")" -ge 1'
+    - shell: 'test "$(ls .morph/trees/*.json 2>/dev/null | wc -l | tr -d " ")" -ge 1'
+    - shell: 'test "$(ls .morph/commits/*.json 2>/dev/null | wc -l | tr -d " ")" -ge 1'
+
+- name: new_type_index_files_are_zero_byte_markers
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "initial", --allow-empty-metrics]
+    - morph: [status]
+    # On a 33 GB blob-heavy store, copying every blob into
+    # `.morph/blobs/` would double disk usage. The new indexes use
+    # zero-byte marker files: `<hash>.json` exists (so `read_dir`
+    # still surfaces it) but contains nothing.
+    - shell: |
+        set -e
+        first_blob_idx=$(ls .morph/blobs/*.json 2>/dev/null | head -1)
+        test -n "$first_blob_idx"
+        test ! -s "$first_blob_idx"
+    - shell: |
+        set -e
+        first_tree_idx=$(ls .morph/trees/*.json 2>/dev/null | head -1)
+        test -n "$first_tree_idx"
+        test ! -s "$first_tree_idx"
+    - shell: |
+        set -e
+        first_commit_idx=$(ls .morph/commits/*.json 2>/dev/null | head -1)
+        test -n "$first_commit_idx"
+        test ! -s "$first_commit_idx"
+
+- name: status_does_not_count_indexed_marker_as_run
+  files:
+    a.txt: "hello"
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "initial", --allow-empty-metrics]
+    # Trigger the lazy rebuild — this drops a `.indexed` marker in
+    # `runs/` even on a freshly-init'd repo with zero runs.
+    - morph: [status]
+    # `morph status` summary must NOT say "Morph activity: 1 run"
+    # just because the marker file exists. count_dir_entries was
+    # widened in 0.37.6 to filter on `*.json`. With no runs recorded,
+    # the activity line is suppressed entirely; "Eval suite:" is the
+    # next line that always appears.
+    - morph: [status]
+      stdout_contains: "Eval suite:"
+      stdout_not_contains: "Morph activity"

@@ -561,8 +561,14 @@ fn then_all_agents_succeeded(w: &mut MorphWorld) {
 fn then_repo_has_n_run_records(w: &mut MorphWorld, n: u32) {
     let root = w.repo_root();
     let runs_dir = root.join(".morph/runs");
+    // Filter to `*.json` so the `.indexed` marker file (0.37.6+
+    // lazy-rebuild bookkeeping) doesn't inflate the count.
     let count = std::fs::read_dir(&runs_dir)
-        .map(|rd| rd.count())
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
+                .count()
+        })
         .unwrap_or(0);
     assert_eq!(
         count as u32,

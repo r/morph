@@ -259,8 +259,18 @@ pub fn activity_summary(_store: &dyn Store, repo_root: &Path) -> Result<Activity
 }
 
 fn count_dir_entries(dir: &Path) -> usize {
+    // Filter to `*.json` so the `.indexed` marker file dropped by the
+    // 0.37.6 lazy-rebuild path doesn't inflate the count. Real index
+    // entries are always `<hash>.json`; anything else is bookkeeping.
     std::fs::read_dir(dir)
-        .map(|rd| rd.filter_map(|e| e.ok()).filter(|e| e.path().is_file()).count())
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .filter(|e| {
+                    e.path().is_file()
+                        && e.path().extension().and_then(|x| x.to_str()) == Some("json")
+                })
+                .count()
+        })
         .unwrap_or(0)
 }
 

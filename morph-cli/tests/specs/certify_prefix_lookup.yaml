@@ -1,0 +1,56 @@
+# `morph certify --commit <prefix>` must resolve a short hash prefix
+# without scanning every object in the store. Before the fix in 0.37.4,
+# `resolve_hash_prefix` iterated all 10 object types and called
+# `store.list(t)` for each — for the 7 types without a type index,
+# `fs_list` walked the whole fanout and deserialized every object.
+# On a repo with even a few hundred objects this looked like a hang.
+#
+# These cases populate the store with multiple commits and runs (so the
+# fanout has many entries), then certify by short hex prefix and assert
+# the call succeeds. Combined with the morph-core unit test
+# `resolve_hash_prefix_does_not_deserialize_objects`, this nails the
+# behavior down: short-prefix certify works, and it doesn't read every
+# object on the way there.
+
+- name: certify_resolves_short_prefix_with_many_objects
+  files:
+    a.txt: "v1"
+    metrics.json: '{"acc": 0.95}'
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "c1", --json, --allow-empty-metrics]
+      capture_json_field:
+        var: target_hash
+        field: hash
+    # Generate a bunch of additional objects (commits + runs + traces +
+    # blobs) so the prefix lookup has real surface area to cover.
+    - morph: [run, record-session, --prompt, "p1", --response, "r1"]
+    - morph: [run, record-session, --prompt, "p2", --response, "r2"]
+    - morph: [run, record-session, --prompt, "p3", --response, "r3"]
+    - write_file: { path: a.txt, content: "v2" }
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "c2", --allow-empty-metrics]
+    - write_file: { path: a.txt, content: "v3" }
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "c3", --allow-empty-metrics]
+    - morph: [run, record-session, --prompt, "p4", --response, "r4"]
+    - morph: [run, record-session, --prompt, "p5", --response, "r5"]
+    # Certify the original commit by an 8-char prefix. This must succeed
+    # without scanning the whole store.
+    - morph: [certify, --metrics-file, metrics.json, --commit, "${target_hash:.8}"]
+      stdout_contains: "PASS"
+
+- name: certify_resolves_12char_prefix
+  files:
+    a.txt: "hello"
+    metrics.json: '{"acc": 0.99}'
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "initial", --json, --allow-empty-metrics]
+      capture_json_field:
+        var: commit_hash
+        field: hash
+    - morph: [run, record-session, --prompt, "x", --response, "y"]
+    - morph: [run, record-session, --prompt, "x2", --response, "y2"]
+    - morph: [certify, --metrics-file, metrics.json, --commit, "${commit_hash:.12}"]
+      stdout_contains: "PASS"

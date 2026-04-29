@@ -212,6 +212,7 @@
     .release h3.changed .marker { background: #6366f1; }
     .release h3.fixed .marker { background: #f59e0b; }
     .release h3.tests .marker { background: #8b5cf6; }
+    .release h3.ci .marker { background: #0ea5e9; }
 
     .release ul {
       list-style: none;
@@ -319,110 +320,138 @@
 
     <article class="release">
       <header>
-        <span class="version">0.37.3 <span class="latest">Latest</span></span>
+        <span class="version">0.37.7 <span class="latest">Latest</span></span>
         <span class="date">2026-04-29</span>
       </header>
       <p class="summary">
-        <code>morph eval gaps</code> now reports stale certifications as a
-        structured gap, so agents and CI can detect rebase-rotted evidence
-        programmatically — not just from the human-readable
-        <code>morph status</code> line.
+        Every <code>Store::list(t)</code> on <code>FsStore</code> is now a
+        directory read instead of a whole-store walk. The latent hang that
+        bit <code>certify</code>, then <code>status</code> + <code>eval
+        gaps</code>, is closed at the source: every top-level object type
+        finally has a per-type index dir.
       </p>
 
       <h3 class="fixed"><span class="marker"></span>Fixed</h3>
       <ul>
-        <li><strong><code>morph eval gaps</code> surfaces stale
-          certifications.</strong> When a morph commit was certified and a
-          subsequent <code>git commit --amend</code> or
-          <code>git rebase</code> attached a <code>kind: "rewritten"</code>
-          annotation, <code>morph status</code> printed a one-line
-          <code>stale certification: N</code> summary but the structured
-          <code>morph eval gaps --json</code> output was silent. The new
-          <code>stale_certifications</code> gap entry carries
-          <code>kind</code>, <code>count</code>, a <code>commits</code>
-          array of affected morph hashes, and a hint pointing at
-          <code>morph certify --commit &lt;successor&gt; --metrics ...</code>.
-          Mode-agnostic — fires in standalone repos too whenever both
-          annotation kinds end up on the same commit.</li>
+        <li><strong>Type indexes for <code>Blob</code>, <code>Tree</code>,
+          <code>Pipeline</code>, <code>Commit</code>, <code>Artifact</code>,
+          <code>TraceRollup</code>.</strong> These were the last unindexed
+          top-level types and the last latent versions of the same hang
+          we'd patched twice already — anything that ever called
+          <code>list(<that-type>)</code> walked the whole object fanout
+          and JSON-deserialized every object just to filter by type.
+          Each type now has a dedicated <code>&lt;type&gt;/</code> index
+          dir maintained by <code>Store::put</code>. Newly indexed types
+          use zero-byte marker files so a 33 GB blob-heavy store doesn't
+          double when <code>blobs/</code> materializes; the five legacy
+          indexes (<code>runs/</code>, <code>traces/</code>,
+          <code>evals/</code>, <code>prompts/</code>,
+          <code>annotations/</code>) keep their full-content format
+          because at least one fallback path (<code>morph tap</code>)
+          reads from them. Legacy stores rebuild every missing index in
+          a single fanout pass on first use, so whichever
+          <code>list</code> call happens first amortizes the cost for
+          all subsequent <code>list</code> calls of every type.</li>
       </ul>
 
       <h3 class="tests"><span class="marker"></span>Tests</h3>
       <ul>
-        <li>New acceptance suite
-          <code>eval_gaps_stale_certifications.yaml</code> (3 cases)
-          covering the reference-mode amend path, the audit-trail
-          invariant that re-certifying the successor does not
-          retroactively clear the gap, and the standalone-mode
-          equivalent.</li>
+        <li>Five new unit tests pin the contract end-to-end: every type
+          uses the index (no <code>get()</code> calls), Pipeline gets its
+          own fixture, legacy stores rebuild every missing index in one
+          walk, the new types use zero-byte markers while the legacy
+          types keep full content, and a prompt blob lands in both
+          <code>blobs/</code> and <code>prompts/</code>. Two
+          <code>read_dir</code> consumers (<code>activity_summary</code>'s
+          counter and the cucumber run-record assertion) now filter on
+          <code>*.json</code> so the <code>.indexed</code> marker doesn't
+          inflate counts.</li>
       </ul>
     </article>
 
     <article class="release">
       <header>
-        <span class="version">0.37.2</span>
+        <span class="version">0.37.6</span>
         <span class="date">2026-04-29</span>
       </header>
       <p class="summary">
-        Project gets a proper changelog — both <code>CHANGELOG.md</code> in
-        the repo and this page on the website. Three most recent versions
-        live here; the codebase file grows with every release.
+        Homepage now leads with a copy-able <code>brew tap r/morph</code> /
+        <code>brew install morph</code> block in the hero, so macOS visitors
+        can go from "land on the page" to "actually trying Morph" in two
+        commands. Source-build path moves to a clearly-labelled fallback.
       </p>
-
-      <h3 class="added"><span class="marker"></span>Added</h3>
-      <ul>
-        <li><code>CHANGELOG.md</code> at the repo root, following the
-          <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>
-          format.</li>
-        <li>This <code>/changelog.html</code> page on the site, mirroring the
-          three most recent entries.</li>
-        <li>Reminder in the version-bump rule to update the changelog when
-          bumping the workspace version.</li>
-      </ul>
 
       <h3 class="changed"><span class="marker"></span>Changed</h3>
       <ul>
-        <li>Homepage version badge bumped to <code>v0.37.2</code>; nav now
-          links to the changelog.</li>
+        <li><strong>Hero install block on <code>site/index.html</code>.</strong>
+          A new copy-able terminal panel sits above the CTA buttons with
+          <code>brew tap r/morph</code> and <code>brew install morph</code>,
+          plus a click-to-copy button and a footnote linking to the
+          source-build path for non-macOS users. The
+          <code>#install</code> section was rewritten to lead with the
+          Homebrew path; <code>cargo install --path …</code> is kept as the
+          cross-platform fallback rather than the only option.</li>
+      </ul>
+
+      <h3 class="ci"><span class="marker"></span>CI</h3>
+      <ul>
+        <li><strong>Releases auto-tag from <code>Cargo.toml</code>.</strong>
+          A new <code>.github/workflows/auto-tag.yml</code> watches the
+          workspace version on <code>main</code>; when it advances to a
+          value that has not yet been tagged on origin, the workflow
+          creates <code>vX.Y.Z</code> (annotated) and dispatches
+          <code>release-homebrew.yml</code> against that tag. Cutting a
+          release is now "bump <code>Cargo.toml</code>, push to
+          <code>main</code>" — no more manual
+          <code>git tag &amp;&amp; git push origin &lt;tag&gt;</code>.</li>
       </ul>
     </article>
 
     <article class="release">
       <header>
-        <span class="version">0.37.1</span>
-        <span class="date">2026-04-28</span>
+        <span class="version">0.37.5</span>
+        <span class="date">2026-04-29</span>
       </header>
       <p class="summary">
-        Two reference-mode bugs that compounded each other: multi-commit
-        fast-forward pulls were collapsing into one Morph mirror, and drift
-        detection was hiding it.
+        <code>morph status</code> and <code>morph eval gaps</code> no longer
+        hang on stores with many objects. Annotations finally get a per-type
+        index dir, so listing them is a directory read instead of a full
+        store walk.
       </p>
 
       <h3 class="fixed"><span class="marker"></span>Fixed</h3>
       <ul>
-        <li><strong>Reference mode, multi-commit fast-forward pulls.</strong>
-          <code>sync_to_head</code> used to mirror only the tip of a
-          multi-commit <code>git pull</code>, collapsing N new commits into a
-          single Morph mirror with the wrong parent edge. It now walks
-          first-parent ancestry back to the last-mirrored commit (or root)
-          and mirrors the unmirrored span in topo-forward order via a shared
-          <code>sync_range</code> helper that <code>backfill_from_init</code>
-          also uses.</li>
-        <li><strong>Reference mode, drift detection.</strong>
-          <code>drift_summary</code> returned <code>unmirrored_count = 0</code>
-          whenever the git <code>HEAD</code> itself was mirrored, silently
-          masking the multi-commit-pull bug above. The early-return is gone;
-          the walk is uniform from <code>HEAD</code> until either a mirrored
-          ancestor or a root, with the 10k-commit cap preserved.</li>
+        <li><strong><code>morph status</code> and <code>morph eval gaps</code>
+          got the same treatment as <code>certify</code>.</strong> Both call
+          <code>list_stale_certifications</code>, which calls
+          <code>Store::list(ObjectType::Annotation)</code>. Annotations were
+          the only top-level object type without a per-type index dir, so on
+          <code>FsStore</code> the call walked the entire object fanout and
+          JSON-deserialized every object just to filter by type — about
+          two minutes per invocation on a 94k-object / 33 GB store.
+          Annotations now have an <code>annotations/</code> index dir
+          maintained by <code>put</code>; legacy stores trigger a one-shot
+          lazy rebuild on first use and drop an <code>.indexed</code> marker
+          so subsequent calls hit the fast path. Verified on the
+          bug-surfacing repo: first call pays the ~2 min rebuild once;
+          second call <strong>0.18 s</strong> (~600× speedup),
+          <code>morph status</code> <strong>0.17 s</strong>.</li>
       </ul>
 
       <h3 class="tests"><span class="marker"></span>Tests</h3>
       <ul>
-        <li>New acceptance suites:
-          <code>reference_mode_multi_commit_pull.yaml</code> (4 cases) and
-          <code>reference_mode_drift_topo.yaml</code> (3 cases). Workspace:
-          1119 / 1119 passing.</li>
+        <li>Three new unit tests pin the contract: legacy stores rebuild
+          the index on first <code>list(Annotation)</code>; once the
+          marker is in place, even a poison file in the object fanout
+          can't perturb the result; the rebuild correctly filters
+          annotations away from noise blobs. New acceptance suite
+          <code>annotations_indexed.yaml</code> (3 cases) covers
+          <code>certify</code> populating the index, <code>status</code>
+          rendering cleanly, and <code>eval gaps</code> succeeding on a
+          certified branch.</li>
       </ul>
     </article>
+
 
     <div class="older">
       <h2>Older versions</h2>

@@ -211,6 +211,96 @@
       color: var(--accent);
     }
 
+    /* — Hero install block — */
+    .hero-install {
+      position: relative;
+      max-width: 480px;
+      width: 100%;
+      margin: 0 auto 2rem;
+      padding: 1.1rem 1.4rem 1.05rem;
+      background: var(--code-bg);
+      border-radius: 12px;
+      border: 1px solid rgba(94, 234, 212, 0.16);
+      box-shadow: 0 14px 40px -18px rgba(15, 118, 110, 0.55);
+      font-family: var(--font-mono);
+      text-align: left;
+      color: var(--code-fg);
+    }
+
+    .hero-install .label {
+      display: block;
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      letter-spacing: 0.09em;
+      color: var(--code-comment);
+      font-weight: 500;
+      margin-bottom: 0.55rem;
+    }
+
+    .hero-install .line {
+      display: block;
+      font-size: 0.95rem;
+      line-height: 1.65;
+      white-space: nowrap;
+      overflow-x: auto;
+    }
+
+    .hero-install .prompt {
+      color: var(--code-keyword);
+      user-select: none;
+      margin-right: 0.55rem;
+    }
+
+    .hero-install .cmd {
+      color: var(--code-fg);
+    }
+
+    .hero-install .footnote {
+      display: block;
+      font-family: var(--font-sans);
+      font-size: 0.78rem;
+      color: var(--code-comment);
+      margin-top: 0.7rem;
+      line-height: 1.5;
+    }
+
+    .hero-install .footnote a {
+      color: var(--code-keyword);
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    .hero-install .footnote a:hover { text-decoration: underline; }
+
+    .hero-install .copy-btn {
+      position: absolute;
+      top: 0.7rem;
+      right: 0.7rem;
+      background: rgba(94, 234, 212, 0.08);
+      border: 1px solid rgba(94, 234, 212, 0.28);
+      color: var(--code-keyword);
+      font-family: var(--font-mono);
+      font-size: 0.65rem;
+      font-weight: 500;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 0.32rem 0.65rem;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+    }
+
+    .hero-install .copy-btn:hover {
+      background: rgba(94, 234, 212, 0.18);
+      border-color: rgba(94, 234, 212, 0.55);
+    }
+
+    .hero-install .copy-btn.copied {
+      background: rgba(134, 239, 172, 0.18);
+      border-color: rgba(134, 239, 172, 0.55);
+      color: var(--code-string);
+    }
+
     /* — Section — */
     section {
       max-width: var(--max-width);
@@ -673,7 +763,7 @@
   </div>
 
   <nav>
-    <a href="./" class="logo">morph<span class="version">v0.37.3 &middot; alpha</span></a>
+    <a href="./" class="logo">morph<span class="version">v0.37.7 &middot; alpha</span></a>
     <ul class="links">
       <li><a href="#problem">Problem</a></li>
       <li><a href="#solution">Thesis</a></li>
@@ -688,7 +778,7 @@
 
   <!-- Hero -->
   <div class="hero">
-    <span class="badge">Alpha &middot; v0.37.3 &middot; Research prototype</span>
+    <span class="badge">Alpha &middot; v0.37.7 &middot; Research prototype</span>
     <h1>Git for <em>AI-assisted</em> development</h1>
     <p class="subtitle">
       Morph is a version control system that records every agent session as an immutable
@@ -697,6 +787,15 @@
       It's an open research prototype. <strong style="color: var(--fg);">We're building it in
       the open and we want your help.</strong>
     </p>
+
+    <div class="hero-install" id="hero-install">
+      <span class="label">Install on macOS</span>
+      <span class="line"><span class="prompt">$</span><span class="cmd">brew tap r/morph</span></span>
+      <span class="line"><span class="prompt">$</span><span class="cmd">brew install morph</span></span>
+      <span class="footnote">Installs both <code>morph</code> and <code>morph-mcp</code>. <a href="#install">Other platforms &rarr;</a></span>
+      <button class="copy-btn" type="button" data-copy="brew tap r/morph&#10;brew install morph" aria-label="Copy install commands">Copy</button>
+    </div>
+
     <div class="cta-group">
       <a href="#install" class="btn btn-primary">Try the alpha</a>
       <a href="./tutorials/getting-started.html" class="btn btn-secondary">Walk the tutorial</a>
@@ -889,7 +988,7 @@
       <p class="section-label">Try the Alpha</p>
       <h2>Zero to recording in three commands</h2>
       <p class="lead">
-        Build the two binaries (<code>morph</code> and <code>morph-mcp</code>), initialize
+        Install the two binaries (<code>morph</code> and <code>morph-mcp</code>), initialize
         a Morph repo in your project, and wire up your IDE. Morph runs side-by-side with
         Git &mdash; commits in one are independent of commits in the other.
         <strong style="color: var(--fg);">Heads-up:</strong> this is alpha software.
@@ -899,7 +998,11 @@
       </p>
 
       <div class="cli-block">
-        <span class="comment"># 1. Build and install the binaries</span><br>
+        <span class="comment"># 1. Install the binaries (macOS via Homebrew &mdash; recommended)</span><br>
+        <span class="prompt">$ </span><span class="cmd">brew tap r/morph</span><br>
+        <span class="prompt">$ </span><span class="cmd">brew install morph</span>&nbsp;&nbsp;<span class="comment"># installs both `morph` and `morph-mcp`</span><br>
+        <br>
+        <span class="comment"># &hellip; or build from source (any platform with Rust)</span><br>
         <span class="prompt">$ </span><span class="cmd">git clone https://github.com/r/morph.git &amp;&amp; cd morph</span><br>
         <span class="prompt">$ </span><span class="cmd">cargo install <span class="flag">--path</span> morph-cli &amp;&amp; cargo install <span class="flag">--path</span> morph-mcp</span><br>
         <br>
@@ -1112,6 +1215,44 @@
       What changed lately? <a href="./changelog.html">Read the changelog.</a>
     </p>
   </footer>
+
+  <script>
+    document.querySelectorAll('.copy-btn[data-copy]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var text = btn.getAttribute('data-copy') || '';
+        var done = function () {
+          var original = btn.textContent;
+          btn.textContent = 'Copied';
+          btn.classList.add('copied');
+          setTimeout(function () {
+            btn.textContent = original;
+            btn.classList.remove('copied');
+          }, 1500);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done).catch(function () {
+            // Fallback for older browsers / non-secure contexts.
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.setAttribute('readonly', '');
+            ta.style.position = 'absolute';
+            ta.style.left = '-9999px';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); done(); } catch (e) { /* ignore */ }
+            document.body.removeChild(ta);
+          });
+        } else {
+          var ta = document.createElement('textarea');
+          ta.value = text;
+          document.body.appendChild(ta);
+          ta.select();
+          try { document.execCommand('copy'); done(); } catch (e) { /* ignore */ }
+          document.body.removeChild(ta);
+        }
+      });
+    });
+  </script>
 
 </body>
 </html>

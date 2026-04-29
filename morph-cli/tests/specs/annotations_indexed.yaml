@@ -1,0 +1,61 @@
+# `morph status` and `morph eval gaps` both call
+# `list_stale_certifications`, which used to scan every object on disk
+# looking for annotation objects (no per-type index). On a real-world
+# 94k-object / 33 GB store that turned both commands into multi-minute
+# hangs. Starting in 0.37.5, annotations get a per-type index dir
+# (`.morph/annotations/`) maintained by `put`, plus a one-shot lazy
+# rebuild on legacy stores.
+#
+# These cases check the user-visible contracts:
+#   1. Issuing a certification populates the annotations/ index.
+#   2. After indexing, morph status and morph eval gaps both stay
+#      correct (no false positives, no missed annotations).
+# The morph-core unit tests
+# (`list_annotation_lazily_builds_index_on_legacy_store`,
+#  `list_annotation_after_marker_does_not_deserialize_objects`,
+#  `list_annotation_filters_to_annotations_only_after_rebuild`)
+# cover the perf contract directly.
+
+- name: certify_populates_annotations_index
+  files:
+    a.txt: "hello"
+    metrics.json: '{"acc": 0.95, "tests_passed": 1}'
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "initial", --allow-empty-metrics]
+    - morph: [certify, --metrics-file, metrics.json]
+      stdout_contains: "PASS"
+    # The certification annotation must end up in the index dir,
+    # not just the object fanout.
+    - shell: 'test -d .morph/annotations && ls .morph/annotations/*.json | head -1'
+    - shell: 'ls .morph/annotations/*.json | wc -l | grep -E "^\s*1\s*$"'
+
+- name: status_succeeds_after_certifications
+  files:
+    a.txt: "v1"
+    metrics.json: '{"acc": 0.95, "tests_passed": 1}'
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "c1", --allow-empty-metrics]
+    - morph: [certify, --metrics-file, metrics.json]
+    - write_file: { path: a.txt, content: "v2" }
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "c2", --allow-empty-metrics]
+    - morph: [certify, --metrics-file, metrics.json]
+    # `morph status` should render cleanly with certifications
+    # indexed (no hang, no incorrect output). The "Eval suite:" line
+    # is emitted unconditionally and only after the certification
+    # walk completes, so it's a reliable proof-of-completion marker.
+    - morph: [status]
+      stdout_contains: "Eval suite:"
+
+- name: eval_gaps_succeeds_after_certifications
+  files:
+    a.txt: "hello"
+    metrics.json: '{"acc": 0.95, "tests_passed": 1}'
+  steps:
+    - morph: [add, a.txt]
+    - morph: [commit, -m, "initial", --allow-empty-metrics]
+    - morph: [certify, --metrics-file, metrics.json]
+    - morph: [eval, gaps, --json]
+      stdout_contains: "gaps"
