@@ -1,0 +1,93 @@
+# Drift summary topology coverage: `drift_summary` must report
+# `unmirrored_count` based on the actual topo walk from git HEAD, not
+# on a HEAD-only cache lookup. See Bug 2 in
+# `morph-core/src/reference.rs::drift_summary`.
+#
+# Symptom before the fix: an early-return `cache.contains_key(&head)`
+# returned `unmirrored_count = 0` whenever git HEAD itself was
+# mirrored — even when intermediate first-parent ancestors were
+# silently missing. Combined with Bug 1 (sync_to_head only mirrored
+# HEAD on a multi-commit pull), `morph status` and `morph eval gaps`
+# would both report "up to date" while N − 1 commits had no morph
+# mirror at all.
+#
+# After the fix, drift_summary walks first-parent ancestry from HEAD
+# until either it hits a mirrored ancestor or it reaches a root, and
+# the count is the number of unmirrored commits along the way.
+
+- name: status_reports_drift_count_when_intermediate_commits_unmirrored
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'v1'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    # Stack 5 git commits with the post-commit hook suppressed so
+    # none of them get mirrored. With Bug 2 in place, drift_summary
+    # would still walk correctly here (HEAD itself isn't in the
+    # cache), but this case pins the topo-walk invariant: the count
+    # equals the number of unmirrored first-parent ancestors between
+    # HEAD and the last mirrored commit.
+    - shell: |
+        for i in 2 3 4 5 6; do
+          MORPH_INTERNAL=1 git commit --allow-empty -q -m "v$i"
+        done
+    - morph: [status]
+      stdout_contains:
+        - "5 unmirrored git commit"
+    - morph: [eval, gaps, --json]
+      stdout_contains:
+        - "git_morph_drift"
+        - '"unmirrored_count": 5'
+
+- name: drift_clears_after_reference_sync_walks_back_to_last_mirrored
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'v1'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    - shell: |
+        for i in 2 3 4 5 6; do
+          MORPH_INTERNAL=1 git commit --allow-empty -q -m "v$i"
+        done
+    # Before the fix, this would mirror only v6 (Bug 1). After the
+    # fix it walks back and mirrors v2..v6, after which drift is 0
+    # and status correctly reports "up to date".
+    - morph: [reference-sync]
+    - morph: [status]
+      stdout_contains: "up to date"
+    - morph: [eval, gaps, --json]
+      stdout_not_contains: "git_morph_drift"
+
+# When git HEAD itself is mirrored but intermediate ancestors aren't,
+# the drift count must still be > 0. This is the strict Bug 2
+# scenario — without Fix 1 it would arise after a multi-commit FF
+# pull; with Fix 1 it can only arise via tools that bypass our hooks
+# (e.g. an out-of-band Morph mirror script that writes only HEAD).
+# We construct it here by mirroring v1 with backfill, advancing git
+# past v2..v5 with the hook suppressed, then mirroring v6 alone via
+# an isolated `morph reference-sync` against a state where v2..v5
+# never got synced. After Fix 1 the same `reference-sync` mirrors
+# everything, so we observe the post-fix correct behavior: drift = 0
+# and every commit is reachable from HEAD's morph mirror.
+
+- name: reference_sync_after_multi_commit_drift_yields_consistent_topology
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'v1'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    - shell: |
+        for i in 2 3 4 5 6; do
+          MORPH_INTERNAL=1 git commit --allow-empty -q -m "v$i"
+        done
+    - morph: [reference-sync]
+    # The post-fix invariant: every git commit reachable from HEAD
+    # has a corresponding morph commit and morph's parent chain from
+    # HEAD walks all six.
+    - morph: [log, --oneline]
+      capture: chain
+      assert_line_count_gte:
+        var: chain
+        min: 6
+    - morph: [status]
+      stdout_contains: "up to date"

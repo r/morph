@@ -355,7 +355,10 @@ pub fn read_git_commit(repo_root: &Path, sha: &str) -> Result<GitCommitInfo, Mor
 /// Outcome of a `sync_to_head` invocation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SyncOutcome {
-    /// Hash of the new Morph commit (`None` when sync was a no-op).
+    /// Hash of the most-recent new Morph commit (`None` when sync was
+    /// a no-op). When `created > 1`, this is the morph hash that
+    /// mirrors git HEAD; the earlier commits in the synced span have
+    /// already been written and are reachable via `morph log`.
     pub new_commit: Option<Hash>,
     /// Git SHA the sync targeted (HEAD at the moment sync ran). Always
     /// populated even for no-op syncs so callers can report progress.
@@ -363,12 +366,39 @@ pub struct SyncOutcome {
     /// True when there was nothing to do (Morph already at this git
     /// SHA, or the git repo has no commits yet).
     pub already_synced: bool,
+    /// Number of new morph commits this call wrote. Multi-commit FF
+    /// pulls (where the post-merge hook sees N new git commits in one
+    /// shot) produce values > 1 because `sync_to_head` walks back to
+    /// the last-mirrored ancestor and mirrors the entire unmirrored
+    /// span in topo-forward order. Single-commit syncs (post-commit
+    /// hook, regular flow) yield `1`.
+    pub created: usize,
 }
 
-/// Walk every commit reachable from any branch and build a
-/// `git_origin_sha → morph_hash` cache. Used by sync to resolve git
-/// parents to the morph commits that mirror them; without this we
-/// couldn't reconstruct multi-parent merge commits across branches.
+/// Build a `git_origin_sha → morph_hash` cache covering every morph
+/// commit in the store, not just branch-reachable ones. Used by sync
+/// to resolve git parents to the morph commits that mirror them, and
+/// by `handle_post_rewrite` to find the old morph mirror after
+/// `git commit --amend` rewrites HEAD's git SHA (the old mirror gets
+/// orphaned the moment the branch ref advances onto the new mirror,
+/// but the rewrite annotation still has to land on it).
+///
+/// Two passes:
+///   1. Walk from branch refs forward through `Commit.parents`. This
+///      establishes the *live* mappings — preferred when both a live
+///      and an orphaned mirror exist for the same git SHA, the live
+///      one wins. (`HashMap::entry().or_insert(...)` keeps the first
+///      writer.)
+///   2. List every persisted `Commit` object and populate any
+///      `git_origin_sha` mapping that the live walk missed. This
+///      covers orphaned mirrors created by amend/rebase + Fix 1's
+///      correct parent edges, where the old mirror is no longer
+///      reachable from a branch.
+///
+/// Listing all commits is bounded by the total number of morph
+/// commits in the repo, which scales with git history; for the
+/// reference-mode use case that's the same order as the cost of
+/// `git log` and remains cheap in practice.
 fn build_git_to_morph_cache(store: &dyn Store) -> Result<HashMap<String, Hash>, MorphError> {
     let mut cache: HashMap<String, Hash> = HashMap::new();
     let mut visited: std::collections::HashSet<Hash> = std::collections::HashSet::new();
@@ -392,6 +422,25 @@ fn build_git_to_morph_cache(store: &dyn Store) -> Result<HashMap<String, Hash>, 
                 if let Ok(ph) = Hash::from_hex(p) {
                     frontier.push(ph);
                 }
+            }
+        }
+    }
+    // Second pass: include orphaned mirrors. `visited` from the live
+    // walk skips the redundant get+decode for already-mapped commits;
+    // `entry().or_insert(...)` preserves live-walk mappings when a
+    // git SHA somehow had both a live and an orphan mirror (in
+    // practice the cache check in `sync_one_commit` prevents this).
+    for h in store.list(crate::store::ObjectType::Commit)? {
+        if visited.contains(&h) {
+            continue;
+        }
+        let obj = match store.get(&h) {
+            Ok(o) => o,
+            Err(_) => continue,
+        };
+        if let MorphObject::Commit(c) = obj {
+            if let Some(git_sha) = c.git_origin_sha.as_ref() {
+                cache.entry(git_sha.clone()).or_insert(h);
             }
         }
     }
@@ -469,15 +518,85 @@ fn sync_one_commit(
     Ok(hash)
 }
 
-/// Mirror the git working tree's HEAD into a Morph commit.
+/// Walk first-parent git ancestry backward from `to_sha` until either
+/// (a) a commit already present in `cache` is found, or (b) the walk
+/// runs out of parents. Returns the unmirrored SHAs in topo-forward
+/// order (oldest first), so callers can `sync_one_commit` them in
+/// sequence with each commit's first-parent already in the cache by
+/// the time it's mirrored.
+///
+/// Hard-capped at 10 000 commits to keep the `git rev-list -n 1`
+/// fan-out bounded on huge histories. In practice the unmirrored
+/// span between two consecutive `git pull`s is well under a hundred
+/// commits.
+fn collect_unmirrored_first_parent_ancestry(
+    repo_root: &Path,
+    to_sha: &str,
+    cache: &HashMap<String, Hash>,
+) -> Result<Vec<String>, MorphError> {
+    let mut chain: Vec<String> = Vec::new();
+    let mut current = to_sha.to_string();
+    let cap: usize = 10_000;
+    while chain.len() < cap {
+        if cache.contains_key(&current) {
+            break;
+        }
+        let parents = git_parents(repo_root, &current)?;
+        chain.push(current.clone());
+        match parents.first() {
+            Some(p) => current = p.clone(),
+            None => break,
+        }
+    }
+    chain.reverse();
+    Ok(chain)
+}
+
+/// Mirror every git commit in `[from_sha (exclusive) .. to_sha
+/// (inclusive)]` reachable via first-parent ancestry into morph,
+/// skipping anything already mirrored. Used by both `sync_to_head`
+/// (post-commit / post-merge fast path) and `backfill_from_init`
+/// (late-adoption escape hatch). Returns the morph hash of `to_sha`'s
+/// mirror plus the count of newly created morph commits.
+///
+/// `cache` is updated in-place so callers can keep iterating over a
+/// larger range without rebuilding the index between commits.
+fn sync_range(
+    store: &dyn Store,
+    repo_root: &Path,
+    shas: &[String],
+    origin: &str,
+    morph_version: Option<&str>,
+    cache: &mut HashMap<String, Hash>,
+) -> Result<(Option<Hash>, usize), MorphError> {
+    let mut last_hash: Option<Hash> = None;
+    let mut created = 0usize;
+    for sha in shas {
+        if let Some(h) = cache.get(sha) {
+            last_hash = Some(*h);
+            continue;
+        }
+        let h = sync_one_commit(store, repo_root, sha, origin, morph_version, cache)?;
+        last_hash = Some(h);
+        created += 1;
+    }
+    Ok((last_hash, created))
+}
+
+/// Mirror the git working tree's HEAD into Morph.
 ///
 /// - Reads `git rev-parse HEAD`.
 /// - If a morph commit already has `git_origin_sha` matching the git
-///   SHA, returns `already_synced = true`.
-/// - Otherwise creates a new Morph commit. Parents are derived from
-///   git's parents (resolved against existing morph history), so a
-///   git merge commit becomes a multi-parent morph commit.
-/// - Advances the current branch ref to the new commit.
+///   SHA, advances the branch ref if needed and returns
+///   `already_synced = true`.
+/// - Otherwise walks first-parent git ancestry until the
+///   last-mirrored commit (or root) and mirrors every intervening
+///   commit in topo-forward order. This is what makes a multi-commit
+///   `git pull --ff-only` produce N new morph commits with correct
+///   parent edges instead of a single mirror of HEAD pegged to the
+///   wrong morph parent.
+/// - Advances the current branch ref to the morph mirror of git
+///   HEAD.
 pub fn sync_to_head(
     store: &dyn Store,
     repo_root: &Path,
@@ -503,15 +622,16 @@ pub fn sync_to_head_with_origin(
                 new_commit: None,
                 git_sha: None,
                 already_synced: true,
+                created: 0,
             });
         }
     };
 
     let mut cache = build_git_to_morph_cache(store)?;
     if let Some(existing_hash) = cache.get(&git_sha).cloned() {
-        // Already mirrored — but the morph branch ref might still
-        // point at an old morph commit (e.g. PR 9 fast-forward case:
-        // `git merge --ff` advanced git's HEAD to a commit the
+        // Hot path. Already mirrored — but the morph branch ref might
+        // still point at an old morph commit (e.g. PR 9 fast-forward
+        // case: `git merge --ff` advanced git's HEAD to a commit the
         // post-commit hook had already mirrored when the *other*
         // branch was checked out). Advance the current branch ref so
         // morph's view of "main" matches git's view. Idempotent for
@@ -528,18 +648,42 @@ pub fn sync_to_head_with_origin(
             new_commit: None,
             git_sha: Some(git_sha),
             already_synced: true,
+            created: 0,
         });
     }
 
-    let hash = sync_one_commit(store, repo_root, &git_sha, origin, morph_version, &mut cache)?;
+    // HEAD is unmirrored. Walk first-parent ancestry to find the
+    // last-mirrored commit (or root) and mirror the unmirrored span
+    // in topo-forward order. Each commit's first-parent is already
+    // in the cache by the time we sync it, so `sync_one_commit`'s
+    // cache-based parent resolution produces the right edges.
+    //
+    // Single-commit syncs (the post-commit hot path) hit this branch
+    // with a 1-element chain and behave exactly like the pre-fix
+    // single-commit path.
+    let chain = collect_unmirrored_first_parent_ancestry(repo_root, &git_sha, &cache)?;
+    let (last_hash, created) = sync_range(
+        store,
+        repo_root,
+        &chain,
+        origin,
+        morph_version,
+        &mut cache,
+    )?;
+    let final_hash = last_hash.ok_or_else(|| {
+        MorphError::Other(
+            "sync_to_head: HEAD unmirrored but ancestry walk produced no commits".into(),
+        )
+    })?;
     let branch = crate::commit::current_branch(store)?
         .unwrap_or_else(|| crate::commit::DEFAULT_BRANCH.to_string());
-    store.ref_write(&format!("heads/{}", branch), &hash)?;
+    store.ref_write(&format!("heads/{}", branch), &final_hash)?;
 
     Ok(SyncOutcome {
-        new_commit: Some(hash),
+        new_commit: Some(final_hash),
         git_sha: Some(git_sha),
         already_synced: false,
+        created,
     })
 }
 
@@ -1188,9 +1332,16 @@ impl DriftSummary {
 }
 
 /// Walk first-parent ancestry from `git HEAD` until we hit a commit
-/// already mirrored into morph; the count of intervening commits is
-/// the drift. Returns `unmirrored_count = 0` when git HEAD is itself
-/// mirrored.
+/// already mirrored into morph; the count of unmirrored commits seen
+/// along the way is the drift.
+///
+/// We always walk — there is deliberately no `cache.contains_key(head)`
+/// short-circuit. The HEAD-only check used to conflate "HEAD has a
+/// mirror" with "every reachable commit has a mirror"; those aren't
+/// the same invariant, and a single-commit mirror written by an
+/// out-of-band tool (or by an older buggy `sync_to_head` that
+/// mirrored only HEAD on a multi-commit FF pull) would silently
+/// satisfy the first while the second was wildly violated.
 ///
 /// Hard-caps the walk at 10 000 commits to keep the call cheap on huge
 /// histories. For typical Stowaway scenarios drift is < 100.
@@ -1207,28 +1358,35 @@ pub fn drift_summary(store: &dyn Store, repo_root: &Path) -> Result<DriftSummary
         }
     };
     let cache = build_git_to_morph_cache(store)?;
-    if cache.contains_key(&head) {
-        return Ok(DriftSummary {
-            git_head: Some(head.clone()),
-            last_mirrored_git_sha: Some(head),
-            unmirrored_count: 0,
-        });
-    }
+    // Uniform walk — no early-return on `cache.contains_key(&head)`.
+    // At each iteration we ask "is `current` mirrored?" If yes,
+    // that's our last-mirrored anchor and the count of unmirrored
+    // commits seen so far is the drift. If no, increment count and
+    // continue to first-parent. Reaching a root (no parents) ends
+    // the walk with the running count.
+    //
+    // Functionally equivalent to the early-return for the well-formed
+    // states `drift_summary` is meant to surface (HEAD unmirrored vs.
+    // HEAD mirrored with full ancestor coverage). The early-return
+    // was also semantically wrong: it conflated "HEAD has a mirror"
+    // with "all of HEAD's ancestors have mirrors", and after Bug 1
+    // those weren't the same invariant. Fix 1 restored the
+    // invariant; this change keeps the walk single-shaped so future
+    // logic edits don't accidentally re-introduce the conflation.
     let mut count = 0usize;
     let mut current = head.clone();
     let mut last_mirrored: Option<String> = None;
     while count < 10_000 {
-        count += 1;
-        let parents = git_parents(repo_root, &current)?;
-        let next = match parents.first() {
-            Some(p) => p.clone(),
-            None => break,
-        };
-        if cache.contains_key(&next) {
-            last_mirrored = Some(next);
+        if cache.contains_key(&current) {
+            last_mirrored = Some(current);
             break;
         }
-        current = next;
+        count += 1;
+        let parents = git_parents(repo_root, &current)?;
+        match parents.first() {
+            Some(p) => current = p.clone(),
+            None => break,
+        }
     }
     Ok(DriftSummary {
         git_head: Some(head),
@@ -1425,16 +1583,13 @@ pub fn backfill_from_init(
     }
 
     let mut cache = build_git_to_morph_cache(store)?;
-    let mut last_hash: Option<Hash> = None;
-    let mut created = 0usize;
-    for sha in &range {
-        if cache.contains_key(sha) {
-            continue;
-        }
-        let hash = sync_one_commit(store, repo_root, sha, "git-hook", morph_version, &mut cache)?;
-        last_hash = Some(hash);
-        created += 1;
-    }
+    let (last_hash, created) =
+        sync_range(store, repo_root, &range, "git-hook", morph_version, &mut cache)?;
+    // Branch ref advances to whichever morph commit corresponds to
+    // git HEAD (the last entry of the range). When everything was
+    // already mirrored, `sync_range` still returns the trailing
+    // morph hash via the cache lookup, so the branch ref is kept
+    // accurate even on idempotent re-runs.
     if let Some(hash) = last_hash {
         let branch = crate::commit::current_branch(store)?
             .unwrap_or_else(|| crate::commit::DEFAULT_BRANCH.to_string());
@@ -2048,6 +2203,146 @@ mod tests {
             .collect();
         messages.sort();
         assert_eq!(messages, vec!["base".to_string(), "feat".to_string()]);
+    }
+
+    /// Bug 1 regression: a multi-commit fast-forward `git pull` fires
+    /// `post-merge` once with N new commits between morph HEAD and
+    /// git HEAD. `sync_to_head` must walk first-parent ancestry back
+    /// to the last-mirrored commit and mirror every intermediate one
+    /// — not just HEAD — so the morph parent chain mirrors git's.
+    #[test]
+    fn sync_to_head_mirrors_every_commit_back_to_last_mirrored_ancestor() {
+        let dir = tempfile::tempdir().unwrap();
+        run_git(dir.path(), &["init", "-q", "-b", "main"]);
+        run_git(dir.path(), &["commit", "--allow-empty", "-q", "-m", "v1"]);
+        let store: Box<dyn Store> = Box::new(crate::init_repo(dir.path()).unwrap());
+        // Mirror v1 first so we have a known last-mirrored anchor.
+        let v1_outcome = sync_to_head(store.as_ref(), dir.path(), None).unwrap();
+        assert_eq!(v1_outcome.created, 1);
+        let v1_morph = v1_outcome.new_commit.expect("v1 mirrored");
+
+        // Five more git commits, none mirrored. This is exactly the
+        // shape of an N-commit fast-forward `git pull` from a
+        // teammate: morph stays at v1; git advances five steps.
+        for msg in &["v2", "v3", "v4", "v5", "v6"] {
+            run_git(dir.path(), &["commit", "--allow-empty", "-q", "-m", msg]);
+        }
+
+        let outcome = sync_to_head(store.as_ref(), dir.path(), None).unwrap();
+        assert!(!outcome.already_synced);
+        assert_eq!(
+            outcome.created, 5,
+            "every git commit between morph HEAD and git HEAD must be mirrored"
+        );
+
+        // Walk the morph parent chain from the new HEAD: should be
+        // v6 → v5 → v4 → v3 → v2 → v1, with each commit's first
+        // parent the immediately-prior version.
+        let mut messages: Vec<String> = Vec::new();
+        let mut cursor = outcome.new_commit;
+        while let Some(h) = cursor {
+            let c = match store.get(&h).unwrap() {
+                MorphObject::Commit(c) => c,
+                _ => panic!("non-commit in chain"),
+            };
+            messages.push(c.message.trim().to_string());
+            cursor = c
+                .parents
+                .first()
+                .and_then(|p| Hash::from_hex(p).ok());
+        }
+        assert_eq!(
+            messages,
+            vec![
+                "v6".to_string(),
+                "v5".to_string(),
+                "v4".to_string(),
+                "v3".to_string(),
+                "v2".to_string(),
+                "v1".to_string(),
+            ],
+            "first-parent chain must mirror git's first-parent chain"
+        );
+
+        // The v1 mirror's hash must be the same one we recorded
+        // earlier — Fix 1 must NOT re-create it.
+        let v1_in_chain = {
+            let mut h = outcome.new_commit;
+            for _ in 0..5 {
+                h = match store.get(&h.unwrap()).unwrap() {
+                    MorphObject::Commit(c) => c.parents.first().and_then(|p| Hash::from_hex(p).ok()),
+                    _ => panic!(),
+                };
+            }
+            h.unwrap()
+        };
+        assert_eq!(v1_in_chain, v1_morph, "v1 mirror reused, not re-created");
+    }
+
+    /// Bug 1 regression: post-commit hot path (the single-commit case)
+    /// must remain a no-walkback when HEAD is unmirrored and the
+    /// parent already is. Verifies Fix 1 didn't regress the
+    /// happy path performance/semantic for the dominant case.
+    #[test]
+    fn sync_to_head_single_commit_path_creates_one_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        run_git(dir.path(), &["init", "-q", "-b", "main"]);
+        run_git(dir.path(), &["commit", "--allow-empty", "-q", "-m", "v1"]);
+        let store: Box<dyn Store> = Box::new(crate::init_repo(dir.path()).unwrap());
+        let v1 = sync_to_head(store.as_ref(), dir.path(), None).unwrap();
+        assert_eq!(v1.created, 1);
+
+        run_git(dir.path(), &["commit", "--allow-empty", "-q", "-m", "v2"]);
+        let v2 = sync_to_head(store.as_ref(), dir.path(), None).unwrap();
+        assert_eq!(
+            v2.created, 1,
+            "single new commit on top of mirrored HEAD = exactly one new mirror"
+        );
+        assert!(!v2.already_synced);
+    }
+
+    /// Bug 2 regression: when intermediate commits are unmirrored
+    /// (the explicit late-adoption / suppressed-hook scenario),
+    /// drift_summary's count must equal the number of unmirrored
+    /// first-parent ancestors. This pins the original walk semantics.
+    #[test]
+    fn drift_summary_counts_unmirrored_first_parent_ancestors() {
+        let dir = tempfile::tempdir().unwrap();
+        run_git(dir.path(), &["init", "-q", "-b", "main"]);
+        run_git(dir.path(), &["commit", "--allow-empty", "-q", "-m", "v1"]);
+        let store: Box<dyn Store> = Box::new(crate::init_repo(dir.path()).unwrap());
+        sync_to_head(store.as_ref(), dir.path(), None).unwrap();
+
+        for msg in &["v2", "v3", "v4", "v5", "v6"] {
+            run_git(dir.path(), &["commit", "--allow-empty", "-q", "-m", msg]);
+        }
+        let drift = drift_summary(store.as_ref(), dir.path()).unwrap();
+        assert_eq!(drift.unmirrored_count, 5);
+        assert!(drift.last_mirrored_git_sha.is_some());
+    }
+
+    /// Bug 2: when git HEAD is itself mirrored AND its full ancestry
+    /// is mirrored, drift is 0 — the up-to-date case. Pins the new
+    /// walk's behavior on the well-formed state.
+    #[test]
+    fn drift_summary_zero_when_head_and_ancestors_all_mirrored() {
+        let dir = tempfile::tempdir().unwrap();
+        run_git(dir.path(), &["init", "-q", "-b", "main"]);
+        for msg in &["v1", "v2", "v3"] {
+            run_git(dir.path(), &["commit", "--allow-empty", "-q", "-m", msg]);
+        }
+        let store: Box<dyn Store> = Box::new(crate::init_repo(dir.path()).unwrap());
+        // Mirror everything via sync_to_head (Fix 1 walks back).
+        let outcome = sync_to_head(store.as_ref(), dir.path(), None).unwrap();
+        assert_eq!(outcome.created, 3);
+
+        let drift = drift_summary(store.as_ref(), dir.path()).unwrap();
+        assert_eq!(drift.unmirrored_count, 0);
+        assert_eq!(
+            drift.last_mirrored_git_sha,
+            drift.git_head,
+            "last-mirrored == HEAD when everything is mirrored"
+        );
     }
 
     #[test]

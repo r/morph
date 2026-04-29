@@ -1,0 +1,122 @@
+# Multi-commit fast-forward `git pull`: post-merge must mirror EVERY
+# new git commit, not just HEAD. See Bug 1 in
+# `morph-core/src/reference.rs::sync_to_head_with_origin`.
+#
+# Symptom before the fix:
+#   - `git pull --ff-only` brings in N commits at once.
+#   - Only the post-merge hook fires (post-commit fires per-commit
+#     locally, never for already-existing remote commits that are
+#     fast-forwarded in).
+#   - sync_to_head reads HEAD, sees it isn't mirrored, mirrors only
+#     HEAD. The intermediate N − 1 commits never reach morph.
+#   - sync_one_commit's parent-resolution fallback then pegs HEAD's
+#     mirror parent to current morph HEAD (still v1), collapsing the
+#     N-step chain into one wrong edge.
+#
+# After the fix, sync_to_head walks first-parent ancestry until the
+# last-mirrored commit, then mirrors the unmirrored span in
+# topo-forward order so each commit's parent has been mirrored by
+# the time we reach it.
+
+- name: post_merge_mirrors_every_commit_after_multi_commit_ff_pull
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'v1'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+      stdout_contains: "Synced 1 git commit"
+    # Simulate a 5-commit FF pull. `MORPH_INTERNAL=1` suppresses the
+    # post-commit hook so morph stays behind, exactly like a remote
+    # fast-forward would: the post-commit hook fires per-commit only
+    # for *local* commits, never for commits arriving via `git pull`.
+    - shell: |
+        for i in 2 3 4 5 6; do
+          MORPH_INTERNAL=1 git commit --allow-empty -q -m "v$i"
+        done
+    # Drive the post-merge hook directly. The hook handler calls
+    # sync_to_head; before the fix it mirrored only v6 and pegged its
+    # parent to v1's mirror. After the fix it mirrors v2..v6 in order
+    # so each one's parent edge is correct.
+    - morph: [hook, post-merge]
+      stdout_contains: "Synced 5 git commit"
+    # `morph log` follows morph parent edges from HEAD; if the chain
+    # collapsed to v1 → v6 we'd only see two messages. All six must
+    # appear, proving every commit got mirrored AND every parent edge
+    # is correct.
+    - morph: [log, --oneline]
+      stdout_contains:
+        - "v1"
+        - "v2"
+        - "v3"
+        - "v4"
+        - "v5"
+        - "v6"
+
+- name: post_merge_log_line_count_matches_git_history_after_multi_commit_pull
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'v1'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    - shell: |
+        for i in 2 3 4 5 6; do
+          MORPH_INTERNAL=1 git commit --allow-empty -q -m "v$i"
+        done
+    - morph: [hook, post-merge]
+    # Six git commits → six morph commits reachable via parent edges
+    # from HEAD. Before the fix this was 2 (v1 + v6 only).
+    - morph: [log, --oneline]
+      capture: log_lines
+      assert_line_count_gte:
+        var: log_lines
+        min: 6
+
+- name: post_merge_preserves_first_parent_chain_across_multi_commit_pull
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'v1'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    - shell: "MORPH_INTERNAL=1 git commit --allow-empty -q -m 'v2' && MORPH_INTERNAL=1 git commit --allow-empty -q -m 'v3'"
+    - morph: [hook, post-merge]
+    # HEAD is v3's mirror; its single parent must be v2's mirror. We
+    # check by reading HEAD as JSON, capturing its parent hash, and
+    # showing that parent: its message must be "v2", not "v1".
+    - morph: [head, --json]
+      capture_json_field:
+        var: head_hash
+        field: hash
+    - morph: [show, "${head_hash}"]
+      stdout_contains:
+        - '"message": "v3'
+    # `morph log -n 2` walks two commits backward from HEAD: v3 then
+    # its parent. Before the fix the parent was v1; after the fix it
+    # is v2.
+    - morph: [log, -n, "2"]
+      stdout_contains: "v2"
+      stdout_not_contains: "v1"
+
+# Plain `morph reference-sync` (without --backfill) is the manual
+# escape hatch users reach for when hooks weren't installed yet. It
+# must satisfy the same invariant: walk back to the last-mirrored
+# ancestor and mirror every intervening commit, not just HEAD.
+
+- name: reference_sync_mirrors_every_intermediate_commit_when_head_unmirrored
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'v1'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    - shell: |
+        for i in 2 3 4 5; do
+          MORPH_INTERNAL=1 git commit --allow-empty -q -m "v$i"
+        done
+    - morph: [reference-sync]
+      stdout_contains: "Synced 4 git commit"
+    - morph: [log, --oneline]
+      stdout_contains:
+        - "v1"
+        - "v2"
+        - "v3"
+        - "v4"
+        - "v5"

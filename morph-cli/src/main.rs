@@ -114,11 +114,23 @@ fn run_hook(event: &str, args: &[String]) -> anyhow::Result<()> {
 
     match event {
         "post-commit" => {
+            // post-commit fires per local `git commit`, so the typical
+            // outcome is `created == 1`. We still honour `created > 1`
+            // here in case the user disabled the hook for a stretch
+            // and a later `git commit` triggers `sync_to_head`'s
+            // walk-back-to-last-mirrored logic — better than silently
+            // under-reporting.
             let outcome = morph_core::sync_to_head(store.as_ref(), &repo_root, version)?;
             if outcome.already_synced {
                 println!("Already up to date.");
             } else if let Some(sha) = outcome.git_sha.as_deref() {
-                println!("Synced 1 git commit ({}).", &sha[..sha.len().min(8)]);
+                let plural = if outcome.created == 1 { "commit" } else { "commits" };
+                println!(
+                    "Synced {} git {} (HEAD {}).",
+                    outcome.created,
+                    plural,
+                    &sha[..sha.len().min(8)],
+                );
             }
         }
         "post-checkout" => {
@@ -166,13 +178,23 @@ fn run_hook(event: &str, args: &[String]) -> anyhow::Result<()> {
         "post-merge" => {
             // git passes <is_squash> as $1 (we ignore it; sync_to_head
             // is idempotent either way).
+            //
+            // post-merge fires for both non-fast-forward `git merge`
+            // (one new merge commit) and fast-forward `git pull`s
+            // that bring in many remote commits at once. In the
+            // multi-commit FF case `sync_to_head` walks back to the
+            // last-mirrored ancestor and mirrors every commit in the
+            // span, so `created` may be > 1.
             let outcome = morph_core::sync_to_head(store.as_ref(), &repo_root, version)?;
             if outcome.already_synced {
                 println!("Already up to date.");
             } else if let Some(sha) = outcome.git_sha.as_deref() {
+                let plural = if outcome.created == 1 { "commit" } else { "commits" };
                 println!(
-                    "Mirrored merge commit ({}).",
-                    &sha[..sha.len().min(8)]
+                    "Synced {} git {} (HEAD {}).",
+                    outcome.created,
+                    plural,
+                    &sha[..sha.len().min(8)],
                 );
             }
         }
@@ -1280,6 +1302,12 @@ in a git repository first."
                     println!("Synced {} git {}.", count, plural);
                 }
             } else {
+                // Plain `morph reference-sync`: walks back to the
+                // last-mirrored ancestor of git HEAD and mirrors every
+                // commit in the unmirrored span. `outcome.created`
+                // reports the actual count, which may exceed 1 when
+                // the user has been running `MORPH_INTERNAL=1 git
+                // commit` or pulled multi-commit FFs without hooks.
                 let outcome = morph_core::sync_to_head(store.as_ref(), &repo_root, version)?;
                 if outcome.already_synced {
                     println!("Already up to date.");
@@ -1289,7 +1317,11 @@ in a git repository first."
                         .as_deref()
                         .map(|s| &s[..s.len().min(8)])
                         .unwrap_or("?");
-                    println!("Synced 1 git commit ({}).", short);
+                    let plural = if outcome.created == 1 { "commit" } else { "commits" };
+                    println!(
+                        "Synced {} git {} (HEAD {}).",
+                        outcome.created, plural, short
+                    );
                 }
             }
         }

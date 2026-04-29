@@ -74,6 +74,13 @@
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'first git commit'"
     - morph: [init, --reference, "${repo}"]
+    # Mirror the init point first so the assertion below isolates
+    # what `reference-sync` does for the *new* unmirrored commit
+    # alone. Without this `sync_to_head` correctly walks back to the
+    # last-mirrored ancestor (or root) and mirrors every intervening
+    # commit — see `reference_mode_multi_commit_pull.yaml` for the
+    # multi-commit walk-back contract.
+    - morph: [reference-sync, --backfill]
     # MORPH_INTERNAL=1 suppresses the post-commit hook so the
     # explicit `morph reference-sync` below has work to do. Without
     # the env var the hook auto-mirrors the new commit and sync
@@ -92,6 +99,10 @@
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
     - morph: [init, --reference, "${repo}"]
+    # Mirror the init point first so the subsequent sync count is
+    # isolated to the new commit (see explanation in
+    # `reference_sync_creates_morph_commit_with_git_hook_origin`).
+    - morph: [reference-sync, --backfill]
     - shell: "MORPH_INTERNAL=1 git commit --allow-empty -q -m 'second'"
     - morph: [reference-sync]
       stdout_contains: "Synced 1 git commit"
@@ -137,6 +148,15 @@
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
     - morph: [init, --reference, "${repo}"]
+    # Backfill + certify the init point so the only pending commit
+    # the rest of the test can produce is the new `second` commit.
+    # Pre-Fix-1, `morph reference-sync` after the second `git commit`
+    # mirrored only `second` and silently dropped `first` — the test
+    # accidentally relied on that bug to land at "no pending" with
+    # only one certify call. Fix 1 walks back to the last mirrored
+    # ancestor, so we now certify the init point explicitly.
+    - morph: [reference-sync, --backfill]
+    - morph: [certify, --metrics, '{"tests_passed":10,"tests_total":10,"pass_rate":1.0}']
     - shell: "git commit --allow-empty -q -m 'second'"
     - morph: [reference-sync]
     - morph: [certify, --metrics, '{"tests_passed":10,"tests_total":10,"pass_rate":1.0}']
