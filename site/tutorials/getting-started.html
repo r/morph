@@ -1,0 +1,1154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Start a new project with Morph (no Git) — Tutorial</title>
+  <meta name="description" content="A 20-minute walkthrough that takes you from an empty directory to a Morph repo with metric-bearing commits, a recorded agent session, and a clean revert — using only Morph, no Git.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #fafbfb;
+      --bg-alt: #f0f5f4;
+      --fg: #0f1a1a;
+      --fg-muted: #3d5250;
+      --fg-subtle: #8a9e9b;
+      --accent: #0f766e;
+      --accent-light: #14b8a6;
+      --accent-bg: #ecfdf8;
+      --border: #d5e0de;
+      --border-soft: #e6ecea;
+      --code-bg: #0c1a2a;
+      --code-fg: #e2e8f0;
+      --code-comment: #5f7a8a;
+      --code-keyword: #5eead4;
+      --code-string: #86efac;
+      --code-flag: #fde68a;
+      --warn-bg: #fef9e7;
+      --warn-border: #fde68a;
+      --warn-fg: #78600a;
+      --max-width: 1200px;
+      --sidebar-width: 240px;
+      --content-width: 720px;
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-mono: 'IBM Plex Mono', 'SF Mono', 'Menlo', monospace;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html {
+      font-size: 17px;
+      scroll-behavior: smooth;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      color: var(--fg);
+      background: var(--bg);
+      line-height: 1.7;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    a:hover { text-decoration: underline; }
+
+    /* — Top nav (matches the homepage) — */
+    .topnav-wrap {
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      backdrop-filter: blur(8px);
+    }
+
+    nav.topnav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      max-width: var(--max-width);
+      margin: 0 auto;
+      padding: 1rem 2rem;
+    }
+
+    nav.topnav .logo {
+      font-weight: 700;
+      font-size: 1.15rem;
+      letter-spacing: -0.02em;
+      color: var(--fg);
+    }
+
+    nav.topnav .logo .crumb {
+      color: var(--fg-subtle);
+      font-weight: 500;
+      margin-left: 0.5rem;
+    }
+
+    nav.topnav .links {
+      display: flex;
+      gap: 1.75rem;
+      list-style: none;
+    }
+
+    nav.topnav .links a {
+      color: var(--fg-muted);
+      font-size: 0.9rem;
+      font-weight: 500;
+    }
+
+    nav.topnav .links a:hover { color: var(--accent); }
+
+    /* — Layout grid — */
+    .layout {
+      max-width: var(--max-width);
+      margin: 0 auto;
+      padding: 0 2rem;
+      display: grid;
+      grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+      gap: 4rem;
+      align-items: start;
+    }
+
+    /* — Sidebar — */
+    aside.toc {
+      position: sticky;
+      top: 5.5rem;
+      padding: 2.5rem 0 2rem;
+      max-height: calc(100vh - 5.5rem);
+      overflow-y: auto;
+    }
+
+    aside.toc .toc-label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--fg-subtle);
+      margin-bottom: 1rem;
+    }
+
+    /* Hide the mobile summary on desktop, hide the desktop label on mobile. */
+    aside.toc details > summary {
+      display: none;
+    }
+    aside.toc details > .toc-label {
+      display: block;
+    }
+    @media (max-width: 880px) {
+      aside.toc details > summary {
+        display: flex;
+      }
+      aside.toc details > .toc-label {
+        display: none;
+      }
+    }
+
+    aside.toc ol {
+      list-style: none;
+      counter-reset: toc;
+      border-left: 2px solid var(--border-soft);
+    }
+
+    aside.toc ol li {
+      counter-increment: toc;
+    }
+
+    aside.toc ol li a {
+      display: block;
+      padding: 0.4rem 0 0.4rem 1rem;
+      margin-left: -2px;
+      border-left: 2px solid transparent;
+      color: var(--fg-muted);
+      font-size: 0.85rem;
+      font-weight: 500;
+      line-height: 1.45;
+      transition: color 0.15s, border-color 0.15s;
+    }
+
+    aside.toc ol li a::before {
+      content: counter(toc, decimal-leading-zero);
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      font-weight: 500;
+      color: var(--fg-subtle);
+      margin-right: 0.55rem;
+    }
+
+    aside.toc ol li a:hover {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    aside.toc ol li a.active {
+      color: var(--accent);
+      border-left-color: var(--accent);
+      font-weight: 600;
+    }
+
+    aside.toc ol li a.active::before {
+      color: var(--accent);
+    }
+
+    /* — Main content — */
+    main.content {
+      padding: 2.5rem 0 5rem;
+      max-width: var(--content-width);
+    }
+
+    main.content .eyebrow {
+      display: inline-block;
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent);
+      background: var(--accent-bg);
+      padding: 0.3rem 0.75rem;
+      border-radius: 100px;
+      margin-bottom: 1.25rem;
+    }
+
+    main.content h1 {
+      font-size: 2.4rem;
+      font-weight: 700;
+      line-height: 1.2;
+      letter-spacing: -0.02em;
+      margin-bottom: 0.85rem;
+    }
+
+    main.content .lede {
+      font-size: 1.1rem;
+      color: var(--fg-muted);
+      line-height: 1.65;
+      margin-bottom: 2rem;
+    }
+
+    main.content .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.25rem;
+      font-size: 0.85rem;
+      color: var(--fg-subtle);
+      padding-bottom: 2rem;
+      margin-bottom: 3rem;
+      border-bottom: 1px solid var(--border-soft);
+    }
+
+    main.content .meta span strong {
+      color: var(--fg-muted);
+      font-weight: 600;
+    }
+
+    main.content section {
+      padding-top: 4rem;
+      margin-top: -2rem; /* offset so sticky-nav anchors land nicely */
+    }
+
+    main.content section:first-of-type {
+      padding-top: 0;
+      margin-top: 0;
+    }
+
+    main.content section h2 {
+      font-size: 1.6rem;
+      font-weight: 700;
+      letter-spacing: -0.015em;
+      margin-bottom: 1rem;
+      scroll-margin-top: 5rem;
+    }
+
+    main.content section h2 .step-num {
+      display: inline-block;
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: var(--fg-subtle);
+      vertical-align: 4px;
+      margin-right: 0.65rem;
+      padding: 0.18rem 0.55rem;
+      background: var(--bg-alt);
+      border-radius: 4px;
+      letter-spacing: 0.05em;
+    }
+
+    main.content section h3 {
+      font-size: 1.05rem;
+      font-weight: 600;
+      letter-spacing: -0.005em;
+      margin-top: 2rem;
+      margin-bottom: 0.6rem;
+      color: var(--fg);
+    }
+
+    main.content p {
+      color: var(--fg-muted);
+      margin-bottom: 1.1rem;
+      font-size: 1rem;
+    }
+
+    main.content p strong { color: var(--fg); font-weight: 600; }
+
+    main.content code {
+      font-family: var(--font-mono);
+      font-size: 0.86em;
+      background: var(--bg-alt);
+      color: var(--fg);
+      padding: 0.12em 0.4em;
+      border-radius: 4px;
+    }
+
+    main.content ul, main.content ol {
+      margin: 0.5rem 0 1.25rem 1.25rem;
+      color: var(--fg-muted);
+    }
+
+    main.content li {
+      margin-bottom: 0.4rem;
+    }
+
+    /* — Code/CLI blocks — */
+    .cli-block {
+      background: var(--code-bg);
+      color: var(--code-fg);
+      border-radius: 10px;
+      padding: 1.4rem 1.6rem;
+      font-family: var(--font-mono);
+      font-size: 0.84rem;
+      line-height: 1.65;
+      overflow-x: auto;
+      margin: 1.25rem 0 1.75rem;
+      white-space: pre;
+    }
+
+    .cli-block .prompt { color: var(--code-comment); user-select: none; }
+    .cli-block .cmd { color: var(--code-fg); }
+    .cli-block .flag { color: var(--code-flag); }
+    .cli-block .str { color: var(--code-string); }
+    .cli-block .kw { color: var(--code-keyword); }
+    .cli-block .comment { color: var(--code-comment); font-style: italic; }
+    .cli-block .out { color: #94a3b8; }
+    .cli-block .out-good { color: var(--code-string); }
+    .cli-block .out-warn { color: var(--code-flag); }
+    .cli-block .out-bad { color: #fca5a5; }
+    .cli-block .label {
+      display: block;
+      font-size: 0.7rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #64748b;
+      margin-bottom: 0.7rem;
+    }
+
+    /* — Callouts — */
+    .callout {
+      border-left: 3px solid var(--accent);
+      background: var(--accent-bg);
+      padding: 1rem 1.25rem;
+      border-radius: 0 6px 6px 0;
+      margin: 1.5rem 0;
+      font-size: 0.95rem;
+      color: var(--fg-muted);
+    }
+    .callout strong { color: var(--accent); }
+    .callout.warn {
+      border-left-color: #b45309;
+      background: var(--warn-bg);
+    }
+    .callout.warn strong { color: var(--warn-fg); }
+
+    /* — Footer — */
+    footer.tutorial-foot {
+      border-top: 1px solid var(--border);
+      margin-top: 4rem;
+      padding: 2.5rem 2rem;
+      text-align: center;
+      color: var(--fg-subtle);
+      font-size: 0.85rem;
+    }
+
+    footer.tutorial-foot a { color: var(--fg-muted); }
+    footer.tutorial-foot a:hover { color: var(--accent); }
+
+    /* — Pager (next/prev tutorial links) — */
+    .pager {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin-top: 4rem;
+      padding-top: 2rem;
+      border-top: 1px solid var(--border-soft);
+    }
+    .pager a {
+      padding: 1rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .pager a:hover {
+      border-color: var(--accent);
+      background: var(--accent-bg);
+      text-decoration: none;
+    }
+    .pager .dir {
+      display: block;
+      font-size: 0.7rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--fg-subtle);
+      margin-bottom: 0.25rem;
+    }
+    .pager .ttl {
+      color: var(--fg);
+      font-weight: 600;
+    }
+    .pager .next {
+      text-align: right;
+    }
+    .pager a.disabled {
+      pointer-events: none;
+      opacity: 0.55;
+    }
+    .pager a.disabled .ttl {
+      color: var(--fg-muted);
+    }
+
+    /* — Mobile — */
+    @media (max-width: 880px) {
+      .layout {
+        grid-template-columns: 1fr;
+        gap: 1rem;
+        padding: 0 1.25rem;
+      }
+      aside.toc {
+        position: relative;
+        top: auto;
+        max-height: none;
+        padding: 1.5rem 0 1rem;
+        border-bottom: 1px solid var(--border-soft);
+        margin-bottom: 1.5rem;
+      }
+      aside.toc[open] ol { display: block; }
+      aside.toc details > summary {
+        list-style: none;
+        cursor: pointer;
+        font-size: 0.9rem;
+        font-weight: 600;
+        color: var(--fg);
+        padding: 0.5rem 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      aside.toc details > summary::after {
+        content: '+';
+        color: var(--fg-subtle);
+        font-family: var(--font-mono);
+      }
+      aside.toc details[open] > summary::after { content: '−'; }
+      aside.toc details ol {
+        margin-top: 0.75rem;
+      }
+      main.content {
+        padding: 1rem 0 3rem;
+      }
+      main.content h1 { font-size: 1.85rem; }
+      main.content section { padding-top: 2.5rem; margin-top: -1rem; }
+      .pager { grid-template-columns: 1fr; }
+      .pager .next { text-align: left; }
+    }
+
+    @media (max-width: 480px) {
+      html { font-size: 16px; }
+      nav.topnav { padding: 0.85rem 1.25rem; }
+      nav.topnav .links a:not(.home-link) { display: none; }
+      .cli-block { font-size: 0.78rem; padding: 1.1rem 1.2rem; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="topnav-wrap">
+    <nav class="topnav">
+      <a href="../" class="logo">morph<span class="crumb">/ tutorials / getting started</span></a>
+      <ul class="links">
+        <li><a href="../" class="home-link">Home</a></li>
+        <li><a href="./">Tutorials</a></li>
+        <li><a href="https://github.com/r/morph">GitHub</a></li>
+      </ul>
+    </nav>
+  </div>
+
+  <div class="layout">
+
+    <aside class="toc">
+      <details open>
+        <summary>On this page</summary>
+        <div class="toc-label" style="margin-top: 1rem;">On this page</div>
+        <ol>
+          <li><a href="#prereqs">Before you start</a></li>
+          <li><a href="#scaffold">Build a tiny project</a></li>
+          <li><a href="#init">morph init</a></li>
+          <li><a href="#first-commit">Your first commit</a></li>
+          <li><a href="#setup-ide">Wire up your IDE</a></li>
+          <li><a href="#human-loop">Edit by hand</a></li>
+          <li><a href="#eval-run">Capture metrics with morph eval run</a></li>
+          <li><a href="#commit-with-evidence">Commit with evidence</a></li>
+          <li><a href="#agent-turn">Let an agent take a turn</a></li>
+          <li><a href="#inspect">Inspect what the agent did</a></li>
+          <li><a href="#revert">Make a regression, then revert</a></li>
+          <li><a href="#serve">Browse it visually</a></li>
+          <li><a href="#next">Where to next</a></li>
+        </ol>
+      </details>
+    </aside>
+
+    <main class="content">
+      <span class="eyebrow">Tutorial · Getting started</span>
+      <h1>Start a new project with Morph</h1>
+      <p class="lede">
+        A 20-minute walkthrough that takes you from an empty directory to a Morph
+        repo with metric-bearing commits, a recorded agent session, and a clean
+        revert. Along the way you'll meet the parts of Morph that don't exist in
+        Git: <strong>runs</strong>, <strong>traces</strong>, and
+        <strong>behavioral commits</strong>.
+      </p>
+      <div class="meta">
+        <span><strong>Time:</strong> ~20 min</span>
+        <span><strong>Mode:</strong> Morph only (no Git)</span>
+        <span><strong>Stack:</strong> Python 3 · pytest · Cursor</span>
+        <span><strong>Difficulty:</strong> Intro</span>
+      </div>
+
+      <!-- 1 -->
+      <section id="prereqs">
+        <h2><span class="step-num">01</span>Before you start</h2>
+        <p>
+          This tutorial sets up a Morph project <em>without Git</em>. Morph is a
+          full version control system on its own — content-addressed object store,
+          branches, merges, the lot — and the cleanest way to learn it is in a
+          repo where it's the only thing tracking your code. If you'd rather add
+          Morph to a project you already manage in Git,
+          <a href="./adding-to-git-project.html">jump to Tutorial 2</a> instead.
+        </p>
+        <p>You'll need four things on your machine before you start:</p>
+        <ul>
+          <li><code>morph</code> and <code>morph-mcp</code> on your <code>PATH</code> — see <a href="https://github.com/r/morph/blob/main/docs/INSTALLATION.md">installation</a>.</li>
+          <li><strong>Python 3</strong> with <code>pytest</code> available (<code>python3 -m pip install --user pytest</code>).</li>
+          <li><strong>Cursor</strong>, <strong>Claude Code</strong>, or <strong>OpenCode</strong> — the agent step is the whole point of recording, so we treat the IDE as a real prerequisite. The screenshots and commands here use Cursor; the others differ only in <code>morph setup &lt;ide&gt;</code>.</li>
+          <li>A free directory to scribble in. We'll use <code>~/morph-tutorial</code>.</li>
+        </ul>
+        <div class="callout">
+          <strong>Verify your install:</strong>
+          <code>morph --version</code> should print something like <code>morph 0.37.0 (built …)</code>.
+          If it doesn't, fix that before going further — the rest of the tutorial assumes the binary is on your <code>PATH</code>.
+        </div>
+      </section>
+
+      <!-- 2 -->
+      <section id="scaffold">
+        <h2><span class="step-num">02</span>Build a tiny project</h2>
+        <p>
+          We need something small enough to fit in a tutorial and
+          interesting enough to write tests against. A currency converter
+          works: a function and three tests, one Python file each.
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">mkdir morph-tutorial &amp;&amp; <span class="kw">cd</span> morph-tutorial</span></div>
+        <p>Create <code>converter.py</code>:</p>
+<div class="cli-block"><span class="comment"># converter.py</span>
+<span class="kw">RATES</span> = {
+    <span class="str">"USD"</span>: <span class="flag">1.0</span>,
+    <span class="str">"EUR"</span>: <span class="flag">0.92</span>,
+}
+
+
+<span class="kw">def</span> <span class="cmd">convert</span>(amount, src, dst):
+    <span class="kw">if</span> src <span class="kw">not in</span> RATES <span class="kw">or</span> dst <span class="kw">not in</span> RATES:
+        <span class="kw">raise</span> <span class="cmd">ValueError</span>(<span class="str">f"unsupported currency: {src} -&gt; {dst}"</span>)
+    usd = amount / RATES[src]
+    <span class="kw">return</span> <span class="cmd">round</span>(usd * RATES[dst], <span class="flag">2</span>)</div>
+        <p>And <code>test_converter.py</code>:</p>
+<div class="cli-block"><span class="comment"># test_converter.py</span>
+<span class="kw">from</span> converter <span class="kw">import</span> convert
+
+
+<span class="kw">def</span> <span class="cmd">test_usd_to_eur</span>():
+    <span class="kw">assert</span> convert(<span class="flag">10</span>, <span class="str">"USD"</span>, <span class="str">"EUR"</span>) == <span class="flag">9.20</span>
+
+
+<span class="kw">def</span> <span class="cmd">test_eur_to_usd</span>():
+    <span class="kw">assert</span> convert(<span class="flag">9.20</span>, <span class="str">"EUR"</span>, <span class="str">"USD"</span>) == <span class="flag">10.00</span>
+
+
+<span class="kw">def</span> <span class="cmd">test_same_currency</span>():
+    <span class="kw">assert</span> convert(<span class="flag">5</span>, <span class="str">"USD"</span>, <span class="str">"USD"</span>) == <span class="flag">5.00</span></div>
+        <p>Sanity-check that the tests pass before we bring Morph into the picture:</p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">python3 -m pytest</span>
+<span class="out">============================= test session starts ==============================</span>
+<span class="out">collected 3 items</span>
+
+<span class="out">test_converter.py ...                                                    [100%]</span>
+
+<span class="out-good">============================== 3 passed in 0.00s ===============================</span></div>
+      </section>
+
+      <!-- 3 -->
+      <section id="init">
+        <h2><span class="step-num">03</span><code>morph init</code></h2>
+        <p>
+          Now turn this directory into a Morph repo:
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph init</span>
+<span class="out-good">Initialized empty Morph repository in /Users/you/morph-tutorial/.morph/</span></div>
+        <p>
+          The <code>.morph/</code> directory is the moral equivalent of <code>.git/</code> — a
+          content-addressed Merkle DAG of objects, plus refs, config, and (this is
+          where it diverges from Git) folders for <code>runs/</code>, <code>traces/</code>, <code>prompts/</code>,
+          and <code>evals/</code>. Those are the things Git can't represent.
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">ls .morph/</span>
+<span class="out">config.json    evals/    objects/    prompts/    refs/    runs/    traces/</span></div>
+        <p>
+          Now look at the policy that <code>morph init</code> just installed for you. This is
+          the most opinionated thing Morph does, and it's better to meet it head-on than
+          to be surprised by it later.
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph policy show</span>
+<span class="out">{</span>
+<span class="out">  </span><span class="kw">"required_metrics"</span><span class="out">: [</span>
+<span class="out">    </span><span class="str">"tests_total"</span><span class="out">,</span>
+<span class="out">    </span><span class="str">"tests_passed"</span>
+<span class="out">  ],</span>
+<span class="out">  </span><span class="kw">"merge_policy"</span><span class="out">: </span><span class="str">"dominance"</span><span class="out">,</span>
+<span class="out">  …</span>
+<span class="out">}</span></div>
+        <p>
+          Translation: <em>every commit on this repo must arrive carrying
+          <code>tests_total</code> and <code>tests_passed</code> as evidence</em>, and merges will be
+          gated on dominance — the merged code has to be at least as good as both
+          parents on every declared metric. You can relax this with
+          <code>morph policy require-metrics</code> (pass no names to disable the gate
+          entirely), but the default is "you don't ship code without proof it works."
+          We're going to honor it.
+        </p>
+      </section>
+
+      <!-- 4 -->
+      <section id="first-commit">
+        <h2><span class="step-num">04</span>Your first commit (the honest version)</h2>
+        <p>
+          Let's stage everything and try the most obvious commit:
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph add .</span>
+<span class="out-good">2 files staged</span>
+
+<span class="prompt">$ </span><span class="cmd">morph commit <span class="flag">-m</span> <span class="str">"scaffold currency converter"</span></span>
+<span class="out-bad">Error: policy requires metrics that are missing: [tests_total, tests_passed]. Pass --metrics</span>
+<span class="out-bad">with these keys, run `morph eval record`, or override with --allow-empty-metrics.</span>
+<span class="out-bad">(Configured in .morph/config.json under policy.required_metrics.)</span></div>
+        <p>
+          That's the policy biting us. The error tells you exactly what to do — there
+          are three real ways out:
+        </p>
+        <ol>
+          <li><code>--metrics '{"tests_passed": 3, "tests_total": 3}'</code> — supply them by hand.</li>
+          <li>Run the test suite under Morph (we'll do this in step 8) so the metrics flow in automatically.</li>
+          <li><code>--allow-empty-metrics</code> — the audited escape hatch. The commit still gets recorded, just without behavioral evidence.</li>
+        </ol>
+        <p>
+          For a scaffold commit, <strong>option 3 is the right call</strong>: there's nothing
+          interesting to evaluate yet, and the commit message says so. From now on,
+          though, we'll always have evidence.
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph commit <span class="flag">-m</span> <span class="str">"scaffold currency converter"</span> <span class="flag">--allow-empty-metrics</span></span>
+<span class="out-warn">warning: commit has no observed_metrics. Morph cannot enforce behavioral merge gating</span>
+<span class="out-warn">without evidence. Pass --metrics, run `morph eval record` / `morph eval run`, …</span>
+<span class="out-good">[main (root-commit) f7077862] scaffold currency converter</span>
+<span class="out"> 2 files committed</span>
+
+<span class="prompt">$ </span><span class="cmd">morph log <span class="flag">--oneline</span></span>
+<span class="out">f7077862  scaffold currency converter</span></div>
+        <div class="callout">
+          <strong>About <code>morph status</code>:</strong>
+          if you run <code>morph status</code> after a <code>morph add</code>, you'll still see your
+          files listed under "Changes not staged for commit." That's a label
+          quirk — Morph's status compares the working tree to <code>HEAD</code>, not to the
+          staging area, so the section header is misleading. Your files <em>are</em>
+          staged. The next <code>morph commit</code> will pick them up.
+        </div>
+      </section>
+
+      <!-- 5 -->
+      <section id="setup-ide">
+        <h2><span class="step-num">05</span>Wire up your IDE</h2>
+        <p>
+          One command installs the MCP server config, the recording hooks, and the
+          behavioral-commit rules for your IDE. Pick the one you use:
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph setup cursor</span>        <span class="comment"># writes .cursor/ (MCP, hooks, rules)</span>
+<span class="prompt">$ </span><span class="cmd">morph setup claude-code</span>   <span class="comment"># writes .claude/</span>
+<span class="prompt">$ </span><span class="cmd">morph setup opencode</span>      <span class="comment"># writes opencode/ + AGENTS.md</span></div>
+        <p>
+          What just happened: the hooks parse the agent's full transcript — every prompt,
+          response, tool call, file read, file edit, shell command — into structured
+          <strong>Trace</strong> events stored under <code>.morph/traces/</code>. Recording is
+          always-on. You don't need the agent to remember to record; the hooks see
+          the transcript and Morph picks up the rest.
+        </p>
+        <p>
+          From here on, when an agent works on this project in your IDE, every
+          session becomes an immutable <strong>Run</strong> with a full <strong>Trace</strong>.
+          Restart your IDE so it picks up the new MCP config, then come back to the
+          terminal.
+        </p>
+        <div class="callout">
+          For the per-IDE details — what files get written, how to verify the hook is
+          firing, troubleshooting — see
+          <a href="https://github.com/r/morph/blob/main/docs/CURSOR-SETUP.md">Cursor</a>,
+          <a href="https://github.com/r/morph/blob/main/docs/CLAUDE-CODE-SETUP.md">Claude Code</a>, or
+          <a href="https://github.com/r/morph/blob/main/docs/OPENCODE-SETUP.md">OpenCode</a>.
+        </div>
+      </section>
+
+      <!-- 6 -->
+      <section id="human-loop">
+        <h2><span class="step-num">06</span>Edit by hand</h2>
+        <p>
+          Make a small change so we have something to commit. Add a docstring
+          to <code>convert</code>, or anything trivial — the goal is just a diff:
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph status</span>
+<span class="out">Changes not staged for commit:</span>
+
+<span class="out">    modified:   converter.py</span></div>
+        <p>
+          We <em>could</em> stage and commit this right now with another
+          <code>--allow-empty-metrics</code>, the way we did the scaffold — and the human
+          loop on its own really is identical to Git's. But that's not why you came.
+          The next two steps wire up the part Git can't do: capture evidence
+          alongside the diff, and let it flow into the commit automatically.
+        </p>
+      </section>
+
+      <!-- 7 -->
+      <section id="eval-run">
+        <h2><span class="step-num">07</span>Capture metrics with <code>morph eval run</code></h2>
+        <p>
+          Your test runner already produces the numbers Morph's policy wants —
+          pass / fail counts, totals, pass rate. <code>morph eval run</code> is just a
+          wrapper around any test command: it shells out, captures stdout, parses
+          it (cargo, pytest, vitest, jest, and go are auto-detected), and writes a
+          <strong>Run</strong> object into the store linked to <code>HEAD</code>. The Run carries
+          the parsed metrics and a Trace of the invocation. It also drops a
+          <code>.morph/LAST_RUN.json</code> breadcrumb that the next <code>morph commit</code>
+          knows to pick up.
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph eval run -- python3 -m pytest</span>
+<span class="out">dff09ec109d469274644f4212f71d0d9c359a429315e6d80c2c833a21f773104</span></div>
+        <p>
+          That hash is the new run. You can inspect it directly:
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph show dff09ec1</span>
+<span class="out">{</span>
+<span class="out">  "type": "run",</span>
+<span class="out">  "commit": "f7077862…",</span>
+<span class="out">  "metrics": {</span>
+<span class="out">    "pass_rate": 1.0,</span>
+<span class="out">    "tests_failed": 0.0,</span>
+<span class="out">    "tests_passed": 3.0,</span>
+<span class="out">    "tests_total": 3.0</span>
+<span class="out">  },</span>
+<span class="out">  "trace": "24c92cf3…",</span>
+<span class="out">  "agent": { "id": "morph-eval-run", "version": "1.0", … }</span>
+<span class="out">}</span></div>
+        <p>
+          The metrics from your test run are now sitting in a Run object,
+          waiting to be attached to a commit. <code>morph eval gaps</code> tells you
+          what evidence is still missing relative to <code>HEAD</code>:
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph eval gaps</span>
+<span class="out-good">Found 2 gap(s):</span>
+<span class="out">  - empty_head_metrics: Run `morph eval run -- &lt;test command&gt;` then `morph commit …`.</span>
+<span class="out">  - empty_default_suite: Add YAML/cucumber acceptance cases via `morph eval add-case &lt;file&gt;`.</span></div>
+        <p>
+          Two gaps. The first (<code>empty_head_metrics</code>) is the one we'll close
+          in the next step — it just means <code>HEAD</code> hasn't yet been
+          stamped with metrics. The run carries them; the commit doesn't yet.
+        </p>
+        <div class="callout">
+          <strong>About <code>empty_default_suite</code>:</strong>
+          this gap will stick around for the rest of the tutorial — that's expected.
+          It means we haven't registered a YAML <em>acceptance suite</em>, a separate
+          Morph concept where you write down what the project promises in plain
+          English. It's optional for a single-branch project (your test runner
+          already produces the numeric metrics the policy needs), but it earns its
+          keep in <a href="./branches-and-merge.html">Tutorial 3</a> when we get to
+          merges and case provenance. Ignore the gap for now.
+        </div>
+        <div class="callout warn">
+          <strong>Use the full pytest output, not <code>-q</code>.</strong>
+          The pytest parser keys off the <code>=== N passed in Xs ===</code> summary
+          line, which <code>pytest -q</code> in recent versions doesn't emit. If
+          <code>morph eval run</code> warns "no metrics extracted," drop the <code>-q</code>.
+        </div>
+      </section>
+
+      <!-- 8 -->
+      <section id="commit-with-evidence">
+        <h2><span class="step-num">08</span>Commit with evidence</h2>
+        <p>
+          Now stage the docstring change and commit. <strong>You don't need
+          <code>--from-run</code> or <code>--metrics</code></strong> — Morph notices the fresh
+          <code>LAST_RUN</code> breadcrumb left by <code>morph eval run</code> and attaches
+          its metrics to the commit automatically:
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph add .</span>
+<span class="out-good">1 file staged</span>
+
+<span class="prompt">$ </span><span class="cmd">morph commit <span class="flag">-m</span> <span class="str">"add a docstring to convert()"</span></span>
+<span class="out-good">attaching evidence from run dff09ec1: pass_rate=1, tests_failed=0, tests_passed=3, tests_total=3</span>
+<span class="out-good">[main 00d89f7a] add a docstring to convert()</span>
+<span class="out"> 1 file committed</span></div>
+        <p>
+          That "<code>attaching evidence from run …</code>" line is the moment of payoff.
+          The commit you just made is no longer a snapshot — it's a snapshot
+          <em>plus</em> a behavioral claim, with the run that produced it linked as
+          evidence.
+        </p>
+        <p>
+          See for yourself. <code>morph log</code> defaults to a compact one-liner; the
+          metrics live one level deeper, on the commit object itself or in the
+          <code>--json</code> view of the log:
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph show 00d89f7a</span>
+<span class="out">{</span>
+<span class="out">  "type": "commit",</span>
+<span class="out">  "tree": "19d1190e…",</span>
+<span class="out">  "message": "add a docstring to convert()",</span>
+<span class="out">  "eval_contract": {</span>
+<span class="out">    "suite": "5abb5131…",</span>
+<span class="out">    "observed_metrics": {</span>
+<span class="out">      "pass_rate": 1.0,</span>
+<span class="out">      "tests_failed": 0.0,</span>
+<span class="out">      "tests_passed": 3.0,</span>
+<span class="out">      "tests_total": 3.0</span>
+<span class="out">    }</span>
+<span class="out">  },</span>
+<span class="out">  "evidence_refs": [</span>
+<span class="out">    "dff09ec1…",</span>
+<span class="out">    "9cd62067…"</span>
+<span class="out">  ],</span>
+<span class="out">  …</span>
+<span class="out">}</span></div>
+        <p>
+          The <code>eval_contract</code> field is the part Git can't represent.
+          <code>evidence_refs</code> point back to the runs that justify the metrics.
+          That's a behavioral commit. (The <code>suite</code> hash
+          <code>5abb5131…</code> is Morph's canonical empty-suite hash — it's the
+          stand-in until you register a real one in Tutorial 3.)
+        </p>
+      </section>
+
+      <!-- 9 -->
+      <section id="agent-turn">
+        <h2><span class="step-num">09</span>Let an agent take a turn</h2>
+        <p>
+          Open this project in Cursor (or your IDE of choice) and ask the agent
+          for something concrete:
+        </p>
+        <div class="callout">
+          <em>"Add support for GBP at rate 0.79. Update the rate table and add a
+          test that converts 10 USD to GBP and asserts the result is 7.90."</em>
+        </div>
+        <p>
+          While the agent works, the hooks you installed in step 5 are quietly
+          recording its transcript into <code>.morph/traces/</code> — every prompt and
+          response, every tool call, every file read, every file edit, every
+          shell invocation. You don't have to do anything; recording is
+          background-noise.
+        </p>
+        <p>
+          When the agent finishes, switch back to the terminal. Your working
+          tree should look something like this:
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph status</span>
+<span class="out">Changes not staged for commit:</span>
+
+<span class="out">    modified:   converter.py</span>
+<span class="out">    modified:   test_converter.py</span>
+
+<span class="out-good">Morph activity: 3 runs, 3 traces</span>
+<span class="out">Eval suite: 0 cases registered</span></div>
+        <p>
+          That <em>"Morph activity"</em> line is new. Two of those runs are from your
+          earlier <code>morph eval run</code> calls; the third is the agent's session
+          — a Run object with a Trace containing every event from the IDE turn.
+          (The "<code>0 cases registered</code>" is the same <code>empty_default_suite</code>
+          gap from step 7 — still expected, still fine.)
+        </p>
+      </section>
+
+      <!-- 10 -->
+      <section id="inspect">
+        <h2><span class="step-num">10</span>Inspect what the agent did</h2>
+        <p>
+          This is the part Git literally cannot do. <code>morph tap</code> is the read
+          surface for recorded agent work — runs, prompts, tool calls, file edits,
+          aggregated by trace.
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph tap summary</span>
+<span class="out">=== Tap Repository Summary ===</span>
+
+<span class="out">Runs:           5</span>
+<span class="out">Traces:         5</span>
+<span class="out">Total events:   38</span>
+<span class="out">Multi-step:     1</span>
+<span class="out">With metrics:   2</span>
+
+<span class="out">Event kinds:</span>
+<span class="out">  prompt           1</span>
+<span class="out">  response         1</span>
+<span class="out">  tool_call        14</span>
+<span class="out">  file_edit         6</span>
+<span class="out">  shell             4</span>
+<span class="out">  test_output       4</span>
+
+<span class="out">Models:</span>
+<span class="out">  claude-opus-4                  1</span>
+<span class="out">  test-runner                    4</span></div>
+        <p>
+          Drill into a specific run to see its grouped steps:
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph tap inspect 52b35819</span>
+<span class="out">=== Run 52b35819 ===</span>
+<span class="out">  model: claude-opus-4  agent: cursor  events: 32  steps: 1</span>
+
+<span class="out">  --- Step 1 ---</span>
+<span class="out">  Prompt:   Add support for GBP at rate 0.79…</span>
+<span class="out">  Tool:     read(converter.py)</span>
+<span class="out">  Tool:     edit(converter.py, +1/-0)</span>
+<span class="out">  Tool:     edit(test_converter.py, +5/-0)</span>
+<span class="out">  Shell:    python3 -m pytest</span>
+<span class="out">  Response: Added GBP at 0.79 with a USD→GBP test. Tests pass (4/4).</span></div>
+        <p>
+          Or look at it through the trace lens, which understands phases and
+          target-context:
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph traces summary</span>
+<span class="out">=== Recent Traces (5 shown) ===</span>
+
+<span class="out">52b35819  2026-04-28T23:44Z  phase=create_code  scope=converter.py</span>
+<span class="out">  prompt: Add support for GBP at rate 0.79…</span>
+
+<span class="prompt">$ </span><span class="cmd">morph traces target-context 52b35819</span>     <span class="comment"># the snippet the agent was working on</span>
+<span class="prompt">$ </span><span class="cmd">morph traces final-artifact 52b35819</span>     <span class="comment"># what the agent produced</span></div>
+        <p>
+          Every one of those events is content-addressed and immutable. Six months
+          from now, when someone asks "<em>why does the converter handle GBP this
+          way?</em>", the answer is a single hash away.
+        </p>
+        <p>
+          Now finish the loop. The agent already ran pytest via <code>shell:</code>
+          events during its turn, but we want a fresh <code>LAST_RUN</code> breadcrumb
+          tied to the staged tree, so re-run it explicitly:
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph add .</span>
+<span class="prompt">$ </span><span class="cmd">morph eval run -- python3 -m pytest</span>
+<span class="out">32eef028…</span>
+
+<span class="prompt">$ </span><span class="cmd">morph commit <span class="flag">-m</span> <span class="str">"add GBP support"</span></span>
+<span class="out-good">attaching evidence from run 32eef028: pass_rate=1, tests_failed=0, tests_passed=4, tests_total=4</span>
+<span class="out-good">[main 526f83ca] add GBP support</span>
+<span class="out"> 2 files committed</span>
+
+<span class="prompt">$ </span><span class="cmd">morph log <span class="flag">--oneline</span></span>
+<span class="out">526f83ca  add GBP support</span>
+<span class="out">00d89f7a  add a docstring to convert()</span>
+<span class="out">f7077862  scaffold currency converter</span></div>
+        <p>
+          Three commits, two with metrics, one (the latest) with the agent's full
+          Trace attached as evidence. <code>morph log --json</code> will show you the
+          metrics inline if you want to verify.
+        </p>
+      </section>
+
+      <!-- 11 -->
+      <section id="revert">
+        <h2><span class="step-num">11</span>Make a regression, then revert</h2>
+        <p>
+          Morph is a full VCS, not just an additive recorder. Reverts work, and the
+          interesting twist is that you can <em>see the regression in the metrics</em>
+          before you decide to undo it.
+        </p>
+        <p>
+          Break something on purpose. Edit <code>converter.py</code> and change the EUR
+          rate to <code>0.95</code> (sloppy "fix" — it'll fail two tests). Then run the
+          eval and commit:
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph add . &amp;&amp; morph eval run -- python3 -m pytest</span>
+<span class="out">3b8f00c1…</span>
+
+<span class="prompt">$ </span><span class="cmd">morph commit <span class="flag">-m</span> <span class="str">"tweak EUR rate"</span></span>
+<span class="out-warn">attaching evidence from run 3b8f00c1: pass_rate=0.5, tests_failed=2, tests_passed=2, tests_total=4</span>
+<span class="out-good">[main 887b835d] tweak EUR rate</span></div>
+        <p>
+          The commit succeeded — Morph's policy requires evidence, not <em>good</em>
+          evidence. The bad commit is recorded with its real metrics, exactly as it
+          should be (suppressing it would defeat the point of behavioral version control).
+          You'd see this regression in <code>morph log --json</code>:
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph log <span class="flag">--json</span> | python3 <span class="flag">-c</span> <span class="str">"import json,sys; [print(c['short'],'->',c['metrics']) for c in json.load(sys.stdin)['commits']]"</span></span>
+<span class="out-bad">887b835d -&gt; {'pass_rate': 0.5, 'tests_failed': 2, 'tests_passed': 2, 'tests_total': 4}</span>
+<span class="out-good">526f83ca -&gt; {'pass_rate': 1.0, 'tests_failed': 0, 'tests_passed': 4, 'tests_total': 4}</span>
+<span class="out-good">00d89f7a -&gt; {'pass_rate': 1.0, 'tests_failed': 0, 'tests_passed': 3, 'tests_total': 3}</span>
+<span class="out">f7077862 -&gt; {}</span></div>
+        <p>
+          Now revert it. <code>morph revert</code> creates a new commit that undoes the
+          target. <strong>One quirk to know:</strong> revert doesn't update your
+          working tree on its own — you'll need <code>morph checkout &lt;branch&gt;</code> to
+          bring the files back into line:
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph revert 887b835d</span>
+<span class="out">18a5f076bc1da8e25b561165089d9f918e2ff6853a6d89f872e3ad24c296262d</span>
+
+<span class="prompt">$ </span><span class="cmd">morph checkout main</span>
+<span class="out-good">Switched to branch main</span>
+
+<span class="prompt">$ </span><span class="cmd">grep EUR converter.py</span>
+<span class="out-good">    "EUR": 0.92,</span>
+
+<span class="prompt">$ </span><span class="cmd">morph eval run -- python3 -m pytest <span class="flag">&amp;&amp;</span> morph commit <span class="flag">-m</span> <span class="str">"re-run suite after revert"</span></span>
+<span class="out-good">attaching evidence from run 20622b3a: pass_rate=1, tests_failed=0, tests_passed=4, tests_total=4</span></div>
+        <p>
+          Both the bad commit and the revert are preserved in history — the bad
+          commit is still inspectable, its run still shows the regression, and the
+          new HEAD is back to a green metric. The Trace of <em>why you made the
+          regression and how you backed out</em> is part of the repo forever. That's
+          the point.
+        </p>
+      </section>
+
+      <!-- 12 -->
+      <section id="serve">
+        <h2><span class="step-num">12</span>Browse it visually</h2>
+        <p>
+          The CLI gets you everywhere, but for showing the result to a teammate
+          (or to yourself, after a long session), the hosted browser UI is a much
+          nicer way to see the graph. Run it from the repo:
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph serve</span>
+<span class="out-good">Listening on http://127.0.0.1:8765</span></div>
+        <p>
+          Open that URL. You'll see the commit graph laid out with metrics on every
+          node, click into a commit to see its eval contract and evidence refs,
+          click an evidence ref to see the run, click into the run to see the trace,
+          click a trace event to see the prompt or tool call. Same data <code>morph
+          tap</code> showed in the terminal — just easier to share.
+        </p>
+        <p>
+          Stop it with <kbd>Ctrl-C</kbd>. <code>morph serve</code> is read-only over the
+          underlying repo; nothing it does mutates state.
+        </p>
+      </section>
+
+      <!-- 13 -->
+      <section id="next">
+        <h2><span class="step-num">13</span>Where to next</h2>
+        <p>
+          You now have a project that's tracked end-to-end by Morph: every commit
+          carries metrics, every agent session is a Run with a Trace, the working
+          tree can be reverted cleanly, and the whole graph is browsable. From here:
+        </p>
+        <ul>
+          <li>
+            <strong><a href="./adding-to-git-project.html">Tutorial 2 — Adding Morph to an existing Git project</a>:</strong>
+            run Morph alongside Git as a behavioral safety net.
+          </li>
+          <li>
+            <strong><a href="./branches-and-merge.html">Tutorial 3 — Branches, merges, and merge conflicts</a>:</strong>
+            behavioral merge gating, dominance, case provenance, and what happens
+            when two branches genuinely conflict. This is where YAML
+            <strong>acceptance suites</strong> (the <code>empty_default_suite</code> gap
+            you saw throughout this tutorial) start earning their keep — they
+            give the merge gate something more than raw numbers to compare against.
+          </li>
+          <li>
+            <strong><a href="https://github.com/r/morph/blob/main/docs/EVAL-DRIVEN.md">Eval-driven development</a>:</strong>
+            the full guide to spec-first workflows, suite evolution, and CI integration.
+          </li>
+          <li>
+            <strong><a href="https://github.com/r/morph/blob/main/docs/THEORY.md">The theory</a>:</strong>
+            pipelines, certificate vectors, partial orders — the algebra under the CLI.
+          </li>
+        </ul>
+
+        <div class="pager">
+          <a href="./" class="prev">
+            <span class="dir">← All tutorials</span>
+            <span class="ttl">Tutorials index</span>
+          </a>
+          <a href="./adding-to-git-project.html" class="next disabled" aria-disabled="true">
+            <span class="dir">Next · coming soon</span>
+            <span class="ttl">Adding Morph to a Git project</span>
+          </a>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="tutorial-foot">
+    <p>
+      Morph is in alpha — file issues and feedback at
+      <a href="https://github.com/r/morph/issues">github.com/r/morph/issues</a>.
+      <br>
+      <a href="../">← Back to home</a>
+    </p>
+  </footer>
+
+  <script>
+    // Scrollspy: highlight the current section in the sidebar.
+    (function () {
+      const links = Array.from(document.querySelectorAll('aside.toc a'));
+      const sections = links
+        .map(a => {
+          const id = a.getAttribute('href').slice(1);
+          return { id, link: a, el: document.getElementById(id) };
+        })
+        .filter(s => s.el);
+
+      const observer = new IntersectionObserver((entries) => {
+        // Pick the topmost intersecting section. If none, leave state alone.
+        let active = null;
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            if (!active || entry.boundingClientRect.top < active.boundingClientRect.top) {
+              active = entry;
+            }
+          }
+        }
+        if (active) {
+          links.forEach(a => a.classList.remove('active'));
+          const link = sections.find(s => s.el === active.target).link;
+          link.classList.add('active');
+        }
+      }, {
+        rootMargin: '-15% 0px -70% 0px',
+        threshold: 0,
+      });
+
+      sections.forEach(s => observer.observe(s.el));
+
+      // Also activate on click immediately (the IO-based approach can lag).
+      links.forEach(a => a.addEventListener('click', () => {
+        links.forEach(b => b.classList.remove('active'));
+        a.classList.add('active');
+      }));
+    })();
+  </script>
+</body>
+</html>

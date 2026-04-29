@@ -7,10 +7,10 @@
 | **morph-core** | 633 unit tests across the lib's modules | `#[cfg(test)]` blocks in each source file |
 | **morph-cli** | 365 YAML-driven CLI specs + 22 unit tests + 20 dedicated integration tests (`remote_helper_integration`, `ssh_fetch_integration`, `status_merge_integration`) | YAML specs in `morph-cli/tests/specs/*.yaml`, compiled by `build.rs`; unit tests in `main.rs` + `setup.rs`; dedicated integration files under `morph-cli/tests/`. |
 | **morph-e2e** | Cucumber scenarios (16 features, 37 scenarios) | `morph-e2e/features/*.feature`, step defs in `morph-e2e/tests/cucumber.rs` |
-| **morph-mcp** | 29 integration tests | `#[cfg(test)]` in `morph-mcp/src/main.rs` |
+| **morph-mcp** | 31 integration tests | `#[cfg(test)]` in `morph-mcp/src/main.rs` |
 | **morph-serve** | 37 unit/API tests (views, service, handlers, org policy, multi-repo) | `morph-serve/src/tests.rs` + `org_policy::tests` |
 
-Totals: **1106 Rust tests** plus the Cucumber suite (37 scenarios, 3 skipped under server-binding constraints), all green. Reproduce the count locally with `cargo test --workspace 2>&1 | rg "^test result:" | rg "passed" | awk '{s+=$4} END {print s}'`.
+Totals: **1108 Rust tests** plus the Cucumber suite (37 scenarios, 3 skipped under server-binding constraints), all green. Reproduce the count locally with `cargo test --workspace 2>&1 | rg "^test result:" | rg "passed" | awk '{s+=$4} END {print s}'`.
 
 ### morph-core unit test highlights
 

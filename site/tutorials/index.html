@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorials — Morph</title>
+  <meta name="description" content="Hands-on walkthroughs for getting started with Morph, adding it to existing Git projects, and working with branches and behavioral merge gating.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #fafbfb;
+      --bg-alt: #f0f5f4;
+      --fg: #0f1a1a;
+      --fg-muted: #3d5250;
+      --fg-subtle: #8a9e9b;
+      --accent: #0f766e;
+      --accent-light: #14b8a6;
+      --accent-bg: #ecfdf8;
+      --border: #d5e0de;
+      --border-soft: #e6ecea;
+      --max-width: 1080px;
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-mono: 'IBM Plex Mono', 'SF Mono', 'Menlo', monospace;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html { font-size: 17px; scroll-behavior: smooth; }
+
+    body {
+      font-family: var(--font-sans);
+      color: var(--fg);
+      background: var(--bg);
+      line-height: 1.7;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* — Top nav — */
+    .topnav-wrap {
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      backdrop-filter: blur(8px);
+    }
+
+    nav.topnav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      max-width: var(--max-width);
+      margin: 0 auto;
+      padding: 1rem 2rem;
+    }
+
+    nav.topnav .logo {
+      font-weight: 700;
+      font-size: 1.15rem;
+      letter-spacing: -0.02em;
+      color: var(--fg);
+    }
+    nav.topnav .logo .crumb {
+      color: var(--fg-subtle);
+      font-weight: 500;
+      margin-left: 0.5rem;
+    }
+
+    nav.topnav .links {
+      display: flex;
+      gap: 1.75rem;
+      list-style: none;
+    }
+    nav.topnav .links a {
+      color: var(--fg-muted);
+      font-size: 0.9rem;
+      font-weight: 500;
+    }
+    nav.topnav .links a:hover { color: var(--accent); }
+
+    /* — Hero — */
+    .hero {
+      max-width: var(--max-width);
+      margin: 0 auto;
+      padding: 5rem 2rem 3rem;
+    }
+
+    .hero .eyebrow {
+      display: inline-block;
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent);
+      background: var(--accent-bg);
+      padding: 0.3rem 0.85rem;
+      border-radius: 100px;
+      margin-bottom: 1.25rem;
+    }
+
+    .hero h1 {
+      font-size: 2.75rem;
+      font-weight: 700;
+      letter-spacing: -0.025em;
+      line-height: 1.15;
+      margin-bottom: 1rem;
+      max-width: 720px;
+    }
+
+    .hero p {
+      font-size: 1.1rem;
+      color: var(--fg-muted);
+      max-width: 640px;
+      line-height: 1.65;
+    }
+
+    /* — Tutorial cards — */
+    .tutorials {
+      max-width: var(--max-width);
+      margin: 0 auto;
+      padding: 1rem 2rem 5rem;
+      display: grid;
+      gap: 1.25rem;
+    }
+
+    .tut-card {
+      display: grid;
+      grid-template-columns: 80px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 1.5rem;
+      padding: 1.75rem 2rem;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--bg);
+      transition: border-color 0.18s, transform 0.18s, box-shadow 0.18s;
+      color: inherit;
+    }
+
+    .tut-card:hover {
+      border-color: var(--accent);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 18px rgba(15, 118, 110, 0.08);
+      text-decoration: none;
+    }
+
+    .tut-card.disabled {
+      pointer-events: none;
+      background: var(--bg-alt);
+      border-style: dashed;
+      opacity: 0.85;
+    }
+
+    .tut-card .num {
+      font-family: var(--font-mono);
+      font-size: 1.6rem;
+      font-weight: 500;
+      color: var(--fg-subtle);
+      letter-spacing: -0.02em;
+    }
+
+    .tut-card.disabled .num { color: var(--fg-subtle); }
+
+    .tut-card h2 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: -0.015em;
+      color: var(--fg);
+      margin-bottom: 0.4rem;
+    }
+
+    .tut-card.disabled h2 { color: var(--fg-muted); }
+
+    .tut-card p {
+      font-size: 0.95rem;
+      color: var(--fg-muted);
+      line-height: 1.55;
+    }
+
+    .tut-card .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-top: 0.65rem;
+    }
+
+    .tut-card .tag {
+      font-size: 0.7rem;
+      font-weight: 500;
+      letter-spacing: 0.04em;
+      color: var(--fg-subtle);
+      background: var(--bg-alt);
+      padding: 0.2rem 0.6rem;
+      border-radius: 100px;
+    }
+
+    .tut-card.disabled .tag {
+      background: rgba(255, 255, 255, 0.5);
+    }
+
+    .tut-card .arrow {
+      font-family: var(--font-mono);
+      font-size: 1.4rem;
+      color: var(--fg-subtle);
+      transition: color 0.15s, transform 0.15s;
+    }
+
+    .tut-card:hover .arrow {
+      color: var(--accent);
+      transform: translateX(3px);
+    }
+
+    .tut-card.disabled .arrow { color: var(--fg-subtle); }
+
+    .tut-card.disabled .arrow::before { content: '·'; }
+    .tut-card:not(.disabled) .arrow::before { content: '→'; }
+
+    /* — Footer — */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 2.5rem 2rem;
+      text-align: center;
+      color: var(--fg-subtle);
+      font-size: 0.85rem;
+    }
+    footer a { color: var(--fg-muted); }
+    footer a:hover { color: var(--accent); }
+
+    @media (max-width: 720px) {
+      .hero { padding: 3rem 1.5rem 2rem; }
+      .hero h1 { font-size: 2rem; }
+      .tutorials { padding: 0.5rem 1.5rem 3rem; }
+      .tut-card {
+        grid-template-columns: 1fr;
+        gap: 0.75rem;
+        padding: 1.5rem 1.5rem;
+      }
+      .tut-card .num { font-size: 1.2rem; }
+      .tut-card .arrow { display: none; }
+      nav.topnav { padding: 0.85rem 1.25rem; }
+      nav.topnav .links { gap: 1.25rem; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="topnav-wrap">
+    <nav class="topnav">
+      <a href="../" class="logo">morph<span class="crumb">/ tutorials</span></a>
+      <ul class="links">
+        <li><a href="../">Home</a></li>
+        <li><a href="./">Tutorials</a></li>
+        <li><a href="https://github.com/r/morph">GitHub</a></li>
+      </ul>
+    </nav>
+  </div>
+
+  <section class="hero">
+    <span class="eyebrow">Tutorials</span>
+    <h1>Hands-on walkthroughs of Morph</h1>
+    <p>
+      Three short tutorials that take you from an empty directory to a fully
+      tracked, eval-gated project — covering the parts of Morph that don't
+      exist in Git: runs, traces, behavioral commits, and merge by dominance.
+    </p>
+  </section>
+
+  <div class="tutorials">
+
+    <a class="tut-card" href="./getting-started.html">
+      <div class="num">01</div>
+      <div>
+        <h2>Start a new project with Morph</h2>
+        <p>
+          From <code>morph init</code> through metric-bearing commits, an agent session
+          recorded as a Trace, and a clean revert — all without Git in the picture.
+          The fastest way to feel the whole loop.
+        </p>
+        <div class="tags">
+          <span class="tag">~20 min</span>
+          <span class="tag">Morph only</span>
+          <span class="tag">Python · pytest</span>
+          <span class="tag">Intro</span>
+        </div>
+      </div>
+      <span class="arrow"></span>
+    </a>
+
+    <a class="tut-card disabled" aria-disabled="true">
+      <div class="num">02</div>
+      <div>
+        <h2>Add Morph to a project that already has Git</h2>
+        <p>
+          Layer Morph onto a real Git repository. Keep your existing branches,
+          commits, and remote — and use Morph as the system of record for
+          behavioral evidence, with Git as a safety net underneath.
+        </p>
+        <div class="tags">
+          <span class="tag">Coming soon</span>
+          <span class="tag">Git + Morph</span>
+        </div>
+      </div>
+      <span class="arrow"></span>
+    </a>
+
+    <a class="tut-card disabled" aria-disabled="true">
+      <div class="num">03</div>
+      <div>
+        <h2>Branches, merges, and merge conflicts</h2>
+        <p>
+          Two branches, two metric vectors, one behavioral merge gate.
+          Walk through dominance, the union eval suite, case provenance,
+          and what to do when the metrics genuinely conflict.
+        </p>
+        <div class="tags">
+          <span class="tag">Coming soon</span>
+          <span class="tag">Merge gating</span>
+        </div>
+      </div>
+      <span class="arrow"></span>
+    </a>
+
+  </div>
+
+  <footer>
+    <p>
+      Morph is in alpha — file issues and feedback at
+      <a href="https://github.com/r/morph/issues">github.com/r/morph/issues</a>.
+      <br>
+      <a href="../">← Back to home</a>
+    </p>
+  </footer>
+
+</body>
+</html>
