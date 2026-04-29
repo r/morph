@@ -1,0 +1,1448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Add Morph to a project that already uses Git — Tutorial</title>
+  <meta name="description" content="A 20-minute walkthrough that adds Morph to an existing Git project in reference mode. Every git commit becomes a behavioral commit in Morph, hashes tied together, your team's workflow unchanged.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #fafbfb;
+      --bg-alt: #f0f5f4;
+      --fg: #0f1a1a;
+      --fg-muted: #3d5250;
+      --fg-subtle: #8a9e9b;
+      --accent: #0f766e;
+      --accent-light: #14b8a6;
+      --accent-bg: #ecfdf8;
+      --border: #d5e0de;
+      --border-soft: #e6ecea;
+      --code-bg: #0c1a2a;
+      --code-fg: #e2e8f0;
+      --code-comment: #5f7a8a;
+      --code-keyword: #5eead4;
+      --code-string: #86efac;
+      --code-flag: #fde68a;
+      --warn-bg: #fef9e7;
+      --warn-border: #fde68a;
+      --warn-fg: #78600a;
+      --max-width: 1200px;
+      --sidebar-width: 240px;
+      --content-width: 720px;
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-mono: 'IBM Plex Mono', 'SF Mono', 'Menlo', monospace;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html {
+      font-size: 17px;
+      scroll-behavior: smooth;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      color: var(--fg);
+      background: var(--bg);
+      line-height: 1.7;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    a:hover { text-decoration: underline; }
+
+    /* — Top nav — */
+    .topnav-wrap {
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      backdrop-filter: blur(8px);
+    }
+
+    nav.topnav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      max-width: var(--max-width);
+      margin: 0 auto;
+      padding: 1rem 2rem;
+    }
+
+    nav.topnav .logo {
+      font-weight: 700;
+      font-size: 1.15rem;
+      letter-spacing: -0.02em;
+      color: var(--fg);
+    }
+
+    nav.topnav .logo .crumb {
+      color: var(--fg-subtle);
+      font-weight: 500;
+      margin-left: 0.5rem;
+    }
+
+    nav.topnav .links {
+      display: flex;
+      gap: 1.75rem;
+      list-style: none;
+    }
+
+    nav.topnav .links a {
+      color: var(--fg-muted);
+      font-size: 0.9rem;
+      font-weight: 500;
+    }
+
+    nav.topnav .links a:hover { color: var(--accent); }
+
+    /* — Layout — */
+    .layout {
+      max-width: var(--max-width);
+      margin: 0 auto;
+      padding: 0 2rem;
+      display: grid;
+      grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+      gap: 4rem;
+      align-items: start;
+    }
+
+    /* — Sidebar — */
+    aside.toc {
+      position: sticky;
+      top: 5.5rem;
+      padding: 2.5rem 0 2rem;
+      max-height: calc(100vh - 5.5rem);
+      overflow-y: auto;
+    }
+
+    aside.toc .toc-label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--fg-subtle);
+      margin-bottom: 1rem;
+    }
+
+    aside.toc details > summary {
+      display: none;
+    }
+    aside.toc details > .toc-label {
+      display: block;
+    }
+    @media (max-width: 880px) {
+      aside.toc details > summary {
+        display: flex;
+      }
+      aside.toc details > .toc-label {
+        display: none;
+      }
+    }
+
+    aside.toc ol {
+      list-style: none;
+      counter-reset: toc;
+      border-left: 2px solid var(--border-soft);
+    }
+
+    aside.toc ol li { counter-increment: toc; }
+
+    aside.toc ol li a {
+      display: block;
+      padding: 0.4rem 0 0.4rem 1rem;
+      margin-left: -2px;
+      border-left: 2px solid transparent;
+      color: var(--fg-muted);
+      font-size: 0.85rem;
+      font-weight: 500;
+      line-height: 1.45;
+      transition: color 0.15s, border-color 0.15s;
+    }
+
+    aside.toc ol li a::before {
+      content: counter(toc, decimal-leading-zero);
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      font-weight: 500;
+      color: var(--fg-subtle);
+      margin-right: 0.55rem;
+    }
+
+    aside.toc ol li a:hover {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    aside.toc ol li a.active {
+      color: var(--accent);
+      border-left-color: var(--accent);
+      font-weight: 600;
+    }
+
+    aside.toc ol li a.active::before { color: var(--accent); }
+
+    /* — Main content — */
+    main.content {
+      padding: 2.5rem 0 5rem;
+      max-width: var(--content-width);
+    }
+
+    main.content .eyebrow {
+      display: inline-block;
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent);
+      background: var(--accent-bg);
+      padding: 0.3rem 0.75rem;
+      border-radius: 100px;
+      margin-bottom: 1.25rem;
+    }
+
+    main.content h1 {
+      font-size: 2.4rem;
+      font-weight: 700;
+      line-height: 1.2;
+      letter-spacing: -0.02em;
+      margin-bottom: 0.85rem;
+    }
+
+    main.content .lede {
+      font-size: 1.1rem;
+      color: var(--fg-muted);
+      line-height: 1.65;
+      margin-bottom: 2rem;
+    }
+
+    main.content .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.25rem;
+      font-size: 0.85rem;
+      color: var(--fg-subtle);
+      padding-bottom: 2rem;
+      margin-bottom: 3rem;
+      border-bottom: 1px solid var(--border-soft);
+    }
+
+    main.content .meta span strong {
+      color: var(--fg-muted);
+      font-weight: 600;
+    }
+
+    main.content section {
+      padding-top: 4rem;
+      margin-top: -2rem;
+    }
+
+    main.content section:first-of-type {
+      padding-top: 0;
+      margin-top: 0;
+    }
+
+    main.content section h2 {
+      font-size: 1.6rem;
+      font-weight: 700;
+      letter-spacing: -0.015em;
+      margin-bottom: 1rem;
+      scroll-margin-top: 5rem;
+    }
+
+    main.content section h2 .step-num {
+      display: inline-block;
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: var(--fg-subtle);
+      vertical-align: 4px;
+      margin-right: 0.65rem;
+      padding: 0.18rem 0.55rem;
+      background: var(--bg-alt);
+      border-radius: 4px;
+      letter-spacing: 0.05em;
+    }
+
+    main.content section h3 {
+      font-size: 1.05rem;
+      font-weight: 600;
+      letter-spacing: -0.005em;
+      margin-top: 2rem;
+      margin-bottom: 0.6rem;
+      color: var(--fg);
+    }
+
+    main.content p {
+      color: var(--fg-muted);
+      margin-bottom: 1.1rem;
+      font-size: 1rem;
+    }
+
+    main.content p strong { color: var(--fg); font-weight: 600; }
+
+    main.content code {
+      font-family: var(--font-mono);
+      font-size: 0.86em;
+      background: var(--bg-alt);
+      color: var(--fg);
+      padding: 0.12em 0.4em;
+      border-radius: 4px;
+    }
+
+    main.content ul, main.content ol {
+      margin: 0.5rem 0 1.25rem 1.25rem;
+      color: var(--fg-muted);
+    }
+
+    main.content li { margin-bottom: 0.4rem; }
+
+    /* — Code/CLI blocks — */
+    .cli-block {
+      background: var(--code-bg);
+      color: var(--code-fg);
+      border-radius: 10px;
+      padding: 1.4rem 1.6rem;
+      font-family: var(--font-mono);
+      font-size: 0.84rem;
+      line-height: 1.65;
+      overflow-x: auto;
+      margin: 1.25rem 0 1.75rem;
+      white-space: pre;
+    }
+
+    .cli-block .prompt { color: var(--code-comment); user-select: none; }
+    .cli-block .cmd { color: var(--code-fg); }
+    .cli-block .flag { color: var(--code-flag); }
+    .cli-block .str { color: var(--code-string); }
+    .cli-block .kw { color: var(--code-keyword); }
+    .cli-block .comment { color: var(--code-comment); font-style: italic; }
+    .cli-block .out { color: #94a3b8; }
+    .cli-block .out-good { color: var(--code-string); }
+    .cli-block .out-warn { color: var(--code-flag); }
+    .cli-block .out-bad { color: #fca5a5; }
+    .cli-block .label {
+      display: block;
+      font-size: 0.7rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #64748b;
+      margin-bottom: 0.7rem;
+    }
+
+    /* — Callouts — */
+    .callout {
+      border-left: 3px solid var(--accent);
+      background: var(--accent-bg);
+      padding: 1rem 1.25rem;
+      border-radius: 0 6px 6px 0;
+      margin: 1.5rem 0;
+      font-size: 0.95rem;
+      color: var(--fg-muted);
+    }
+    .callout strong { color: var(--accent); }
+    .callout.warn {
+      border-left-color: #b45309;
+      background: var(--warn-bg);
+    }
+    .callout.warn strong { color: var(--warn-fg); }
+
+    /* — Two-column comparison (git side / morph side) — */
+    .duo {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin: 1.5rem 0;
+    }
+    .duo .duo-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem 1.15rem;
+      background: var(--bg);
+    }
+    .duo .duo-card h4 {
+      font-size: 0.78rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--fg-subtle);
+      margin-bottom: 0.5rem;
+      font-weight: 600;
+    }
+    .duo .duo-card p {
+      font-size: 0.92rem;
+      color: var(--fg-muted);
+      margin: 0;
+    }
+    @media (max-width: 720px) {
+      .duo { grid-template-columns: 1fr; }
+    }
+
+    /* — Pager — */
+    .pager {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin-top: 4rem;
+      padding-top: 2rem;
+      border-top: 1px solid var(--border-soft);
+    }
+    .pager a {
+      padding: 1rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .pager a:hover {
+      border-color: var(--accent);
+      background: var(--accent-bg);
+      text-decoration: none;
+    }
+    .pager .dir {
+      display: block;
+      font-size: 0.7rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--fg-subtle);
+      margin-bottom: 0.25rem;
+    }
+    .pager .ttl {
+      color: var(--fg);
+      font-weight: 600;
+    }
+    .pager .next { text-align: right; }
+    .pager a.disabled {
+      pointer-events: none;
+      opacity: 0.55;
+    }
+    .pager a.disabled .ttl { color: var(--fg-muted); }
+
+    footer.tutorial-foot {
+      border-top: 1px solid var(--border);
+      margin-top: 4rem;
+      padding: 2.5rem 2rem;
+      text-align: center;
+      color: var(--fg-subtle);
+      font-size: 0.85rem;
+    }
+    footer.tutorial-foot a { color: var(--fg-muted); }
+    footer.tutorial-foot a:hover { color: var(--accent); }
+
+    @media (max-width: 880px) {
+      .layout {
+        grid-template-columns: 1fr;
+        gap: 1rem;
+        padding: 0 1.25rem;
+      }
+      aside.toc {
+        position: relative;
+        top: auto;
+        max-height: none;
+        padding: 1.5rem 0 1rem;
+        border-bottom: 1px solid var(--border-soft);
+        margin-bottom: 1.5rem;
+      }
+      aside.toc details > summary {
+        list-style: none;
+        cursor: pointer;
+        font-size: 0.9rem;
+        font-weight: 600;
+        color: var(--fg);
+        padding: 0.5rem 0;
+        align-items: center;
+        justify-content: space-between;
+      }
+      aside.toc details > summary::after {
+        content: '+';
+        color: var(--fg-subtle);
+        font-family: var(--font-mono);
+      }
+      aside.toc details[open] > summary::after { content: '−'; }
+      aside.toc details ol { margin-top: 0.75rem; }
+      main.content { padding: 1rem 0 3rem; }
+      main.content h1 { font-size: 1.85rem; }
+      main.content section { padding-top: 2.5rem; margin-top: -1rem; }
+      .pager { grid-template-columns: 1fr; }
+      .pager .next { text-align: left; }
+    }
+
+    @media (max-width: 480px) {
+      html { font-size: 16px; }
+      nav.topnav { padding: 0.85rem 1.25rem; }
+      nav.topnav .links a:not(.home-link) { display: none; }
+      .cli-block { font-size: 0.78rem; padding: 1.1rem 1.2rem; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="topnav-wrap">
+    <nav class="topnav">
+      <a href="../" class="logo">morph<span class="crumb">/ tutorials / add to git project</span></a>
+      <ul class="links">
+        <li><a href="../" class="home-link">Home</a></li>
+        <li><a href="./">Tutorials</a></li>
+        <li><a href="https://github.com/r/morph">GitHub</a></li>
+      </ul>
+    </nav>
+  </div>
+
+  <div class="layout">
+
+    <aside class="toc">
+      <details open>
+        <summary>On this page</summary>
+        <div class="toc-label" style="margin-top: 1rem;">On this page</div>
+        <ol>
+          <li><a href="#prereqs">Before you start</a></li>
+          <li><a href="#picture">How it works (in plain English)</a></li>
+          <li><a href="#init">morph init --reference</a></li>
+          <li><a href="#backfill">Mirror your existing history</a></li>
+          <li><a href="#git-commit">Plain git commit, automatic mirror</a></li>
+          <li><a href="#teammate-pull">Pulling from teammates</a></li>
+          <li><a href="#morph-commit">Commit through Morph for evidence</a></li>
+          <li><a href="#drift">When the hooks don't fire — drift</a></li>
+          <li><a href="#push">Pushing to GitHub</a></li>
+          <li><a href="#agents">Recording agent work</a></li>
+          <li><a href="#team-adoption">Bringing teammates onto Morph</a></li>
+          <li><a href="#scope">What you have, what you don't</a></li>
+          <li><a href="#next">Where to next</a></li>
+        </ol>
+      </details>
+    </aside>
+
+    <main class="content">
+      <span class="eyebrow">Tutorial · Add Morph to an existing Git project</span>
+      <h1>Morph alongside the Git repo you already use</h1>
+      <p class="lede">
+        You have a Python project on GitHub, the team uses Git, and you want
+        the things Morph adds &mdash; runs, traces, metric-bearing commits &mdash;
+        without changing anyone else's workflow. This walkthrough sets up
+        <strong>reference mode</strong>: Git stays the source of truth, Morph rides
+        on top, and every <code>git commit</code> is automatically tied to a Morph commit
+        by hash.
+      </p>
+      <div class="meta">
+        <span><strong>Time:</strong> ~20 min</span>
+        <span><strong>Mode:</strong> Reference (Stowaway)</span>
+        <span><strong>Stack:</strong> Python 3 · pytest · Git · GitHub</span>
+        <span><strong>Difficulty:</strong> Intermediate</span>
+      </div>
+
+      <section id="who-for" style="padding-top: 1rem; margin-top: 0;">
+        <h3 style="margin-top: 0;">Who is this for?</h3>
+        <p>If any of these sounds like you, the rest of this tutorial is
+        worth your 20 minutes:</p>
+        <div class="duo" style="grid-template-columns: 1fr 1fr 1fr; gap: 0.85rem;">
+          <div class="duo-card">
+            <h4>Curious about Morph</h4>
+            <p>You want to try Morph on a real project &mdash; not a toy
+            sandbox &mdash; without making a commitment for the whole team.
+            Reference mode is local to your clone; you can rip it out at any
+            time with <code>rm -rf .morph &amp;&amp; rm .git/hooks/post-*</code>
+            and Git keeps working as if Morph never existed.</p>
+          </div>
+          <div class="duo-card">
+            <h4>Starting agentic coding</h4>
+            <p>You're about to let an agent loose on an existing repo and
+            you want runs, traces, and metric-bearing commits captured
+            locally <em>before</em> any of that work goes to your teammates.
+            Morph records every agent session as an immutable trace tied to
+            the Git commits it produced.</p>
+          </div>
+          <div class="duo-card">
+            <h4>Don't want to bother teammates</h4>
+            <p>The rest of the team is on plain Git and you don't want to
+            change that yet. Stowaway submode is invisible to anyone else
+            &mdash; <code>.morph/</code> is auto-excluded from Git, the four
+            installed hooks live in untracked <code>.git/hooks/</code>, and
+            <code>git push</code>/<code>git pull</code> ship only the Git
+            tree. Teammates see exactly what they always have.</p>
+          </div>
+        </div>
+        <p style="margin-top: 1.25rem;">
+          When you eventually <em>do</em> want to bring teammates onto Morph
+          &mdash; sharing runs, traces, and certifications across machines &mdash;
+          there's a clean path for that too. We cover it in
+          <a href="#team-adoption">&sect;11</a>, after you've gotten
+          comfortable with the solo flow.
+        </p>
+      </section>
+
+      <!-- 1 -->
+      <section id="prereqs">
+        <h2><span class="step-num">01</span>Before you start</h2>
+        <p>
+          This tutorial assumes you've at least skimmed
+          <a href="./getting-started.html">Tutorial 1</a> &mdash; we won't re-teach the
+          eval-run-then-commit flow, just show how it interacts with Git.
+        </p>
+        <p>You'll need:</p>
+        <ul>
+          <li><code>morph</code> and <code>morph-mcp</code> on your <code>PATH</code> (<a href="https://github.com/r/morph/blob/main/docs/INSTALLATION.md">install guide</a>).</li>
+          <li>A real Git repo &mdash; an existing one is ideal. If you don't have one handy, the steps below show how to spin up a tiny one.</li>
+          <li><strong>Python 3</strong> with <code>pytest</code>.</li>
+          <li>A GitHub remote (or any Git remote). We'll demonstrate that <code>git push</code> works unchanged.</li>
+        </ul>
+        <div class="callout">
+          <strong>If you don't already have a Git repo:</strong> the snippet below
+          spins up a throwaway one with two commits and a fake remote so you can
+          follow along verbatim. If you already have your own project, skip the
+          snippet and run the rest in your project directory.
+        </div>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">mkdir converter &amp;&amp; <span class="kw">cd</span> converter</span>
+<span class="prompt">$ </span><span class="cmd">git init <span class="flag">-b</span> main</span>
+<span class="prompt">$ </span><span class="cmd">git remote add origin git@github.com:you/converter.git</span>
+<span class="comment"># Drop a tiny converter.py + test_converter.py (same shape as Tutorial 1)…</span>
+<span class="prompt">$ </span><span class="cmd">git add converter.py     &amp;&amp; git commit <span class="flag">-m</span> <span class="str">"scaffold currency converter"</span></span>
+<span class="prompt">$ </span><span class="cmd">git add test_converter.py &amp;&amp; git commit <span class="flag">-m</span> <span class="str">"add basic conversion tests"</span></span>
+<span class="prompt">$ </span><span class="cmd">git log <span class="flag">--oneline</span></span>
+<span class="out">d12b9aa add basic conversion tests</span>
+<span class="out">a92430d scaffold currency converter</span></div>
+      </section>
+
+      <!-- 2 -->
+      <section id="picture">
+        <h2><span class="step-num">02</span>How it works, in plain English</h2>
+        <p>
+          Reference mode is a single sentence:
+          <strong>Git owns your code; Morph watches Git through hooks and writes a parallel
+          history of behavioral metadata next to it.</strong> Concretely:
+        </p>
+        <ul>
+          <li>
+            <strong>Git is the only thing your team sees.</strong>
+            Teammates clone, pull, push exactly like before. The hooks Morph
+            installs are local to <em>your</em> clone (Git never tracks <code>.git/hooks/</code>),
+            so other developers don't get them and don't notice anything.
+          </li>
+          <li>
+            <strong>Morph is your local sidecar.</strong>
+            All Morph state lives in <code>.morph/</code>, which the installer adds to
+            <code>.git/info/exclude</code> so a stray <code>git add .</code> can't accidentally
+            commit it. <code>.morph/</code> never travels.
+          </li>
+          <li>
+            <strong>Hashes are tied.</strong>
+            Every Morph commit object carries a <code>git_origin_sha</code> field equal
+            to the Git SHA it mirrors. Git's hash is the truth; Morph's hash is a
+            content-addressed pointer to "the behavioral record for that Git commit."
+            No special database, no separate ID space.
+          </li>
+          <li>
+            <strong>Recording is automatic.</strong>
+            A <code>post-commit</code> hook fires after every <code>git commit</code> and
+            mirrors the new Git commit into Morph. <code>post-checkout</code>,
+            <code>post-merge</code>, and <code>post-rewrite</code> handle the other Git events.
+            All four are passive &mdash; if Morph is broken or uninstalled, your Git
+            keeps working.
+          </li>
+        </ul>
+        <div class="callout">
+          <strong>Two flavors of reference mode</strong> exist: <em>Stowaway</em> (default,
+          only you have Morph; passive observers) and <em>Solo</em> (the whole team
+          adopts Morph; an extra <code>pre-merge-commit</code> hook gates plain
+          <code>git merge</code> on behavioral dominance). This tutorial covers
+          <strong>Stowaway</strong> end-to-end. We touch Solo briefly at the end &mdash;
+          the full story is in
+          <a href="https://github.com/r/morph/blob/main/docs/reference-mode.md">docs/reference-mode.md</a>.
+        </div>
+      </section>
+
+      <!-- 3 -->
+      <section id="init">
+        <h2><span class="step-num">03</span><code>morph init --reference</code></h2>
+        <p>
+          From the root of your Git working tree, run:
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph init <span class="flag">--reference</span> .</span>
+<span class="out-good">Initialized Morph repository in reference mode in /…/converter/.morph/</span>
+<span class="out">  bound to git HEAD d12b9aaa7fda</span>
+<span class="out">  installed 4 git hook(s) at .git/hooks/ (4 present, 0 already up to date)</span>
+<span class="out">  morph state is local to this clone (.morph/ added to .git/info/exclude)</span>
+<span class="out">  teammates not using morph are unaffected — your git workflow is unchanged</span></div>
+        <p>
+          Four lines worth reading carefully. Each is a real promise:
+        </p>
+        <ul>
+          <li><strong>"bound to git HEAD &lt;sha&gt;"</strong> — Morph snapshots which Git commit it started watching from. Pre-existing history before this point isn't mirrored automatically; we'll handle that in the next step.</li>
+          <li><strong>"installed 4 git hook(s)"</strong> — <code>post-commit</code>, <code>post-checkout</code>, <code>post-merge</code>, <code>post-rewrite</code>. Each one is a tiny shell stub that calls <code>morph hook &lt;event&gt;</code> and exits zero whatever happens.</li>
+          <li><strong>".morph/ added to .git/info/exclude"</strong> — local-only. <code>git status</code> won't see <code>.morph/</code>, even with no <code>.gitignore</code> change.</li>
+          <li><strong>"teammates not using morph are unaffected"</strong> — the whole design goal in one sentence.</li>
+        </ul>
+        <p>Peek at one of the hooks if you're curious:</p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">cat .git/hooks/post-commit</span>
+<span class="comment">#!/bin/sh</span>
+<span class="comment"># Installed by morph (`morph init --reference` / `morph install-hooks`).</span>
+<span class="comment"># Mirrors every git commit into a Morph commit with morph_origin=git-hook.</span>
+[ <span class="str">"$MORPH_INTERNAL"</span> = <span class="str">"1"</span> ] &amp;&amp; <span class="kw">exit</span> 0
+<span class="kw">exec</span> morph hook post-commit &gt;/dev/null 2&gt;&amp;1 || <span class="kw">true</span></div>
+        <p>
+          That's the whole machinery. The <code>MORPH_INTERNAL=1</code> escape is how
+          <code>morph commit</code> and <code>morph merge</code> shell out to Git without
+          the hook recursing into itself, and the trailing <code>|| true</code> is the
+          guarantee that a broken Morph never blocks a Git commit.
+        </p>
+      </section>
+
+      <!-- 4 -->
+      <section id="backfill">
+        <h2><span class="step-num">04</span>Mirror your existing history</h2>
+        <p>
+          Right after init, <code>morph status</code> tells you about the elephant in
+          the room: any Git commits that existed <em>before</em> you ran
+          <code>morph init --reference</code> aren't mirrored yet.
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph status</span>
+<span class="out-warn">Reference mode (git ↔ morph)</span>
+<span class="out-warn">  git HEAD:        d12b9aaa7fda</span>
+<span class="out-warn">  drift:           2 unmirrored git commits — run `morph reference-sync`</span>
+<span class="out-warn">  last mirrored:   (none — run `morph reference-sync --backfill`)</span>
+<span class="out">Eval suite: 0 cases registered</span></div>
+        <p>
+          This is <strong>drift</strong>, the central concept of reference mode. Whenever
+          Git moves and Morph hasn't seen it, you're in drift. It's not an error;
+          it's a state. Morph names it explicitly so you can decide what to do.
+        </p>
+        <p>
+          For pre-existing history, the right answer is <code>--backfill</code>:
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph reference-sync <span class="flag">--backfill</span></span>
+<span class="out-good">Synced 1 git commit.</span>
+
+<span class="prompt">$ </span><span class="cmd">morph status</span>
+<span class="out">Reference mode (git ↔ morph)</span>
+<span class="out">  git HEAD:        d12b9aaa7fda</span>
+<span class="out-good">  drift:           up to date</span>
+<span class="out">1 uncertified git-hook commit on this branch — run `morph certify` to attach evidence.</span></div>
+        <p>
+          Two notes on what just happened:
+        </p>
+        <ul>
+          <li>
+            <strong>Backfill mirrored from the init point forward, not all of history.</strong>
+            That older "scaffold" commit before <code>morph init</code> stayed in Git
+            only. This is intentional &mdash; behavioral evidence for code that
+            existed before you adopted Morph would be made up.
+          </li>
+          <li>
+            <strong>The mirror is "uncertified."</strong> It carries the Git tree's
+            shape but no metrics. <code>morph certify</code> attaches metrics
+            retroactively if you want them; we'll see the more common pattern
+            (commit with metrics in a single step) shortly.
+          </li>
+        </ul>
+        <div class="callout warn">
+          <strong>About <code>morph status</code> in reference mode:</strong> you may see
+          a "Changes not staged for commit" block listing files that Git already
+          has committed. That's a known UX wart &mdash; Morph commits in reference
+          mode have <code>tree: null</code> (the Git tree is the truth), so the
+          working-tree diff has nothing to compare against. Trust <code>git status</code>
+          for whether your tree is clean. The <em>"Reference mode (git ↔ morph)"</em>
+          block at the bottom is the one that matters here.
+        </div>
+      </section>
+
+      <!-- 5 -->
+      <section id="git-commit">
+        <h2><span class="step-num">05</span>Plain <code>git commit</code> &mdash; automatic mirror</h2>
+        <p>
+          From here on, just commit through Git the way you always have. Edit a
+          file, stage, commit:
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">git add converter.py</span>
+<span class="prompt">$ </span><span class="cmd">git commit <span class="flag">-m</span> <span class="str">"add docstrings to converter"</span></span>
+<span class="out-good">[main df21819] add docstrings to converter</span>
+<span class="out"> 1 file changed, 4 insertions(+)</span></div>
+        <p>
+          That looks like an ordinary Git commit because it <em>is</em> an ordinary Git
+          commit. The <code>post-commit</code> hook fired silently, and Morph now has
+          a mirror:
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">git log <span class="flag">--oneline</span> | head -3</span>
+<span class="out">df21819 add docstrings to converter</span>
+<span class="out">d12b9aa add basic conversion tests</span>
+<span class="out">a92430d scaffold currency converter</span>
+
+<span class="prompt">$ </span><span class="cmd">morph log <span class="flag">--oneline</span></span>
+<span class="out">258a7e26  add docstrings to converter</span>
+<span class="out">9b3b2490  add basic conversion tests</span></div>
+        <p>
+          Morph's hash <code>258a7e26</code> is different from Git's <code>df21819</code> &mdash;
+          they're hashing different things (Git: tree + parents + message; Morph:
+          all of that <em>plus</em> the behavioral metadata Morph adds). The tie between
+          them is <code>git_origin_sha</code> on the Morph commit:
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph show 258a7e26</span>
+<span class="out">{</span>
+<span class="out">  "type": "commit",</span>
+<span class="out">  "tree": null,</span>
+<span class="out">  "parents": ["9b3b2490…"],</span>
+<span class="out">  "message": "add docstrings to converter",</span>
+<span class="out">  "eval_contract": {</span>
+<span class="out">    "suite": "5abb5131…",</span>
+<span class="out">    "observed_metrics": {}</span>
+<span class="out">  },</span>
+<span class="out">  </span><span class="out-good">"morph_origin": "git-hook",</span>
+<span class="out">  </span><span class="out-good">"git_origin_sha": "df21819ff45149f1062621c9afb0a8557ab0df86"</span>
+<span class="out">}</span></div>
+        <p>
+          That's the tying-of-hashes. Two important details:
+        </p>
+        <ul>
+          <li>
+            <strong><code>tree: null</code></strong>. Morph doesn't duplicate Git's file tree
+            in reference mode &mdash; the Git tree is canonical. Saves space, avoids
+            two-systems-of-truth bugs.
+          </li>
+          <li>
+            <strong><code>morph_origin: "git-hook"</code></strong>. This commit was created
+            passively by the post-commit hook, not by anyone running
+            <code>morph commit</code>. Morph keeps these labelled separately so the
+            merge gate can tell active claims from passive ones.
+          </li>
+        </ul>
+      </section>
+
+      <!-- 6 -->
+      <section id="teammate-pull">
+        <h2><span class="step-num">06</span>Pulling from teammates who don't use Morph</h2>
+        <p>
+          The whole point of Stowaway is that <em>only you</em> have Morph. Your
+          teammates clone, commit, push exactly like before. So what happens
+          when one of them pushes a slew of commits and you <code>git pull</code>
+          them down?
+        </p>
+        <p>
+          Short answer: Morph mirrors every new commit automatically, with the
+          right parent edges, and <code>morph status</code> stays accurate. The
+          two pull flavors &mdash; fast-forward and rebase &mdash; route through
+          different hooks but both Just Work.
+        </p>
+
+        <h3>Fast-forward pull (<code>git pull --ff-only</code>)</h3>
+        <p>
+          Suppose I'm on <code>v1</code>, the only commit. A teammate pushes
+          five commits (<code>v2</code>..<code>v6</code>). I pull:
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">git pull <span class="flag">--ff-only</span></span>
+<span class="out">From github.com:you/converter</span>
+<span class="out">   f0f8a30..16058d3  main       -&gt; origin/main</span>
+<span class="out">Updating f0f8a30..16058d3</span>
+<span class="out">Fast-forward</span>
+<span class="out"> a.txt | 2 +-</span>
+<span class="out"> 1 file changed, 1 insertion(+), 1 deletion(-)</span></div>
+        <p>
+          Git fast-forwards the ref and fires the <code>post-merge</code> hook.
+          That hook calls <code>morph hook post-merge</code> &rarr;
+          <code>sync_to_head</code>, which walks first-parent ancestry from the
+          new HEAD back to the last mirrored commit and mirrors every commit in
+          the unmirrored span in topo order. The result:
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">git log <span class="flag">--oneline</span></span>
+<span class="out">16058d3 teammate: a.txt v6</span>
+<span class="out">b545510 teammate: a.txt v5</span>
+<span class="out">a1a2fa1 teammate: a.txt v4</span>
+<span class="out">b06e8a5 teammate: a.txt v3</span>
+<span class="out">265dac0 teammate: a.txt v2</span>
+<span class="out">f0f8a30 initial: a.txt v1</span>
+
+<span class="prompt">$ </span><span class="cmd">morph log <span class="flag">--oneline</span></span>
+<span class="out-good">19a6d04c  teammate: a.txt v6</span>
+<span class="out-good">ba3647cc  teammate: a.txt v5</span>
+<span class="out-good">61a27e0e  teammate: a.txt v4</span>
+<span class="out-good">b6252e44  teammate: a.txt v3</span>
+<span class="out-good">76d86fc9  teammate: a.txt v2</span>
+<span class="out">7ef4fc34  initial: a.txt v1</span>
+
+<span class="prompt">$ </span><span class="cmd">morph status</span>
+<span class="out">Reference mode (git ↔ morph)</span>
+<span class="out">  git HEAD:        16058d326bb5</span>
+<span class="out-good">  drift:           up to date</span></div>
+        <p>
+          One <code>git pull</code>, five new Morph commits, parent chain
+          matches Git's. Each new mirror has <code>morph_origin: "git-hook"</code>
+          (passive, no metrics) and a <code>git_origin_sha</code> tying it to
+          the corresponding teammate commit. From here, you can decide which of
+          those commits deserve evidence (run tests + <code>morph certify</code>)
+          and which stay as bare mirrors.
+        </p>
+
+        <h3>Rebase pull (<code>git pull --rebase</code>)</h3>
+        <p>
+          The other common case: I have a local commit
+          (<code>me: add b.txt</code>) that hasn't been pushed yet. Teammate
+          pushes three commits to <code>origin/main</code>. I do
+          <code>git pull --rebase</code> so my local commit gets replayed on
+          top of theirs:
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">git pull <span class="flag">--rebase</span></span>
+<span class="out">From github.com:you/converter</span>
+<span class="out">   fe40765..18503d8  main       -&gt; origin/main</span>
+<span class="out">Rebasing (1/1)</span>
+<span class="out-good">Successfully rebased and updated refs/heads/main.</span></div>
+        <p>
+          Rebase doesn't fire <code>post-merge</code> &mdash; it fires
+          <code>post-rewrite</code>, because the existing <em>local</em> commit
+          gets a new SHA when it's replayed. Morph handles both halves:
+        </p>
+        <ul>
+          <li>The three teammate commits are mirrored as fresh
+            <code>git-hook</code> commits, same as the FF case.</li>
+          <li>My local commit's <em>old</em> Morph mirror is annotated with
+            <code>kind: "rewritten"</code>, recording the
+            <code>old_git_sha &rarr; new_git_sha</code> and the new Morph
+            commit as its <code>successor</code>. The old object stays in the
+            store (immutability is load-bearing) but is no longer on the
+            branch.</li>
+          <li>A new Morph commit replaces it on the branch tip, with parents
+            pointing at the most recent teammate commit.</li>
+        </ul>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">git log <span class="flag">--oneline</span></span>
+<span class="out">d896641 me: add b.txt          </span><span class="comment"># replayed: new sha</span>
+<span class="out">18503d8 teammate: a.txt v4</span>
+<span class="out">a938d05 teammate: a.txt v3</span>
+<span class="out">50e8a16 teammate: a.txt v2</span>
+<span class="out">fe40765 initial: a.txt v1</span>
+
+<span class="prompt">$ </span><span class="cmd">morph log <span class="flag">--oneline</span></span>
+<span class="out-good">76d4ab00  me: add b.txt</span>
+<span class="out-good">fe138dc8  teammate: a.txt v4</span>
+<span class="out-good">35e558a0  teammate: a.txt v3</span>
+<span class="out-good">49df2265  teammate: a.txt v2</span>
+<span class="out">90eadfb8  initial: a.txt v1</span>
+
+<span class="prompt">$ </span><span class="cmd">morph status</span>
+<span class="out">Reference mode (git ↔ morph)</span>
+<span class="out">  git HEAD:        d89664168bde</span>
+<span class="out-good">  drift:           up to date</span></div>
+        <p>
+          One thing to call out: if my local commit had a certification
+          (because I'd done <code>morph commit</code> earlier with metrics
+          attached), that certification points at the <em>old</em> Morph hash.
+          The rewritten annotation marks it stale &mdash; <code>morph status</code>
+          will surface it as an "uncertified-by-rewrite" commit, and you re-run
+          tests on the rebased commit and use <code>morph certify</code> to
+          re-attach evidence. The merge gate refuses to honor stale
+          certifications, which is exactly the protection you want: rewritten
+          history can't silently inherit evidence it didn't earn.
+        </p>
+
+        <div class="callout">
+          <strong>The takeaway:</strong> a teammate doing 50 commits then
+          pushing, followed by you pulling, results in 50 new Morph commits
+          on your machine with the right parent chain &mdash; no manual
+          intervention. The post-merge / post-rewrite hooks do the work.
+          You only need to think about drift in the rare cases covered next.
+        </div>
+      </section>
+
+      <!-- 7 -->
+      <section id="morph-commit">
+        <h2><span class="step-num">07</span>Commit through Morph when you want evidence</h2>
+        <p>
+          Plain <code>git commit</code> works forever, but the resulting Morph
+          mirror has empty metrics. When you want the commit to carry behavioral
+          evidence &mdash; pass rates, test counts, a link back to the Run that
+          produced them &mdash; commit through Morph instead. <code>morph commit</code>
+          is a thin wrapper: it shells out to <code>git commit</code>, then attaches
+          metrics to the resulting Morph mirror as a certification annotation.
+        </p>
+        <p>
+          The pattern is identical to Tutorial 1. Run your test suite under
+          <code>morph eval run</code> first &mdash; it leaves a <code>LAST_RUN</code>
+          breadcrumb that <code>morph commit</code> picks up automatically:
+        </p>
+<div class="cli-block"><span class="comment"># Make a real change: add GBP support, add a test, edit the spec.</span>
+
+<span class="prompt">$ </span><span class="cmd">git add <span class="flag">-A</span></span>
+<span class="prompt">$ </span><span class="cmd">morph eval run -- python3 -m pytest</span>
+<span class="out">e19963e9cd2defa46d69cd2a0086de30a6454581d5b5301e16706ded92b4c16c</span>
+
+<span class="prompt">$ </span><span class="cmd">morph commit <span class="flag">-m</span> <span class="str">"add GBP support"</span></span>
+<span class="out-good">attaching evidence from run e19963e9: pass_rate=1, tests_failed=0, tests_passed=3, tests_total=3</span>
+<span class="out-good">[3006006a (cli)] add GBP support</span>
+<span class="out">  git: e7d8df044d8b</span></div>
+        <p>
+          Two hashes printed side-by-side: the new Morph commit and the new Git
+          commit it wraps. Both happened in one step. Verify:
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">git log <span class="flag">--oneline</span> | head -1</span>
+<span class="out">e7d8df0 add GBP support</span>
+
+<span class="prompt">$ </span><span class="cmd">morph log <span class="flag">--json</span> <span class="flag">-n 1</span> | python3 <span class="flag">-c</span> <span class="str">"import json,sys; c=json.load(sys.stdin)['commits'][0]; print(c['short'], '->', c['metrics'])"</span></span>
+<span class="out-good">3006006a -&gt; {'pass_rate': 1.0, 'tests_failed': 0, 'tests_passed': 3, 'tests_total': 3}</span>
+
+<span class="prompt">$ </span><span class="cmd">morph gate</span>
+<span class="out-good">PASS: commit 3006006a… satisfies policy</span></div>
+        <p>
+          That commit has <code>morph_origin: "cli"</code> (active, not passively
+          mirrored), its certification carries the metrics, and <code>morph gate</code>
+          confirms it satisfies the default policy's
+          <code>required_metrics: [tests_total, tests_passed]</code>.
+        </p>
+        <div class="callout">
+          <strong>The everyday rhythm:</strong> use plain <code>git commit</code> for
+          throwaway in-progress work, and use <code>morph commit</code> when you want
+          the commit to carry evidence &mdash; landing a feature, fixing a bug,
+          finishing a refactor. There's no penalty for either: every Git commit
+          becomes a Morph commit. The only difference is whether the Morph side
+          carries metrics.
+        </div>
+      </section>
+
+      <!-- 8 -->
+      <section id="drift">
+        <h2><span class="step-num">08</span>When the hooks don't fire &mdash; drift</h2>
+        <p>
+          The previous two sections showed the happy paths: <code>git commit</code>
+          fires <code>post-commit</code>, <code>git pull</code> fires
+          <code>post-merge</code> or <code>post-rewrite</code>, and Morph mirrors
+          everything automatically. But a handful of git operations bypass hooks
+          entirely. The realistic ones:
+        </p>
+        <ul>
+          <li><code>git fetch</code> followed by <code>git reset --hard origin/main</code> &mdash; resets don't fire any of the four hooks Morph installs.</li>
+          <li>You disabled the hooks (<code>chmod -x .git/hooks/post-merge</code>) or deleted them by accident.</li>
+          <li>You cloned the repo fresh and forgot to run <code>morph init --reference</code> in the new clone &mdash; hooks live in <code>.git/hooks/</code>, which Git never tracks, so a fresh clone has none.</li>
+        </ul>
+        <p>
+          When that happens, Morph doesn't blow up &mdash; it falls behind Git,
+          and says so. The drift detector walks first-parent ancestry from git
+          HEAD until it finds a mirrored commit, so it catches gaps that span
+          many commits, not just an unmirrored tip.
+        </p>
+        <p>
+          Simulate it by committing with the hook suppressed via
+          <code>MORPH_INTERNAL=1</code> (the same escape hatch <code>morph commit</code>
+          uses internally):
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">MORPH_INTERNAL=1 git commit <span class="flag">-m</span> <span class="str">"stealth commit (hook suppressed)"</span> <span class="flag">--allow-empty</span></span>
+
+<span class="prompt">$ </span><span class="cmd">morph status</span>
+<span class="out">Reference mode (git ↔ morph)</span>
+<span class="out">  git HEAD:        29352b7b9a36</span>
+<span class="out-warn">  drift:           3 unmirrored git commits — run `morph reference-sync`</span>
+<span class="out">  last mirrored:   16058d326bb5</span></div>
+        <p>
+          (You'd see "1 unmirrored" if you only suppressed one commit; the
+          example shows what real-world drift looks like &mdash; multiple commits
+          appearing in one go from a <code>git fetch + git reset</code>.)
+          <code>morph eval gaps --json</code> surfaces the same state as a
+          structured event so agents and CI can detect it programmatically:
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph eval gaps <span class="flag">--json</span></span>
+<span class="out">{</span>
+<span class="out">  "gaps": [</span>
+<span class="out">    {</span>
+<span class="out">      "kind": "git_morph_drift",</span>
+<span class="out">      "git_head": "29352b7b9a36…",</span>
+<span class="out">      "last_mirrored_git_sha": "16058d326bb5…",</span>
+<span class="out-warn">      "unmirrored_count": 3,</span>
+<span class="out">      "hint": "morph is 3 commit(s) behind git — run `morph reference-sync` …"</span>
+<span class="out">    }</span>
+<span class="out">  ]</span>
+<span class="out">}</span></div>
+        <p>Resolve it with one command, regardless of how many commits are missing:</p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph reference-sync</span>
+<span class="out-good">Synced 3 git commits (HEAD 29352b7b).</span>
+
+<span class="prompt">$ </span><span class="cmd">morph status</span>
+<span class="out">Reference mode (git ↔ morph)</span>
+<span class="out">  git HEAD:        29352b7b9a36</span>
+<span class="out-good">  drift:           up to date</span></div>
+        <p>
+          <code>morph reference-sync</code> walks first-parent ancestry from
+          git HEAD back to the most recent mirrored commit (or the root) and
+          mirrors every commit in the unmirrored span in topo order. It's
+          idempotent &mdash; running it twice when already in sync prints
+          "Already up to date." and exits zero. (<code>--backfill</code> is the
+          rarer cousin: it walks from <code>init_at_git_sha</code> instead, and
+          you only need it for late adoption when you missed pre-init history.)
+        </p>
+        <p>
+          Make this part of your muscle memory: <strong>any time you've done
+          something to Git that bypassed the normal commit / pull flow, run
+          <code>morph status</code></strong>. If it shows drift, sync. If you
+          forget, nothing breaks &mdash; the next time Morph notices the gap
+          (next status, next eval-gaps, next merge), it'll tell you again.
+        </p>
+
+        <h3>Other staleness Morph tracks</h3>
+        <p>
+          Drift is the most visible kind of staleness, but Morph tracks four
+          in total. They all surface in <code>morph status</code>; the
+          structured ones also show up in <code>morph eval gaps --json</code>
+          so agents and CI can key off them.
+        </p>
+        <table style="width: 100%; border-collapse: collapse; margin: 1rem 0 1.5rem; font-size: 0.92rem;">
+          <thead>
+            <tr style="background: var(--bg-alt); text-align: left;">
+              <th style="padding: 0.6rem 0.8rem; font-weight: 600; border-bottom: 1px solid var(--border);">Kind</th>
+              <th style="padding: 0.6rem 0.8rem; font-weight: 600; border-bottom: 1px solid var(--border);">What it means</th>
+              <th style="padding: 0.6rem 0.8rem; font-weight: 600; border-bottom: 1px solid var(--border);">Surfaces</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style="padding: 0.55rem 0.8rem; border-bottom: 1px solid var(--border-soft); vertical-align: top;"><strong>Drift</strong></td>
+              <td style="padding: 0.55rem 0.8rem; border-bottom: 1px solid var(--border-soft); vertical-align: top;">git HEAD has commits that aren't mirrored in morph (covered above).</td>
+              <td style="padding: 0.55rem 0.8rem; border-bottom: 1px solid var(--border-soft); vertical-align: top;"><code>morph status</code>; <code>morph eval gaps</code> as <code>kind: "git_morph_drift"</code></td>
+            </tr>
+            <tr>
+              <td style="padding: 0.55rem 0.8rem; border-bottom: 1px solid var(--border-soft); vertical-align: top;"><strong>Stale certifications</strong></td>
+              <td style="padding: 0.55rem 0.8rem; border-bottom: 1px solid var(--border-soft); vertical-align: top;">A morph commit had a <code>kind: "certification"</code> annotation, then <code>git rebase</code>/<code>amend</code> rewrote the underlying git SHA. The certification now describes superseded code.</td>
+              <td style="padding: 0.55rem 0.8rem; border-bottom: 1px solid var(--border-soft); vertical-align: top;"><code>morph status</code>; <code>morph eval gaps</code> as <code>kind: "stale_certifications"</code> (since 0.37.3)</td>
+            </tr>
+            <tr>
+              <td style="padding: 0.55rem 0.8rem; border-bottom: 1px solid var(--border-soft); vertical-align: top;"><strong>Uncertified git-hook commits</strong></td>
+              <td style="padding: 0.55rem 0.8rem; border-bottom: 1px solid var(--border-soft); vertical-align: top;">Passive mirrors created by <code>post-commit</code>/<code>post-merge</code> with empty <code>observed_metrics</code>. Fine on their own &mdash; just means there's no behavioral evidence on those commits yet.</td>
+              <td style="padding: 0.55rem 0.8rem; border-bottom: 1px solid var(--border-soft); vertical-align: top;"><code>morph status</code> only</td>
+            </tr>
+            <tr>
+              <td style="padding: 0.55rem 0.8rem; vertical-align: top;"><strong>Merge in progress</strong></td>
+              <td style="padding: 0.55rem 0.8rem; vertical-align: top;">A <code>morph merge</code> hit a Git conflict; <code>.morph/MERGE_REF.json</code> is the breadcrumb. Resolve with <code>morph merge --continue</code> or <code>--abort</code>.</td>
+              <td style="padding: 0.55rem 0.8rem; vertical-align: top;"><code>morph status</code> only</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          Two of those four (drift and stale certifications) emit structured
+          events that an agent or CI job can detect with one command:
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph eval gaps <span class="flag">--json</span> | jq <span class="str">'.gaps[] | select(.kind == "git_morph_drift" or .kind == "stale_certifications")'</span></span></div>
+        <p>
+          A reasonable habit if you're using Morph day-to-day: alias
+          <code>git pull</code> to <code>git pull &amp;&amp; morph status</code>
+          (or whatever shell hook you prefer), and run the
+          <code>morph eval gaps --json</code> filter above in your CI pipeline.
+          The first catches anything you'd miss visually; the second catches
+          anything stuck on someone else's machine that lands in CI.
+        </p>
+      </section>
+
+      <!-- 9 -->
+      <section id="push">
+        <h2><span class="step-num">09</span>Pushing to GitHub</h2>
+        <p>
+          There's no <code>morph push</code> in reference mode. Git is the only
+          thing with a remote, and your remote setup is already done.
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">git push origin main</span>
+<span class="out-good">To github.com:you/converter.git</span>
+<span class="out-good">   d12b9aa..bb95ac4  main -&gt; main</span></div>
+        <p>
+          That's it. <code>.morph/</code> stays local because of the
+          <code>.git/info/exclude</code> entry; only your Git history reaches the
+          remote. A teammate cloning the repo gets the same Git tree they
+          always would, with no idea Morph exists on your machine.
+        </p>
+        <div class="callout">
+          <strong>What about sharing behavioral evidence with the team?</strong>
+          Stowaway is intentionally local-only. If you want the team to see runs
+          and metrics, two paths: (a) export to CI &mdash; have your test pipeline
+          run <code>morph certify --metrics-file …</code> on each merged commit, so
+          metrics live in a shared <code>.morph/</code> on a server; or (b) flip the
+          whole project to <strong>Solo submode</strong> when every developer has Morph
+          installed, so plain <code>git merge</code> is gated team-wide. Both are
+          covered in <a href="https://github.com/r/morph/blob/main/docs/reference-mode.md">docs/reference-mode.md</a>.
+        </div>
+      </section>
+
+      <!-- 10 -->
+      <section id="agents">
+        <h2><span class="step-num">10</span>Recording agent work</h2>
+        <p>
+          The IDE side is identical to Tutorial 1: <code>morph setup cursor</code>
+          (or <code>claude-code</code> / <code>opencode</code>) wires up the MCP server
+          and recording hooks. Those hooks live in <code>.cursor/</code> (or
+          equivalent) and are independent of the Git hooks reference mode just
+          installed &mdash; they don't conflict, and you can install them in any
+          order.
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph setup cursor</span>
+<span class="comment"># …writes .cursor/ (MCP, hooks, rules)…</span></div>
+        <p>
+          Once an agent has worked on the project in your IDE, the standard
+          inspection commands work exactly as they did in Tutorial 1:
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph tap summary</span>          <span class="comment"># overview of recorded runs</span>
+<span class="prompt">$ </span><span class="cmd">morph tap inspect <span class="flag">&lt;run&gt;</span></span>  <span class="comment"># grouped steps</span>
+<span class="prompt">$ </span><span class="cmd">morph traces summary</span>       <span class="comment"># newest traces with phase/scope</span>
+<span class="prompt">$ </span><span class="cmd">morph serve</span>                <span class="comment"># browser UI at http://127.0.0.1:8765</span></div>
+        <p>
+          Same data, same commands. The only difference from Tutorial 1 is that
+          when you click into a Morph commit in <code>morph serve</code>, it now
+          shows the <code>git_origin_sha</code> so you can cross-reference back to
+          GitHub.
+        </p>
+      </section>
+
+      <!-- 11 -->
+      <section id="team-adoption">
+        <h2><span class="step-num">11</span>Bringing teammates onto Morph</h2>
+        <p>
+          So far this tutorial has been about you, alone, on a team that
+          uses plain Git. That's the right starting point. But what happens
+          when one of your teammates says <em>"I want what you have"</em>,
+          or you decide to move the whole team to Morph as a group?
+          Stowaway is designed to scale up gracefully, and the path has
+          three stages.
+        </p>
+
+        <h3>Stage 1: stand up a Morph server</h3>
+        <p>
+          So far <code>.morph/</code> has lived only on your laptop. To
+          share runs, traces, and certifications across machines you need
+          a place those objects can travel to &mdash; the same way a Git
+          repo needs a remote. Morph servers are bare repos accessed over
+          SSH; you can stand one up on any box you can <code>ssh</code>
+          into:
+        </p>
+<div class="cli-block"><span class="comment"># On a server you control (homelab box, EC2 instance, whatever)</span>
+<span class="prompt">$ </span><span class="cmd">ssh you@homelab</span>
+<span class="prompt">$ </span><span class="cmd">mkdir <span class="flag">-p</span> ~/repos/converter.morph</span>
+<span class="prompt">$ </span><span class="cmd">morph init <span class="flag">--bare</span> ~/repos/converter.morph</span>
+<span class="out-good">Initialized bare Morph repository at /home/you/repos/converter.morph</span></div>
+        <p>
+          A bare repo has no working tree and no <code>.morph/</code>
+          wrapper &mdash; its files (<code>objects/</code>,
+          <code>refs/</code>, <code>config.json</code>) live directly at
+          the path. That's the only kind of repo you can
+          <code>morph push</code> to from multiple clients.
+        </p>
+        <p>
+          Now wire your existing reference-mode clone up to it:
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph remote add origin you@homelab:repos/converter.morph</span>
+<span class="prompt">$ </span><span class="cmd">morph push origin main</span>
+<span class="out-good">Pushed main -&gt; origin/main (3006006a)</span></div>
+        <p>
+          A <code>morph push</code> ships the <strong>reachable
+          closure</strong> of the new branch tip: every Morph commit
+          object, the eval suites they reference, the runs and traces
+          attached as evidence, the certification annotations &mdash;
+          the works. The server runs <code>verify_closure</code> on
+          receive, so a partial push that's missing a referenced object
+          is rejected; either everything lands and the branch ref moves,
+          or nothing does.
+        </p>
+        <div class="callout">
+          <strong>Note:</strong> <code>morph push</code> is independent
+          of <code>git push</code>. Most reference-mode users alias them
+          back-to-back so a single command pushes both:
+          <code>git push origin main &amp;&amp; morph push origin main</code>.
+          The two pushes carry different things &mdash; Git ships the
+          file tree, Morph ships the behavioral evidence.
+        </div>
+
+        <h3>Stage 2: a teammate joins</h3>
+        <p>
+          Your teammate is in their existing Git clone, still on plain
+          Git. They run two commands:
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph init <span class="flag">--reference</span> .</span>
+<span class="prompt">$ </span><span class="cmd">morph remote add origin you@homelab:repos/converter.morph</span>
+<span class="prompt">$ </span><span class="cmd">morph fetch origin</span>
+<span class="out-good">origin/main -&gt; 3006006a</span></div>
+        <p>
+          That last command is the magic. <code>morph fetch</code> walks
+          the closure on the server side, ships every object the client
+          doesn't already have, and updates remote-tracking refs at
+          <code>refs/remotes/origin/&lt;branch&gt;</code>. After it runs, your
+          teammate has every Morph commit, run, trace, and certification
+          you've ever pushed &mdash; locally, in their own
+          <code>.morph/objects/</code>, fully indexable.
+        </p>
+        <p>
+          From here on, both of you are using Morph. Your teammate's
+          <code>git commit</code>s fire their <code>post-commit</code>
+          hook and produce Morph mirrors; your <code>git pull</code>s
+          (now bringing in their work) fire your <code>post-merge</code>
+          hook and mirror their commits on your machine. The behavioral
+          evidence flows through <code>morph push</code> /
+          <code>morph fetch</code> alongside the Git tree.
+        </p>
+
+        <h3>Stage 3: flip everyone to Solo</h3>
+        <p>
+          Once every committer on the project has Morph installed and
+          you all want the merge gate enforced for plain
+          <code>git merge</code> too &mdash; not just for
+          <code>morph merge</code> &mdash; flip each clone to Solo
+          submode:
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph install-hooks <span class="flag">--solo</span></span>
+<span class="out-good">hooks installed: post-commit, post-checkout, post-merge, post-rewrite, pre-merge-commit</span>
+<span class="out">config: repo_submode = solo</span></div>
+        <p>
+          The new fifth hook (<code>pre-merge-commit</code>) is the only
+          difference: it fires <em>before</em> Git records a merge
+          commit, runs the dominance gate against both parents'
+          certified metrics, and exits non-zero if the merged result
+          would regress. Plain <code>git merge</code> is now gated on
+          the same behavioral contract as <code>morph merge</code>. To
+          flip back: <code>morph install-hooks --stowaway</code>.
+        </p>
+        <p>
+          Submode is local to each clone, recorded in
+          <code>.morph/config.json</code>. There's no team-wide setting,
+          no central authority, no surprise gate that appears for someone
+          who didn't opt in. Each developer makes the flip on their own
+          machine when they're ready.
+        </p>
+
+        <h3>Honest scope: the evidence horizon</h3>
+        <p>
+          One thing to call out: when your teammate runs
+          <code>morph fetch origin</code> in Stage 2, they receive the
+          closure of <em>refs you've pushed</em>. Local-only branches,
+          uncertified work that hasn't been pushed yet, and any
+          experiments living in <code>.morph/</code> that you never
+          decided to share won't be there. The merge gate's "no morph
+          claim" rule (a parent without behavioral evidence triggers no
+          violations) means this is operationally fine going forward
+          &mdash; but it does mean a regular <code>morph push</code>
+          rhythm is what makes evidence visible to the team. Treat
+          <code>morph push</code> with the same seriousness as
+          <code>git push</code>.
+        </p>
+      </section>
+
+      <!-- 12 -->
+      <section id="scope">
+        <h2><span class="step-num">12</span>What you have, what you don't</h2>
+        <p>
+          Stowaway is deliberately scoped. Naming the trade-offs explicitly so
+          there are no surprises:
+        </p>
+        <div class="duo">
+          <div class="duo-card">
+            <h4>What you get</h4>
+            <p>
+              Tied-hash mirroring on every Git commit; metric-bearing commits via
+              <code>morph commit</code>; agent runs and traces with full inspection;
+              <code>morph gate</code> as a local CI-style check; drift detection
+              and explicit recovery via <code>morph reference-sync</code>; everything
+              completely local to your clone.
+            </p>
+          </div>
+          <div class="duo-card">
+            <h4>What you don't get (until you opt in)</h4>
+            <p>
+              Team-wide merge gating. Stowaway only protects the merges
+              <em>you</em> perform with <code>morph merge</code>. A teammate doing
+              plain <code>git merge</code> on another machine bypasses it. The
+              fix is the Solo flip described in
+              <a href="#team-adoption">&sect;11 Stage 3</a> &mdash; once every
+              developer's clone is in Solo submode, plain <code>git merge</code>
+              is gated everywhere too.
+            </p>
+          </div>
+        </div>
+        <p>
+          One more honest scope note: certifications attached to a Morph commit
+          can become <em>stale</em> if you later <code>git commit --amend</code> or
+          <code>git rebase</code> the underlying Git commit. Morph won't lose the
+          old certification (object immutability is load-bearing), but it'll
+          flag it as stale &mdash; both in <code>morph status</code> and in
+          <code>morph eval gaps</code>'s structured output as
+          <code>kind: "stale_certifications"</code> &mdash; and ask you to
+          re-certify the rewritten commit. That's a feature, not a bug:
+          rewritten history can't silently inherit evidence it didn't earn.
+        </p>
+      </section>
+
+      <!-- 13 -->
+      <section id="next">
+        <h2><span class="step-num">13</span>Where to next</h2>
+        <p>
+          You now have Morph living next to Git in a real project. Every
+          <code>git commit</code> is a behavioral commit, every
+          <code>morph commit</code> carries evidence, and <code>git push</code> works
+          unchanged. From here:
+        </p>
+        <ul>
+          <li>
+            <strong><a href="./branches-and-merge.html">Tutorial 3 &mdash; Branches, merges, and merge conflicts</a>:</strong>
+            behavioral merge gating in action, including what happens when two branches genuinely conflict. Reference mode's <code>morph merge</code> is the canonical merge driver there.
+          </li>
+          <li>
+            <strong><a href="https://github.com/r/morph/blob/main/docs/reference-mode.md">docs/reference-mode.md</a>:</strong>
+            the comprehensive reference. Covers Solo submode, the <code>pre-merge-commit</code> gate, conflict resolution with <code>morph merge --continue</code> / <code>--abort</code>, stale certifications, recovery, and CI integration.
+          </li>
+          <li>
+            <strong><a href="https://github.com/r/morph/blob/main/docs/MORPH-AND-GIT.md">docs/MORPH-AND-GIT.md</a>:</strong>
+            the long-form story of running Morph and Git side-by-side &mdash; including the alternative shape (two independent VCSes in one tree) if that fits your situation better than reference mode.
+          </li>
+        </ul>
+
+        <div class="pager">
+          <a href="./getting-started.html" class="prev">
+            <span class="dir">← Previous</span>
+            <span class="ttl">Start a new project with Morph</span>
+          </a>
+          <a href="./branches-and-merge.html" class="next disabled" aria-disabled="true">
+            <span class="dir">Next · coming soon</span>
+            <span class="ttl">Branches, merges, and conflicts</span>
+          </a>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="tutorial-foot">
+    <p>
+      Morph is in alpha — file issues and feedback at
+      <a href="https://github.com/r/morph/issues">github.com/r/morph/issues</a>.
+      <br>
+      <a href="../">← Back to home</a>
+    </p>
+  </footer>
+
+  <script>
+    (function () {
+      const links = Array.from(document.querySelectorAll('aside.toc a'));
+      const sections = links
+        .map(a => {
+          const id = a.getAttribute('href').slice(1);
+          return { id, link: a, el: document.getElementById(id) };
+        })
+        .filter(s => s.el);
+
+      const observer = new IntersectionObserver((entries) => {
+        let active = null;
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            if (!active || entry.boundingClientRect.top < active.boundingClientRect.top) {
+              active = entry;
+            }
+          }
+        }
+        if (active) {
+          links.forEach(a => a.classList.remove('active'));
+          const link = sections.find(s => s.el === active.target).link;
+          link.classList.add('active');
+        }
+      }, {
+        rootMargin: '-15% 0px -70% 0px',
+        threshold: 0,
+      });
+
+      sections.forEach(s => observer.observe(s.el));
+
+      links.forEach(a => a.addEventListener('click', () => {
+        links.forEach(b => b.classList.remove('active'));
+        a.classList.add('active');
+      }));
+    })();
+  </script>
+</body>
+</html>
