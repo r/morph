@@ -1,0 +1,107 @@
+name: auto-tag
+
+# Watches the workspace version on `main`. When `Cargo.toml`'s
+# `[workspace.package].version` advances to a value that has not yet
+# been tagged, this workflow creates `vX.Y.Z` and dispatches the
+# release pipeline against it. Net effect: a single push to `main`
+# that bumps the version is enough to cut a release. No more manual
+# `git tag vX.Y.Z && git push origin vX.Y.Z`.
+#
+# Why dispatch instead of relying on `on: push: tags`:
+# `GITHUB_TOKEN`-pushed refs intentionally do not retrigger workflows
+# in the same repo (GitHub's anti-loop protection). So pushing the
+# tag here would not fire `release-homebrew.yml` via its tag trigger.
+# Instead we push the tag (so it exists for everyone, future bisects,
+# the `head` URL in the formula, etc.) and then explicitly dispatch
+# the release workflow against that tag's ref. `release-homebrew`'s
+# metadata step keys off `GITHUB_REF`, which a tag-targeted dispatch
+# sets to `refs/tags/v<version>`, so it runs the full tag-release
+# path (`is_tag_release=true`, formula update, etc.) without
+# duplicating any of that logic here.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "Cargo.toml"
+  # Useful escape hatch: if `main` already carries an untagged
+  # version bump (e.g. the auto-tag workflow itself was added after
+  # the bump), a manual dispatch will retroactively tag it.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: auto-tag
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(python - <<'PY'
+          import tomllib
+          with open("Cargo.toml", "rb") as f:
+              data = tomllib.load(f)
+          print(data["workspace"]["package"]["version"])
+          PY
+          )"
+          tag="v${version}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "Workspace version: ${version} (target tag: ${tag})"
+
+      - id: tag_exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.version.outputs.tag }}"
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag ${tag} already exists on origin — nothing to do."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Tag ${tag} does not exist; will create."
+          fi
+
+      - name: Create and push tag
+        if: steps.tag_exists.outputs.exists == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.version.outputs.tag }}"
+          version="${{ steps.version.outputs.version }}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Annotated tag so `git describe` and `git for-each-ref` see
+          # a real tag object with a message, not just a lightweight ref.
+          git tag -a "${tag}" -m "Release ${version}"
+          git push origin "${tag}"
+
+      - name: Dispatch release-homebrew against the new tag
+        if: steps.tag_exists.outputs.exists == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.version.outputs.tag }}"
+          # Dispatch against the tag ref so release-homebrew's
+          # metadata step sees GITHUB_REF=refs/tags/v<version> and
+          # treats this as a tag release (full build + publish +
+          # update-tap). Without this dispatch, the tag push above
+          # is silent because GITHUB_TOKEN-pushed refs don't
+          # retrigger workflows.
+          gh workflow run release-homebrew.yml --ref "${tag}"
+          echo "Dispatched release-homebrew.yml against ${tag}."

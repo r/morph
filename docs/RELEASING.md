@@ -64,23 +64,27 @@ The release workflow refuses to publish a tag whose name doesn't match the works
    ```
 
    See `.cursor/rules/behavioral-commits.mdc` for the metrics shape.
-5. **Commit and push to `main`**.
-6. **Tag and push the tag**:
+5. **Commit and push to `main`**. That's it — no manual tag step.
 
-   ```bash
-   git tag v0.16.0
-   git push origin v0.16.0
-   ```
-
-   The push triggers `.github/workflows/release-homebrew.yml`, which:
+   `.github/workflows/auto-tag.yml` watches `Cargo.toml` on `main`. When
+   the workspace version advances to a value that has not yet been
+   tagged on origin, it creates `vX.Y.Z` (annotated) and dispatches
+   `release-homebrew.yml` against that tag. The release pipeline then:
 
    - Runs the full test suite (`test` job — release blocks on this).
    - Builds the four target tarballs in parallel (`build-artifacts`).
    - Smoke-tests each native binary by parsing `morph version --json`.
-   - Publishes a GitHub release at `v0.16.0` with all eight files (`publish`).
+   - Publishes a GitHub release at `vX.Y.Z` with all eight files (`publish`).
    - Updates the Homebrew formula in the tap repo with the new version, URLs, and per-target SHA-256s (`update-tap`).
 
-7. **Verify the release** in three places:
+   If you ever need to force a tag manually (e.g. you bumped the
+   version before `auto-tag.yml` existed, or you want to retag a
+   commit), `git tag vX.Y.Z && git push origin vX.Y.Z` still works
+   — it triggers `release-homebrew.yml` directly. You can also run
+   `gh workflow run auto-tag.yml --ref main` to retroactively tag
+   whatever version `Cargo.toml` on `main` currently points at.
+
+6. **Verify the release** in three places:
 
    - GitHub Releases page: tarballs + checksums attached, release notes auto-populated.
    - Tap repo: `Formula/morph.rb` updated with the new version and SHAs.
