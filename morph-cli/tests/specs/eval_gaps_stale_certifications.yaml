@@ -1,0 +1,141 @@
+# Stale certifications surfacing in `morph eval gaps`.
+#
+# `morph status` already prints a single "stale certification: N ..." line
+# in reference mode when a `morph certify` annotation has been invalidated
+# by a subsequent `kind: "rewritten"` annotation (typically the result of
+# `git commit --amend` or `git rebase`). The structured `morph eval gaps`
+# output, however, was missing this signal — agents and CI inspecting the
+# JSON could not detect rebase-rotted certifications programmatically.
+#
+# These cases pin the structured peer of that human-readable line: a gap
+# entry with `kind: "stale_certifications"`, a `count`, a `commits` array
+# of stale morph hashes, and a hint pointing at `morph certify --commit
+# <successor> --metrics ...`.
+
+# ── reference mode: amended-after-certify trips the new gap ──────────
+
+- name: eval_gaps_reports_stale_certifications_after_amend
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    # Capture the original git SHA + morph hash before certifying so we
+    # can drive `morph hook post-rewrite` manually below. Driving the
+    # dispatcher directly mirrors the PR 6 status spec
+    # (`status_flags_stale_certification_after_amend`) — it avoids
+    # depending on the installed `.git/hooks/post-rewrite` finding the
+    # right `morph` on PATH from inside an `assert_cmd` shell step.
+    - shell: "git rev-parse HEAD > .morph/old_git_sha.txt"
+    - morph: [head, --json]
+      capture_json_field:
+        var: original_morph_hash
+        field: hash
+    - morph: [certify, --metrics, '{"tests_total":3,"tests_passed":3,"pass_rate":1.0}']
+    # Pre-fix: gaps does not mention stale_certifications, even though
+    # the certification annotation is about to be invalidated.
+    - morph: [eval, gaps, --json]
+      stdout_not_contains: "stale_certifications"
+    # Amend the underlying git commit. MORPH_INTERNAL=1 stops the
+    # post-commit hook from racing the manual post-rewrite dispatch
+    # below; the rewrite handler still has to mirror the new SHA and
+    # attach the `kind: "rewritten"` annotation on the original morph
+    # commit.
+    - shell: "MORPH_INTERNAL=1 git commit --amend --allow-empty -q -m 'first (amended)'"
+    - shell: |
+        OLD=$(cat .morph/old_git_sha.txt)
+        NEW=$(git rev-parse HEAD)
+        printf '%s %s\n' "$OLD" "$NEW" | morph hook post-rewrite amend
+    # Sanity: the original commit really did get a rewritten annotation
+    # (so `list_stale_certifications` will return it).
+    - morph: [annotations, "${original_morph_hash}"]
+      stdout_contains: "rewritten"
+    # Post-fix: `morph eval gaps --json` includes a structured
+    # stale_certifications entry with the right shape — kind, count,
+    # commits array, and a hint pointing at `morph certify`.
+    - morph: [eval, gaps, --json]
+      stdout_contains:
+        - '"kind": "stale_certifications"'
+        - '"count": 1'
+        - "${original_morph_hash}"
+        - "morph certify"
+    # The non-JSON pretty-print form also surfaces the new gap with
+    # its hint alongside the existing gaps.
+    - morph: [eval, gaps]
+      stdout_contains:
+        - "stale_certifications"
+        - "morph certify"
+    # The existing `morph status` line is unchanged — the two surfaces
+    # are complementary, not duplicative.
+    - morph: [status]
+      stdout_contains:
+        - "stale certification"
+
+# ── re-certifying the successor does not retroactively clear the gap ─
+#
+# The detector intersects `kind: "rewritten"` and `kind: "certification"`
+# annotation targets — both annotations live on the OLD morph hash, so a
+# fresh certification on the successor cannot remove the old hash from
+# either set. The gap stays until the user explicitly clears the audit
+# trail (out of scope for this fix). Pin the behavior so future detector
+# changes don't silently regress the audit guarantee.
+
+- name: eval_gaps_stale_certifications_persist_after_successor_certify
+  init: false
+  steps:
+    - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
+    - morph: [init, --reference, "${repo}"]
+    - morph: [reference-sync, --backfill]
+    - shell: "git rev-parse HEAD > .morph/old_git_sha.txt"
+    - morph: [head, --json]
+      capture_json_field:
+        var: original_morph_hash
+        field: hash
+    - morph: [certify, --metrics, '{"tests_total":3,"tests_passed":3,"pass_rate":1.0}']
+    - shell: "MORPH_INTERNAL=1 git commit --amend --allow-empty -q -m 'first (amended)'"
+    - shell: |
+        OLD=$(cat .morph/old_git_sha.txt)
+        NEW=$(git rev-parse HEAD)
+        printf '%s %s\n' "$OLD" "$NEW" | morph hook post-rewrite amend
+    # Certify the SUCCESSOR — the certification annotation here lives
+    # on the new morph hash, not the old one, so it does not enter the
+    # `certified ∩ rewritten` intersection.
+    - morph: [certify, --metrics, '{"tests_total":3,"tests_passed":3,"pass_rate":1.0}']
+    - morph: [eval, gaps, --json]
+      stdout_contains:
+        - '"kind": "stale_certifications"'
+        - "${original_morph_hash}"
+
+# ── standalone mode: rewritten + certification annotations on the same
+#    morph commit also produce the gap, even without reference mode ────
+#
+# `list_stale_certifications` is mode-agnostic — it just walks
+# annotations. A standalone repo that somehow ends up with both
+# annotation kinds (e.g. a tool replays them, or a future workflow
+# attaches them in non-reference mode) should still surface the gap.
+# We construct that state directly via `morph annotate` so the case
+# does not depend on git plumbing.
+
+- name: eval_gaps_reports_stale_certifications_in_standalone_mode
+  files:
+    foo.txt: "v1"
+  steps:
+    - morph: [add, "."]
+    - morph: [commit, -m, "first", --metrics, '{"tests_total":1,"tests_passed":1,"pass_rate":1.0}', --json]
+      capture_json_field:
+        var: first_hash
+        field: hash
+    # Construct the same annotation pair the reference-mode hooks would
+    # produce: `kind: "certification"` on the old commit, then
+    # `kind: "rewritten"` on the same commit. `morph annotate` takes
+    # the target as a positional + `--kind` and `--data` JSON; the
+    # detector only intersects annotation `kind`/`target` pairs, so the
+    # `data` payload (including the `successor` field) is opaque here
+    # and can reuse the same hash without affecting behavior.
+    - morph: [annotate, "${first_hash}", "--kind", "certification", "--data", '{"metrics":{"tests_passed":1,"tests_total":1,"pass_rate":1.0}}']
+    - morph: [annotate, "${first_hash}", "--kind", "rewritten", "--data", '{"successor":"${first_hash}","git_command":"amend"}']
+    - morph: [eval, gaps, --json]
+      stdout_contains:
+        - '"kind": "stale_certifications"'
+        - '"count": 1'
+        - "${first_hash}"

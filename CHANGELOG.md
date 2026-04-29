@@ -16,6 +16,31 @@ metrics — see `.cursor/rules/behavioral-commits.mdc`.
 
 ## [Unreleased]
 
+## [0.37.3] — 2026-04-29
+
+### Fixed
+
+- **`morph eval gaps` now surfaces stale certifications.** When a morph
+  commit had a `kind: "certification"` annotation that was later
+  invalidated by a `kind: "rewritten"` annotation (typically because
+  `git commit --amend` or `git rebase` superseded the underlying git
+  SHA), `morph status` would print a one-line `stale certification: N`
+  summary but the structured `morph eval gaps --json` output was silent.
+  Agents and CI watching the gap stream couldn't detect rebase-rotted
+  evidence programmatically. `compute_eval_gaps` now emits a
+  `stale_certifications` entry — `kind`, `count`, `commits` array of
+  affected morph hashes, and a hint pointing at
+  `morph certify --commit <successor> --metrics ...`. The check is
+  mode-agnostic (works in both reference and standalone repos); the
+  existing `morph status` line is unchanged.
+
+### Tests
+
+- New acceptance suite `eval_gaps_stale_certifications.yaml` (3 cases)
+  covering the reference-mode amend path, the audit-trail invariant
+  (re-certifying the successor does not retroactively clear the gap),
+  and the standalone-mode equivalent.
+
 ## [0.37.2] — 2026-04-29
 
 ### Added
@@ -127,7 +152,8 @@ Three coordinated changes to repo setup, adoption, and migration.
 - 15 new YAML acceptance spec cases in the default eval suite:
   `init_at_latest:*` ×4, `init_in_git_dir:*` ×6, `upgrade:*` ×5.
 
-[Unreleased]: https://github.com/r/morph/compare/v0.37.2...HEAD
+[Unreleased]: https://github.com/r/morph/compare/v0.37.3...HEAD
+[0.37.3]: https://github.com/r/morph/compare/v0.37.2...v0.37.3
 [0.37.2]: https://github.com/r/morph/compare/v0.37.1...v0.37.2
 [0.37.1]: https://github.com/r/morph/compare/v0.37.0...v0.37.1
 [0.37.0]: https://github.com/r/morph/compare/v0.36.0...v0.37.0

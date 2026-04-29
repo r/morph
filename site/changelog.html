@@ -319,7 +319,47 @@
 
     <article class="release">
       <header>
-        <span class="version">0.37.2 <span class="latest">Latest</span></span>
+        <span class="version">0.37.3 <span class="latest">Latest</span></span>
+        <span class="date">2026-04-29</span>
+      </header>
+      <p class="summary">
+        <code>morph eval gaps</code> now reports stale certifications as a
+        structured gap, so agents and CI can detect rebase-rotted evidence
+        programmatically — not just from the human-readable
+        <code>morph status</code> line.
+      </p>
+
+      <h3 class="fixed"><span class="marker"></span>Fixed</h3>
+      <ul>
+        <li><strong><code>morph eval gaps</code> surfaces stale
+          certifications.</strong> When a morph commit was certified and a
+          subsequent <code>git commit --amend</code> or
+          <code>git rebase</code> attached a <code>kind: "rewritten"</code>
+          annotation, <code>morph status</code> printed a one-line
+          <code>stale certification: N</code> summary but the structured
+          <code>morph eval gaps --json</code> output was silent. The new
+          <code>stale_certifications</code> gap entry carries
+          <code>kind</code>, <code>count</code>, a <code>commits</code>
+          array of affected morph hashes, and a hint pointing at
+          <code>morph certify --commit &lt;successor&gt; --metrics ...</code>.
+          Mode-agnostic — fires in standalone repos too whenever both
+          annotation kinds end up on the same commit.</li>
+      </ul>
+
+      <h3 class="tests"><span class="marker"></span>Tests</h3>
+      <ul>
+        <li>New acceptance suite
+          <code>eval_gaps_stale_certifications.yaml</code> (3 cases)
+          covering the reference-mode amend path, the audit-trail
+          invariant that re-certifying the successor does not
+          retroactively clear the gap, and the standalone-mode
+          equivalent.</li>
+      </ul>
+    </article>
+
+    <article class="release">
+      <header>
+        <span class="version">0.37.2</span>
         <span class="date">2026-04-29</span>
       </header>
       <p class="summary">
@@ -381,63 +421,6 @@
           <code>reference_mode_multi_commit_pull.yaml</code> (4 cases) and
           <code>reference_mode_drift_topo.yaml</code> (3 cases). Workspace:
           1119 / 1119 passing.</li>
-      </ul>
-    </article>
-
-    <article class="release">
-      <header>
-        <span class="version">0.37.0</span>
-        <span class="date">2026-04-28</span>
-      </header>
-      <p class="summary">
-        A workspace-wide audit-and-repair pass. Correctness fixes,
-        well-tested crates replacing hand-rolled equivalents, +20 tests, and
-        a documentation rewrite.
-      </p>
-
-      <h3 class="added"><span class="marker"></span>Added</h3>
-      <ul>
-        <li>20 new tests, including five <code>SshUrl</code> edge cases
-          (IPv6 brackets ± port, unbracketed IPv6 rejection, malformed
-          schemes, Windows drive letters), an agent instance-id 1000-id
-          uniqueness test, three <code>morph gc</code> acceptance specs,
-          eight <code>morph traces</code> specs covering every
-          <code>TracesCmd</code>, an <code>morph-mcp</code> read-only handler
-          smoke test, and a <code>reference_sync</code> error path.</li>
-      </ul>
-
-      <h3 class="changed"><span class="marker"></span>Changed</h3>
-      <ul>
-        <li><code>uuid</code> v4 replaces the hand-rolled
-          <code>generate_instance_id</code> (the old scheme packed
-          <code>time × pid</code> into 24 bits, ~16M id space; now slices 12
-          hex chars from a v4 UUID).</li>
-        <li><code>strip-ansi-escapes</code> replaces the hand-rolled CSI
-          scanner in <code>eval_parsers</code> — full terminal-escape
-          grammar instead of <code>ESC[</code>-only.</li>
-        <li><code>default_clone_dest</code> delegates to
-          <code>SshUrl::parse</code> so SSH/SCP/IPv6 forms share one
-          authoritative parser.</li>
-        <li>README, <code>v0-spec.md</code>, <code>MERGE.md</code>,
-          <code>EVAL-DRIVEN.md</code>, <code>SERVER-SETUP.md</code>,
-          <code>MULTI-MACHINE.md</code>, <code>reference-mode.md</code>, and
-          <code>TESTING.md</code> rewritten (not patched) for current
-          behavior.</li>
-      </ul>
-
-      <h3 class="fixed"><span class="marker"></span>Fixed</h3>
-      <ul>
-        <li><code>SshUrl::parse</code> handles bracketed IPv6 literals
-          (<code>ssh://user@[::1]:22/repo</code>) and rejects unbracketed
-          IPv6 instead of silently mis-splitting on the colon.</li>
-        <li><code>set_branch_upstream</code> no longer reads
-          <code>config.json</code> twice (TOCTOU + redundant IO).</li>
-        <li><code>init_morph_dir_at</code> propagates serde failures as
-          <code>MorphError::Serialization</code> instead of panicking via
-          <code>expect()</code> / <code>unwrap()</code>.</li>
-        <li><code>cli::run_merge</code> single-shot path uses an exhaustive
-          if-let-tuple instead of three coupled <code>.unwrap()</code>s on
-          pipeline / metrics / message.</li>
       </ul>
     </article>
 

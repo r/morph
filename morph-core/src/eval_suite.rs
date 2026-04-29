@@ -105,6 +105,31 @@ pub fn compute_eval_gaps(
         }
     }
 
+    // Stale certifications: a morph commit was certified, then a
+    // subsequent `kind: "rewritten"` annotation invalidated it (typically
+    // because `git commit --amend` or `git rebase` superseded the
+    // underlying git SHA). The certification on the rewritten commit
+    // describes superseded code, so the merge gate cannot honor it as
+    // evidence on the successor — re-certifying the successor is the
+    // fix. This check is mode-agnostic: `list_stale_certifications`
+    // walks annotation objects, so a standalone repo that ends up with
+    // both annotation kinds on one commit surfaces the gap too.
+    let stale = crate::reference::list_stale_certifications(store)?;
+    if !stale.is_empty() {
+        let stale_hashes: Vec<String> = stale.iter().map(|h| h.to_string()).collect();
+        let count = stale_hashes.len();
+        gaps.push(json!({
+            "kind": "stale_certifications",
+            "count": count,
+            "commits": stale_hashes,
+            "hint": format!(
+                "{} morph commit(s) had certifications invalidated by `git rebase`/`amend` — \
+                 re-certify the successor with `morph certify --commit <successor> --metrics ...`.",
+                count
+            ),
+        }));
+    }
+
     Ok(gaps)
 }
 
@@ -712,6 +737,66 @@ mod tests {
 
         let gaps = compute_eval_gaps(&morph_dir(&dir), store.as_ref(), 0).unwrap();
         assert!(gap_kinds(&gaps).contains(&"empty_head_metrics".to_string()));
+    }
+
+    #[test]
+    fn compute_eval_gaps_reports_stale_certifications() {
+        // A commit annotated with both `certification` and `rewritten`
+        // is the canonical "stale" state. We construct it directly via
+        // `morph annotate` plumbing (no git involved) to confirm the
+        // detector fires in standalone mode too.
+        let (dir, store) = fresh_repo();
+        std::fs::write(dir.path().join("f.txt"), "data").unwrap();
+        crate::add_paths(store.as_ref(), dir.path(), &[std::path::PathBuf::from(".")]).unwrap();
+        let mut metrics = std::collections::BTreeMap::new();
+        metrics.insert("tests_passed".to_string(), 1.0);
+        metrics.insert("tests_total".to_string(), 1.0);
+        let commit_hash = crate::create_tree_commit(
+            store.as_ref(),
+            dir.path(),
+            None,
+            None,
+            metrics,
+            "first".into(),
+            None,
+            Some("0.5"),
+        )
+        .unwrap();
+
+        let cert = crate::create_annotation(
+            &commit_hash,
+            None,
+            "certification".into(),
+            std::collections::BTreeMap::new(),
+            None,
+        );
+        store.put(&cert).unwrap();
+        let mut rewritten_data = std::collections::BTreeMap::new();
+        rewritten_data.insert("successor".into(), json!(commit_hash.to_string()));
+        rewritten_data.insert("git_command".into(), json!("amend"));
+        let rewritten = crate::create_annotation(
+            &commit_hash,
+            None,
+            "rewritten".into(),
+            rewritten_data,
+            None,
+        );
+        store.put(&rewritten).unwrap();
+
+        let gaps = compute_eval_gaps(&morph_dir(&dir), store.as_ref(), 0).unwrap();
+        let entry = gaps
+            .iter()
+            .find(|g| g.get("kind").and_then(|k| k.as_str()) == Some("stale_certifications"))
+            .expect("expected stale_certifications gap");
+        assert_eq!(entry["count"], json!(1));
+        let commits = entry["commits"].as_array().unwrap();
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0].as_str().unwrap(), commit_hash.to_string());
+        let hint = entry["hint"].as_str().unwrap();
+        assert!(
+            hint.contains("morph certify"),
+            "hint should point at re-certification, got: {hint}"
+        );
     }
 
     #[test]
