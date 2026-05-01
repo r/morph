@@ -713,6 +713,12 @@ pub enum SetupCmd {
         #[arg(long, default_value = ".")]
         path: PathBuf,
     },
+    /// Install Claude Code MCP config and UserPromptSubmit/Stop hooks
+    #[command(name = "claude-code")]
+    ClaudeCode {
+        #[arg(long, default_value = ".")]
+        path: PathBuf,
+    },
 }
 
 #[derive(clap::Subcommand)]

@@ -1,0 +1,142 @@
+# Acceptance cases for `morph setup claude-code`.
+#
+# Mirrors the OpenCode + Cursor setup flows: drop the agent's settings file
+# (`.claude/settings.json`) into the project pre-wired with the morph MCP
+# server and the UserPromptSubmit/Stop recording hooks, and ship the hook
+# scripts under `.claude/hooks/`. Idempotent and merges into existing
+# configuration without clobbering user state.
+
+- name: setup_claude_code_creates_settings_json
+  init: false
+  steps:
+    - morph: [init, "${repo}"]
+    - morph: [setup, claude-code, --path, "${repo}"]
+      stdout_contains: "Claude Code integration installed"
+  assert:
+    - kind: file_exists
+      path: .claude/settings.json
+    - kind: dir_exists
+      path: .claude/hooks
+    - kind: file_exists
+      path: .claude/hooks/morph-record-prompt.sh
+    - kind: file_exists
+      path: .claude/hooks/morph-record-stop.sh
+
+- name: setup_claude_code_settings_has_mcp_morph
+  init: false
+  steps:
+    - morph: [init, "${repo}"]
+    - morph: [setup, claude-code, --path, "${repo}"]
+  assert:
+    # Use file_contains so we don't pin exact JSON formatting.
+    - kind: file_contains
+      path: .claude/settings.json
+      contents: '"morph"'
+    - kind: file_contains
+      path: .claude/settings.json
+      contents: '"morph-mcp"'
+    - kind: file_contains
+      path: .claude/settings.json
+      contents: 'MORPH_WORKSPACE'
+
+- name: setup_claude_code_settings_has_hooks
+  init: false
+  steps:
+    - morph: [init, "${repo}"]
+    - morph: [setup, claude-code, --path, "${repo}"]
+  assert:
+    - kind: file_contains
+      path: .claude/settings.json
+      contents: 'UserPromptSubmit'
+    - kind: file_contains
+      path: .claude/settings.json
+      contents: 'Stop'
+    - kind: file_contains
+      path: .claude/settings.json
+      contents: 'morph-record-prompt.sh'
+    - kind: file_contains
+      path: .claude/settings.json
+      contents: 'morph-record-stop.sh'
+
+- name: setup_claude_code_hook_scripts_have_shebang
+  init: false
+  steps:
+    - morph: [init, "${repo}"]
+    - morph: [setup, claude-code, --path, "${repo}"]
+  assert:
+    - kind: file_contains
+      path: .claude/hooks/morph-record-prompt.sh
+      contents: "#!/usr/bin/env bash"
+    - kind: file_contains
+      path: .claude/hooks/morph-record-stop.sh
+      contents: "#!/usr/bin/env bash"
+
+- name: setup_claude_code_requires_morph_init
+  init: false
+  steps:
+    - morph: [setup, claude-code, --path, "${repo}"]
+      expect_exit: 1
+      stderr_contains: ".morph"
+
+- name: setup_claude_code_idempotent
+  init: false
+  steps:
+    - morph: [init, "${repo}"]
+    - morph: [setup, claude-code, --path, "${repo}"]
+    - morph: [setup, claude-code, --path, "${repo}"]
+      stdout_contains: "Claude Code integration installed"
+  assert:
+    - kind: file_exists
+      path: .claude/settings.json
+    - kind: file_exists
+      path: .claude/hooks/morph-record-prompt.sh
+    - kind: file_exists
+      path: .claude/hooks/morph-record-stop.sh
+
+- name: setup_claude_code_preserves_existing_settings
+  init: false
+  files:
+    .claude/settings.json: |
+      {
+        "model": "opus",
+        "mcpServers": {
+          "other-server": {
+            "command": "other-mcp"
+          }
+        },
+        "hooks": {
+          "UserPromptSubmit": [
+            {
+              "hooks": [
+                {"type": "command", "command": ".claude/hooks/my-existing.sh"}
+              ]
+            }
+          ]
+        }
+      }
+  steps:
+    - morph: [init, "${repo}"]
+    - morph: [setup, claude-code, --path, "${repo}"]
+  assert:
+    # Existing top-level settings preserved
+    - kind: file_contains
+      path: .claude/settings.json
+      contents: '"model"'
+    - kind: file_contains
+      path: .claude/settings.json
+      contents: '"opus"'
+    # Existing MCP server preserved
+    - kind: file_contains
+      path: .claude/settings.json
+      contents: 'other-server'
+    # Existing hook command preserved
+    - kind: file_contains
+      path: .claude/settings.json
+      contents: 'my-existing.sh'
+    # Morph entries added
+    - kind: file_contains
+      path: .claude/settings.json
+      contents: '"morph"'
+    - kind: file_contains
+      path: .claude/settings.json
+      contents: 'morph-record-prompt.sh'

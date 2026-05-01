@@ -16,6 +16,50 @@ metrics — see `.cursor/rules/behavioral-commits.mdc`.
 
 ## [Unreleased]
 
+## [0.38.0] — 2026-04-30
+
+### Added
+
+- **`morph setup claude-code`.** New CLI subcommand that mirrors
+  `morph setup cursor` and `morph setup opencode`: it merges the
+  `mcpServers.morph` entry (pointing at `morph-mcp` with
+  `MORPH_WORKSPACE` set to the project root) into
+  `.claude/settings.json` and registers `UserPromptSubmit` /
+  `Stop` hooks that point at two embedded recording scripts —
+  `morph-record-prompt.sh` and `morph-record-stop.sh`. The scripts
+  themselves are written into `.claude/hooks/` and marked
+  executable on Unix. Existing settings, MCP servers, and hooks
+  are preserved on first install and on every re-run; the morph
+  hook entries are keyed by command path so re-running `setup
+  claude-code` doesn't duplicate them. The Stop hook parses
+  `transcript_path` / `conversation` payloads into structured
+  trace events (file_read, file_edit, tool_call, tool_result),
+  records token usage in `run.environment.parameters`, and writes
+  the resulting Run + Trace via `morph run record`. Replaces the
+  old "copy the scripts from `claude-code/hooks/` and edit
+  `.claude/settings.json` by hand" flow documented in
+  `docs/CLAUDE-CODE-SETUP.md`. Hook scripts continue to live at
+  `claude-code/hooks/` for direct copy/symlink users; the setup
+  command embeds the same content via `include_str!` so a
+  shipped `morph` binary doesn't depend on the source checkout.
+
+### Tests
+
+- New acceptance suite `morph-cli/tests/specs/setup_claude_code.yaml`
+  covering: settings.json creation, MCP entry shape,
+  UserPromptSubmit + Stop hook registration, hook scripts present
+  with shebang, "requires `morph init`" error path, idempotent
+  re-run, and merge that preserves a pre-existing user
+  `model`/`mcpServers`/`hooks` block.
+- New Rust unit tests in `morph-cli/src/setup.rs::tests` paralleling
+  the OpenCode + Cursor coverage:
+  `claude_code_requires_morph_init`,
+  `claude_code_settings_json_created`,
+  `claude_code_hook_scripts_written_and_executable`,
+  `claude_code_hooks_registered_for_userpromptsubmit_and_stop`,
+  `claude_code_settings_json_merge_preserves_existing`,
+  `claude_code_idempotent`.
+
 ## [0.37.7] — 2026-04-29
 
 ### Fixed
@@ -301,7 +345,8 @@ Three coordinated changes to repo setup, adoption, and migration.
 - 15 new YAML acceptance spec cases in the default eval suite:
   `init_at_latest:*` ×4, `init_in_git_dir:*` ×6, `upgrade:*` ×5.
 
-[Unreleased]: https://github.com/r/morph/compare/v0.37.7...HEAD
+[Unreleased]: https://github.com/r/morph/compare/v0.38.0...HEAD
+[0.38.0]: https://github.com/r/morph/compare/v0.37.7...v0.38.0
 [0.37.7]: https://github.com/r/morph/compare/v0.37.6...v0.37.7
 [0.37.6]: https://github.com/r/morph/compare/v0.37.5...v0.37.6
 [0.37.5]: https://github.com/r/morph/compare/v0.37.4...v0.37.5

@@ -40,6 +40,19 @@ mod assets {
     pub const OPENCODE_AGENTS_MD: &str = include_str!("../assets/opencode/AGENTS.md");
     pub const OPENCODE_PLUGIN: &str =
         include_str!("../assets/opencode/plugins/morph-record.ts");
+
+    // Claude Code hook scripts. Mirror the shell scripts in
+    // `claude-code/hooks/` so `morph setup claude-code` can install them
+    // without depending on the source checkout being present at runtime.
+    pub const CLAUDE_HOOK_PROMPT: &str =
+        include_str!("../assets/claude-code/hooks/morph-record-prompt.sh");
+    pub const CLAUDE_HOOK_STOP: &str =
+        include_str!("../assets/claude-code/hooks/morph-record-stop.sh");
+
+    pub const CLAUDE_HOOK_SCRIPTS: &[(&str, &str)] = &[
+        ("morph-record-prompt.sh", CLAUDE_HOOK_PROMPT),
+        ("morph-record-stop.sh", CLAUDE_HOOK_STOP),
+    ];
 }
 
 #[derive(Debug)]
@@ -104,6 +117,154 @@ pub fn setup_opencode(project_root: &Path) -> anyhow::Result<OpenCodeSetupReport
         agents_md_written,
         plugin_written,
     })
+}
+
+#[derive(Debug)]
+pub struct ClaudeCodeSetupReport {
+    pub settings_json_updated: bool,
+    pub hooks_written: Vec<String>,
+}
+
+/// Install Claude Code MCP config + hooks into `project_root`.
+///
+/// Writes hook scripts to `.claude/hooks/` (executable on Unix) and
+/// merges `mcpServers.morph` plus `UserPromptSubmit` / `Stop` hook
+/// entries into `.claude/settings.json`. Existing user state is
+/// preserved; the morph entries are keyed by command path so a re-run
+/// is idempotent rather than additive.
+///
+/// Requires `.morph/` to exist (run `morph init` first).
+pub fn setup_claude_code(project_root: &Path) -> anyhow::Result<ClaudeCodeSetupReport> {
+    if !project_root.join(".morph").is_dir() {
+        anyhow::bail!(
+            ".morph directory not found in {}. Run `morph init` first.",
+            project_root.display()
+        );
+    }
+
+    let claude_dir = project_root.join(".claude");
+    std::fs::create_dir_all(&claude_dir)?;
+
+    let hooks_written = write_claude_hook_scripts(&claude_dir)?;
+    let settings_json_updated = merge_claude_settings_json(&claude_dir, project_root)?;
+
+    Ok(ClaudeCodeSetupReport {
+        settings_json_updated,
+        hooks_written,
+    })
+}
+
+fn write_claude_hook_scripts(claude_dir: &Path) -> anyhow::Result<Vec<String>> {
+    let hooks_dir = claude_dir.join("hooks");
+    std::fs::create_dir_all(&hooks_dir)?;
+
+    let mut written = Vec::new();
+    for (name, content) in assets::CLAUDE_HOOK_SCRIPTS {
+        let path = hooks_dir.join(name);
+        std::fs::write(&path, content)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&path)?.permissions();
+            perms.set_mode(perms.mode() | 0o755);
+            std::fs::set_permissions(&path, perms)?;
+        }
+        written.push(name.to_string());
+    }
+    Ok(written)
+}
+
+fn merge_claude_settings_json(
+    claude_dir: &Path,
+    project_root: &Path,
+) -> anyhow::Result<bool> {
+    let path = claude_dir.join("settings.json");
+    let mut doc: serde_json::Value = if path.exists() {
+        serde_json::from_str(&std::fs::read_to_string(&path)?)?
+    } else {
+        serde_json::json!({})
+    };
+
+    let obj = doc
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!(".claude/settings.json root is not an object"))?;
+
+    // 1. mcpServers.morph
+    let project_path = project_root
+        .canonicalize()
+        .unwrap_or_else(|_| project_root.to_path_buf())
+        .to_string_lossy()
+        .to_string();
+
+    let mcp_servers = obj
+        .entry("mcpServers")
+        .or_insert(serde_json::json!({}))
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!(".claude/settings.json mcpServers is not an object"))?;
+
+    mcp_servers.insert(
+        "morph".to_string(),
+        serde_json::json!({
+            "command": "morph-mcp",
+            "args": [],
+            "env": {
+                "MORPH_WORKSPACE": project_path
+            }
+        }),
+    );
+
+    // 2. hooks.UserPromptSubmit + hooks.Stop. Claude Code's hook schema
+    //    is `{event: [{matcher?, hooks: [{type, command}]}]}`. Morph
+    //    owns the entries whose command points at our two hook scripts;
+    //    other entries are left untouched.
+    let claude_hooks: &[(&str, &str)] = &[
+        ("UserPromptSubmit", ".claude/hooks/morph-record-prompt.sh"),
+        ("Stop", ".claude/hooks/morph-record-stop.sh"),
+    ];
+
+    let hooks_section = obj
+        .entry("hooks")
+        .or_insert(serde_json::json!({}))
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!(".claude/settings.json hooks is not an object"))?;
+
+    for (event, command) in claude_hooks {
+        let matchers = hooks_section
+            .entry(event.to_string())
+            .or_insert(serde_json::json!([]))
+            .as_array_mut()
+            .ok_or_else(|| {
+                anyhow::anyhow!(".claude/settings.json hooks.{} is not an array", event)
+            })?;
+
+        // Drop any matcher group whose only hook is the morph entry, so
+        // re-runs don't accumulate duplicates. Groups that mix our hook
+        // with user hooks are kept and their morph-pointing entry is
+        // pruned in-place, preserving the user's hook(s).
+        matchers.retain_mut(|matcher| {
+            let Some(hooks_arr) = matcher
+                .get_mut("hooks")
+                .and_then(|h| h.as_array_mut())
+            else {
+                return true;
+            };
+            hooks_arr.retain(|h| {
+                h.get("command")
+                    .and_then(|c| c.as_str())
+                    .is_none_or(|c| c != *command)
+            });
+            !hooks_arr.is_empty()
+        });
+
+        matchers.push(serde_json::json!({
+            "hooks": [
+                {"type": "command", "command": command}
+            ]
+        }));
+    }
+
+    std::fs::write(&path, serde_json::to_string_pretty(&doc)?)?;
+    Ok(true)
 }
 
 fn merge_opencode_json(project_root: &Path) -> anyhow::Result<bool> {
@@ -656,6 +817,194 @@ mod tests {
         assert!(
             instructions.iter().any(|v| v.as_str() == Some("AGENTS.md")),
             "instructions should include AGENTS.md"
+        );
+    }
+
+    // --- Claude Code tests ---
+
+    #[test]
+    fn claude_code_requires_morph_init() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = setup_claude_code(tmp.path());
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("morph") || msg.contains(".morph"),
+            "error should mention morph init: {msg}"
+        );
+    }
+
+    #[test]
+    fn claude_code_settings_json_created() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_morph_repo(tmp.path());
+        setup_claude_code(tmp.path()).unwrap();
+
+        let path = tmp.path().join(".claude/settings.json");
+        assert!(path.exists(), ".claude/settings.json should exist");
+
+        let val: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let morph = &val["mcpServers"]["morph"];
+        assert_eq!(morph["command"].as_str().unwrap(), "morph-mcp");
+        let ws = morph["env"]["MORPH_WORKSPACE"].as_str().unwrap();
+        let expected = tmp.path().canonicalize().unwrap();
+        assert_eq!(ws, expected.to_str().unwrap());
+    }
+
+    #[test]
+    fn claude_code_hook_scripts_written_and_executable() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_morph_repo(tmp.path());
+        let report = setup_claude_code(tmp.path()).unwrap();
+
+        for (name, _) in assets::CLAUDE_HOOK_SCRIPTS {
+            let path = tmp.path().join(".claude/hooks").join(name);
+            assert!(path.exists(), "hook script should exist: {name}");
+            let content = fs::read_to_string(&path).unwrap();
+            assert!(
+                content.starts_with("#!/usr/bin/env bash"),
+                "hook script should be a bash script: {name}"
+            );
+
+            #[cfg(unix)]
+            {
+                let mode = fs::metadata(&path).unwrap().permissions().mode();
+                assert!(
+                    mode & 0o111 != 0,
+                    "hook script should be executable: {name} (mode: {mode:o})"
+                );
+            }
+        }
+        assert_eq!(report.hooks_written.len(), assets::CLAUDE_HOOK_SCRIPTS.len());
+    }
+
+    #[test]
+    fn claude_code_hooks_registered_for_userpromptsubmit_and_stop() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_morph_repo(tmp.path());
+        setup_claude_code(tmp.path()).unwrap();
+
+        let val: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(tmp.path().join(".claude/settings.json")).unwrap(),
+        )
+        .unwrap();
+        let user = val["hooks"]["UserPromptSubmit"].as_array().unwrap();
+        let stop = val["hooks"]["Stop"].as_array().unwrap();
+        assert!(!user.is_empty());
+        assert!(!stop.is_empty());
+
+        let user_cmds: Vec<&str> = user
+            .iter()
+            .flat_map(|m| m["hooks"].as_array().unwrap().iter())
+            .filter_map(|h| h["command"].as_str())
+            .collect();
+        assert!(
+            user_cmds.iter().any(|c| c.contains("morph-record-prompt")),
+            "UserPromptSubmit should reference morph-record-prompt: {user_cmds:?}"
+        );
+
+        let stop_cmds: Vec<&str> = stop
+            .iter()
+            .flat_map(|m| m["hooks"].as_array().unwrap().iter())
+            .filter_map(|h| h["command"].as_str())
+            .collect();
+        assert!(
+            stop_cmds.iter().any(|c| c.contains("morph-record-stop")),
+            "Stop should reference morph-record-stop: {stop_cmds:?}"
+        );
+    }
+
+    #[test]
+    fn claude_code_settings_json_merge_preserves_existing() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_morph_repo(tmp.path());
+        let claude_dir = tmp.path().join(".claude");
+        fs::create_dir_all(&claude_dir).unwrap();
+        fs::write(
+            claude_dir.join("settings.json"),
+            r#"{
+              "model": "opus",
+              "mcpServers": {
+                "other-server": {"command": "other-mcp"}
+              },
+              "hooks": {
+                "UserPromptSubmit": [
+                  {"hooks": [{"type": "command", "command": "my-existing.sh"}]}
+                ]
+              }
+            }"#,
+        )
+        .unwrap();
+
+        setup_claude_code(tmp.path()).unwrap();
+
+        let val: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(claude_dir.join("settings.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(val["model"].as_str().unwrap(), "opus");
+        assert!(
+            val["mcpServers"]["other-server"].is_object(),
+            "existing MCP server should be preserved"
+        );
+        assert!(
+            val["mcpServers"]["morph"].is_object(),
+            "morph MCP server should be added"
+        );
+        let user = val["hooks"]["UserPromptSubmit"].as_array().unwrap();
+        let user_cmds: Vec<&str> = user
+            .iter()
+            .flat_map(|m| m["hooks"].as_array().unwrap().iter())
+            .filter_map(|h| h["command"].as_str())
+            .collect();
+        assert!(
+            user_cmds.contains(&"my-existing.sh"),
+            "user hook should be preserved: {user_cmds:?}"
+        );
+        assert!(
+            user_cmds.iter().any(|c| c.contains("morph-record-prompt")),
+            "morph hook should be added: {user_cmds:?}"
+        );
+    }
+
+    #[test]
+    fn claude_code_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_morph_repo(tmp.path());
+
+        setup_claude_code(tmp.path()).unwrap();
+        let settings_first =
+            fs::read_to_string(tmp.path().join(".claude/settings.json")).unwrap();
+        let prompt_first =
+            fs::read_to_string(tmp.path().join(".claude/hooks/morph-record-prompt.sh")).unwrap();
+
+        setup_claude_code(tmp.path()).unwrap();
+        let settings_second =
+            fs::read_to_string(tmp.path().join(".claude/settings.json")).unwrap();
+        let prompt_second =
+            fs::read_to_string(tmp.path().join(".claude/hooks/morph-record-prompt.sh")).unwrap();
+
+        assert_eq!(
+            settings_first, settings_second,
+            "settings.json should be stable across runs"
+        );
+        assert_eq!(
+            prompt_first, prompt_second,
+            "hook script should be stable across runs"
+        );
+
+        let val: serde_json::Value = serde_json::from_str(&settings_second).unwrap();
+        let user = val["hooks"]["UserPromptSubmit"].as_array().unwrap();
+        let morph_count = user
+            .iter()
+            .flat_map(|m| m["hooks"].as_array().unwrap().iter())
+            .filter_map(|h| h["command"].as_str())
+            .filter(|c| c.contains("morph-record-prompt"))
+            .count();
+        assert_eq!(
+            morph_count, 1,
+            "should not duplicate morph hook on re-run"
         );
     }
 

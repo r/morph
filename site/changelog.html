@@ -320,7 +320,64 @@
 
     <article class="release">
       <header>
-        <span class="version">0.37.7 <span class="latest">Latest</span></span>
+        <span class="version">0.38.0 <span class="latest">Latest</span></span>
+        <span class="date">2026-04-30</span>
+      </header>
+      <p class="summary">
+        <code>morph setup claude-code</code> joins
+        <code>morph setup cursor</code> and <code>morph setup opencode</code>:
+        one command merges the morph MCP server, the
+        <code>UserPromptSubmit</code> + <code>Stop</code> recording hooks,
+        and two embedded hook scripts into your project's
+        <code>.claude/</code>. Existing settings are preserved on first
+        install and on every re-run.
+      </p>
+
+      <h3 class="added"><span class="marker"></span>Added</h3>
+      <ul>
+        <li><strong>New CLI subcommand <code>morph setup claude-code</code>.</strong>
+          Writes (or merges into) <code>.claude/settings.json</code>:
+          adds <code>mcpServers.morph</code> wired to the
+          <code>morph-mcp</code> binary with <code>MORPH_WORKSPACE</code>
+          set to the project root, plus
+          <code>hooks.UserPromptSubmit</code> and
+          <code>hooks.Stop</code> entries pointing at
+          <code>.claude/hooks/morph-record-prompt.sh</code> and
+          <code>.claude/hooks/morph-record-stop.sh</code>. The two hook
+          scripts are written into <code>.claude/hooks/</code> and
+          marked executable on Unix. The Stop hook parses Claude Code's
+          <code>transcript_path</code> / <code>conversation</code>
+          payload into structured trace events (file_read, file_edit,
+          tool_call, tool_result), captures token usage in
+          <code>run.environment.parameters</code>, and writes the
+          resulting Run + Trace via <code>morph run record</code>. The
+          morph entries are keyed by command path so re-running
+          <code>morph setup claude-code</code> doesn't accumulate
+          duplicate hooks; pre-existing user state — top-level keys,
+          third-party MCP servers, and unrelated hook entries — is
+          preserved on every run. Replaces the old "copy the scripts
+          from <code>claude-code/hooks/</code> and edit
+          <code>.claude/settings.json</code> by hand" flow that
+          <code>docs/CLAUDE-CODE-SETUP.md</code> used to lead with.</li>
+      </ul>
+
+      <h3 class="tests"><span class="marker"></span>Tests</h3>
+      <ul>
+        <li>New <code>setup_claude_code.yaml</code> acceptance suite (7
+          cases) covers settings.json creation, MCP entry shape, hook
+          registration, hook script presence + shebang, the "requires
+          <code>morph init</code>" error, idempotent re-runs, and a
+          merge that preserves a pre-existing
+          <code>model</code> / <code>mcpServers</code> / <code>hooks</code>
+          block. Six new Rust unit tests in
+          <code>morph-cli/src/setup.rs::tests</code> mirror the OpenCode
+          + Cursor coverage at the function level.</li>
+      </ul>
+    </article>
+
+    <article class="release">
+      <header>
+        <span class="version">0.37.7</span>
         <span class="date">2026-04-29</span>
       </header>
       <p class="summary">
@@ -406,52 +463,6 @@
           <code>git tag &amp;&amp; git push origin &lt;tag&gt;</code>.</li>
       </ul>
     </article>
-
-    <article class="release">
-      <header>
-        <span class="version">0.37.5</span>
-        <span class="date">2026-04-29</span>
-      </header>
-      <p class="summary">
-        <code>morph status</code> and <code>morph eval gaps</code> no longer
-        hang on stores with many objects. Annotations finally get a per-type
-        index dir, so listing them is a directory read instead of a full
-        store walk.
-      </p>
-
-      <h3 class="fixed"><span class="marker"></span>Fixed</h3>
-      <ul>
-        <li><strong><code>morph status</code> and <code>morph eval gaps</code>
-          got the same treatment as <code>certify</code>.</strong> Both call
-          <code>list_stale_certifications</code>, which calls
-          <code>Store::list(ObjectType::Annotation)</code>. Annotations were
-          the only top-level object type without a per-type index dir, so on
-          <code>FsStore</code> the call walked the entire object fanout and
-          JSON-deserialized every object just to filter by type — about
-          two minutes per invocation on a 94k-object / 33 GB store.
-          Annotations now have an <code>annotations/</code> index dir
-          maintained by <code>put</code>; legacy stores trigger a one-shot
-          lazy rebuild on first use and drop an <code>.indexed</code> marker
-          so subsequent calls hit the fast path. Verified on the
-          bug-surfacing repo: first call pays the ~2 min rebuild once;
-          second call <strong>0.18 s</strong> (~600× speedup),
-          <code>morph status</code> <strong>0.17 s</strong>.</li>
-      </ul>
-
-      <h3 class="tests"><span class="marker"></span>Tests</h3>
-      <ul>
-        <li>Three new unit tests pin the contract: legacy stores rebuild
-          the index on first <code>list(Annotation)</code>; once the
-          marker is in place, even a poison file in the object fanout
-          can't perturb the result; the rebuild correctly filters
-          annotations away from noise blobs. New acceptance suite
-          <code>annotations_indexed.yaml</code> (3 cases) covers
-          <code>certify</code> populating the index, <code>status</code>
-          rendering cleanly, and <code>eval gaps</code> succeeding on a
-          certified branch.</li>
-      </ul>
-    </article>
-
 
     <div class="older">
       <h2>Older versions</h2>

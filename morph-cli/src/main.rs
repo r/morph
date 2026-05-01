@@ -1457,6 +1457,14 @@ in a git repository first."
                 println!("  AGENTS.md: {}", if report.agents_md_written { "written" } else { "unchanged" });
                 println!("  .opencode/plugins/morph-record.ts: {}", if report.plugin_written { "written" } else { "unchanged" });
             }
+            SetupCmd::ClaudeCode { path } => {
+                let root = std::path::Path::new(&path).canonicalize().unwrap_or_else(|_| path.clone());
+                verbose_msg(verbose, &format!("setting up Claude Code integration at {}", root.display()));
+                let report = setup::setup_claude_code(&root)?;
+                println!("Claude Code integration installed in {}", root.display());
+                println!("  Hook scripts: {}", report.hooks_written.join(", "));
+                println!("  .claude/settings.json: {}", if report.settings_json_updated { "updated" } else { "unchanged" });
+            }
         },
 
         Command::Upgrade => {

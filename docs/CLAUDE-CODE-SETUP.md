@@ -9,9 +9,16 @@ This page is the full reference for using Morph in Claude Code. For a single can
 ## Quick start (installation order)
 
 1. **Install the Morph binaries** -- see [Installation: Install the Morph binaries](INSTALLATION.md#1-install-the-morph-binaries).
-2. **Configure MCP** in Claude Code so the morph server is connected (Section 1 below).
-3. **Initialize** a Morph repo: `morph init` -- see [Installation: Initialize a Morph repo](INSTALLATION.md#2-initialize-a-morph-repo).
-4. **Enable hooks** so Claude Code records every prompt and response (Section 2 below).
+2. **Initialize** a Morph repo: `morph init` -- see [Installation: Initialize a Morph repo](INSTALLATION.md#2-initialize-a-morph-repo).
+3. **Run setup** to install MCP config + hooks + the recording scripts:
+
+```bash
+morph setup claude-code
+```
+
+This writes (or merges into) `.claude/settings.json` in your project, drops two recording scripts under `.claude/hooks/`, and marks them executable. Then open the project in Claude Code; ensure `morph` and `morph-mcp` are on your PATH. No manual MCP or hook configuration needed.
+
+If you would rather wire it by hand (CI, custom layouts, restricted writes), Sections 1 and 2 below describe the full hand-roll. `morph setup claude-code` writes exactly the same artifacts, idempotently, while preserving any pre-existing `model`, `mcpServers`, or `hooks` entries.
 
 ---
 
