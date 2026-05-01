@@ -1,0 +1,207 @@
+# Acceptance cases for `morph setup aoe`.
+#
+# Sets a project up so that running `aoe add ...` on it produces sessions
+# whose lifecycle is recorded by morph: a per-repo
+# `.agent-of-empires/config.toml` carrying morph hooks + sandbox env/volume
+# entries, a baked-image Dockerfile reference users can opt into, and a
+# `AGENTS.md` so AoE-launched agents know about the morph MCP. By default we
+# also delegate to setup_cursor / setup_opencode / setup_claude_code so
+# recording works regardless of which agent AoE spawns.
+
+- name: setup_aoe_creates_config_toml
+  init: false
+  steps:
+    - morph: [init, "${repo}"]
+    - morph: [setup, aoe, --path, "${repo}"]
+      stdout_contains: "Agent of Empires integration installed"
+  assert:
+    - kind: file_exists
+      path: .agent-of-empires/config.toml
+    - kind: file_exists
+      path: .agent-of-empires/Dockerfile.morph-aoe
+    - kind: file_exists
+      path: AGENTS.md
+
+- name: setup_aoe_config_has_lifecycle_hooks
+  init: false
+  steps:
+    - morph: [init, "${repo}"]
+    - morph: [setup, aoe, --path, "${repo}"]
+  assert:
+    - kind: file_contains
+      path: .agent-of-empires/config.toml
+      contents: "[hooks]"
+    - kind: file_contains
+      path: .agent-of-empires/config.toml
+      contents: "on_create"
+    - kind: file_contains
+      path: .agent-of-empires/config.toml
+      contents: "on_launch"
+    - kind: file_contains
+      path: .agent-of-empires/config.toml
+      contents: "on_destroy"
+    # Always-commit semantics on create + destroy.
+    - kind: file_contains
+      path: .agent-of-empires/config.toml
+      contents: "morph commit"
+    - kind: file_contains
+      path: .agent-of-empires/config.toml
+      contents: "aoe-create"
+    - kind: file_contains
+      path: .agent-of-empires/config.toml
+      contents: "aoe-destroy"
+    # Lifecycle records a session trace event.
+    - kind: file_contains
+      path: .agent-of-empires/config.toml
+      contents: "morph run record-session"
+
+- name: setup_aoe_config_has_sandbox_env_and_volumes
+  init: false
+  steps:
+    - morph: [init, "${repo}"]
+    - morph: [setup, aoe, --path, "${repo}"]
+  assert:
+    - kind: file_contains
+      path: .agent-of-empires/config.toml
+      contents: "[sandbox]"
+    - kind: file_contains
+      path: .agent-of-empires/config.toml
+      contents: "MORPH_WORKSPACE"
+    - kind: file_contains
+      path: .agent-of-empires/config.toml
+      contents: "AOE_INSTANCE_ID"
+    # Default writes bind-mount entries for both binaries.
+    - kind: file_contains
+      path: .agent-of-empires/config.toml
+      contents: "/usr/local/bin/morph:ro"
+    - kind: file_contains
+      path: .agent-of-empires/config.toml
+      contents: "/usr/local/bin/morph-mcp:ro"
+
+- name: setup_aoe_no_bind_mount_skips_volume_entries
+  init: false
+  steps:
+    - morph: [init, "${repo}"]
+    - morph: [setup, aoe, --path, "${repo}", --no-bind-mount]
+  assert:
+    # The bind-mount paths must be absent in --no-bind-mount mode; the user
+    # is expected to bake morph into a custom sandbox image instead.
+    - kind: file_contains
+      path: .agent-of-empires/config.toml
+      contents: "MORPH_WORKSPACE"
+
+- name: setup_aoe_dockerfile_documents_both_paths
+  init: false
+  steps:
+    - morph: [init, "${repo}"]
+    - morph: [setup, aoe, --path, "${repo}"]
+  assert:
+    - kind: file_contains
+      path: .agent-of-empires/Dockerfile.morph-aoe
+      contents: "ARG AOE_BASE"
+    - kind: file_contains
+      path: .agent-of-empires/Dockerfile.morph-aoe
+      contents: "Path A"
+    - kind: file_contains
+      path: .agent-of-empires/Dockerfile.morph-aoe
+      contents: "Path B"
+
+- name: setup_aoe_delegates_to_per_agent_setups_by_default
+  init: false
+  steps:
+    - morph: [init, "${repo}"]
+    - morph: [setup, aoe, --path, "${repo}"]
+  assert:
+    # Cursor delegate: hooks + MCP config land under .cursor/.
+    - kind: file_exists
+      path: .cursor/mcp.json
+    - kind: file_exists
+      path: .cursor/hooks.json
+    # OpenCode delegate: opencode.json + plugin land at the project root.
+    - kind: file_exists
+      path: opencode.json
+    - kind: file_exists
+      path: .opencode/plugins/morph-record.ts
+    # Claude Code delegate: settings + hooks land under .claude/.
+    - kind: file_exists
+      path: .claude/settings.json
+    - kind: file_exists
+      path: .claude/hooks/morph-record-prompt.sh
+
+- name: setup_aoe_skip_agents_does_not_delegate
+  init: false
+  steps:
+    - morph: [init, "${repo}"]
+    - morph: [setup, aoe, --path, "${repo}", --skip-agents]
+  assert:
+    - kind: file_exists
+      path: .agent-of-empires/config.toml
+    # AGENTS.md is still seeded so any agent AoE launches sees morph guidance.
+    - kind: file_exists
+      path: AGENTS.md
+
+- name: setup_aoe_requires_morph_init
+  init: false
+  steps:
+    - morph: [setup, aoe, --path, "${repo}"]
+      expect_exit: 1
+      stderr_contains: ".morph"
+
+- name: setup_aoe_idempotent
+  init: false
+  steps:
+    - morph: [init, "${repo}"]
+    - morph: [setup, aoe, --path, "${repo}"]
+    - morph: [setup, aoe, --path, "${repo}"]
+      stdout_contains: "Agent of Empires integration installed"
+  assert:
+    - kind: file_exists
+      path: .agent-of-empires/config.toml
+    - kind: file_exists
+      path: .agent-of-empires/Dockerfile.morph-aoe
+
+- name: setup_aoe_preserves_existing_config_toml
+  init: false
+  files:
+    .agent-of-empires/config.toml: |
+      [hooks]
+      on_launch = ["npm install"]
+
+      [session]
+      default_tool = "claude"
+
+      [sandbox]
+      enabled_by_default = true
+      default_image = "my-org/my-sandbox:latest"
+      environment = ["MY_API_KEY"]
+      extra_volumes = ["/data:/data:ro"]
+  steps:
+    - morph: [init, "${repo}"]
+    - morph: [setup, aoe, --path, "${repo}"]
+  assert:
+    # User's existing settings preserved.
+    - kind: file_contains
+      path: .agent-of-empires/config.toml
+      contents: "npm install"
+    - kind: file_contains
+      path: .agent-of-empires/config.toml
+      contents: "default_tool"
+    - kind: file_contains
+      path: .agent-of-empires/config.toml
+      contents: "claude"
+    - kind: file_contains
+      path: .agent-of-empires/config.toml
+      contents: "default_image"
+    - kind: file_contains
+      path: .agent-of-empires/config.toml
+      contents: "MY_API_KEY"
+    - kind: file_contains
+      path: .agent-of-empires/config.toml
+      contents: "/data:/data:ro"
+    # Morph block layered in alongside.
+    - kind: file_contains
+      path: .agent-of-empires/config.toml
+      contents: "MORPH_WORKSPACE"
+    - kind: file_contains
+      path: .agent-of-empires/config.toml
+      contents: "aoe-create"

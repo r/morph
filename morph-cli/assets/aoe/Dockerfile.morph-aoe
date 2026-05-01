@@ -1,0 +1,50 @@
+# Dockerfile.morph-aoe — sandbox image with morph + morph-mcp baked in.
+#
+# Use this when you want morph hooks (`.agent-of-empires/config.toml`) to run
+# inside Agent of Empires Docker sandboxes WITHOUT relying on host bind-mounts
+# of `/usr/local/bin/morph` and `/usr/local/bin/morph-mcp`.
+#
+# Two build paths are provided. Pick one and comment the other out, then
+# build the image and point `[sandbox].default_image` in your repo's
+# `.agent-of-empires/config.toml` at the resulting tag.
+#
+# After switching to a baked image, you can also drop the morph entries
+# (`/usr/local/bin/morph:...:ro` and `/usr/local/bin/morph-mcp:...:ro`)
+# from `[sandbox].extra_volumes` if you used `morph setup aoe` to seed it.
+
+ARG AOE_BASE=ghcr.io/njbrake/aoe-dev-sandbox:latest
+FROM ${AOE_BASE}
+
+# === Path A: copy from a local cargo build (default) =========================
+# Build the host binaries first, from a checkout of the morph repo:
+#
+#   cargo build --release -p morph-cli -p morph-mcp
+#
+# Then build this image with the morph repo root as the build context:
+#
+#   docker build \
+#     -f .agent-of-empires/Dockerfile.morph-aoe \
+#     -t aoe-morph:latest \
+#     <path-to-morph-checkout>
+#
+# Adjust the COPY paths if your build context differs.
+COPY target/release/morph     /usr/local/bin/morph
+COPY target/release/morph-mcp /usr/local/bin/morph-mcp
+RUN chmod +x /usr/local/bin/morph /usr/local/bin/morph-mcp
+
+# === Path B: pull a published release ========================================
+# Comment out Path A above and uncomment this block. Adjust MORPH_VERSION and
+# the download URL to match where you publish morph builds (GitHub releases,
+# internal artifactory, etc.). The expected files are statically-linked
+# Linux/x86_64 binaries.
+#
+# ARG MORPH_VERSION=0.39.0
+# ARG MORPH_DIST=https://example.invalid/morph
+# RUN set -eux \
+#  && curl -fsSL "${MORPH_DIST}/${MORPH_VERSION}/morph-linux-x86_64"     -o /usr/local/bin/morph \
+#  && curl -fsSL "${MORPH_DIST}/${MORPH_VERSION}/morph-mcp-linux-x86_64" -o /usr/local/bin/morph-mcp \
+#  && chmod +x /usr/local/bin/morph /usr/local/bin/morph-mcp
+
+# Smoke-test that both binaries can run inside the image. If this RUN fails
+# the build will stop with a useful error rather than producing a broken image.
+RUN /usr/local/bin/morph --version && /usr/local/bin/morph-mcp --version

@@ -16,6 +16,120 @@ metrics — see `.cursor/rules/behavioral-commits.mdc`.
 
 ## [Unreleased]
 
+## [0.39.1] — 2026-05-01
+
+### Fixed
+
+- **`morph commit --from-run <hash>` now propagates the run's
+  metrics into `observed_metrics`.** Previously, the standalone
+  commit path read the run for provenance / `evidence_refs` /
+  `env_constraints` / contributors but silently dropped its
+  `metrics` map, so every `--from-run` commit produced the
+  "commit has no observed_metrics" warning and `morph eval gaps`
+  kept reporting `empty_head_metrics`. The reference-mode helper
+  already did this correctly; the fix mirrors that path in
+  `morph-cli/src/main.rs` with the same UX as the LAST_RUN
+  breadcrumb auto-attach (a `attaching evidence from run <hash>:
+  k=v, ...` stderr preview before the commit object is written).
+  Precedence is unchanged: explicit `--metrics` still wins over
+  the run's parsed metrics, and a run whose `metrics` map is
+  itself empty correctly leaves the commit metrics-less and
+  surfaces the standard warning.
+
+### Tests
+
+- New acceptance suite
+  `morph-cli/tests/specs/commit_from_run_metrics.yaml` with
+  three cases: a populated `cargo`-runner Run propagates
+  `tests_passed` / `tests_total` into the commit; explicit
+  `--metrics` overrides the run's metrics; and a Run with
+  `metrics: {}` still surfaces the standard `no observed_metrics`
+  warning rather than silently producing a metrics-less
+  behavioral commit. The existing
+  `commit_from_recorded_run_persists_env_and_contributors` and
+  `commit_from_recorded_run_with_reviewer` cases stay intact —
+  they only ever asserted provenance/contributors, which is why
+  the bug slipped past them.
+
+## [0.39.0] — 2026-04-30
+
+### Added
+
+- **`morph setup aoe`.** New CLI subcommand that wires Morph
+  recording into [Agent of Empires](https://github.com/njbrake/agent-of-empires)
+  multi-agent sessions. AoE is a `tmux`-based session manager that
+  runs Claude Code, OpenCode, Cursor CLI, and other coding agents on
+  top of git worktrees, optionally inside Docker sandboxes — and now
+  every AoE session is wrapped by morph lifecycle hooks. The command:
+  - Writes (or merges into) `.agent-of-empires/config.toml` a
+    deterministic morph block: `[hooks].on_create` snapshots the
+    worktree as a morph commit (`aoe-create: <instance-id>`,
+    tolerant of missing `.morph/` and empty metrics so AoE never
+    aborts session creation); `[hooks].on_launch` records a `Run` +
+    `Trace` for every (re)launch; `[hooks].on_destroy` writes a
+    final commit (`aoe-destroy: <instance-id>`) and a closing trace
+    event before AoE tears the worktree down. Re-running the
+    command rewrites only morph-owned lines (matched by command
+    prefix) so user-defined hooks (`on_launch = ["npm install"]`,
+    etc.) survive every re-run.
+  - Seeds `[sandbox].environment` with `MORPH_WORKSPACE` +
+    `AOE_INSTANCE_ID` so the hooks can find the morph repo and tag
+    commits with the AoE instance id when running inside the
+    sandbox container.
+  - Seeds `[sandbox].extra_volumes` with bind-mounts for
+    `/usr/local/bin/morph` and `/usr/local/bin/morph-mcp` (default;
+    works against the stock `ghcr.io/njbrake/aoe-dev-sandbox`
+    image). `--no-bind-mount` suppresses the volume entries for
+    teams who prefer a baked sandbox image.
+  - Emits `.agent-of-empires/Dockerfile.morph-aoe`, a reference
+    Dockerfile that bakes morph + morph-mcp into an
+    `aoe-dev-sandbox`-based image. Two install paths are
+    documented: `COPY` from a local cargo build, and `curl` from a
+    published release URL. `--no-dockerfile` skips it.
+  - By default, delegates to `setup_cursor`, `setup_opencode`, and
+    `setup_claude_code` so prompt/response recording works
+    regardless of which agent AoE launches per session. Override
+    with `--agent <name>` (repeatable) or `--skip-agents`. AGENTS.md
+    is seeded either way so AoE-launched agents see morph guidance.
+  - Idempotent: every re-run produces a byte-identical
+    `config.toml` against a clean repo, and against repos that
+    started with user-authored `[hooks]` / `[session]` /
+    `[sandbox]` / `[worktree]` blocks the morph-owned entries are
+    deduplicated rather than appended.
+
+### Changed
+
+- `docs/INSTALLATION.md` now documents `morph setup aoe` as a
+  one-command quick path alongside cursor / opencode.
+- `morph-cli` depends on `toml_edit = "0.22"` so the AoE config
+  merge round-trips comments and formatting in user-authored
+  `.agent-of-empires/config.toml` files.
+
+### Tests
+
+- New acceptance suite `morph-cli/tests/specs/setup_aoe.yaml`
+  covering: config.toml + Dockerfile + AGENTS.md creation, hook
+  block (`on_create` / `on_launch` / `on_destroy`, with always-commit
+  semantics on create + destroy), sandbox env passthrough
+  (`MORPH_WORKSPACE` + `AOE_INSTANCE_ID`), bind-mount entries
+  (default), `--no-bind-mount` mode, Dockerfile contents (Path A
+  + Path B documented), default delegation to all three per-agent
+  setups, `--skip-agents` mode, "requires `morph init`" error path,
+  idempotent re-run, and merge that preserves a pre-existing user
+  `[hooks]` / `[session]` / `[sandbox]` block.
+- New Rust unit tests in `morph-cli/src/setup.rs::tests`:
+  `aoe_requires_morph_init`,
+  `aoe_writes_config_dockerfile_and_agents_md`,
+  `aoe_config_toml_has_lifecycle_hooks`,
+  `aoe_config_toml_seeds_sandbox_env_and_volumes`,
+  `aoe_no_bind_mount_omits_morph_volume_entries`,
+  `aoe_default_delegates_to_all_three_agents`,
+  `aoe_skip_agents_only_writes_glue`,
+  `aoe_unknown_agent_errors`,
+  `aoe_idempotent`,
+  `aoe_preserves_existing_user_config`,
+  `aoe_re_run_does_not_duplicate_morph_entries_with_user_config`.
+
 ## [0.38.0] — 2026-04-30
 
 ### Added
@@ -345,7 +459,9 @@ Three coordinated changes to repo setup, adoption, and migration.
 - 15 new YAML acceptance spec cases in the default eval suite:
   `init_at_latest:*` ×4, `init_in_git_dir:*` ×6, `upgrade:*` ×5.
 
-[Unreleased]: https://github.com/r/morph/compare/v0.38.0...HEAD
+[Unreleased]: https://github.com/r/morph/compare/v0.39.1...HEAD
+[0.39.1]: https://github.com/r/morph/compare/v0.39.0...v0.39.1
+[0.39.0]: https://github.com/r/morph/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/r/morph/compare/v0.37.7...v0.38.0
 [0.37.7]: https://github.com/r/morph/compare/v0.37.6...v0.37.7
 [0.37.6]: https://github.com/r/morph/compare/v0.37.5...v0.37.6

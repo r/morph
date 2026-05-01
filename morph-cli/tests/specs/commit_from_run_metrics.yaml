@@ -1,0 +1,121 @@
+# Acceptance cases for `morph commit --from-run <hash>` metric propagation.
+#
+# Bug: standalone-mode `morph commit --from-run <hash>` carried provenance,
+# evidence_refs, contributors, and env constraints from the named run, but
+# silently dropped the run's `metrics` map. Every `--from-run` commit then
+# tripped the "commit has no observed_metrics" warning and `morph eval gaps`
+# kept reporting `empty_head_metrics`, defeating behavioral merge gating.
+#
+# These cases pin the contract: a run with non-empty metrics must populate
+# the resulting commit's observed_metrics; explicit `--metrics` still wins
+# over `--from-run`; a run whose metrics map is empty leaves the commit
+# metrics-less and surfaces the standard warning.
+
+- name: commit_from_run_propagates_metrics_into_observed_metrics
+  files:
+    foo.txt: "seed"
+  steps:
+    # Use `morph eval run` against a printf-canned cargo summary to make
+    # a real Run object whose `metrics` map is populated.
+    - morph:
+        - eval
+        - run
+        - --runner
+        - cargo
+        - --
+        - printf
+        - "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.42s\n"
+      capture_first_line: run_hash
+      assert_hash: true
+
+    - morph: [add, foo.txt]
+
+    # The fix: --from-run must carry the run's metrics into the
+    # commit's observed_metrics, mirroring the breadcrumb path's UX
+    # (stderr preview line) and writing them into the Commit object.
+    - morph: [commit, -m, "implement X", --from-run, "${run_hash}", --json]
+      capture_json_field:
+        var: commit_hash
+        field: hash
+      assert_hash: true
+      stderr_contains:
+        - "attaching evidence from run"
+        - "tests_passed=7"
+        - "tests_total=7"
+      stderr_not_contains:
+        - "no observed_metrics"
+
+    - morph: [show, "${commit_hash}"]
+      stdout_contains:
+        - "tests_passed"
+        - "tests_total"
+        - "${run_hash}"
+
+- name: commit_from_run_explicit_metrics_override_run_metrics
+  files:
+    foo.txt: "seed"
+  steps:
+    - morph:
+        - eval
+        - run
+        - --runner
+        - cargo
+        - --
+        - printf
+        - "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.42s\n"
+      capture_first_line: run_hash
+      assert_hash: true
+
+    - morph: [add, foo.txt]
+
+    # Explicit --metrics wins over the run's parsed metrics. This
+    # preserves CI determinism: a script that passes --metrics gets
+    # exactly those values regardless of what the run captured.
+    - morph:
+        - commit
+        - -m
+        - "explicit override"
+        - --from-run
+        - "${run_hash}"
+        - --metrics
+        - '{"custom_metric":42}'
+        - --json
+      capture_json_field:
+        var: commit_hash
+        field: hash
+      assert_hash: true
+
+    - morph: [show, "${commit_hash}"]
+      stdout_contains:
+        - "custom_metric"
+        - "42"
+      # Run's parsed metrics must NOT bleed in when --metrics is explicit.
+      stdout_not_contains:
+        - "tests_passed"
+
+- name: commit_from_run_with_empty_metrics_run_warns_and_leaves_commit_empty
+  files:
+    trace.json: '{"type":"trace","events":[{"id":"e1","seq":0,"ts":"2025-01-01T00:00:00Z","kind":"prompt","payload":{}}]}'
+    code.txt: "hello"
+  steps:
+    - compute_hash:
+        var: trace_hash
+        json: '{"type":"trace","events":[{"id":"e1","seq":0,"ts":"2025-01-01T00:00:00Z","kind":"prompt","payload":{}}]}'
+
+    # A hand-rolled Run with metrics: {} (no eval results recorded).
+    - write_file:
+        path: run.json
+        content: '{"type":"run","pipeline":"0000000000000000000000000000000000000000000000000000000000000000","commit":null,"environment":{"model":"claude-4","version":"2025-06-01","parameters":{},"toolchain":{}},"input_state_hash":"0000000000000000000000000000000000000000000000000000000000000000","output_artifacts":[],"metrics":{},"trace":"${trace_hash}","agent":{"id":"primary-agent","version":"1.0","policy":null}}'
+
+    - morph: [run, record, run.json, --trace, trace.json]
+      capture: run_hash
+      assert_hash: true
+
+    - morph: [add, code.txt]
+
+    # The run carries provenance but no metrics, so the commit
+    # should still surface the standard warning rather than silently
+    # produce a metrics-less behavioral commit.
+    - morph: [commit, -m, "no-metrics provenance commit", --from-run, "${run_hash}"]
+      stderr_contains:
+        - "no observed_metrics"

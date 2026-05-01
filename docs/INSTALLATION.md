@@ -68,6 +68,16 @@ morph setup opencode
 
 This writes (or merges into) `opencode.json`, `AGENTS.md`, and `.opencode/plugins/morph-record.ts` in your project. Then open the project in OpenCode; ensure `morph` and `morph-mcp` are on your PATH.
 
+### Quick path: one command for Agent of Empires (`aoe`)
+
+If you drive multiple agents through [Agent of Empires](https://github.com/njbrake/agent-of-empires), install the AoE integration in one step:
+
+```bash
+morph setup aoe
+```
+
+This writes lifecycle hooks (always commit on `on_create` / `on_destroy`, plus a per-launch `Run`) into `.agent-of-empires/config.toml`, seeds `[sandbox].environment` and `[sandbox].extra_volumes` so morph hooks work inside AoE Docker sandboxes, and ships a `Dockerfile.morph-aoe` reference image. By default it also delegates to `setup cursor` / `setup opencode` / `setup claude-code` so prompt/response recording works regardless of which agent AoE launches. See [AOE-SETUP.md](AOE-SETUP.md).
+
 ---
 
 ## 3. Set up your IDE

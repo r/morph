@@ -320,7 +320,133 @@
 
     <article class="release">
       <header>
-        <span class="version">0.38.0 <span class="latest">Latest</span></span>
+        <span class="version">0.39.1 <span class="latest">Latest</span></span>
+        <span class="date">2026-05-01</span>
+      </header>
+      <p class="summary">
+        Fixes a silent regression in <code>morph commit
+        --from-run &lt;hash&gt;</code>: it now propagates the
+        run's <code>observed_metrics</code> into the commit, so
+        the spec-first eval-driven workflow (<code>morph eval run
+        ... → morph commit --from-run</code>) no longer produces
+        metrics-less commits that break behavioral merge gating.
+      </p>
+
+      <h3 class="fixed"><span class="marker"></span>Fixed</h3>
+      <ul>
+        <li><strong>Standalone-mode <code>morph commit
+          --from-run</code> dropped the run's metrics map.</strong>
+          The standalone commit path read the named run for
+          provenance, <code>evidence_refs</code>,
+          <code>env_constraints</code>, and contributors but
+          silently skipped its <code>metrics</code> map, so every
+          <code>--from-run</code> commit produced the
+          <em>"commit has no observed_metrics"</em> warning and
+          <code>morph eval gaps</code> kept reporting
+          <code>empty_head_metrics</code>. The reference-mode
+          helper already did this correctly; the standalone path
+          now mirrors that behavior with the same UX as the
+          LAST_RUN-breadcrumb auto-attach (a
+          <code>attaching evidence from run &lt;hash&gt;: k=v,
+          ...</code> stderr preview before the commit lands).
+          Precedence is unchanged: explicit <code>--metrics</code>
+          still wins, and a run whose <code>metrics</code> map is
+          itself empty correctly leaves the commit metrics-less
+          and surfaces the standard warning. The fix unblocks
+          <code>morph eval gaps</code> for every commit captured
+          via <code>morph commit --from-run</code>.</li>
+      </ul>
+
+      <h3 class="tests"><span class="marker"></span>Tests</h3>
+      <ul>
+        <li>New <code>commit_from_run_metrics.yaml</code>
+          acceptance suite (3 cases): a populated cargo-runner
+          Run propagates <code>tests_passed</code> /
+          <code>tests_total</code> into the commit; explicit
+          <code>--metrics</code> overrides the run's metrics; a
+          Run with <code>metrics: {}</code> still surfaces the
+          standard warning rather than silently producing a
+          metrics-less behavioral commit. The existing
+          <code>commit_from_recorded_run_*</code> specs stay
+          intact — they only ever asserted provenance /
+          contributors, which is why the bug slipped past them.</li>
+      </ul>
+    </article>
+
+    <article class="release">
+      <header>
+        <span class="version">0.39.0</span>
+        <span class="date">2026-04-30</span>
+      </header>
+      <p class="summary">
+        <code>morph setup aoe</code> joins the family. One command wires
+        Morph recording into <a href="https://github.com/njbrake/agent-of-empires">Agent of Empires</a>:
+        every session it spawns gets a morph commit on create, a
+        <code>Run</code> + <code>Trace</code> on every launch, and a
+        final morph commit on destroy — across whichever agent AoE runs
+        per session (Claude Code, OpenCode, Cursor CLI, …).
+      </p>
+
+      <h3 class="added"><span class="marker"></span>Added</h3>
+      <ul>
+        <li><strong>New CLI subcommand <code>morph setup aoe</code>.</strong>
+          Writes (or merges into) <code>.agent-of-empires/config.toml</code>
+          a deterministic morph block: <code>[hooks].on_create</code>
+          snapshots the worktree as a morph commit
+          (<code>aoe-create: ${AOE_INSTANCE_ID}</code>, tolerant of missing
+          <code>.morph/</code> + empty metrics so AoE never aborts session
+          creation), <code>[hooks].on_launch</code> records a
+          <code>Run</code> + <code>Trace</code> for every (re)launch,
+          <code>[hooks].on_destroy</code> writes a final commit
+          (<code>aoe-destroy: ${AOE_INSTANCE_ID}</code>) and a closing
+          trace event before AoE tears the worktree down. Re-running the
+          command rewrites only morph-owned lines (matched by command
+          prefix) so user hooks like <code>on_launch = ["npm install"]</code>
+          survive every re-run. <code>[sandbox].environment</code> is
+          seeded with <code>MORPH_WORKSPACE</code> +
+          <code>AOE_INSTANCE_ID</code> so the hooks work inside Docker
+          sandboxes; <code>[sandbox].extra_volumes</code> bind-mounts the
+          host <code>morph</code> + <code>morph-mcp</code> binaries by
+          default (override with <code>--no-bind-mount</code>). A
+          reference <code>Dockerfile.morph-aoe</code> ships next to it
+          for teams who'd rather bake morph into their AoE sandbox image.
+          By default the command also delegates to
+          <code>setup cursor</code> + <code>setup opencode</code> +
+          <code>setup claude-code</code>, so prompt/response recording
+          works regardless of which agent AoE launches per session.
+          <code>--agent &lt;name&gt;</code> (repeatable) and
+          <code>--skip-agents</code> let you opt out. Idempotent —
+          re-runs against a clean repo are byte-identical, and against
+          repos with user-authored <code>[hooks]</code> /
+          <code>[session]</code> / <code>[sandbox]</code> /
+          <code>[worktree]</code> blocks the morph entries are
+          deduplicated rather than appended. See
+          <code>docs/AOE-SETUP.md</code> for the full reference.</li>
+      </ul>
+
+      <h3 class="tests"><span class="marker"></span>Tests</h3>
+      <ul>
+        <li>New <code>setup_aoe.yaml</code> acceptance suite (10 cases)
+          covering: config + Dockerfile + AGENTS.md creation, lifecycle
+          hooks (always-commit on create + destroy), sandbox env
+          passthrough, default bind-mount entries, the
+          <code>--no-bind-mount</code> mode, both Dockerfile install
+          paths documented, default delegation to all three per-agent
+          setups, <code>--skip-agents</code> mode, the "requires
+          <code>morph init</code>" error, idempotent re-runs, and a
+          merge that preserves a pre-existing
+          <code>[hooks]</code> / <code>[session]</code> /
+          <code>[sandbox]</code> block. Eleven new Rust unit tests in
+          <code>morph-cli/src/setup.rs::tests</code> mirror the spec
+          coverage at the function level, including a triple-run
+          idempotency check that round-trips through
+          <code>toml_edit</code>.</li>
+      </ul>
+    </article>
+
+    <article class="release">
+      <header>
+        <span class="version">0.38.0</span>
         <span class="date">2026-04-30</span>
       </header>
       <p class="summary">
@@ -372,95 +498,6 @@
           block. Six new Rust unit tests in
           <code>morph-cli/src/setup.rs::tests</code> mirror the OpenCode
           + Cursor coverage at the function level.</li>
-      </ul>
-    </article>
-
-    <article class="release">
-      <header>
-        <span class="version">0.37.7</span>
-        <span class="date">2026-04-29</span>
-      </header>
-      <p class="summary">
-        Every <code>Store::list(t)</code> on <code>FsStore</code> is now a
-        directory read instead of a whole-store walk. The latent hang that
-        bit <code>certify</code>, then <code>status</code> + <code>eval
-        gaps</code>, is closed at the source: every top-level object type
-        finally has a per-type index dir.
-      </p>
-
-      <h3 class="fixed"><span class="marker"></span>Fixed</h3>
-      <ul>
-        <li><strong>Type indexes for <code>Blob</code>, <code>Tree</code>,
-          <code>Pipeline</code>, <code>Commit</code>, <code>Artifact</code>,
-          <code>TraceRollup</code>.</strong> These were the last unindexed
-          top-level types and the last latent versions of the same hang
-          we'd patched twice already — anything that ever called
-          <code>list(<that-type>)</code> walked the whole object fanout
-          and JSON-deserialized every object just to filter by type.
-          Each type now has a dedicated <code>&lt;type&gt;/</code> index
-          dir maintained by <code>Store::put</code>. Newly indexed types
-          use zero-byte marker files so a 33 GB blob-heavy store doesn't
-          double when <code>blobs/</code> materializes; the five legacy
-          indexes (<code>runs/</code>, <code>traces/</code>,
-          <code>evals/</code>, <code>prompts/</code>,
-          <code>annotations/</code>) keep their full-content format
-          because at least one fallback path (<code>morph tap</code>)
-          reads from them. Legacy stores rebuild every missing index in
-          a single fanout pass on first use, so whichever
-          <code>list</code> call happens first amortizes the cost for
-          all subsequent <code>list</code> calls of every type.</li>
-      </ul>
-
-      <h3 class="tests"><span class="marker"></span>Tests</h3>
-      <ul>
-        <li>Five new unit tests pin the contract end-to-end: every type
-          uses the index (no <code>get()</code> calls), Pipeline gets its
-          own fixture, legacy stores rebuild every missing index in one
-          walk, the new types use zero-byte markers while the legacy
-          types keep full content, and a prompt blob lands in both
-          <code>blobs/</code> and <code>prompts/</code>. Two
-          <code>read_dir</code> consumers (<code>activity_summary</code>'s
-          counter and the cucumber run-record assertion) now filter on
-          <code>*.json</code> so the <code>.indexed</code> marker doesn't
-          inflate counts.</li>
-      </ul>
-    </article>
-
-    <article class="release">
-      <header>
-        <span class="version">0.37.6</span>
-        <span class="date">2026-04-29</span>
-      </header>
-      <p class="summary">
-        Homepage now leads with a copy-able <code>brew tap r/morph</code> /
-        <code>brew install morph</code> block in the hero, so macOS visitors
-        can go from "land on the page" to "actually trying Morph" in two
-        commands. Source-build path moves to a clearly-labelled fallback.
-      </p>
-
-      <h3 class="changed"><span class="marker"></span>Changed</h3>
-      <ul>
-        <li><strong>Hero install block on <code>site/index.html</code>.</strong>
-          A new copy-able terminal panel sits above the CTA buttons with
-          <code>brew tap r/morph</code> and <code>brew install morph</code>,
-          plus a click-to-copy button and a footnote linking to the
-          source-build path for non-macOS users. The
-          <code>#install</code> section was rewritten to lead with the
-          Homebrew path; <code>cargo install --path …</code> is kept as the
-          cross-platform fallback rather than the only option.</li>
-      </ul>
-
-      <h3 class="ci"><span class="marker"></span>CI</h3>
-      <ul>
-        <li><strong>Releases auto-tag from <code>Cargo.toml</code>.</strong>
-          A new <code>.github/workflows/auto-tag.yml</code> watches the
-          workspace version on <code>main</code>; when it advances to a
-          value that has not yet been tagged on origin, the workflow
-          creates <code>vX.Y.Z</code> (annotated) and dispatches
-          <code>release-homebrew.yml</code> against that tag. Cutting a
-          release is now "bump <code>Cargo.toml</code>, push to
-          <code>main</code>" — no more manual
-          <code>git tag &amp;&amp; git push origin &lt;tag&gt;</code>.</li>
       </ul>
     </article>
 

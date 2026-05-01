@@ -53,6 +53,13 @@ mod assets {
         ("morph-record-prompt.sh", CLAUDE_HOOK_PROMPT),
         ("morph-record-stop.sh", CLAUDE_HOOK_STOP),
     ];
+
+    // Agent of Empires sandbox image template. Co-shipped with
+    // `morph setup aoe` so users can opt out of host bind-mounts of
+    // /usr/local/bin/morph{,-mcp} by baking the binaries into their
+    // sandbox image instead.
+    pub const AOE_DOCKERFILE: &str =
+        include_str!("../assets/aoe/Dockerfile.morph-aoe");
 }
 
 #[derive(Debug)]
@@ -266,6 +273,281 @@ fn merge_claude_settings_json(
     std::fs::write(&path, serde_json::to_string_pretty(&doc)?)?;
     Ok(true)
 }
+
+// === Agent of Empires (`morph setup aoe`) ====================================
+
+/// Caller-controlled options for `setup_aoe`.
+#[derive(Debug, Clone)]
+pub struct AoeSetupOpts {
+    /// Per-agent integrations to install. Each entry must be one of
+    /// "cursor", "opencode", or "claude-code". Empty means *all three*
+    /// (the typical case — AoE may launch any of them, so we want morph
+    /// recording to work regardless of which agent the user picks via
+    /// `aoe add`).
+    pub agents: Vec<String>,
+    /// If true, skip per-agent delegation entirely. Only the AoE-glue
+    /// layer (config.toml + Dockerfile + AGENTS.md) is written.
+    pub skip_agents: bool,
+    /// If true, write `[sandbox].extra_volumes` entries that bind-mount
+    /// the host's `morph` and `morph-mcp` binaries into AoE's Docker
+    /// sandbox. Set to false when the user prefers a baked sandbox image
+    /// (built from the shipped `Dockerfile.morph-aoe`).
+    pub bind_mount: bool,
+    /// If true, emit `.agent-of-empires/Dockerfile.morph-aoe` as a
+    /// reference image template.
+    pub write_dockerfile: bool,
+}
+
+impl Default for AoeSetupOpts {
+    fn default() -> Self {
+        Self {
+            agents: Vec::new(),
+            skip_agents: false,
+            bind_mount: true,
+            write_dockerfile: true,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct AoeSetupReport {
+    pub config_toml_updated: bool,
+    pub dockerfile_written: bool,
+    pub agents_md_written: bool,
+    /// Names of per-agent integrations that were successfully delegated
+    /// to (e.g. `["cursor", "opencode", "claude-code"]`).
+    pub delegated: Vec<String>,
+}
+
+/// Install Agent of Empires integration into `project_root`.
+///
+/// Writes `.agent-of-empires/config.toml` with morph lifecycle hooks and
+/// (optionally) sandbox bind-mounts; emits `Dockerfile.morph-aoe` as a
+/// reference image template; ensures `AGENTS.md` is present so any agent
+/// AoE launches sees morph guidance; and (unless `skip_agents`) delegates
+/// to `setup_cursor` / `setup_opencode` / `setup_claude_code` so morph
+/// recording works regardless of which agent AoE runs.
+///
+/// Requires `.morph/` to exist (run `morph init` first).
+/// Idempotent: safe to call multiple times. Existing user state in
+/// `config.toml` is preserved; only morph-owned entries are rewritten.
+pub fn setup_aoe(
+    project_root: &Path,
+    opts: &AoeSetupOpts,
+) -> anyhow::Result<AoeSetupReport> {
+    if !project_root.join(".morph").is_dir() {
+        anyhow::bail!(
+            ".morph directory not found in {}. Run `morph init` first.",
+            project_root.display()
+        );
+    }
+
+    let aoe_dir = project_root.join(".agent-of-empires");
+    std::fs::create_dir_all(&aoe_dir)?;
+
+    let config_toml_updated = merge_aoe_config_toml(&aoe_dir, opts.bind_mount)?;
+    let dockerfile_written = if opts.write_dockerfile {
+        write_aoe_dockerfile(&aoe_dir)?
+    } else {
+        false
+    };
+    // Always seed AGENTS.md — even with --skip-agents, AoE-launched
+    // agents should pick up morph instructions.
+    let agents_md_written = write_agents_md(project_root)?;
+
+    let mut delegated = Vec::new();
+    if !opts.skip_agents {
+        let agents_to_set_up: Vec<String> = if opts.agents.is_empty() {
+            vec![
+                "cursor".to_string(),
+                "opencode".to_string(),
+                "claude-code".to_string(),
+            ]
+        } else {
+            opts.agents.clone()
+        };
+
+        for agent in &agents_to_set_up {
+            match agent.as_str() {
+                "cursor" => {
+                    setup_cursor(project_root)?;
+                    delegated.push("cursor".to_string());
+                }
+                "opencode" => {
+                    setup_opencode(project_root)?;
+                    delegated.push("opencode".to_string());
+                }
+                "claude-code" => {
+                    setup_claude_code(project_root)?;
+                    delegated.push("claude-code".to_string());
+                }
+                other => anyhow::bail!(
+                    "unknown --agent value `{other}` for `morph setup aoe` \
+                     (supported: cursor, opencode, claude-code)"
+                ),
+            }
+        }
+    }
+
+    Ok(AoeSetupReport {
+        config_toml_updated,
+        dockerfile_written,
+        agents_md_written,
+        delegated,
+    })
+}
+
+/// Substring patterns identifying a hook command morph owns. Anything in
+/// the user's existing `config.toml` matching one of these is removed
+/// before we re-emit the canonical morph block, so re-runs don't
+/// accumulate duplicate hook lines.
+const MORPH_HOOK_PREFIXES: &[&str] = &[
+    "morph init --quiet",
+    "morph add . && morph commit -m \"aoe-",
+    "morph run record-session --prompt \"aoe-",
+];
+
+const MORPH_VOLUME_SUFFIXES: &[&str] = &[
+    "/usr/local/bin/morph:ro",
+    "/usr/local/bin/morph-mcp:ro",
+];
+
+const MORPH_ENV_KEYS: &[&str] = &["MORPH_WORKSPACE", "AOE_INSTANCE_ID"];
+
+fn is_morph_hook_command(s: &str) -> bool {
+    let trimmed = s.trim_start();
+    MORPH_HOOK_PREFIXES.iter().any(|p| trimmed.starts_with(p))
+}
+
+fn merge_aoe_config_toml(aoe_dir: &Path, bind_mount: bool) -> anyhow::Result<bool> {
+    use toml_edit::{value, Array, DocumentMut, Item, Table, Value};
+
+    let path = aoe_dir.join("config.toml");
+    let mut doc: DocumentMut = if path.exists() {
+        std::fs::read_to_string(&path)?
+            .parse()
+            .map_err(|e| anyhow::anyhow!("failed to parse {}: {}", path.display(), e))?
+    } else {
+        DocumentMut::new()
+    };
+
+    fn ensure_table_mut<'a>(doc: &'a mut DocumentMut, key: &str) -> &'a mut Table {
+        let needs_init = match doc.get(key) {
+            Some(item) => !item.is_table(),
+            None => true,
+        };
+        if needs_init {
+            let mut t = Table::new();
+            t.set_implicit(false);
+            doc.insert(key, Item::Table(t));
+        }
+        doc.get_mut(key)
+            .and_then(|i| i.as_table_mut())
+            .expect("table inserted above")
+    }
+
+    fn ensure_array<'a>(table: &'a mut Table, key: &str) -> &'a mut Array {
+        // AoE accepts either `key = "single"` or `key = ["a", "b"]`.
+        // Normalize to an array so we can append predictably.
+        let promote_string: Option<String> = match table.get(key) {
+            Some(Item::Value(Value::String(s))) => Some(s.value().clone()),
+            _ => None,
+        };
+        let needs_init = !matches!(table.get(key), Some(Item::Value(Value::Array(_))));
+        if needs_init {
+            let mut arr = Array::new();
+            if let Some(s) = promote_string {
+                arr.push(s);
+            }
+            table.insert(key, value(arr));
+        }
+        table
+            .get_mut(key)
+            .and_then(|i| i.as_array_mut())
+            .expect("array inserted above")
+    }
+
+    fn scrub<F: Fn(&str) -> bool>(arr: &mut Array, drop_if: F) {
+        let kept: Vec<Value> = arr
+            .iter()
+            .filter(|v| match v {
+                Value::String(s) => !drop_if(s.value()),
+                _ => true,
+            })
+            .cloned()
+            .collect();
+        arr.clear();
+        for v in kept {
+            arr.push(v);
+        }
+    }
+
+    // ---- [hooks] -----------------------------------------------------------
+    let canonical: &[(&str, &[&str])] = &[
+        (
+            "on_create",
+            &[
+                "morph init --quiet 2>/dev/null || true",
+                "morph add . && morph commit -m \"aoe-create: ${AOE_INSTANCE_ID:-unknown}\" --allow-empty-metrics 2>/dev/null || true",
+            ],
+        ),
+        (
+            "on_launch",
+            &[
+                "morph run record-session --prompt \"aoe-launch instance=${AOE_INSTANCE_ID:-unknown} branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)\" --response \"\" --model-name aoe --agent-id aoe 2>/dev/null || true",
+            ],
+        ),
+        (
+            "on_destroy",
+            &[
+                "morph add . && morph commit -m \"aoe-destroy: ${AOE_INSTANCE_ID:-unknown}\" --allow-empty-metrics 2>/dev/null || true",
+                "morph run record-session --prompt \"aoe-destroy instance=${AOE_INSTANCE_ID:-unknown}\" --response \"\" --model-name aoe --agent-id aoe 2>/dev/null || true",
+            ],
+        ),
+    ];
+
+    {
+        let hooks = ensure_table_mut(&mut doc, "hooks");
+        for (key, morph_entries) in canonical {
+            let arr = ensure_array(hooks, key);
+            scrub(arr, is_morph_hook_command);
+            for entry in *morph_entries {
+                arr.push(*entry);
+            }
+        }
+    }
+
+    // ---- [sandbox] ---------------------------------------------------------
+    {
+        let sandbox = ensure_table_mut(&mut doc, "sandbox");
+
+        let env = ensure_array(sandbox, "environment");
+        scrub(env, |s| MORPH_ENV_KEYS.contains(&s));
+        for k in MORPH_ENV_KEYS {
+            env.push(*k);
+        }
+
+        let vols = ensure_array(sandbox, "extra_volumes");
+        scrub(vols, |s| {
+            MORPH_VOLUME_SUFFIXES.iter().any(|suf| s.ends_with(*suf))
+        });
+        if bind_mount {
+            vols.push("/usr/local/bin/morph:/usr/local/bin/morph:ro");
+            vols.push("/usr/local/bin/morph-mcp:/usr/local/bin/morph-mcp:ro");
+        }
+    }
+
+    std::fs::write(&path, doc.to_string())?;
+    Ok(true)
+}
+
+fn write_aoe_dockerfile(aoe_dir: &Path) -> anyhow::Result<bool> {
+    let path = aoe_dir.join("Dockerfile.morph-aoe");
+    std::fs::write(&path, assets::AOE_DOCKERFILE)?;
+    Ok(true)
+}
+
+// === OpenCode ===============================================================
 
 fn merge_opencode_json(project_root: &Path) -> anyhow::Result<bool> {
     let path = project_root.join("opencode.json");
@@ -1032,5 +1314,315 @@ mod tests {
             .filter(|v| v.as_str() == Some("AGENTS.md"))
             .count();
         assert_eq!(instructions, 1, "should not duplicate AGENTS.md in instructions on re-run");
+    }
+
+    // --- Agent of Empires (`morph setup aoe`) tests ---
+
+    #[test]
+    fn aoe_requires_morph_init() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = setup_aoe(tmp.path(), &AoeSetupOpts::default());
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("morph") || msg.contains(".morph"),
+            "error should mention morph init: {msg}"
+        );
+    }
+
+    #[test]
+    fn aoe_writes_config_dockerfile_and_agents_md() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_morph_repo(tmp.path());
+
+        let report = setup_aoe(tmp.path(), &AoeSetupOpts::default()).unwrap();
+
+        assert!(report.config_toml_updated);
+        assert!(report.dockerfile_written);
+        assert!(report.agents_md_written);
+        assert!(tmp.path().join(".agent-of-empires/config.toml").exists());
+        assert!(tmp.path().join(".agent-of-empires/Dockerfile.morph-aoe").exists());
+        assert!(tmp.path().join("AGENTS.md").exists());
+    }
+
+    #[test]
+    fn aoe_config_toml_has_lifecycle_hooks() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_morph_repo(tmp.path());
+        setup_aoe(tmp.path(), &AoeSetupOpts::default()).unwrap();
+
+        let cfg = fs::read_to_string(tmp.path().join(".agent-of-empires/config.toml")).unwrap();
+        for needle in [
+            "[hooks]",
+            "on_create",
+            "on_launch",
+            "on_destroy",
+            "morph commit",
+            "aoe-create",
+            "aoe-destroy",
+            "morph run record-session",
+        ] {
+            assert!(
+                cfg.contains(needle),
+                "config.toml should mention {needle:?}; got:\n{cfg}"
+            );
+        }
+    }
+
+    #[test]
+    fn aoe_config_toml_seeds_sandbox_env_and_volumes() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_morph_repo(tmp.path());
+        setup_aoe(tmp.path(), &AoeSetupOpts::default()).unwrap();
+
+        let cfg = fs::read_to_string(tmp.path().join(".agent-of-empires/config.toml")).unwrap();
+        for needle in [
+            "[sandbox]",
+            "MORPH_WORKSPACE",
+            "AOE_INSTANCE_ID",
+            "/usr/local/bin/morph:/usr/local/bin/morph:ro",
+            "/usr/local/bin/morph-mcp:/usr/local/bin/morph-mcp:ro",
+        ] {
+            assert!(
+                cfg.contains(needle),
+                "config.toml should mention {needle:?}; got:\n{cfg}"
+            );
+        }
+    }
+
+    #[test]
+    fn aoe_no_bind_mount_omits_morph_volume_entries() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_morph_repo(tmp.path());
+        let opts = AoeSetupOpts {
+            bind_mount: false,
+            ..AoeSetupOpts::default()
+        };
+        setup_aoe(tmp.path(), &opts).unwrap();
+
+        let cfg = fs::read_to_string(tmp.path().join(".agent-of-empires/config.toml")).unwrap();
+        // Env passthrough still seeded — that's needed regardless of which
+        // sandbox layout the user chose.
+        assert!(cfg.contains("MORPH_WORKSPACE"));
+        assert!(cfg.contains("AOE_INSTANCE_ID"));
+        // But no host bind-mounts of the morph binaries.
+        assert!(
+            !cfg.contains("/usr/local/bin/morph:ro"),
+            "should not bind-mount morph binary: {cfg}"
+        );
+        assert!(
+            !cfg.contains("/usr/local/bin/morph-mcp:ro"),
+            "should not bind-mount morph-mcp binary: {cfg}"
+        );
+    }
+
+    #[test]
+    fn aoe_default_delegates_to_all_three_agents() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_morph_repo(tmp.path());
+        let report = setup_aoe(tmp.path(), &AoeSetupOpts::default()).unwrap();
+
+        assert_eq!(
+            report.delegated,
+            vec!["cursor", "opencode", "claude-code"],
+            "default delegation should hit all three agents"
+        );
+        assert!(tmp.path().join(".cursor/mcp.json").exists());
+        assert!(tmp.path().join("opencode.json").exists());
+        assert!(tmp.path().join(".claude/settings.json").exists());
+    }
+
+    #[test]
+    fn aoe_skip_agents_only_writes_glue() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_morph_repo(tmp.path());
+        let opts = AoeSetupOpts {
+            skip_agents: true,
+            ..AoeSetupOpts::default()
+        };
+        let report = setup_aoe(tmp.path(), &opts).unwrap();
+
+        assert!(report.delegated.is_empty());
+        assert!(tmp.path().join(".agent-of-empires/config.toml").exists());
+        // AGENTS.md is *always* seeded so AoE-launched agents still see
+        // morph guidance even when per-agent setup is skipped.
+        assert!(tmp.path().join("AGENTS.md").exists());
+        assert!(!tmp.path().join(".cursor/mcp.json").exists());
+        assert!(!tmp.path().join("opencode.json").exists());
+        assert!(!tmp.path().join(".claude/settings.json").exists());
+    }
+
+    #[test]
+    fn aoe_unknown_agent_errors() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_morph_repo(tmp.path());
+        let opts = AoeSetupOpts {
+            agents: vec!["totally-fake-agent".to_string()],
+            ..AoeSetupOpts::default()
+        };
+        let err = setup_aoe(tmp.path(), &opts).unwrap_err().to_string();
+        assert!(
+            err.contains("totally-fake-agent"),
+            "error should name the bad agent: {err}"
+        );
+    }
+
+    #[test]
+    fn aoe_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_morph_repo(tmp.path());
+
+        setup_aoe(tmp.path(), &AoeSetupOpts::default()).unwrap();
+        let cfg_first =
+            fs::read_to_string(tmp.path().join(".agent-of-empires/config.toml")).unwrap();
+
+        setup_aoe(tmp.path(), &AoeSetupOpts::default()).unwrap();
+        let cfg_second =
+            fs::read_to_string(tmp.path().join(".agent-of-empires/config.toml")).unwrap();
+
+        assert_eq!(
+            cfg_first, cfg_second,
+            "config.toml should be stable across runs"
+        );
+
+        // Each morph hook line should appear exactly once.
+        let occ = |s: &str| cfg_second.matches(s).count();
+        assert_eq!(occ("morph init --quiet"), 1, "morph init line should not duplicate");
+        assert_eq!(
+            occ("aoe-create:"),
+            1,
+            "aoe-create commit line should not duplicate"
+        );
+        assert_eq!(
+            occ("aoe-destroy:"),
+            1,
+            "aoe-destroy commit line should not duplicate (one in on_destroy, distinct from record-session)"
+        );
+        assert_eq!(
+            occ("MORPH_WORKSPACE"),
+            1,
+            "MORPH_WORKSPACE env entry should not duplicate"
+        );
+        assert_eq!(
+            occ("/usr/local/bin/morph:/usr/local/bin/morph:ro"),
+            1,
+            "morph binary mount should not duplicate"
+        );
+    }
+
+    #[test]
+    fn aoe_preserves_existing_user_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_morph_repo(tmp.path());
+        let aoe_dir = tmp.path().join(".agent-of-empires");
+        fs::create_dir_all(&aoe_dir).unwrap();
+        fs::write(
+            aoe_dir.join("config.toml"),
+            r#"# user comment
+[hooks]
+on_launch = ["npm install"]
+
+[session]
+default_tool = "claude"
+
+[sandbox]
+enabled_by_default = true
+default_image = "my-org/my-sandbox:latest"
+environment = ["MY_API_KEY"]
+extra_volumes = ["/data:/data:ro"]
+"#,
+        )
+        .unwrap();
+
+        setup_aoe(tmp.path(), &AoeSetupOpts::default()).unwrap();
+
+        let cfg = fs::read_to_string(aoe_dir.join("config.toml")).unwrap();
+
+        assert!(cfg.contains("npm install"), "user on_launch hook preserved");
+        assert!(
+            cfg.contains("default_tool"),
+            "user [session] table preserved"
+        );
+        assert!(cfg.contains("\"claude\""), "user default_tool value preserved");
+        assert!(
+            cfg.contains("default_image"),
+            "user sandbox.default_image preserved"
+        );
+        assert!(
+            cfg.contains("my-org/my-sandbox"),
+            "user sandbox image value preserved"
+        );
+        assert!(
+            cfg.contains("MY_API_KEY"),
+            "user sandbox.environment entry preserved"
+        );
+        assert!(
+            cfg.contains("/data:/data:ro"),
+            "user sandbox.extra_volumes entry preserved"
+        );
+
+        // Morph block layered alongside the user content.
+        assert!(cfg.contains("MORPH_WORKSPACE"));
+        assert!(cfg.contains("aoe-create"));
+        assert!(cfg.contains("/usr/local/bin/morph:/usr/local/bin/morph:ro"));
+
+        // Reparse to confirm the file is still valid TOML.
+        let parsed: toml_edit::DocumentMut = cfg.parse().expect("valid TOML");
+        let env = parsed["sandbox"]["environment"].as_array().unwrap();
+        let env_strings: Vec<String> = env
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect();
+        assert!(
+            env_strings.iter().any(|s| s == "MY_API_KEY"),
+            "MY_API_KEY survived merge: {env_strings:?}"
+        );
+        assert!(
+            env_strings.iter().any(|s| s == "MORPH_WORKSPACE"),
+            "MORPH_WORKSPACE added: {env_strings:?}"
+        );
+    }
+
+    #[test]
+    fn aoe_re_run_does_not_duplicate_morph_entries_with_user_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        make_morph_repo(tmp.path());
+
+        setup_aoe(tmp.path(), &AoeSetupOpts::default()).unwrap();
+        setup_aoe(tmp.path(), &AoeSetupOpts::default()).unwrap();
+        setup_aoe(tmp.path(), &AoeSetupOpts::default()).unwrap();
+
+        let cfg =
+            fs::read_to_string(tmp.path().join(".agent-of-empires/config.toml")).unwrap();
+        let parsed: toml_edit::DocumentMut = cfg.parse().expect("valid TOML");
+
+        let env = parsed["sandbox"]["environment"].as_array().unwrap();
+        let count_morph_workspace = env
+            .iter()
+            .filter(|v| v.as_str() == Some("MORPH_WORKSPACE"))
+            .count();
+        assert_eq!(count_morph_workspace, 1, "MORPH_WORKSPACE should appear once");
+
+        let vols = parsed["sandbox"]["extra_volumes"].as_array().unwrap();
+        let count_mount = vols
+            .iter()
+            .filter(|v| {
+                v.as_str()
+                    .map(|s| s == "/usr/local/bin/morph:/usr/local/bin/morph:ro")
+                    .unwrap_or(false)
+            })
+            .count();
+        assert_eq!(count_mount, 1, "morph binary mount should appear once");
+
+        let on_create = parsed["hooks"]["on_create"].as_array().unwrap();
+        let aoe_create_lines = on_create
+            .iter()
+            .filter(|v| {
+                v.as_str()
+                    .map(|s| s.contains("aoe-create:"))
+                    .unwrap_or(false)
+            })
+            .count();
+        assert_eq!(aoe_create_lines, 1, "aoe-create commit line should appear once");
     }
 }

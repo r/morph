@@ -1465,6 +1465,26 @@ in a git repository first."
                 println!("  Hook scripts: {}", report.hooks_written.join(", "));
                 println!("  .claude/settings.json: {}", if report.settings_json_updated { "updated" } else { "unchanged" });
             }
+            SetupCmd::Aoe { path, agent, skip_agents, no_bind_mount, no_dockerfile } => {
+                let root = std::path::Path::new(&path).canonicalize().unwrap_or_else(|_| path.clone());
+                verbose_msg(verbose, &format!("setting up Agent of Empires integration at {}", root.display()));
+                let opts = setup::AoeSetupOpts {
+                    agents: agent,
+                    skip_agents,
+                    bind_mount: !no_bind_mount,
+                    write_dockerfile: !no_dockerfile,
+                };
+                let report = setup::setup_aoe(&root, &opts)?;
+                println!("Agent of Empires integration installed in {}", root.display());
+                println!("  .agent-of-empires/config.toml: {}", if report.config_toml_updated { "updated" } else { "unchanged" });
+                println!("  .agent-of-empires/Dockerfile.morph-aoe: {}", if report.dockerfile_written { "written" } else { "skipped" });
+                println!("  AGENTS.md: {}", if report.agents_md_written { "written" } else { "unchanged" });
+                if report.delegated.is_empty() {
+                    println!("  Per-agent setups: skipped");
+                } else {
+                    println!("  Per-agent setups: {}", report.delegated.join(", "));
+                }
+            }
         },
 
         Command::Upgrade => {
@@ -1997,8 +2017,52 @@ in a git repository first."
             // pass `--metrics`. Explicit metrics always win so CI
             // scripts retain deterministic, repeatable input even
             // when a stale breadcrumb is sitting on disk.
+            //
+            // Precedence inside this branch:
+            //   1. `--from-run <hash>` — the user explicitly nominated
+            //      a run as evidence, so propagate its `metrics` map
+            //      into observed_metrics. Without this, --from-run
+            //      silently produced metrics-less commits even though
+            //      the run had full evidence — the merge gate had no
+            //      data to compare and `morph eval gaps` kept
+            //      reporting `empty_head_metrics`.
+            //   2. `LAST_RUN.json` breadcrumb (auto_run_hash) — the
+            //      single-use bridge written by `morph eval run`,
+            //      consumed silently by the next `morph commit`.
             if metrics.is_none() {
-                if let Some(ref run_hash) = auto_run_hash {
+                if let Some(s) = from_run.as_deref() {
+                    let run_hash = resolve_obj_hash(store.as_ref(), s)?;
+                    match store.get(&run_hash) {
+                        Ok(MorphObject::Run(run)) => {
+                            if !run.metrics.is_empty() {
+                                let preview: Vec<String> = run
+                                    .metrics
+                                    .iter()
+                                    .map(|(k, v)| format!("{}={}", k, v))
+                                    .collect();
+                                eprintln!(
+                                    "attaching evidence from run {}: {}",
+                                    short_hash(&run_hash.to_string()),
+                                    preview.join(", "),
+                                );
+                                observed_metrics = run.metrics.clone();
+                            }
+                        }
+                        Ok(_) => {
+                            eprintln!(
+                                "warning: --from-run {} is not a Run object; metrics not attached",
+                                short_hash(&run_hash.to_string()),
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "warning: could not load run from --from-run {}: {}",
+                                short_hash(&run_hash.to_string()),
+                                e,
+                            );
+                        }
+                    }
+                } else if let Some(ref run_hash) = auto_run_hash {
                     match store.get(run_hash) {
                         Ok(MorphObject::Run(run)) => {
                             if !run.metrics.is_empty() {

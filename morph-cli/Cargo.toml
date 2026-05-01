@@ -19,6 +19,10 @@ clap = { version = "4.4", features = ["derive"] }
 anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+# `toml_edit` round-trips comments and formatting so `morph setup aoe` can
+# layer its hooks/sandbox block into a user's existing
+# `.agent-of-empires/config.toml` without clobbering their other settings.
+toml_edit = "0.22"
 
 [build-dependencies]
 serde = { version = "1.0", features = ["derive"] }

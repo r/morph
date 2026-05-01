@@ -193,6 +193,13 @@ pub enum Command {
         metrics: Option<String>,
         #[arg(long)]
         author: Option<String>,
+        /// Hash of a `Run` to attach as evidence. The commit
+        /// inherits the run's `observed_metrics`, provenance,
+        /// `evidence_refs`, `env_constraints`, and contributors.
+        /// Pairs with `morph eval run` (which prints the hash on
+        /// stdout) for the spec-first eval-driven workflow.
+        /// `--metrics` (when also passed) wins over the run's
+        /// metrics map.
         #[arg(long)]
         from_run: Option<String>,
         /// Bypass the policy.required_metrics gate. Pre-commit
@@ -718,6 +725,34 @@ pub enum SetupCmd {
     ClaudeCode {
         #[arg(long, default_value = ".")]
         path: PathBuf,
+    },
+    /// Install Agent of Empires (`aoe`) integration: per-repo
+    /// `.agent-of-empires/config.toml` with morph lifecycle hooks +
+    /// sandbox env/volume entries, a baked-image Dockerfile reference,
+    /// AGENTS.md guidance, and (by default) per-agent recording for any
+    /// of cursor/opencode/claude-code that AoE may launch.
+    Aoe {
+        #[arg(long, default_value = ".")]
+        path: PathBuf,
+        /// Per-agent integrations to install. Repeatable. One of:
+        /// cursor, opencode, claude-code. If unspecified, all three are
+        /// installed (so morph recording works no matter which agent
+        /// AoE launches via `aoe add`).
+        #[arg(long = "agent")]
+        agent: Vec<String>,
+        /// Skip per-agent delegation entirely. Only the AoE-glue layer
+        /// is written.
+        #[arg(long)]
+        skip_agents: bool,
+        /// Don't seed `[sandbox].extra_volumes` with bind-mount entries
+        /// for the host morph binaries. Use this when you've baked
+        /// morph + morph-mcp into a custom sandbox image (see the
+        /// `Dockerfile.morph-aoe` template).
+        #[arg(long)]
+        no_bind_mount: bool,
+        /// Don't write `.agent-of-empires/Dockerfile.morph-aoe`.
+        #[arg(long)]
+        no_dockerfile: bool,
     },
 }
 
