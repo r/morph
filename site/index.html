@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Morph — Git for AI-assisted development</title>
-  <meta name="description" content="Morph is a version control system that records every agent session, attaches evaluation scores to commits, and gates merges on behavioral dominance. Built for Cursor, Claude Code, and OpenCode.">
+  <meta name="description" content="Morph is a version control system that records every agent session, attaches evaluation scores to commits, and gates merges on behavioral dominance. Built for Cursor, Claude Code, OpenCode, and Agent of Empires.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -763,11 +763,11 @@
   </div>
 
   <nav>
-    <a href="./" class="logo">morph<span class="version">v0.37.7 &middot; alpha</span></a>
+    <a href="./" class="logo">morph<span class="version">v0.39.2 &middot; alpha</span></a>
     <ul class="links">
       <li><a href="#problem">Problem</a></li>
       <li><a href="#solution">Thesis</a></li>
-      <li><a href="#ides">IDEs</a></li>
+      <li><a href="#ides">Integrations</a></li>
       <li><a href="#install">Try it</a></li>
       <li><a href="./tutorials/">Tutorials</a></li>
       <li><a href="./changelog.html">Changelog</a></li>
@@ -778,7 +778,7 @@
 
   <!-- Hero -->
   <div class="hero">
-    <span class="badge">Alpha &middot; v0.37.7 &middot; Research prototype</span>
+    <span class="badge">Alpha &middot; v0.39.2 &middot; Research prototype</span>
     <h1>Git for <em>AI-assisted</em> development</h1>
     <p class="subtitle">
       Morph is a version control system that records every agent session as an immutable
@@ -812,9 +812,10 @@
     <p class="section-label">The Problem</p>
     <h2>Git doesn't know how your code got here</h2>
     <p class="lead">
-      When an agent writes your code in Cursor, Claude Code, or OpenCode, Git snapshots
-      the file tree and tracks line-level diffs. But it has no idea <em>how</em> those
-      files arrived &mdash; and it can't tell you whether the result still works.
+      When an agent writes your code &mdash; in Cursor, Claude Code, OpenCode, or
+      across a fleet of agents under Agent of Empires &mdash; Git snapshots the file
+      tree and tracks line-level diffs. But it has no idea <em>how</em> those files
+      arrived &mdash; and it can't tell you whether the result still works.
     </p>
 
     <div class="problem-grid">
@@ -949,15 +950,16 @@
     </section>
   </div>
 
-  <!-- IDE integrations -->
+  <!-- Agent integrations -->
   <section id="ides">
-    <p class="section-label">IDE Integrations</p>
+    <p class="section-label">Agent Integrations</p>
     <h2>One command to wire up your agent</h2>
     <p class="lead">
       Morph ships with an MCP server (<code>morph-mcp</code>) and setup commands that
-      install the right config, hooks, and rules for your IDE. Hooks parse the full
-      agent transcript into structured Trace events, so every prompt, tool call, and
-      file edit is recorded &mdash; you don't depend on the agent remembering to record.
+      install the right config, hooks, and rules for your IDE &mdash; or your
+      multi-agent session manager. Hooks parse the full agent transcript into
+      structured Trace events, so every prompt, tool call, and file edit is recorded
+      &mdash; you don't depend on the agent remembering to record.
     </p>
 
     <div class="ide-grid">
@@ -978,6 +980,12 @@
         <p>MCP config, <code>AGENTS.md</code>, and a recording plugin &mdash; one command, fully-traced sessions.</p>
         <div class="cmd-inline">morph setup opencode</div><br>
         <a href="https://github.com/r/morph/blob/main/docs/OPENCODE-SETUP.md">OpenCode setup &rarr;</a>
+      </div>
+      <div class="ide-card">
+        <h3>Agent of Empires</h3>
+        <p>Multi-agent session manager that drives Claude Code, OpenCode, Cursor CLI, and others through <code>tmux</code> + Docker sandboxes. Morph wraps every session with lifecycle hooks: a commit on create, a Run + Trace on every launch, a final commit on destroy. <a href="https://github.com/njbrake/agent-of-empires">AoE on GitHub &rarr;</a></p>
+        <div class="cmd-inline">morph setup aoe</div><br>
+        <a href="https://github.com/r/morph/blob/main/docs/AOE-SETUP.md">Agent of Empires setup &rarr;</a>
       </div>
     </div>
   </section>
@@ -1010,10 +1018,11 @@
         <span class="prompt">$ </span><span class="cmd">cd /path/to/your/project</span><br>
         <span class="prompt">$ </span><span class="cmd">morph init</span><br>
         <br>
-        <span class="comment"># 3. Wire up your IDE (pick one)</span><br>
+        <span class="comment"># 3. Wire up your agent (pick one)</span><br>
         <span class="prompt">$ </span><span class="cmd">morph setup cursor</span><br>
         <span class="prompt">$ </span><span class="cmd">morph setup claude-code</span><br>
-        <span class="prompt">$ </span><span class="cmd">morph setup opencode</span>
+        <span class="prompt">$ </span><span class="cmd">morph setup opencode</span><br>
+        <span class="prompt">$ </span><span class="cmd">morph setup aoe</span>&nbsp;&nbsp;<span class="comment"># Agent of Empires &mdash; multi-agent session manager</span>
       </div>
       <p style="text-align: center; margin-top: 1.75rem; font-size: 0.95rem;">
         New here? Walk through the
@@ -1130,7 +1139,7 @@
       <div class="status-card works">
         <h3>What works today <span class="tag">Solid</span></h3>
         <ul>
-          <li>IDE setup for Cursor, Claude Code, and OpenCode via one <code>morph setup</code> command</li>
+          <li>One-command setup for Cursor, Claude Code, OpenCode, and the <a href="https://github.com/njbrake/agent-of-empires">Agent of Empires</a> multi-agent session manager (<code>morph setup &lt;name&gt;</code>)</li>
           <li>Recording prompts and responses as immutable Runs + Traces, always-on via hooks</li>
           <li>Core Git-shaped workflow: <code>init</code>, <code>add</code>, <code>commit</code>, <code>log</code>, <code>diff</code>, <code>branch</code>, <code>checkout</code>, <code>merge</code>, <code>tag</code>, <code>stash</code>, <code>revert</code></li>
           <li>Behavioral merge with dominance check and <code>merge-plan</code> preview (incl. case provenance)</li>

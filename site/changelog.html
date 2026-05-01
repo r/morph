@@ -320,7 +320,56 @@
 
     <article class="release">
       <header>
-        <span class="version">0.39.1 <span class="latest">Latest</span></span>
+        <span class="version">0.39.2 <span class="latest">Latest</span></span>
+        <span class="date">2026-05-01</span>
+      </header>
+      <p class="summary">
+        Homepage rewires for the
+        <a href="https://github.com/njbrake/agent-of-empires">Agent of Empires</a>
+        integration shipped in <code>0.39.0</code>. Version badge
+        unsticks from the long-stale <code>v0.37.7</code>, a fourth
+        "Agent of Empires" card lands next to Cursor / Claude Code /
+        OpenCode, the install block lists <code>morph setup aoe</code>,
+        and the "What works today" panel mentions AoE. No CLI surface
+        changes — the binary already shipped this in <code>0.39.0</code>;
+        this release just makes the public site reflect it.
+      </p>
+
+      <h3 class="changed"><span class="marker"></span>Changed</h3>
+      <ul>
+        <li><strong>Homepage now lists Agent of Empires alongside
+          Cursor / Claude Code / OpenCode.</strong>
+          <code>site/index.html</code> had been frozen at the
+          <code>v0.37.7</code> badge and the IDE-integrations section
+          showed only the three first-class IDEs, so the
+          <code>morph setup aoe</code> integration shipped in
+          <code>0.39.0</code> was invisible to anyone landing on the
+          site. The version badge bumps to <code>v0.39.2</code> in
+          both the nav and the hero, a fourth "Agent of Empires"
+          card lands next to the existing three with a link through
+          to <code>docs/AOE-SETUP.md</code>, the section header
+          renames to "Agent integrations" so AoE (a session manager,
+          not an IDE) fits the framing, the "Try the alpha" install
+          block adds <code>morph setup aoe</code>, and the
+          "What works today" status panel mentions AoE so the honest
+          status report stays in sync with the repo.</li>
+        <li><code>site/changelog.html</code> rolls forward to surface
+          <code>0.39.2</code> as the latest release, demoting
+          <code>0.38.0</code> off the bottom (the page shows the
+          three most recent releases).</li>
+      </ul>
+
+      <h3 class="tests"><span class="marker"></span>Tests</h3>
+      <ul>
+        <li><code>morph-cli/tests/specs/version.yaml</code> updated
+          to expect <code>0.39.2</code> from <code>morph --version</code>
+          and <code>morph version</code>.</li>
+      </ul>
+    </article>
+
+    <article class="release">
+      <header>
+        <span class="version">0.39.1</span>
         <span class="date">2026-05-01</span>
       </header>
       <p class="summary">
@@ -441,63 +490,6 @@
           coverage at the function level, including a triple-run
           idempotency check that round-trips through
           <code>toml_edit</code>.</li>
-      </ul>
-    </article>
-
-    <article class="release">
-      <header>
-        <span class="version">0.38.0</span>
-        <span class="date">2026-04-30</span>
-      </header>
-      <p class="summary">
-        <code>morph setup claude-code</code> joins
-        <code>morph setup cursor</code> and <code>morph setup opencode</code>:
-        one command merges the morph MCP server, the
-        <code>UserPromptSubmit</code> + <code>Stop</code> recording hooks,
-        and two embedded hook scripts into your project's
-        <code>.claude/</code>. Existing settings are preserved on first
-        install and on every re-run.
-      </p>
-
-      <h3 class="added"><span class="marker"></span>Added</h3>
-      <ul>
-        <li><strong>New CLI subcommand <code>morph setup claude-code</code>.</strong>
-          Writes (or merges into) <code>.claude/settings.json</code>:
-          adds <code>mcpServers.morph</code> wired to the
-          <code>morph-mcp</code> binary with <code>MORPH_WORKSPACE</code>
-          set to the project root, plus
-          <code>hooks.UserPromptSubmit</code> and
-          <code>hooks.Stop</code> entries pointing at
-          <code>.claude/hooks/morph-record-prompt.sh</code> and
-          <code>.claude/hooks/morph-record-stop.sh</code>. The two hook
-          scripts are written into <code>.claude/hooks/</code> and
-          marked executable on Unix. The Stop hook parses Claude Code's
-          <code>transcript_path</code> / <code>conversation</code>
-          payload into structured trace events (file_read, file_edit,
-          tool_call, tool_result), captures token usage in
-          <code>run.environment.parameters</code>, and writes the
-          resulting Run + Trace via <code>morph run record</code>. The
-          morph entries are keyed by command path so re-running
-          <code>morph setup claude-code</code> doesn't accumulate
-          duplicate hooks; pre-existing user state — top-level keys,
-          third-party MCP servers, and unrelated hook entries — is
-          preserved on every run. Replaces the old "copy the scripts
-          from <code>claude-code/hooks/</code> and edit
-          <code>.claude/settings.json</code> by hand" flow that
-          <code>docs/CLAUDE-CODE-SETUP.md</code> used to lead with.</li>
-      </ul>
-
-      <h3 class="tests"><span class="marker"></span>Tests</h3>
-      <ul>
-        <li>New <code>setup_claude_code.yaml</code> acceptance suite (7
-          cases) covers settings.json creation, MCP entry shape, hook
-          registration, hook script presence + shebang, the "requires
-          <code>morph init</code>" error, idempotent re-runs, and a
-          merge that preserves a pre-existing
-          <code>model</code> / <code>mcpServers</code> / <code>hooks</code>
-          block. Six new Rust unit tests in
-          <code>morph-cli/src/setup.rs::tests</code> mirror the OpenCode
-          + Cursor coverage at the function level.</li>
       </ul>
     </article>
 

@@ -16,6 +16,41 @@ metrics — see `.cursor/rules/behavioral-commits.mdc`.
 
 ## [Unreleased]
 
+## [0.39.2] — 2026-05-01
+
+### Changed
+
+- **Homepage now lists Agent of Empires alongside Cursor /
+  Claude Code / OpenCode.** `site/index.html` had been frozen at
+  the `v0.37.7` version badge and the IDE-integrations section
+  showed only the three first-class IDEs, so the
+  `morph setup aoe` integration shipped in `0.39.0` was
+  invisible to anyone landing on the site. This release rewires
+  the homepage:
+  - Version badge bumps to `v0.39.2` in both the nav and the
+    hero (no more stale `v0.37.7`).
+  - A fourth integration card "Agent of Empires" lands next to
+    Cursor / Claude Code / OpenCode, with the
+    `morph setup aoe` command and a link through to
+    [`docs/AOE-SETUP.md`](docs/AOE-SETUP.md). The section header
+    was renamed to "Agent integrations" so AoE (a session
+    manager, not an IDE) fits the framing.
+  - The "Try the alpha" install block adds
+    `morph setup aoe` to the list of `morph setup …` commands,
+    so the homepage's three-command quickstart now mirrors the
+    full set of supported integrations.
+  - The "What works today" status panel mentions AoE explicitly
+    so the site's honest status report stays in sync with the
+    repo.
+- `site/changelog.html` rolls forward to surface `0.39.2` as
+  the latest release, demoting `0.38.0` off the bottom (the
+  page shows the three most recent releases).
+
+### Tests
+
+- `morph-cli/tests/specs/version.yaml` updated to expect
+  `0.39.2` from `morph --version` / `morph version`.
+
 ## [0.39.1] — 2026-05-01
 
 ### Fixed
@@ -459,7 +494,8 @@ Three coordinated changes to repo setup, adoption, and migration.
 - 15 new YAML acceptance spec cases in the default eval suite:
   `init_at_latest:*` ×4, `init_in_git_dir:*` ×6, `upgrade:*` ×5.
 
-[Unreleased]: https://github.com/r/morph/compare/v0.39.1...HEAD
+[Unreleased]: https://github.com/r/morph/compare/v0.39.2...HEAD
+[0.39.2]: https://github.com/r/morph/compare/v0.39.1...v0.39.2
 [0.39.1]: https://github.com/r/morph/compare/v0.39.0...v0.39.1
 [0.39.0]: https://github.com/r/morph/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/r/morph/compare/v0.37.7...v0.38.0
