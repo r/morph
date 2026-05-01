@@ -37,9 +37,14 @@ pub mod revert;
 pub mod ssh_proto;
 pub mod ssh_store;
 pub mod reference;
+pub mod forget;
 
 pub use hash::{canonical_json, content_hash, content_hash_git, Hash};
-pub use objects::{CommitContributor, EvalContract, MorphObject};
+pub use objects::{CommitContributor, EvalContract, MorphObject, Tombstone};
+pub use forget::{
+    apply_tombstone, commits_referencing, forget_local, kind_is_forgettable,
+    ForgetReport, RETROACTIVE_NOTE,
+};
 #[allow(deprecated)]
 pub use store::GixStore;
 pub use store::{resolve_hash_prefix, resolve_revision, FsStore, MorphError, ObjectType, Store};

@@ -1,0 +1,160 @@
+# `morph forget` (v0.41.0) — permanent retirement of Run / Trace /
+# prompt Blob objects. The acceptance contract:
+#
+#   - Refuses non-interactive callers without --yes.
+#   - With --yes, deletes the object and writes a Tombstone.
+#   - Refuses to forget commits, regular blobs, trees, etc.
+#   - Refuses when the target is named in a commit's evidence_refs
+#     (unless --force).
+#   - --dry-run prints the plan and does not mutate.
+#   - After forget, the original object is gone from objects/, and
+#     `.morph/forgotten/<hash>.txt` exists.
+
+- name: forget_run_with_yes_writes_tombstone_and_removes_object
+  files:
+    foo.txt: "seed"
+    .morph/config.json: '{"repo_version":"0.0","policy":{"required_metrics":[]}}'
+  steps:
+    - morph: [add, foo.txt]
+    - morph:
+        - eval
+        - run
+        - --runner
+        - cargo
+        - --
+        - printf
+        - "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s\n"
+      capture_first_line: run_hash
+      assert_hash: true
+    - morph: [forget, "${run_hash}", --yes, --reason, "spec test"]
+      stdout_contains:
+        - "forgot run"
+        - "tombstone"
+  assert:
+    - kind: dir_exists
+      path: .morph/forgotten
+
+- name: forget_dry_run_does_not_mutate
+  files:
+    foo.txt: "seed"
+    .morph/config.json: '{"repo_version":"0.0","policy":{"required_metrics":[]}}'
+  steps:
+    - morph: [add, foo.txt]
+    - morph:
+        - eval
+        - run
+        - --runner
+        - cargo
+        - --
+        - printf
+        - "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s\n"
+      capture_first_line: run_hash
+      assert_hash: true
+    - morph: [forget, "${run_hash}", --dry-run]
+      stdout_contains:
+        - "Forget plan:"
+        - "kind:"
+        - "no objects deleted"
+    # The run is still readable after a dry run.
+    - morph: [tap, inspect, "${run_hash}"]
+
+- name: forget_refuses_non_interactive_without_yes
+  files:
+    foo.txt: "seed"
+    .morph/config.json: '{"repo_version":"0.0","policy":{"required_metrics":[]}}'
+  steps:
+    - morph: [add, foo.txt]
+    - morph:
+        - eval
+        - run
+        - --runner
+        - cargo
+        - --
+        - printf
+        - "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s\n"
+      capture_first_line: run_hash
+      assert_hash: true
+    - morph: [forget, "${run_hash}"]
+      expect_exit: 1
+      stderr_contains: "non-interactive input without --yes"
+
+- name: forget_refuses_commit_kind
+  files:
+    foo.txt: "seed"
+    .morph/config.json: '{"repo_version":"0.0","policy":{"required_metrics":[]}}'
+  steps:
+    - morph: [add, foo.txt]
+    - morph: [commit, -m, "first", --metrics, '{"tests_passed":1}', --json]
+      capture_json_field:
+        var: commit_hash
+        field: hash
+      assert_hash: true
+    - morph: [forget, "${commit_hash}", --yes]
+      expect_exit: 1
+      stderr_contains: "not a forgettable kind"
+
+- name: forget_refuses_referenced_run_without_force
+  # A run that's named in a commit's evidence_refs is still forgettable,
+  # but only with --force. The default refuses so the operator can
+  # eyeball the commit list first.
+  files:
+    foo.txt: "seed"
+    .morph/config.json: '{"repo_version":"0.0","policy":{"required_metrics":[]}}'
+  steps:
+    - morph: [add, foo.txt]
+    - morph:
+        - eval
+        - run
+        - --runner
+        - cargo
+        - --
+        - printf
+        - "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s\n"
+      capture_first_line: run_hash
+      assert_hash: true
+    - morph: [commit, -m, "with run", --from-run, "${run_hash}"]
+    - morph: [forget, "${run_hash}", --yes]
+      expect_exit: 1
+      stderr_contains: "evidence_refs"
+    - morph: [forget, "${run_hash}", --yes, --force]
+      stdout_contains:
+        - "forgot run"
+        - "now read as 'no claim'"
+
+# After a forget, the original object is gone. Both `morph show` and
+# `morph tap inspect` correctly report the absence; we don't surface
+# the tombstone reason on those paths *yet* (roadmap), but the data
+# is genuinely gone.
+- name: forget_removes_object_from_store
+  files:
+    foo.txt: "seed"
+    .morph/config.json: '{"repo_version":"0.0","policy":{"required_metrics":[]}}'
+  steps:
+    - morph: [add, foo.txt]
+    - morph:
+        - eval
+        - run
+        - --runner
+        - cargo
+        - --
+        - printf
+        - "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s\n"
+      capture_first_line: run_hash
+      assert_hash: true
+    - morph: [forget, "${run_hash}", --yes]
+    - morph: [show, "${run_hash}"]
+      expect_exit: 1
+      stderr_contains: "not found"
+
+## Cross-repo tombstone propagation is exercised at the unit-test
+## level in `morph-core::forget::tests::apply_tombstone_round_trips_from_remote`
+## and through the push/fetch protocol's `transfer_tombstones` helper
+## in `morph-core::sync`. Driving it end-to-end from the CLI requires
+## a more elaborate fixture (a sibling bare-style remote that the
+## reference-mode push path can talk to) than the existing spec
+## harness exposes ergonomically; the cucumber feature in
+## `morph-e2e/features/forget_propagation.feature` covers the wire
+## case once those fixtures are in place. For now, the local-side
+## acceptance cases above (forget_run_with_yes…, forget_dry_run…,
+## forget_refuses_*) plus the unit + property tests in
+## morph-core are the contract.

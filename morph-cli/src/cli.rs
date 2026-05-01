@@ -553,6 +553,65 @@ pub enum Command {
     },
     /// Upgrade the repo store to the latest version
     Upgrade,
+    /// Permanently retire a `Run`, `Trace`, or prompt `Blob` from
+    /// the local store and (optionally) propagate the retirement
+    /// to a configured morph remote. Refuses to forget commits,
+    /// trees, blobs (other than prompts), pipelines, eval suites,
+    /// artifacts, trace rollups, or annotations — those carry
+    /// structural meaning the version-control DAG depends on.
+    ///
+    /// The deletion writes an immutable `Tombstone` object so the
+    /// act of forgetting remains auditable even though the
+    /// original bytes are gone. The merge gate treats any
+    /// `evidence_ref` that resolves to a tombstone as "no claim"
+    /// rather than a hard error.
+    ///
+    /// **What forget does NOT cover:**
+    /// - **Already-fetched copies on other laptops.** A teammate
+    ///   who pulled the trace before the `morph forget --remote`
+    ///   push still has it. Their next `morph fetch` from the
+    ///   remote will apply the tombstone, but data on disk before
+    ///   the fetch is theirs to delete.
+    /// - **Partial redaction.** Forget is whole-object only; you
+    ///   cannot edit out a single secret while keeping the rest
+    ///   of the trace.
+    /// - **Forgetting commits.** Tearing a commit out of the DAG
+    ///   would silently break parent chains; refused.
+    Forget {
+        /// Hash (or 4-char prefix) of the run / trace / prompt
+        /// blob to retire.
+        hash: String,
+        /// Free-text reason recorded with the tombstone. Best
+        /// practice: short and audit-friendly — "leaked db
+        /// password; rotated", "PII captured by accident".
+        #[arg(long)]
+        reason: Option<String>,
+        /// Forget even when the named hash appears in some
+        /// commit's `evidence_refs`. Without this flag, forget
+        /// refuses and lists the referencing commits so the
+        /// operator can audit the impact first. Forced forgets
+        /// leave the merge gate to read those references as
+        /// "no claim" and emit a one-line warning.
+        #[arg(long)]
+        force: bool,
+        /// Morph remote to propagate the deletion to. The
+        /// tombstone object lands locally first, then the next
+        /// `morph push <remote>` ships it. The remote applies
+        /// the tombstone on receipt, and any teammate who
+        /// subsequently runs `morph fetch <remote>` will pull
+        /// the tombstone and scrub their own copy.
+        #[arg(long)]
+        remote: Option<String>,
+        /// Print what would be forgotten without mutating the
+        /// store. Useful for previewing the impact (referencing
+        /// commits, tombstone reason) before committing to it.
+        #[arg(long)]
+        dry_run: bool,
+        /// Skip the interactive `type 'forget' to confirm`
+        /// prompt. Required for non-TTY callers (scripts, CI).
+        #[arg(long)]
+        yes: bool,
+    },
     /// Hidden JSON-RPC server for SSH-driven sync. Spawned by
     /// `SshStore` over `ssh user@host morph remote-helper
     /// --repo-root <path>`. Reads one JSON request per line from

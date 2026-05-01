@@ -34,6 +34,20 @@ pub enum MorphError {
     RepoTooNew(String),
     #[error("already exists: {0}")]
     AlreadyExists(String),
+    /// Object was permanently retired by `morph forget`. The original
+    /// bytes are gone from the store; the named tombstone object
+    /// records the actor / reason / timestamp of the deletion.
+    /// Callers that need the original (e.g. trace inspection) should
+    /// surface this as "the trace was forgotten on <ts>: <reason>".
+    /// The merge gate treats a tombstoned `evidence_ref` as "no
+    /// claim" rather than a hard error. Introduced in v0.41.0.
+    #[error("forgotten: {hash} (kind={kind}; tombstone={tombstone}{})", reason.as_deref().map(|r| format!("; reason={}", r)).unwrap_or_default())]
+    Forgotten {
+        hash: String,
+        kind: String,
+        tombstone: String,
+        reason: Option<String>,
+    },
     /// Branch has diverged from its remote tracking ref; fast-forward not
     /// possible. The CLI surfaces this with a hint to run
     /// `morph pull --merge` (PR 4) or `morph merge` manually.
@@ -72,6 +86,7 @@ pub enum ObjectType {
     Trace,
     TraceRollup,
     Annotation,
+    Tombstone,
 }
 
 impl MorphObject {
@@ -87,6 +102,7 @@ impl MorphObject {
             MorphObject::Trace(_) => ObjectType::Trace,
             MorphObject::TraceRollup(_) => ObjectType::TraceRollup,
             MorphObject::Annotation(_) => ObjectType::Annotation,
+            MorphObject::Tombstone(_) => ObjectType::Tombstone,
         }
     }
 }
@@ -134,6 +150,56 @@ pub trait Store {
         self.list_refs("heads")
     }
 
+    // ── Tombstones (v0.41.0) ─────────────────────────────────────────
+    //
+    // The default impls below are "tombstones not supported" — every
+    // store type (SSH, custom backends) can opt in incrementally
+    // without breaking compilation. `FsStore` provides real
+    // implementations that read and write `forgotten/` markers and
+    // tombstone objects through the same `objects/<hash>.json`
+    // path the rest of the trait uses.
+
+    /// Enumerate every original-hash this store has retired.
+    /// Default: empty — backends that don't support `morph forget`
+    /// silently skip the tombstone-transfer phase.
+    fn list_forgotten(&self) -> Result<Vec<Hash>, MorphError> {
+        Ok(Vec::new())
+    }
+
+    /// True when this hash has been retired locally. Default
+    /// `false`. Callers in the merge gate / pre-merge-commit hook
+    /// use this to surface a "forgotten evidence" warning instead
+    /// of a hard error.
+    fn is_forgotten(&self, _hash: &Hash) -> Result<bool, MorphError> {
+        Ok(false)
+    }
+
+    /// Read the tombstone recorded for an original-hash. Default
+    /// `None`. `FsStore` implements this in terms of its
+    /// `forgotten/<original_hash>.txt` marker + `objects/`.
+    fn read_tombstone(
+        &self,
+        _original_hash: &Hash,
+    ) -> Result<Option<crate::objects::Tombstone>, MorphError> {
+        Ok(None)
+    }
+
+    /// Persist a tombstone (object + marker) and return the
+    /// tombstone's hash. Default returns
+    /// `MorphError::Other("tombstones unsupported by this store")`
+    /// so a `morph fetch` from an SSH remote that *does* have
+    /// tombstones surfaces the limitation rather than silently
+    /// applying nothing. Callers wrap with try-best-effort if they
+    /// want to skip unsupported backends.
+    fn write_tombstone(
+        &self,
+        _tombstone: &crate::objects::Tombstone,
+    ) -> Result<Hash, MorphError> {
+        Err(MorphError::Other(
+            "tombstones unsupported by this store backend".into(),
+        ))
+    }
+
     /// List object hashes whose hex string starts with `prefix`.
     ///
     /// This powers `resolve_hash_prefix` (Git-style short-hash lookup).
@@ -162,6 +228,7 @@ pub trait Store {
             ObjectType::Trace,
             ObjectType::TraceRollup,
             ObjectType::Annotation,
+            ObjectType::Tombstone,
         ] {
             for h in self.list(t)? {
                 if h.to_string().starts_with(&prefix) && !out.contains(&h) {
@@ -218,6 +285,10 @@ impl Store for Box<dyn Store + '_> {
     fn refs_dir(&self) -> PathBuf { self.as_ref().refs_dir() }
     fn hash_object(&self, object: &MorphObject) -> Result<Hash, MorphError> { self.as_ref().hash_object(object) }
     fn list_hashes_with_prefix(&self, prefix: &str) -> Result<Vec<Hash>, MorphError> { self.as_ref().list_hashes_with_prefix(prefix) }
+    fn list_forgotten(&self) -> Result<Vec<Hash>, MorphError> { self.as_ref().list_forgotten() }
+    fn is_forgotten(&self, h: &Hash) -> Result<bool, MorphError> { self.as_ref().is_forgotten(h) }
+    fn read_tombstone(&self, h: &Hash) -> Result<Option<crate::objects::Tombstone>, MorphError> { self.as_ref().read_tombstone(h) }
+    fn write_tombstone(&self, t: &crate::objects::Tombstone) -> Result<Hash, MorphError> { self.as_ref().write_tombstone(t) }
 }
 
 // ── Filesystem-backed store ──────────────────────────────────────────
@@ -303,6 +374,123 @@ impl FsStore {
         } else {
             Ok(false)
         }
+    }
+
+    /// Path to the per-original-hash tombstone marker. The marker
+    /// file's contents are the tombstone object's own hash, so a
+    /// receiver can resolve the tombstone bytes via `get` once it
+    /// knows the original hash. We use `forgotten/` (separate from
+    /// the `tombstones/` per-type index) to keep the two lookups
+    /// independent: `tombstones/` answers "give me every tombstone
+    /// object", `forgotten/` answers "is this hash retired?".
+    fn forgotten_marker_path(&self, original_hash: &Hash) -> PathBuf {
+        self.root.join("forgotten").join(format!("{}.txt", original_hash))
+    }
+
+    /// True iff the named hash has been retired by `morph forget`
+    /// (a tombstone marker is on disk for it). Constant-time stat;
+    /// no JSON deserialization.
+    pub fn is_forgotten(&self, original_hash: &Hash) -> Result<bool, MorphError> {
+        Ok(self.forgotten_marker_path(original_hash).exists())
+    }
+
+    /// Read the `Tombstone` recorded for an `original_hash`. Returns
+    /// `Ok(None)` when the hash was never forgotten. Returns
+    /// `Err(MorphError::Forgotten{..})` only when the marker exists
+    /// but the tombstone object itself has gone missing — that's a
+    /// corruption case we surface clearly.
+    pub fn read_tombstone(
+        &self,
+        original_hash: &Hash,
+    ) -> Result<Option<crate::objects::Tombstone>, MorphError> {
+        let path = self.forgotten_marker_path(original_hash);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let body = std::fs::read_to_string(&path)?;
+        let tombstone_hash_hex = body.trim();
+        let tombstone_hash = Hash::from_hex(tombstone_hash_hex)
+            .map_err(|_| MorphError::InvalidHash(tombstone_hash_hex.into()))?;
+        let obj = fs_get(&self.object_path(&tombstone_hash), &tombstone_hash)?;
+        match obj {
+            MorphObject::Tombstone(t) => Ok(Some(t)),
+            _ => Err(MorphError::Other(format!(
+                "forgotten/{}.txt points at non-tombstone object {}",
+                original_hash, tombstone_hash
+            ))),
+        }
+    }
+
+    /// Persist a `Tombstone` into the store. Steps:
+    /// 1. Best-effort delete of the primary object at
+    ///    `objects/<original_hash>.json` and every type-index
+    ///    entry. Silently skips when the original is absent (the
+    ///    receiver may never have had it).
+    /// 2. `put` the tombstone object normally (lands in `objects/`
+    ///    and the `tombstones/` per-type index).
+    /// 3. Write `forgotten/<original_hash>.txt` containing the
+    ///    tombstone's own hash, so future lookups by `original_hash`
+    ///    can resolve the tombstone bytes.
+    ///
+    /// Idempotent: re-applying the same tombstone leaves the marker
+    /// pointing at the same hash. If a different tombstone is
+    /// recorded for an already-forgotten hash, the marker rewrites
+    /// to the new tombstone (last-writer wins; both tombstone
+    /// objects remain in the store for audit).
+    pub fn write_tombstone(
+        &self,
+        tombstone: &crate::objects::Tombstone,
+    ) -> Result<Hash, MorphError> {
+        let original_hash = Hash::from_hex(&tombstone.original_hash)
+            .map_err(|_| MorphError::InvalidHash(tombstone.original_hash.clone()))?;
+        let _ = self.delete_object(&original_hash);
+        let _ = self.delete_from_type_indexes(&original_hash);
+        let obj = MorphObject::Tombstone(tombstone.clone());
+        let tombstone_hash = self.put(&obj)?;
+        let marker_path = self.forgotten_marker_path(&original_hash);
+        if let Some(parent) = marker_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&marker_path, format!("{}\n", tombstone_hash))?;
+        Ok(tombstone_hash)
+    }
+
+    /// Enumerate every retired hash in this store. Used by
+    /// `morph push` to know which tombstones to ship to a remote
+    /// (alongside the normal reachable-objects walk), and by
+    /// `morph fsck` to audit retirement state.
+    pub fn list_forgotten(&self) -> Result<Vec<Hash>, MorphError> {
+        let dir = self.root.join("forgotten");
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+        let mut out = Vec::new();
+        for entry in std::fs::read_dir(&dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("txt") {
+                continue;
+            }
+            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            if stem.len() != 64 {
+                continue;
+            }
+            out.push(Hash::from_hex(stem).map_err(|_| MorphError::InvalidHash(stem.into()))?);
+        }
+        Ok(out)
+    }
+
+    /// Remove an object's entry from every type-index directory.
+    /// Used by `forget_local` to scrub the by-type indexes after
+    /// deleting the primary `objects/<hash>.json`. Idempotent.
+    pub fn delete_from_type_indexes(&self, hash: &Hash) -> Result<(), MorphError> {
+        for dir in ALL_TYPE_INDEX_DIRS {
+            let p = self.root.join(dir).join(format!("{}.json", hash));
+            if p.exists() {
+                std::fs::remove_file(&p)?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -408,6 +596,28 @@ impl Store for FsStore {
     fn hash_object(&self, object: &MorphObject) -> Result<Hash, MorphError> {
         (self.hash_fn)(object)
     }
+
+    fn list_forgotten(&self) -> Result<Vec<Hash>, MorphError> {
+        FsStore::list_forgotten(self)
+    }
+
+    fn is_forgotten(&self, hash: &Hash) -> Result<bool, MorphError> {
+        FsStore::is_forgotten(self, hash)
+    }
+
+    fn read_tombstone(
+        &self,
+        original_hash: &Hash,
+    ) -> Result<Option<crate::objects::Tombstone>, MorphError> {
+        FsStore::read_tombstone(self, original_hash)
+    }
+
+    fn write_tombstone(
+        &self,
+        tombstone: &crate::objects::Tombstone,
+    ) -> Result<Hash, MorphError> {
+        FsStore::write_tombstone(self, tombstone)
+    }
 }
 
 /// Backward-compatible alias: 0.2+ store with Git-format hashes.
@@ -453,6 +663,7 @@ fn type_indexes_for_object(object: &MorphObject) -> Vec<TypeIndex> {
         MorphObject::Trace(_) => TypeIndex { dir: "traces", full_content: true },
         MorphObject::TraceRollup(_) => TypeIndex { dir: "trace_rollups", full_content: false },
         MorphObject::Annotation(_) => TypeIndex { dir: "annotations", full_content: true },
+        MorphObject::Tombstone(_) => TypeIndex { dir: "tombstones", full_content: true },
     };
     out.push(primary);
     if let MorphObject::Blob(b) = object {
@@ -479,6 +690,7 @@ fn type_index_for_object_type(t: ObjectType) -> Option<&'static str> {
         ObjectType::Trace => Some("traces"),
         ObjectType::TraceRollup => Some("trace_rollups"),
         ObjectType::Annotation => Some("annotations"),
+        ObjectType::Tombstone => Some("tombstones"),
     }
 }
 
@@ -488,6 +700,7 @@ fn type_index_for_object_type(t: ObjectType) -> Option<&'static str> {
 const ALL_TYPE_INDEX_DIRS: &[&str] = &[
     "blobs", "trees", "pipelines", "evals", "commits",
     "runs", "artifacts", "traces", "trace_rollups", "annotations",
+    "tombstones",
 ];
 
 fn fs_get(object_path: &Path, hash: &Hash) -> Result<MorphObject, MorphError> {

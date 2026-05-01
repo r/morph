@@ -684,6 +684,7 @@ fn morph_object_type_str(obj: &MorphObject) -> &'static str {
         MorphObject::Trace(_) => "trace",
         MorphObject::TraceRollup(_) => "trace_rollup",
         MorphObject::Annotation(_) => "annotation",
+        MorphObject::Tombstone(_) => "tombstone",
     }
 }
 
@@ -1805,6 +1806,158 @@ fn main() -> anyhow::Result<()> {
             // for the SSH client instead of inheriting the CLI's
             // discover-via-cwd behavior.
             remote_helper::run(&repo_root)?;
+        }
+
+        Command::Forget {
+            hash,
+            reason,
+            force,
+            remote,
+            dry_run,
+            yes,
+        } => {
+            let (repo_root, _store_handle) = get_store(verbose)?;
+            let morph_dir = repo_root.join(".morph");
+            let fs_store = morph_core::FsStore::from_store_version(&morph_dir)?;
+
+            let target = morph_core::resolve_hash_prefix(&fs_store, &hash)?;
+
+            // Pre-flight: load and classify so dry-run / confirm
+            // can be honest about what's about to die.
+            if morph_core::Store::is_forgotten(&fs_store, &target)? {
+                anyhow::bail!(
+                    "{} is already forgotten in this store",
+                    target
+                );
+            }
+            let obj = morph_core::Store::get(&fs_store, &target)?;
+            let kind = morph_core::forget::forgettable_kind_label(&obj).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "refused: {} is not a forgettable kind. \
+                     `morph forget` only retires runs, traces, and prompt blobs; \
+                     other kinds carry structural meaning the DAG depends on.",
+                    target
+                )
+            })?;
+            let referencing = morph_core::commits_referencing(&fs_store, &target)?;
+
+            println!("Forget plan:");
+            println!("  hash:     {}", target);
+            println!("  kind:     {}", kind);
+            println!(
+                "  reason:   {}",
+                reason.as_deref().unwrap_or("(none)")
+            );
+            if referencing.is_empty() {
+                println!("  commits:  0 (no commit references this hash)");
+            } else {
+                let preview: Vec<String> = referencing
+                    .iter()
+                    .take(3)
+                    .map(|h| h.to_string()[..12].to_string())
+                    .collect();
+                let extra = if referencing.len() > 3 {
+                    format!(" (+{} more)", referencing.len() - 3)
+                } else {
+                    String::new()
+                };
+                println!(
+                    "  commits:  {} referencing: {}{}",
+                    referencing.len(),
+                    preview.join(", "),
+                    extra
+                );
+                if !force {
+                    println!(
+                        "  refuse:   yes — pass --force to forget anyway \
+                         (merge gate will read those refs as 'no claim')"
+                    );
+                }
+            }
+            if let Some(name) = &remote {
+                println!("  remote:   {} (push tombstone with `morph push {}`)", name, name);
+            }
+
+            if dry_run {
+                println!("\n--dry-run: no objects deleted.");
+                return Ok(());
+            }
+
+            if !referencing.is_empty() && !force {
+                anyhow::bail!(
+                    "refused: {} is named in evidence_refs of {} commit(s). \
+                     Pass --force to forget anyway.",
+                    target,
+                    referencing.len()
+                );
+            }
+
+            // Interactive confirmation. Non-TTY callers must pass
+            // --yes; this stops a runaway script from forgetting
+            // the wrong hash.
+            if !yes {
+                use std::io::IsTerminal;
+                if !std::io::stdin().is_terminal() {
+                    anyhow::bail!(
+                        "morph forget refuses non-interactive input without --yes. \
+                         Re-run as `morph forget {} --yes` (and consider --reason '<...>').",
+                        &hash
+                    );
+                }
+                eprint!(
+                    "Forget {} (kind={}). Type 'forget' to confirm: ",
+                    target, kind
+                );
+                use std::io::Write;
+                std::io::stderr().flush().ok();
+                let mut line = String::new();
+                std::io::stdin().read_line(&mut line)?;
+                if line.trim() != "forget" {
+                    anyhow::bail!("aborted: confirmation text did not match 'forget'");
+                }
+            }
+
+            let actor = morph_core::resolve_author_for_repo(&morph_dir, None)?;
+            let report = morph_core::forget_local(
+                &fs_store,
+                &target,
+                &actor,
+                reason.as_deref(),
+                force,
+            )?;
+
+            println!(
+                "forgot {} {}; tombstone {}",
+                report.original_kind, report.original_hash, report.tombstone_hash
+            );
+            if !report.referencing_commits.is_empty() {
+                println!(
+                    "{} commit(s) now read as 'no claim' on this evidence \
+                     (merge gate will warn at next merge).",
+                    report.referencing_commits.len()
+                );
+            }
+
+            if let Some(name) = &remote {
+                let remotes = morph_core::read_remotes(&morph_dir)?;
+                if !remotes.contains_key(name) {
+                    eprintln!(
+                        "warning: remote '{}' is not configured. \
+                         The tombstone is recorded locally; \
+                         configure with `morph remote add {} <url>` and run \
+                         `morph push {} <branch>` to ship it.",
+                        name, name, name
+                    );
+                } else {
+                    println!(
+                        "Tombstone queued for remote '{}'. Run `morph push {} <branch>` \
+                         to propagate.",
+                        name, name
+                    );
+                }
+            }
+
+            println!("\nNote: {}", morph_core::RETROACTIVE_NOTE);
         }
 
         Command::Gc => {

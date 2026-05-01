@@ -270,6 +270,7 @@ fn object_type_ord(obj: &MorphObject) -> u8 {
         MorphObject::EvalSuite(_) => 0,
         MorphObject::Trace(_) => 0,
         MorphObject::Artifact(_) => 0,
+        MorphObject::Tombstone(_) => 0,
         MorphObject::Tree(_) => 1,
         MorphObject::Pipeline(_) => 2,
         MorphObject::Commit(_) => 3,
@@ -386,6 +387,21 @@ fn rewrite_object(obj: &MorphObject, map: &HashMap<String, Hash>) -> Result<Morp
                 data,
                 author: a.author.clone(),
                 timestamp: a.timestamp.clone(),
+            })
+        }
+        MorphObject::Tombstone(t) => {
+            // Tombstones are content-addressed by their original_hash
+            // string. A 0.0→0.2 hash-format migration would change
+            // the original_hash too — but tombstones never existed
+            // pre-0.41.0, so this branch is only reachable from a
+            // forward-compat path on a future migration. Re-emitting
+            // bytes-by-bytes preserves the audit trail.
+            MorphObject::Tombstone(crate::objects::Tombstone {
+                original_hash: subst(map, &t.original_hash),
+                original_kind: t.original_kind.clone(),
+                forgotten_at: t.forgotten_at.clone(),
+                actor: t.actor.clone(),
+                reason: t.reason.clone(),
             })
         }
     })

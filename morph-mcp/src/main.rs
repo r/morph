@@ -60,6 +60,7 @@ fn morph_object_type_str(obj: &MorphObject) -> &'static str {
         MorphObject::Commit(_) => "commit",
         MorphObject::Annotation(_) => "annotation",
         MorphObject::TraceRollup(_) => "trace_rollup",
+        MorphObject::Tombstone(_) => "tombstone",
     }
 }
 

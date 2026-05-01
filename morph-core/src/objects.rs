@@ -350,6 +350,43 @@ pub struct Annotation {
     pub timestamp: String,
 }
 
+// ---------- 4.11 Tombstone (v0.41.0) ----------
+//
+// A Tombstone permanently retires a previously-recorded `Run`,
+// `Trace`, or prompt `Blob`. It is itself an immutable
+// content-addressed object, so the act of forgetting is auditable
+// even though the original bytes are gone. The merge gate treats
+// any `evidence_ref` that resolves to a tombstone as "no claim"
+// rather than a hard error, so retroactively forgetting evidence
+// does not retroactively break commits.
+//
+// Tombstones do **not** apply to commits, blobs (other than
+// prompts), trees, pipelines, eval suites, or annotations —
+// `morph forget` refuses those kinds. This keeps the version
+// control DAG mathematically intact (commits and trees remain
+// reachable; only the *evidence* attached to them can disappear).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Tombstone {
+    /// Hash of the object being forgotten. The local index keys on
+    /// this; `Store::is_forgotten(hash)` returns `true` once the
+    /// tombstone is recorded.
+    pub original_hash: String,
+    /// One of: `"run"`, `"trace"`, `"prompt"`. Recorded so a
+    /// receiver can audit the deletion without having to
+    /// re-derive the kind from the (now absent) bytes.
+    pub original_kind: String,
+    /// ISO-8601 timestamp of the forget operation.
+    pub forgotten_at: String,
+    /// Free-text identifier of the actor that ran `morph forget`.
+    /// Echoes the same value `morph commit` records as `author`.
+    pub actor: String,
+    /// Free-text reason recorded with the deletion. Best practice
+    /// is "leaked secret X; rotated", "PII captured by accident",
+    /// etc. — short, human-readable, and audit-friendly.
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
 // ---------- Tagged enum for (de)serialization ----------
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -365,6 +402,7 @@ pub enum MorphObject {
     Trace(Trace),
     TraceRollup(TraceRollup),
     Annotation(Annotation),
+    Tombstone(Tombstone),
 }
 
 #[cfg(test)]

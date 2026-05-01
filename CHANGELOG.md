@@ -16,6 +16,216 @@ metrics — see `.cursor/rules/behavioral-commits.mdc`.
 
 ## [Unreleased]
 
+## [0.41.0] — 2026-05-01
+
+`morph forget` lands. The "I leaked a secret into a trace; what
+do I do?" question now has a first-class answer.
+
+### Added
+
+- **`morph forget <hash>` CLI subcommand.** Permanently retires a
+  `Run`, `Trace`, or prompt `Blob` from the local store and (with
+  `--remote <name>`) propagates the deletion to a configured morph
+  remote. Writes an immutable `Tombstone` object recording actor,
+  reason, timestamp, and the original kind, deletes the original
+  `objects/<hash>.json`, scrubs the per-type index entries, and
+  drops a `.morph/forgotten/<hash>.txt` marker pointing at the
+  tombstone. Flags: `--reason`, `--force` (override the
+  "referenced by commit" refusal), `--remote`, `--dry-run`,
+  `--yes` (required for non-interactive callers; interactive
+  callers type `forget` to confirm). The CLI refuses to retire
+  `Commit`, `Tree`, regular `Blob`, `Pipeline`, `EvalSuite`,
+  `Artifact`, `TraceRollup`, and `Annotation` objects — those
+  carry structural meaning the version-control DAG depends on.
+- **`Tombstone` as a first-class `MorphObject` variant.** Defined
+  in `morph-core/src/objects.rs` with fields `original_hash`,
+  `original_kind`, `forgotten_at`, `actor`, `reason`. Tombstones
+  are content-addressed — `morph show <tombstone-hash>` returns
+  who retired what, when, and why. The original bytes are gone;
+  the *fact* of the deletion is permanent.
+- **`forget_local()` / `apply_tombstone()` core APIs.** New
+  `morph-core/src/forget.rs` module: `forget_local()` validates
+  the kind, locates referencing commits, deletes the original +
+  index entries, writes the tombstone; `apply_tombstone()` is the
+  idempotent receiver path used by `morph fetch`. Both functions
+  are exported from `morph-core` and exercised by unit tests
+  (round-trip forget, refuse non-forgettable kinds, refuse
+  referenced runs without `--force`, `--dry-run` is read-only).
+- **Push/fetch propagation.** `morph-core/src/sync.rs` now ships
+  tombstones alongside normal objects on `morph push` and
+  auto-applies them on `morph fetch` via a new
+  `transfer_tombstones()` helper. Local-filesystem morph remotes
+  carry tombstones end-to-end today; SSH transport for tombstones
+  is queued for v0.41.1 (see `docs/SECURITY.md`).
+- **Merge-gate tolerance.** A commit whose `evidence_refs` names
+  a tombstoned hash is read as "no claim" with a one-line warning
+  rather than a hard error. Forgetting evidence does not
+  retroactively break commits.
+- **`docs/SECURITY.md` — full `morph forget` section.** Replaces
+  the v0.40.2 gap-bullet with a detailed write-up: when to use
+  it, how it works, what it refuses, what it does *not* cover
+  (already-fetched copies on teammates' laptops, partial
+  redaction, SSH propagation in v0.41.0, MCP tool), and a
+  step-by-step "I leaked a secret" recipe.
+- **Homepage `morph forget` callout.** [`site/index.html`](site/index.html)
+  privacy section now leads with the secret-leak escape hatch:
+  one-paragraph explanation, a three-line CLI sample, and a
+  "what forget does *not* cover" footer with a deep-link to
+  `docs/SECURITY.md`. The "Things morph does not yet do" list
+  drops the missing-forget bullet and gains a clarifying note
+  that SSH transport for tombstones lands in v0.41.1.
+- **`docs/SESSION-TRACKING.md`** — *Immutable* note now describes
+  `Tombstone` as the audit-preserving way to retire a run/trace
+  rather than promising it for a future release.
+- **Spec coverage.**
+  [`morph-cli/tests/specs/forget.yaml`](morph-cli/tests/specs/forget.yaml)
+  covers: forget a run with `--yes` writes a tombstone and removes
+  the original from the store; `--dry-run` does not mutate;
+  non-interactive without `--yes` is refused; commit-kind hashes
+  are refused; runs referenced by a commit are refused without
+  `--force`; the original object is no longer loadable
+  post-forget. The cross-repo push/fetch propagation case is
+  covered by the morph-core unit tests; an end-to-end Cucumber
+  feature for the multi-repo CLI flow is queued for v0.41.1.
+
+### Known gaps (called out in `docs/SECURITY.md`)
+
+- **MCP tool.** `morph_forget` MCP wrapper is queued for v0.41.1.
+- **SSH transport for tombstones.** Filesystem remotes work end
+  to end; SSH-served remotes need the remote-helper protocol
+  upgrade. Workaround: ssh into the SSH-served remote and run
+  `morph forget` there too.
+- **Already-fetched copies on teammates' laptops.** `morph
+  fetch` applies the tombstone automatically; data on disk
+  *before* the fetch is the teammate's choice to delete.
+  Out-of-band ask remains the honest answer for "data on N
+  already-cloned machines."
+
+### Changed
+
+- [`site/index.html`](site/index.html) and
+  [`site/changelog.html`](site/changelog.html) version badges roll
+  to `v0.41.0`. The changelog page surfaces 0.41.0 as the latest;
+  0.40.0 ages off (page shows 0.41.0, 0.40.2, 0.40.1).
+
+### Tests
+
+- New `morph-core::forget` unit tests pin the local round-trip,
+  apply-tombstone idempotency, kind refusals, and referencing-commit
+  refusals. The CLI spec file
+  [`morph-cli/tests/specs/forget.yaml`](morph-cli/tests/specs/forget.yaml)
+  registers six cases through the auto-generated harness;
+  `morph-cli/tests/specs/version.yaml` expects `0.41.0`.
+
+## [0.40.2] — 2026-05-01
+
+Docs-only release: the privacy & sharing story, told plainly.
+
+### Added
+
+- **`docs/SECURITY.md`.** New, plain-language companion to
+  [`docs/SESSION-TRACKING.md`](docs/SESSION-TRACKING.md). Answers the
+  question "morph records everything; what happens when I share it?"
+  without hand-waving:
+  - **What morph records, said plainly** — verbatim prompts and
+    responses, every tool call (including `read(<path>)` whose
+    output is the file contents), every shell stdout/stderr, every
+    file edit, environment, model id, token counts. *"If the agent
+    read your `.env`, the contents of `.env` are in the trace."*
+  - **Where it lives, and what's in scope** — the on-disk layout
+    of `.morph/`, the fact that it's never tracked by git
+    (auto-excluded via `.git/info/exclude`), and the fact that it's
+    not encrypted at rest (same posture as Claude/Cursor/OpenCode
+    on-disk transcripts; use disk encryption).
+  - **What crosses the wire when** — `git push` (code only,
+    physically cannot include traces) vs `morph push` (opt-in,
+    separate channel, sends everything reachable from the commit),
+    drawn as a two-channel diagram.
+  - **Recommended team setup** — code through your existing git
+    remote; behavioral history through a *separate* morph remote
+    accessible only to people you'd trust to read your IDE history.
+  - **Things morph does *not* yet do** — explicitly listed: no
+    `morph forget` (lands in v0.41.0), no client-side redaction
+    filter on push, no selective fetch, no encryption at rest, no
+    automatic secret scanning.
+  - **Before-you-share checklist** and a brittle-but-real
+    "I leaked a secret into a trace, what now" recipe that
+    collapses into `morph forget <hash> --remote <name>` once
+    v0.41.0 ships.
+- **Homepage privacy section.** [`site/index.html`](site/index.html)
+  — new "What gets recorded, what gets shared" section between
+  How-It-Works and Design-Principles. Two side-by-side cards
+  (`git push: code only` and `morph push: opt-in, separate`) make
+  the two-channel model visible at a glance, followed by an
+  honest "things morph does not yet do" list and a deep-link out
+  to `docs/SECURITY.md`. New `.privacy-grid` / `.privacy-card`
+  / `.privacy-list` styles in the page's CSS.
+- **`docs/README.md`** — Guides table indexes `SECURITY.md`
+  with the *"Read before you push to a morph remote"* hint.
+
+### Changed
+
+- [`site/index.html`](site/index.html) and
+  [`site/changelog.html`](site/changelog.html) version badges roll
+  to `v0.40.2`. The changelog page surfaces 0.40.2 as the latest
+  release; 0.39.2 ages off the bottom (page shows the three most
+  recent releases — 0.40.2, 0.40.1, 0.40.0).
+
+### Tests
+
+- [`morph-cli/tests/specs/version.yaml`](morph-cli/tests/specs/version.yaml)
+  expects `0.40.2` from `morph --version` / `morph version` /
+  `morph version --json`. Workspace test count unchanged from
+  0.40.1: **1159 / 1159 passing, 15 skipped**.
+
+## [0.40.1] — 2026-05-01
+
+Docs-only release: the session-tracking story, told plainly.
+
+### Added
+
+- **`docs/SESSION-TRACKING.md`.** New companion to
+  [`docs/MORPH-AND-GIT.md`](docs/MORPH-AND-GIT.md). Opens with the
+  load-bearing claim — *"a diff plus a commit message is not enough
+  to review AI-authored code; the next person needs the prompt"* —
+  then walks through seven concrete things you can only do because
+  the prompt + trace are part of the commit graph: review the
+  transformation (not just the output), the prompt as a spec,
+  replay/regenerate, attribution when something breaks, promote
+  prompts → acceptance cases, merge-aware behavioral context,
+  cross-tool portability. A six-row comparison table follows: the
+  three alternatives that keep coming up — Claude / Cursor /
+  OpenCode on-disk transcripts, OTEL spans in a tracing backend,
+  Langfuse / Phoenix / Helicone — each scored honestly on the
+  properties a reviewer actually needs (linked to a specific
+  commit, content-addressed, visible to teammates, same shape
+  across tools, merge-aware, local-first). The doc closes with the
+  morph trace contract and a forward-link to `docs/SECURITY.md`
+  (landing in 0.40.2).
+- **Homepage comparison table.** [`site/index.html`](site/index.html)
+  — the existing "Runs and Traces" solution item is extended with
+  the same six-row comparison, embedded inline so the answer to
+  *"doesn't Claude already record this?"* is one scroll away from
+  the hero. Links out to `docs/SESSION-TRACKING.md` for the full
+  argument. New `.compare-table` styling lives in the page's CSS.
+- **`docs/README.md`** — Guides table now indexes
+  `SESSION-TRACKING.md` next to `MORPH-AND-GIT.md`.
+
+### Changed
+
+- [`site/index.html`](site/index.html) and
+  [`site/changelog.html`](site/changelog.html) version badges roll
+  to `v0.40.1`. The changelog page surfaces 0.40.1 as the latest
+  release; 0.39.1 ages off the bottom (the page shows the three
+  most recent releases).
+
+### Tests
+
+- [`morph-cli/tests/specs/version.yaml`](morph-cli/tests/specs/version.yaml)
+  expects `0.40.1` from `morph --version` / `morph version` /
+  `morph version --json`. Workspace test count unchanged from
+  0.40.0: **1159 / 1159 passing, 15 skipped**.
+
 ## [0.40.0] — 2026-05-01
 
 A workspace-wide simplification: Morph now runs in **reference mode
@@ -579,7 +789,9 @@ Three coordinated changes to repo setup, adoption, and migration.
 - 15 new YAML acceptance spec cases in the default eval suite:
   `init_at_latest:*` ×4, `init_in_git_dir:*` ×6, `upgrade:*` ×5.
 
-[Unreleased]: https://github.com/r/morph/compare/v0.40.0...HEAD
+[Unreleased]: https://github.com/r/morph/compare/v0.40.2...HEAD
+[0.40.2]: https://github.com/r/morph/compare/v0.40.1...v0.40.2
+[0.40.1]: https://github.com/r/morph/compare/v0.40.0...v0.40.1
 [0.40.0]: https://github.com/r/morph/compare/v0.39.2...v0.40.0
 [0.39.2]: https://github.com/r/morph/compare/v0.39.1...v0.39.2
 [0.39.1]: https://github.com/r/morph/compare/v0.39.0...v0.39.1

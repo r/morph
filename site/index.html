@@ -405,6 +405,196 @@
       line-height: 1.7;
     }
 
+    /* — Privacy / two-channel diagram — */
+    .privacy-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 1.25rem;
+      margin: 2rem 0 1.5rem;
+    }
+
+    .privacy-card {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+    }
+
+    .privacy-card h3 {
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      margin-bottom: 0.4rem;
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+    }
+
+    .privacy-card h3 .pill {
+      font-size: 0.65rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      padding: 0.18rem 0.55rem;
+      border-radius: 99px;
+    }
+
+    .privacy-card.code .pill {
+      background: var(--accent-bg, #ecfdf8);
+      color: var(--accent);
+    }
+
+    .privacy-card.traces .pill {
+      background: #fff4d6;
+      color: #92400e;
+    }
+
+    .privacy-card .channel {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: var(--fg-muted);
+      margin-bottom: 0.85rem;
+    }
+
+    .privacy-card p {
+      font-size: 0.92rem;
+      line-height: 1.6;
+      color: var(--fg-muted);
+      margin-bottom: 0.6rem;
+    }
+
+    .privacy-card p:last-child {
+      margin-bottom: 0;
+    }
+
+    .privacy-card .examples {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      background: var(--code-bg);
+      border-radius: 6px;
+      padding: 0.6rem 0.8rem;
+      color: var(--fg-muted);
+      margin-top: 0.75rem;
+    }
+
+    .privacy-list {
+      list-style: none;
+      padding: 0;
+      margin: 1.5rem 0 0;
+    }
+
+    .privacy-list li {
+      position: relative;
+      padding-left: 1.6rem;
+      margin-bottom: 0.6rem;
+      font-size: 0.93rem;
+      line-height: 1.65;
+      color: var(--fg-muted);
+    }
+
+    .privacy-list li::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 0.55em;
+      width: 0.55rem;
+      height: 0.55rem;
+      border-radius: 99px;
+      background: var(--accent);
+    }
+
+    .privacy-list.gaps li::before {
+      background: #b45309;
+    }
+
+    .privacy-list strong {
+      color: var(--fg);
+    }
+
+    @media (max-width: 768px) {
+      .privacy-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* — Session-tracking comparison table — */
+    .compare-wrap {
+      grid-column: 1 / -1;
+      margin-top: 0.75rem;
+    }
+
+    .compare-wrap .compare-intro {
+      font-size: 0.95rem;
+      color: var(--fg-muted);
+      max-width: 720px;
+      margin-bottom: 1.25rem;
+      line-height: 1.6;
+    }
+
+    .compare-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.88rem;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .compare-table th,
+    .compare-table td {
+      padding: 0.85rem 1rem;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+
+    .compare-table thead th {
+      background: var(--bg-alt);
+      font-weight: 600;
+      font-size: 0.82rem;
+      letter-spacing: 0.01em;
+      color: var(--fg);
+    }
+
+    .compare-table tbody th {
+      font-weight: 600;
+      color: var(--fg);
+      font-size: 0.85rem;
+      width: 28%;
+    }
+
+    .compare-table td {
+      color: var(--fg-muted);
+    }
+
+    .compare-table tr:last-child th,
+    .compare-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    .compare-table .yes {
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .compare-table .no {
+      color: #b45309;
+      font-weight: 500;
+    }
+
+    .compare-table th.morph-col {
+      color: var(--accent);
+    }
+
+    @media (max-width: 768px) {
+      .compare-table th,
+      .compare-table td {
+        padding: 0.65rem 0.7rem;
+        font-size: 0.82rem;
+      }
+    }
+
     /* — Commit comparison — */
     .commit-box {
       background: var(--code-bg);
@@ -763,7 +953,7 @@
   </div>
 
   <nav>
-    <a href="./" class="logo">morph<span class="version">v0.40.0 &middot; alpha</span></a>
+    <a href="./" class="logo">morph<span class="version">v0.41.0 &middot; alpha</span></a>
     <ul class="links">
       <li><a href="#problem">Problem</a></li>
       <li><a href="#solution">Thesis</a></li>
@@ -778,7 +968,7 @@
 
   <!-- Hero -->
   <div class="hero">
-    <span class="badge">Alpha &middot; v0.40.0 &middot; Research prototype</span>
+    <span class="badge">Alpha &middot; v0.41.0 &middot; Research prototype</span>
     <h1>Git for <em>AI-assisted</em> development</h1>
     <p class="subtitle">
       Morph is a version control system that records every agent session as an immutable
@@ -889,6 +1079,64 @@
             <span class="new-field">tool_call</span>&nbsp;&nbsp;<span class="value">edit(src/retry.rs, +12/-4)</span><br>
             <span class="new-field">shell</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="value">cargo test &mdash;&mdash; retry</span><br>
             <span class="new-field">response</span>&nbsp;&nbsp;&nbsp;<span class="value">"fixed; tests pass."</span>
+          </div>
+
+          <div class="compare-wrap">
+            <p class="compare-intro">
+              "Doesn't Claude already record this on disk? Doesn't Langfuse?" Yes &mdash; and no.
+              The on-disk transcripts and the LLM observability platforms each solve a different problem.
+              Only morph traces live <em>inside the version control DAG</em>, addressable from the commit they
+              produced. Read the full argument in
+              <a href="https://github.com/r/morph/blob/main/docs/SESSION-TRACKING.md" style="color: var(--accent); font-weight: 500;">SESSION-TRACKING.md</a>.
+            </p>
+            <table class="compare-table">
+              <thead>
+                <tr>
+                  <th>Property a reviewer needs</th>
+                  <th>Claude / Cursor / OpenCode <br><small>(on-disk transcripts)</small></th>
+                  <th>Langfuse / Phoenix / OTEL <br><small>(LLM observability)</small></th>
+                  <th class="morph-col">Morph traces</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th>Linked from a specific commit</th>
+                  <td><span class="no">No</span> &mdash; correlated only by timestamp, if at all</td>
+                  <td><span class="no">No</span> &mdash; indexed by app/session, not by VCS commit</td>
+                  <td><span class="yes">Yes</span> &mdash; <code>commit.evidence_refs</code></td>
+                </tr>
+                <tr>
+                  <th>Content-addressed (immutable)</th>
+                  <td><span class="no">No</span> &mdash; files can be rotated, edited, deleted</td>
+                  <td><span class="no">No</span> &mdash; span IDs are random</td>
+                  <td><span class="yes">Yes</span> &mdash; hash of canonical bytes</td>
+                </tr>
+                <tr>
+                  <th>Visible to teammates</th>
+                  <td><span class="no">No</span> &mdash; lives only on the developer's laptop</td>
+                  <td>Yes &mdash; via the SaaS dashboard (data egress required)</td>
+                  <td><span class="yes">Yes</span> &mdash; via opt-in morph remote, local-first</td>
+                </tr>
+                <tr>
+                  <th>Same shape across agent tools</th>
+                  <td><span class="no">No</span> &mdash; Cursor, Claude, OpenCode all differ</td>
+                  <td>Partial &mdash; OTLP-shaped, but app-defined fields vary</td>
+                  <td><span class="yes">Yes</span> &mdash; one Run+Trace schema per repo</td>
+                </tr>
+                <tr>
+                  <th>Merge-aware</th>
+                  <td><span class="no">No</span></td>
+                  <td><span class="no">No</span> &mdash; no notion of "merge"</td>
+                  <td><span class="yes">Yes</span> &mdash; case provenance via <code>morph merge-plan</code></td>
+                </tr>
+                <tr>
+                  <th>Local-first / offline</th>
+                  <td><span class="yes">Yes</span></td>
+                  <td><span class="no">No</span> &mdash; ships to a hosted backend</td>
+                  <td><span class="yes">Yes</span></td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
 
@@ -1076,6 +1324,132 @@
       <span class="comment"># Team inspection (hosted browser UI + JSON API)</span><br>
       <span class="prompt">$ </span><span class="cmd">morph serve</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="comment"># http://127.0.0.1:8765</span>
     </div>
+  </section>
+
+  <!-- Privacy / What gets recorded, what gets shared -->
+  <section id="privacy">
+    <p class="section-label">Privacy &amp; Sharing</p>
+    <h2>What morph records, what crosses the wire</h2>
+    <p class="lead">
+      Morph records everything &mdash; that's the design point.
+      Reviewability, replay, attribution, prompt-as-spec, and
+      merge-aware behavioral context all depend on it. The tradeoff
+      is that traces contain whatever happened in your agent
+      session, and you should know exactly what crosses the wire
+      when, before you let any of it leave your laptop.
+    </p>
+
+    <div class="privacy-grid">
+      <div class="privacy-card code">
+        <h3><span class="pill">git push</span> code only</h3>
+        <div class="channel">→ git remote (GitHub / GitLab / self-hosted)</div>
+        <p>
+          <code>.morph/</code> is in <code>.git/info/exclude</code>
+          automatically. The git push <strong>physically cannot</strong>
+          include runs, traces, prompts, or model responses. Teammates
+          pulling git see ordinary git commits and a clean working
+          tree.
+        </p>
+        <div class="examples">
+          $ git push origin main<br>
+          <span style="color:var(--fg-subtle);">// no <code>.morph/</code>, no traces, no prompts</span>
+        </div>
+      </div>
+
+      <div class="privacy-card traces">
+        <h3><span class="pill">morph push</span> opt-in, separate</h3>
+        <div class="channel">→ morph remote (independently configured)</div>
+        <p>
+          A <em>morph remote</em> is a separate channel with separate
+          access control. Default install configures none. When you
+          do push, you're sending the prompts, responses, file
+          contents the agent read, shell stdout/stderr, and model
+          parameters &mdash; verbatim.
+        </p>
+        <div class="examples">
+          $ morph remote add team ssh://team-host/morph/repo<br>
+          $ morph push team main
+        </div>
+      </div>
+    </div>
+
+    <p class="lead" style="margin-top: 0.5rem;">
+      <strong>The team-sharing model in one line:</strong> code goes
+      through your existing git remote; behavioral history goes
+      through a separate morph remote that <em>only people you'd
+      trust to read your IDE history</em> can pull from. Set them
+      up explicitly. Neither channel is silent.
+    </p>
+
+    <h3 style="font-size: 1.05rem; font-weight: 700; margin-top: 2.25rem; margin-bottom: 0.6rem; letter-spacing: -0.01em;">
+      <code>morph forget</code> &mdash; the secret-leak escape hatch (v0.41.0)
+    </h3>
+    <p style="color: var(--fg-muted); font-size: 0.95rem; margin-bottom: 0.6rem;">
+      A trace caught a credential or PII you didn't intend to record?
+      <code>morph forget &lt;hash&gt;</code> permanently retires the
+      offending <em>Run</em>, <em>Trace</em>, or prompt blob from your
+      local store and writes an immutable <em>Tombstone</em> object
+      recording the actor / reason / timestamp. Pass
+      <code>--remote team</code> and the next
+      <code>morph push team</code> ships the tombstone; the
+      teammate's next <code>morph fetch</code> applies it
+      automatically. The merge gate treats any
+      <code>evidence_ref</code> that resolves to a tombstone as
+      "no claim" rather than a hard error, so retroactively
+      forgetting evidence does not retroactively break commits.
+    </p>
+    <div class="examples" style="font-family: var(--font-mono); font-size: 0.78rem; background: var(--code-bg); border-radius: 6px; padding: 0.6rem 0.8rem; color: var(--fg-muted); margin-bottom: 1rem;">
+      $ morph forget &lt;run-hash&gt; --remote team --reason "leaked db password"<br>
+      $ morph push team main<br>
+      <span style="color:var(--fg-subtle);">// teammates: morph fetch team — tombstone applied silently</span>
+    </div>
+    <p style="color: var(--fg-muted); font-size: 0.85rem; margin-bottom: 0;">
+      Forget refuses to retire commits, blobs (other than prompts),
+      trees, pipelines, eval suites, or annotations &mdash; those
+      carry structural meaning the DAG depends on. It also refuses
+      whole-object-only: there is no partial-redaction story.
+      <strong>Already-fetched copies on teammates' laptops</strong> stay
+      where they are until that teammate fetches the tombstone.
+      <a href="https://github.com/r/morph/blob/main/docs/SECURITY.md" style="color: var(--accent); font-weight: 500;">Full design in SECURITY.md</a>.
+    </p>
+
+    <h3 style="font-size: 1.05rem; font-weight: 700; margin-top: 2.25rem; margin-bottom: 0.6rem; letter-spacing: -0.01em;">
+      Things morph does <em>not</em> yet do
+    </h3>
+    <p style="color: var(--fg-muted); font-size: 0.95rem; margin-bottom: 0;">
+      Stated up front, so you don't discover them by reading the source:
+    </p>
+    <ul class="privacy-list gaps">
+      <li><strong>No client-side redaction filter on
+        <code>morph push</code>.</strong> Today push is
+        "send everything reachable from this commit." A
+        redaction-on-push hook is roadmap.</li>
+      <li><strong>No selective fetch.</strong>
+        <code>morph fetch team</code> pulls the full DAG.</li>
+      <li><strong>No encryption at rest in <code>.morph/</code>.</strong>
+        Same posture as every agent tool's on-disk transcripts
+        (Claude / Cursor / OpenCode all unencrypted on disk by
+        default). Use disk encryption.</li>
+      <li><strong>No automatic secret scanning.</strong> Morph
+        does not look at trace bytes for tokens, API keys, or PII
+        before recording or pushing. Use the agent-level
+        guardrails your IDE provides.</li>
+      <li><strong>SSH transport for tombstones is local-filesystem
+        only in v0.41.0.</strong> <code>morph forget</code> works
+        end-to-end across filesystem morph remotes today; the
+        SSH remote-helper protocol upgrade lands in v0.41.1.
+        Until then, ssh into an SSH-served remote and run
+        <code>morph forget</code> there too.</li>
+    </ul>
+
+    <p class="lead" style="margin-top: 2rem;">
+      The full plain-language privacy story &mdash; what's in
+      <code>.morph/</code>, what's in a trace, the team-setup
+      checklist, and the "I leaked a secret, what do I do" recipe
+      &mdash; is in
+      <a href="https://github.com/r/morph/blob/main/docs/SECURITY.md" style="color: var(--accent); font-weight: 500;">docs/SECURITY.md</a>.
+      Read it before you push to a morph remote.
+    </p>
   </section>
 
   <!-- Design Principles -->

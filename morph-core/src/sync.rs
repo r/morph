@@ -249,6 +249,16 @@ fn collect_refs(obj: &MorphObject, queue: &mut VecDeque<Hash>) {
                 enqueue(queue, a);
             }
         }
+        MorphObject::Tombstone(_) => {
+            // Tombstones intentionally do *not* enqueue their
+            // `original_hash` for reachability — by the time the
+            // tombstone exists, the original is gone from the store
+            // and pointing at it would force receivers to error on
+            // a transfer that's supposed to *delete* the original.
+            // Tombstones travel through the parallel push/fetch
+            // path in `transfer_tombstones`, not via the reachable-
+            // objects walk.
+        }
         MorphObject::Blob(_)
         | MorphObject::EvalSuite(_)
         | MorphObject::Trace(_)
@@ -326,6 +336,7 @@ pub fn push_branch(
     }
 
     transfer_objects(local_store, remote_store, &local_tip)?;
+    transfer_tombstones(local_store, remote_store)?;
     remote_store.ref_write(&local_ref, &local_tip)?;
 
     Ok(local_tip)
@@ -351,7 +362,59 @@ pub fn fetch_remote(
         local_store.ref_write(&tracking, &tip)?;
         updated.push((branch, tip));
     }
+    transfer_tombstones(remote_store, local_store)?;
     Ok(updated)
+}
+
+/// Copy every tombstone the source has retired into the
+/// destination, applying it locally (delete original + scrub
+/// type-index entries + write tombstone marker).
+///
+/// Skipped silently when the destination doesn't support
+/// tombstones (the trait's default `write_tombstone` returns
+/// `MorphError::Other`). This keeps SSH push/fetch backwards-
+/// compatible while local-filesystem morph remotes get the
+/// remote-coordinated forget guarantee.
+///
+/// When the source is itself tombstone-unaware (the default
+/// `list_forgotten` returns empty), this is a cheap no-op.
+fn transfer_tombstones(
+    source: &dyn Store,
+    dest: &dyn Store,
+) -> Result<(), MorphError> {
+    for original_hash in source.list_forgotten()? {
+        if dest.is_forgotten(&original_hash)? {
+            continue;
+        }
+        let Some(tombstone) = source.read_tombstone(&original_hash)? else {
+            continue;
+        };
+        // Best-effort: scrub the original from the destination if
+        // it's there. We ignore "not found" because the dest may
+        // never have had the object in the first place — the
+        // tombstone still lands locally so the dest knows the
+        // hash is retired and any future fetch surfaces it.
+        if let Ok(true) = dest.has(&original_hash) {
+            // If `dest` is an FsStore the inherent delete_object
+            // handles it; through the trait we can't reach it,
+            // but `write_tombstone` (FsStore impl) deletes the
+            // primary object as part of marker-writing on the
+            // filesystem. SSH dest backends silently no-op via
+            // the default trait impl, which returns a clear error
+            // we surface to the operator below.
+        }
+        match dest.write_tombstone(&tombstone) {
+            Ok(_) => {}
+            Err(MorphError::Other(msg)) if msg.contains("unsupported") => {
+                eprintln!(
+                    "warning: skipping tombstone for {}: {}",
+                    original_hash, msg
+                );
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
 }
 
 // ── Pull ─────────────────────────────────────────────────────────────
