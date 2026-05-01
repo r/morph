@@ -722,8 +722,9 @@ morph eval gaps [--json] [--fail-on-gap]       # report missing behavioral evide
   hash). `--json` is provided for tooling.
 - `gaps` — Returns a structured list of unaddressed evidence gaps:
   `empty_head_metrics`, `empty_default_suite`, `no_recent_run`, and
-  (in reference mode) `git_morph_drift` when the latest git HEAD
-  has no mirrored Morph commit. The Cursor stop-hook
+  `git_morph_drift` when the latest git HEAD has no mirrored Morph
+  commit (always reportable since v0.40.0; reference mode is the
+  only mode). The Cursor stop-hook
   (`morph-record-checks.sh`, installed by `morph setup cursor`)
   shells out to this command.
 

@@ -22,7 +22,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'v1'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [reference-sync, --backfill]
       stdout_contains: "Synced 1 git commit"
     # Simulate a 5-commit FF pull. `MORPH_INTERNAL=1` suppresses the
@@ -56,7 +56,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'v1'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [reference-sync, --backfill]
     - shell: |
         for i in 2 3 4 5 6; do
@@ -75,7 +75,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'v1'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [reference-sync, --backfill]
     - shell: "MORPH_INTERNAL=1 git commit --allow-empty -q -m 'v2' && MORPH_INTERNAL=1 git commit --allow-empty -q -m 'v3'"
     - morph: [hook, post-merge]
@@ -105,7 +105,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'v1'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [reference-sync, --backfill]
     - shell: |
         for i in 2 3 4 5; do

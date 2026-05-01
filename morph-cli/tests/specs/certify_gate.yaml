@@ -117,18 +117,16 @@
         - "FAIL"
         - "threshold"
 
-- name: gate_fails_uncertified
-  files:
-    a.txt: "hello"
-    policy.json: '{"required_metrics":["acc"]}'
-    metrics.json: '{"acc": 0.95}'
-  steps:
-    - morph: [policy, set, policy.json]
-    - morph: [add, a.txt]
-    - morph: [commit, -m, "initial", --metrics, '{"acc": 0.95}']
-    - morph: [gate]
-      expect_exit: 1
-      stderr_contains: "not certified"
+# `gate_fails_uncertified` was retired in v0.40.0. Reference-mode
+# `morph commit --metrics` now writes the metrics inline AND records
+# a certification annotation in one step (matching the eval-driven
+# workflow agents follow); a separate `morph certify` step is no
+# longer required to mark the commit as certified. The gate therefore
+# treats `morph commit --metrics` results as certified, so the
+# original "uncertified" failure path no longer exists. The
+# `gate_fails_when_metrics_below_threshold` case below still pins the
+# threshold-failure path; certification semantics are otherwise
+# covered by the certify_*` and `commit_*` specs.
 
 - name: ci_json_output_certify
   files:

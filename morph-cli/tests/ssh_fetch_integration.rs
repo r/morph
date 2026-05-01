@@ -56,11 +56,15 @@ fn run_morph(repo: &std::path::Path, args: &[&str], env: &[(&str, &str)]) -> std
 }
 
 fn init_repo(path: &std::path::Path) {
+    // Reference mode is the only mode (v0.40+); `--git-init` makes
+    // the tempdir a git working tree so reference-mode init can
+    // succeed without an explicit `git init` shell-out.
     // `--no-default-policy` keeps these pre-Phase-2a fixtures
     // permissive so the bodies that commit without metrics still
-    // work. Production users get the strict default.
+    // work.
     let out = Command::new(morph_bin())
         .arg("init")
+        .arg("--git-init")
         .arg("--no-default-policy")
         .arg(path)
         .output()

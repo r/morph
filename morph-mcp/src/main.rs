@@ -450,10 +450,12 @@ impl MorphServer {
         Ok(CallToolResult::success(vec![json_text(body)]))
     }
 
-    /// PR 3: MCP parity for reference mode. Mirrors `morph reference-sync`
-    /// (with optional `--backfill`). Errors when the repo isn't in
-    /// reference mode, matching the CLI behavior.
-    #[tool(description = "Mirror git history into Morph commits when the repo is in reference mode. Single-commit by default (HEAD only); pass `backfill: true` to walk every git commit between `init_at_git_sha` and HEAD that hasn't been mirrored yet. Returns `{mode, backfill, synced, git_sha, new_commit, already_synced}` JSON.")]
+    /// MCP parity for reference-mode mirror. Mirrors `morph
+    /// reference-sync` (with optional `--backfill`). Reference is the
+    /// only mode (v0.40+); unit tests that don't sit alongside a
+    /// `.git/` simply get a "no git working tree" error from the
+    /// underlying sync code.
+    #[tool(description = "Mirror git history into Morph commits. Single-commit by default (HEAD only); pass `backfill: true` to walk every git commit between `init_at_git_sha` and HEAD that hasn't been mirrored yet. Returns `{mode, backfill, synced, git_sha, new_commit, already_synced}` JSON.")]
     async fn morph_reference_sync(
         &self,
         params: Parameters<ReferenceSyncParams>,
@@ -462,13 +464,6 @@ impl MorphServer {
             .repo_store(params.0.workspace_path.as_deref())
             .map_err(mcp_err)?;
         let morph_dir = repo_root.join(".morph");
-        let mode = morph_core::read_repo_mode(&morph_dir).map_err(mcp_err)?;
-        if mode != morph_core::RepoMode::Reference {
-            return Err(mcp_err(
-                "morph_reference_sync: repository is not in reference mode. Run \
-                 `morph init --reference` in the underlying git working tree first.",
-            ));
-        }
         let version = Some(env!("CARGO_PKG_VERSION"));
         let backfill = params.0.backfill.unwrap_or(false);
         let body = if backfill {
@@ -2089,7 +2084,11 @@ mod tests {
     /// `morph_reference_sync` must refuse to run on a standalone repo.
     /// The error string is part of the IDE-facing UX so we pin it.
     #[tokio::test]
-    async fn reference_sync_on_standalone_repo_errors() {
+    async fn reference_sync_without_git_errors() {
+        // Post-Standalone (v0.40+), reference mode is the only mode
+        // and a missing `.git/` directory is itself the failure
+        // signal. We assert the call surfaces a git-layer error
+        // rather than silently succeeding.
         let (dir, server) = setup_repo();
         let ws = dir.path().to_str().unwrap().to_string();
         let result = server
@@ -2098,11 +2097,11 @@ mod tests {
                 workspace_path: Some(ws),
             }))
             .await;
-        let err = result.expect_err("standalone repo must reject reference_sync");
+        let err = result.expect_err("missing .git/ must reject reference_sync");
         let msg = format!("{}", err);
         assert!(
-            msg.contains("not in reference mode") || msg.contains("reference"),
-            "expected reference-mode rejection, got: {}",
+            msg.contains("not a git repository") || msg.contains("git"),
+            "expected git-layer rejection, got: {}",
             msg
         );
     }

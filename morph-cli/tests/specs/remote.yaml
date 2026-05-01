@@ -4,7 +4,7 @@
   dirs:
     - remote_repo
   steps:
-    - morph: [init, "${repo}/remote_repo"]
+    - morph: [init, --git-init, "${repo}/remote_repo"]
     - morph: [remote, add, origin, "${repo}/remote_repo"]
       stdout_contains: "Remote 'origin' added"
     - morph: [remote, list]
@@ -15,8 +15,8 @@
     - remote_a
     - remote_b
   steps:
-    - morph: [init, "${repo}/remote_a"]
-    - morph: [init, "${repo}/remote_b"]
+    - morph: [init, --git-init, "${repo}/remote_a"]
+    - morph: [init, --git-init, "${repo}/remote_b"]
     - morph: [remote, add, alpha, "${repo}/remote_a"]
     - morph: [remote, add, beta, "${repo}/remote_b"]
     - morph: [remote, list]
@@ -30,7 +30,7 @@
   files:
     hello.txt: "world"
   steps:
-    - morph: [init, "${repo}/remote_repo"]
+    - morph: [init, --git-init, "${repo}/remote_repo"]
     - morph: [remote, add, origin, "${repo}/remote_repo"]
     - morph: [add, hello.txt]
     - morph: [commit, -m, "first commit", --json]
@@ -50,7 +50,7 @@
   files:
     hello.txt: "world"
   steps:
-    - morph: [init, "${repo}/remote_repo"]
+    - morph: [init, --git-init, "${repo}/remote_repo"]
     - morph: [remote, add, origin, "${repo}/remote_repo"]
     - morph: [add, hello.txt]
     - morph: [commit, -m, "first"]

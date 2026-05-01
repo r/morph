@@ -10,7 +10,7 @@ This page is the full reference for using Morph in Cursor. For a single canonica
 
 1. **Install the Morph binaries** -- see [Installation: Install the Morph binaries](INSTALLATION.md#1-install-the-morph-binaries).
 2. **Configure MCP** in Cursor so the morph server is connected (Section 1 below).
-3. **Initialize** a Morph repo: `morph init` -- see [Installation: Initialize a Morph repo](INSTALLATION.md#2-initialize-a-morph-repo).
+3. **Initialize** a Morph repo *inside an existing git repo*: `morph init` -- see [Installation: Initialize a Morph repo](INSTALLATION.md#2-initialize-a-morph-repo). (If your project is not a git repo yet, `morph init` will offer to run `git init` for you.)
 4. **Enable hooks** so Cursor records every prompt and response automatically (Section 3 below).
 
 Or run `morph setup cursor` after `morph init` to install MCP config, hooks, and rules in one step.

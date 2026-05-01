@@ -71,6 +71,22 @@ fn short_hash(h: &str) -> String {
     h.chars().take(8).collect()
 }
 
+/// Lower-case ASCII slug suitable for the local-part of a synthetic
+/// email when only a bare name is available. Anything outside
+/// `[a-z0-9._-]` is dropped; an empty result falls back to "user".
+fn slug_for_email(s: &str) -> String {
+    let cleaned: String = s
+        .chars()
+        .map(|c| c.to_ascii_lowercase())
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '_' || *c == '-')
+        .collect();
+    if cleaned.is_empty() {
+        "user".to_string()
+    } else {
+        cleaned
+    }
+}
+
 /// After `morph eval run` (or `eval from-output --record`) persists
 /// a metric-bearing Run, drop a `LAST_RUN.json` breadcrumb under
 /// `.morph/` so the next `morph commit` (without explicit
@@ -102,13 +118,6 @@ fn run_hook(event: &str, args: &[String]) -> anyhow::Result<()> {
     let repo_root = morph_core::find_repo(&cwd)
         .ok_or_else(|| anyhow::anyhow!("not in a morph repository"))?;
     let morph_dir = repo_root.join(".morph");
-    let mode = morph_core::read_repo_mode(&morph_dir)?;
-    if mode != morph_core::RepoMode::Reference {
-        anyhow::bail!(
-            "morph hook {}: not in reference mode (hook should not be installed in standalone repos)",
-            event
-        );
-    }
     let store = morph_core::open_store(&morph_dir)?;
     let version = Some(env!("CARGO_PKG_VERSION"));
 
@@ -251,6 +260,7 @@ fn run_hook(event: &str, args: &[String]) -> anyhow::Result<()> {
 ///   6. attaches a `kind: "introduces_cases"` annotation when
 ///      `--new-cases` is provided.
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn run_reference_commit(
     store: &dyn Store,
     repo_root: &std::path::Path,
@@ -261,12 +271,16 @@ fn run_reference_commit(
     from_run: Option<&str>,
     new_cases: Option<&str>,
     eval_suite: Option<&str>,
+    pipeline: Option<&str>,
     author: Option<&str>,
     allow_empty_metrics: bool,
     allow_empty_commit: bool,
     no_auto_run: bool,
     json: bool,
 ) -> anyhow::Result<()> {
+    let prog_hash: Option<Hash> = pipeline
+        .map(|s| resolve_obj_hash(store, s))
+        .transpose()?;
     let policy = morph_core::read_policy(morph_dir)?;
 
     let auto_run_hash: Option<Hash> = if no_auto_run || from_run.is_some() {
@@ -285,6 +299,11 @@ fn run_reference_commit(
         .unwrap_or_default();
 
     if observed_metrics.is_empty() {
+        // Both paths consume Run.metrics → Commit.observed_metrics
+        // when the user didn't pass `--metrics` explicitly. The
+        // banner that announces the attach is emitted once, below,
+        // by the unified `evidence_run_hash` resolution block so
+        // we don't print twice for the auto_run path.
         if let Some(s) = from_run {
             let run_hash = resolve_obj_hash(store, s)?;
             if let Ok(MorphObject::Run(run)) = store.get(&run_hash) {
@@ -293,16 +312,6 @@ fn run_reference_commit(
         } else if let Some(ref run_hash) = auto_run_hash {
             if let Ok(MorphObject::Run(run)) = store.get(run_hash) {
                 if !run.metrics.is_empty() {
-                    let preview: Vec<String> = run
-                        .metrics
-                        .iter()
-                        .map(|(k, v)| format!("{}={}", k, v))
-                        .collect();
-                    eprintln!(
-                        "attaching evidence from run {}: {}",
-                        short_hash(&run_hash.to_string()),
-                        preview.join(", "),
-                    );
                     observed_metrics = run.metrics.clone();
                 }
             }
@@ -321,21 +330,270 @@ fn run_reference_commit(
         }
     }
 
+    // Stage every tracked & untracked working-tree change before the
+    // git commit. `morph commit` is a behavioral checkpoint at HEAD —
+    // users expect "whatever's in the working tree" to land, the same
+    // way standalone-mode `morph commit` walked the working tree
+    // directly. Auto-staging keeps the agent flow ("edit files, then
+    // morph commit") working without an extra `morph add` step.
+    if let Err(e) = std::process::Command::new("git")
+        .current_dir(repo_root)
+        .args(["add", "-A", "--"])
+        .status()
+    {
+        eprintln!("warning: git add -A failed before commit: {}", e);
+    }
+
+    // Default to `--allow-empty` so morph commits remain valid as
+    // pure behavioral checkpoints (recording a fresh run / metric
+    // bundle without code change). Strict-git users opt out with
+    // explicit git commits. Honors `--allow-empty-commit` as a
+    // no-op (always-true here); leaves the flag in place so callers
+    // who pass it surface intent in scripts.
+    let _ = allow_empty_commit;
+    // Resolve author through morph's identity chain (explicit flag >
+    // MORPH_AUTHOR_* env > .morph/config user.name/email) and pass it
+    // to `git commit --author=...`. Without this, `morph config
+    // user.name X` would silently lose to whatever git's own config /
+    // env says, breaking the round-trip between `morph config` and
+    // `morph show`.
+    let resolved_author = morph_core::resolve_author_for_repo(morph_dir, author)
+        .ok()
+        .filter(|s| !s.is_empty())
+        // git's `--author` insists on `Name <email>` — refuses bare
+        // names. Morph identity allows email-less authors, so when
+        // we only have a name we synthesise a placeholder `<>` to
+        // satisfy git's parser. The author string Morph stores comes
+        // from `git log %aN <%aE>` after the commit, so the
+        // placeholder is preserved verbatim, which is fine for tests
+        // and acceptable for users (they can reset with --author or
+        // morph config).
+        .map(|a| {
+            if a.contains('<') && a.contains('>') {
+                a
+            } else {
+                format!("{} <{}@morph.local>", a, slug_for_email(&a))
+            }
+        });
     let new_git_sha = morph_core::run_git_commit_with_morph_internal(
         repo_root,
         message,
-        allow_empty_commit,
-        author,
+        true,
+        resolved_author.as_deref(),
     )
     .map_err(|e| anyhow::anyhow!("{}", e))?;
 
     let outcome = morph_core::sync_to_head_with_origin(store, repo_root, "cli", Some(version))?;
-    let new_morph_hash = outcome.new_commit.ok_or_else(|| {
+    let mirrored_hash = outcome.new_commit.ok_or_else(|| {
         anyhow::anyhow!(
             "git commit {} did not produce a new morph commit (already mirrored?)",
             &new_git_sha[..new_git_sha.len().min(12)]
         )
     })?;
+
+    // Reference-mode mirror commits are created with empty inline
+    // metrics + an empty pipeline + an empty eval-suite by
+    // `sync_one_commit`. `morph commit` is the user-driven path,
+    // and its callers expect inline metrics, the user-supplied
+    // pipeline, and a real suite hash so commits look the same as
+    // they did in standalone mode. Resolve the user's choices,
+    // re-derive the commit object with those fields, and advance
+    // the branch ref onto the rewritten hash. The mirror commit
+    // produced moments ago is harmlessly orphaned (still
+    // reachable by hash, but no ref).
+    let policy_for_suite = morph_core::read_policy(morph_dir).ok();
+    let suite_hash_str = match eval_suite {
+        Some(s) => Some(resolve_obj_hash(store, s)?.to_string()),
+        None => match policy_for_suite
+            .as_ref()
+            .and_then(|p| p.default_eval_suite.as_deref())
+        {
+            Some(s) => Some(resolve_obj_hash(store, s)?.to_string()),
+            None => None,
+        },
+    };
+    // Auto-attach evidence_refs from --from-run / breadcrumb so the
+    // commit links back to the originating run — matches standalone
+    // mode's implicit "the run that produced these metrics is the
+    // evidence" linkage. Explicit --from-run with a nonexistent hash
+    // is a hard error: silently swallowing it would let mistyped
+    // hashes land uncertified commits.
+    let (evidence_run_hash, mut evidence_refs): (Option<Hash>, Option<Vec<String>>) =
+        if let Some(s) = from_run {
+            let h = resolve_obj_hash(store, s)?;
+            let run = match store.get(&h) {
+                Ok(MorphObject::Run(r)) => r,
+                Ok(_) => {
+                    return Err(anyhow::anyhow!(
+                        "--from-run target {} is not a Run object",
+                        s
+                    ));
+                }
+                Err(_) => {
+                    return Err(anyhow::anyhow!("--from-run target {} not found", s));
+                }
+            };
+            // Always print the evidence-attach banner (with metrics
+            // preview when available) so audit tooling sees the
+            // same trail whether evidence came from --from-run or
+            // the LAST_RUN breadcrumb.
+            let preview: Vec<String> = run
+                .metrics
+                .iter()
+                .map(|(k, v)| format!("{}={}", k, v))
+                .collect();
+            eprintln!(
+                "attaching evidence from run {}: {}",
+                short_hash(&h.to_string()),
+                preview.join(", "),
+            );
+            // evidence_refs link both the Run and its Trace so
+            // downstream consumers (`morph show`, certify gating,
+            // SSH push closure) reach the full provenance graph
+            // from a single starting hash.
+            let mut refs = vec![h.to_string()];
+            if !run.trace.is_empty() {
+                refs.push(run.trace.clone());
+            }
+            (Some(h), Some(refs))
+        } else if let Some(rh) = auto_run_hash {
+            let mut refs = vec![rh.to_string()];
+            if let Ok(MorphObject::Run(r)) = store.get(&rh) {
+                if !r.trace.is_empty() {
+                    refs.push(r.trace.clone());
+                }
+                let preview: Vec<String> = r
+                    .metrics
+                    .iter()
+                    .map(|(k, v)| format!("{}={}", k, v))
+                    .collect();
+                eprintln!(
+                    "attaching evidence from run {}: {}",
+                    short_hash(&rh.to_string()),
+                    preview.join(", "),
+                );
+            }
+            (Some(rh), Some(refs))
+        } else {
+            (None, None)
+        };
+    // Silence dead-store warning in branches where we don't override
+    // evidence_refs further; explicit reassignment keeps intent clear.
+    let _ = &mut evidence_refs;
+
+    // Pull env_constraints + contributors off the evidence Run so
+    // the rewritten commit looks the same as a standalone-mode
+    // commit produced via the run-recording flow. Run.environment
+    // is a structured record (model, version, parameters,
+    // toolchain); we project it onto the commit's
+    // `env_constraints: BTreeMap<String, Value>` field by name so
+    // downstream tools (like merge gating's environment pinning)
+    // can reason about it directly.
+    let mut env_constraints: Option<std::collections::BTreeMap<String, serde_json::Value>> = None;
+    let mut commit_contributors: Option<Vec<morph_core::CommitContributor>> = None;
+    if let Some(rh) = evidence_run_hash {
+        if let Ok(MorphObject::Run(run)) = store.get(&rh) {
+            let mut map: std::collections::BTreeMap<String, serde_json::Value> =
+                std::collections::BTreeMap::new();
+            if !run.environment.model.is_empty() {
+                map.insert(
+                    "model".to_string(),
+                    serde_json::Value::String(run.environment.model.clone()),
+                );
+            }
+            if !run.environment.version.is_empty() {
+                map.insert(
+                    "version".to_string(),
+                    serde_json::Value::String(run.environment.version.clone()),
+                );
+            }
+            if !run.environment.parameters.is_empty() {
+                if let Ok(v) = serde_json::to_value(&run.environment.parameters) {
+                    map.insert("parameters".to_string(), v);
+                }
+            }
+            if !run.environment.toolchain.is_empty() {
+                if let Ok(v) = serde_json::to_value(&run.environment.toolchain) {
+                    map.insert("toolchain".to_string(), v);
+                }
+            }
+            if !map.is_empty() {
+                env_constraints = Some(map);
+            }
+            // Project Run.contributors (Vec<ContributorInfo>) +
+            // Run.agent (the primary contributor) onto
+            // Commit.contributors (Vec<CommitContributor>) by id +
+            // role. The primary agent is recorded with role
+            // "primary" so reviewers can distinguish the agent
+            // that drove the run from sidecar review/retrieval
+            // agents that contributed evidence. The shape is
+            // intentionally narrower than ContributorInfo —
+            // version/instance/policy detail lives on the linked
+            // Run rather than duplicated on every commit.
+            let mut mapped: Vec<morph_core::CommitContributor> = Vec::new();
+            if !run.agent.id.is_empty() {
+                mapped.push(morph_core::CommitContributor {
+                    id: run.agent.id.clone(),
+                    role: Some("primary".to_string()),
+                });
+            }
+            if let Some(run_contribs) = &run.contributors {
+                for c in run_contribs {
+                    mapped.push(morph_core::CommitContributor {
+                        id: c.id.clone(),
+                        role: c.role.clone(),
+                    });
+                }
+            }
+            if !mapped.is_empty() {
+                commit_contributors = Some(mapped);
+            }
+        }
+    }
+
+    let mut new_morph_hash = mirrored_hash;
+    let needs_rewrite = !observed_metrics.is_empty()
+        || prog_hash.is_some()
+        || suite_hash_str.is_some()
+        || evidence_refs.is_some()
+        || env_constraints.is_some()
+        || commit_contributors.is_some();
+    if needs_rewrite {
+        let mirrored = match store.get(&mirrored_hash)? {
+            MorphObject::Commit(c) => c,
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "mirrored commit {} is not a Commit object",
+                    mirrored_hash
+                ));
+            }
+        };
+        let final_pipeline: String = prog_hash
+            .as_ref()
+            .map(|h: &Hash| h.to_string())
+            .unwrap_or(mirrored.pipeline.clone());
+        let final_suite = suite_hash_str.unwrap_or(mirrored.eval_contract.suite.clone());
+        let mut new_commit = mirrored.clone();
+        new_commit.pipeline = final_pipeline;
+        new_commit.eval_contract = morph_core::objects::EvalContract {
+            suite: final_suite,
+            observed_metrics: observed_metrics.clone(),
+        };
+        if let Some(refs) = &evidence_refs {
+            new_commit.evidence_refs = Some(refs.clone());
+        }
+        if let Some(ec) = &env_constraints {
+            new_commit.env_constraints = Some(ec.clone());
+        }
+        if let Some(c) = &commit_contributors {
+            new_commit.contributors = Some(c.clone());
+        }
+        let rewritten = store.put(&MorphObject::Commit(new_commit))?;
+        new_morph_hash = rewritten;
+        let branch =
+            morph_core::current_branch(store).unwrap_or(None).unwrap_or_else(|| "main".to_string());
+        store.ref_write(&format!("heads/{}", branch), &rewritten)?;
+    }
 
     if !observed_metrics.is_empty() {
         let cert = morph_core::certify_commit(
@@ -362,6 +620,18 @@ fn run_reference_commit(
         {
             store.put(&ann)?;
         }
+    }
+
+    // Clear the morph staging index after a successful reference-mode
+    // commit. Symmetric with the standalone path which also clears
+    // it; without this `morph status` would still report files as
+    // staged after `morph commit` because `morph add` writes both
+    // `.morph/index.json` and `git add`'s index.
+    if let Err(e) = morph_core::clear_index(morph_dir) {
+        eprintln!(
+            "warning: could not clear staging index after commit: {}",
+            e
+        );
     }
 
     if observed_metrics.is_empty() {
@@ -783,7 +1053,10 @@ fn ensure_reference_synced_for_merge(
     repo_root: &std::path::Path,
     branch: &str,
 ) -> anyhow::Result<()> {
-    if morph_core::read_repo_mode(morph_dir)? != morph_core::RepoMode::Reference {
+    // Reference mode is the only mode (v0.40+); skip the auto-mirror
+    // only for the rare unit-test case where the repo is missing its
+    // sibling `.git/` (`init_repo` used as a tempdir fixture).
+    if !morph_core::is_git_working_tree(repo_root) {
         return Ok(());
     }
     let version = read_repo_version(morph_dir)?;
@@ -890,14 +1163,12 @@ fn run_merge(
         return Ok(());
     }
 
-    // PR 11: in reference mode, `--abort` and `--continue` route to
-    // their reference-mode handlers (which drive `git merge --abort`
-    // / `git commit -m <msg>` instead of touching morph's structural
-    // merge state). Standalone falls through to the existing flow.
-    let is_reference = matches!(
-        morph_core::read_repo_mode(&morph_dir)?,
-        morph_core::RepoMode::Reference
-    );
+    // Reference mode is the only mode (v0.40+); `--abort` and
+    // `--continue` route to the reference-mode handlers (which drive
+    // `git merge --abort` / `git commit -m <msg>`). The plain
+    // `morph_core::abort_merge` path is only reached in unit-test
+    // tempdirs that lack a `.git/` sibling.
+    let is_reference = morph_core::is_git_working_tree(&repo_root);
 
     if abort {
         if is_reference {
@@ -1092,184 +1363,147 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        Command::Init { path, bare, reference, no_default_policy, solo } => {
+        Command::Init { path, bare, no_default_policy, solo, git_init, no_git_init } => {
             verbose_msg(
                 verbose,
                 &format!(
                     "initializing {} repo at {}",
-                    if bare {
-                        "bare"
-                    } else if reference {
-                        "reference-mode"
-                    } else {
-                        "working"
-                    },
+                    if bare { "bare" } else { "reference-mode" },
                     path.display()
                 ),
             );
-            if reference {
-                if !morph_core::is_git_working_tree(&path) {
-                    eprintln!(
-                        "morph init --reference: {} is not a git repository (no .git directory found). \
-Run `git init` first or pass a path that is already a git working tree.",
-                        path.display()
-                    );
-                    std::process::exit(1);
-                }
-                morph_core::init_repo(&path)?;
-                let init_at = morph_core::git_head_sha(&path)?;
-                let morph_dir = path.join(".morph");
-                morph_core::write_reference_mode(&morph_dir, init_at.as_deref())?;
-                let submode = if solo {
-                    morph_core::RepoSubmode::Solo
-                } else {
-                    morph_core::RepoSubmode::Stowaway
-                };
-                morph_core::write_repo_submode(&morph_dir, submode)?;
-                // Reference mode default policy: empty `required_metrics`
-                // (so direct CLI commits aren't blocked at commit time
-                // either, until the user opts in via `morph policy init`)
-                // plus a carve-out for git-hook commits in `gate_check`.
-                // Every git commit produces a morph commit before the
-                // user has had a chance to certify it; without this
-                // carve-out the manual gate would always fail. The
-                // merge gate is unaffected — it still requires
-                // evidence on each parent before letting them combine.
-                // We write this even when `--no-default-policy` is
-                // set, because reference mode's correctness *depends*
-                // on the carve-out, not just on policy ergonomics.
-                let policy = morph_core::RepoPolicy {
-                    exempt_origins: vec!["git-hook".to_string()],
-                    ..Default::default()
-                };
-                morph_core::write_policy(&morph_dir, &policy)?;
-                let hook_report = morph_core::install_reference_hooks(&path, submode)?;
-                let exclude_added = morph_core::ensure_morph_in_git_info_exclude(&path)?;
-                let abs_morph = path
-                    .canonicalize()
-                    .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(&path))
-                    .join(".morph");
-                println!(
-                    "Initialized Morph repository in reference mode in {}/",
-                    abs_morph.display()
-                );
-                if let Some(sha) = init_at.as_deref() {
-                    println!("  bound to git HEAD {}", &sha[..sha.len().min(12)]);
-                } else {
-                    println!("  bound to empty git repository (no commits yet)");
-                }
-                let total = hook_report.installed.len() + hook_report.already_present.len();
-                println!(
-                    "  installed {} git hook(s) at .git/hooks/ ({} present, {} already up to date)",
-                    total,
-                    hook_report.installed.len(),
-                    hook_report.already_present.len()
-                );
-                if exclude_added {
-                    println!(
-                        "  morph state is local to this clone (.morph/ added to .git/info/exclude)"
-                    );
-                } else {
-                    println!(
-                        "  morph state is local to this clone (.git/info/exclude already excludes .morph/)"
-                    );
-                }
-                match submode {
-                    morph_core::RepoSubmode::Stowaway => {
-                        println!(
-                            "  teammates not using morph are unaffected — your git workflow is unchanged"
-                        );
-                    }
-                    morph_core::RepoSubmode::Solo => {
-                        println!(
-                            "  Solo submode: pre-merge-commit hook is active — plain `git merge` is gated"
-                        );
-                        println!(
-                            "  bypass the gate one-off with MORPH_NO_GATE=1; flip back with `morph install-hooks --stowaway`"
-                        );
-                    }
-                }
-            } else if bare {
+            if bare {
                 morph_core::init_bare(&path)?;
                 let abs = path
                     .canonicalize()
                     .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(&path));
                 println!("Initialized bare Morph repository in {}/", abs.display());
-            } else {
-                morph_core::init_repo(&path)?;
-                let abs_morph = path
-                    .canonicalize()
-                    .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(&path))
-                    .join(".morph");
-                println!("Initialized empty Morph repository in {}/", abs_morph.display());
-                // Standalone-in-git ergonomics: a bare `morph init` inside
-                // an existing git working tree silently created a .morph/
-                // that git would *also* track unless the user manually
-                // gitignored it. Two passes here:
-                //   1. Add `.morph/` to .git/info/exclude so morph state
-                //      stays local to this clone (same trick reference
-                //      mode uses; teammates' clones never see it).
-                //   2. Print a one-line nudge on stderr pointing at
-                //      `morph init --reference`, the more common path
-                //      for git users.
-                // This block intentionally runs only on the plain init
-                // branch — `--reference` already owns its own exclude
-                // write and prints richer guidance, and `--bare` has no
-                // .morph/ to exclude.
-                if morph_core::is_git_working_tree(&path) {
-                    match morph_core::ensure_morph_in_git_info_exclude(&path) {
-                        Ok(true) => {
-                            eprintln!(
-                                "morph: detected an existing git repository here."
-                            );
-                            eprintln!(
-                                "       added '.morph/' to .git/info/exclude (local to this clone)."
-                            );
-                            eprintln!(
-                                "       to mirror every git commit into morph instead, run:"
-                            );
-                            eprintln!("         morph init --reference");
-                        }
-                        Ok(false) => {
-                            // Already excluded — silent on the exclude
-                            // line, but still nudge toward --reference
-                            // since the user is in a git repo.
-                            eprintln!(
-                                "morph: detected an existing git repository here."
-                            );
-                            eprintln!(
-                                "       to mirror every git commit into morph, run:"
-                            );
-                            eprintln!("         morph init --reference");
-                        }
-                        Err(e) => {
-                            // Best-effort: if we can't write
-                            // .git/info/exclude (permissions, etc.),
-                            // surface a warning but don't fail init.
-                            eprintln!(
-                                "warning: could not update .git/info/exclude: {}", e
-                            );
-                        }
+                return Ok(());
+            }
+
+            // Reference-mode (the only working-tree mode in v0.40+).
+            // morph requires a git repository alongside; if `path`
+            // isn't already a git working tree, ask before running
+            // `git init`. `--git-init` and `--no-git-init` skip the
+            // prompt for scripting / CI.
+            if !morph_core::is_git_working_tree(&path) {
+                let should_git_init = if git_init {
+                    true
+                } else if no_git_init {
+                    false
+                } else if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+                    use std::io::Write;
+                    eprint!(
+                        "morph requires a git repository here. Run `git init` for you? [y/N] "
+                    );
+                    let _ = std::io::stderr().flush();
+                    let mut answer = String::new();
+                    if std::io::stdin().read_line(&mut answer).is_err() {
+                        false
+                    } else {
+                        let trimmed = answer.trim().to_lowercase();
+                        trimmed == "y" || trimmed == "yes"
                     }
+                } else {
+                    false
+                };
+                if should_git_init {
+                    let status = std::process::Command::new("git")
+                        .arg("init")
+                        .arg(&path)
+                        .status()
+                        .map_err(|e| anyhow::anyhow!("failed to spawn `git init`: {}", e))?;
+                    if !status.success() {
+                        anyhow::bail!(
+                            "`git init {}` failed (exit {}); fix the underlying error and re-run",
+                            path.display(),
+                            status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".into())
+                        );
+                    }
+                } else {
+                    eprintln!(
+                        "morph init: {} is not a git repository (no .git/ found). \
+                         Run `git init` first, or pass `--git-init` to morph init to do it for you.",
+                        path.display()
+                    );
+                    std::process::exit(1);
                 }
             }
-            // Phase 2a: clear the default policy when the test harness
-            // asks for a permissive repo. Production users never pass
-            // this flag; spec fixtures from before Phase 2a do.
-            // Reference mode is exempt: it writes its own
-            // exempt_origins=["git-hook"] policy that is *already*
-            // permissive on metrics, and clobbering it here would
-            // remove the carve-out the gate needs to recognise
-            // git-hook commits.
-            if no_default_policy && !reference {
-                let morph_dir = if bare {
-                    path.clone()
-                } else {
-                    path.join(".morph")
-                };
-                let permissive = morph_core::RepoPolicy::default();
-                morph_core::write_policy(&morph_dir, &permissive)?;
+
+            morph_core::init_repo(&path)?;
+            let init_at = morph_core::git_head_sha(&path)?;
+            let morph_dir = path.join(".morph");
+            if let Some(sha) = init_at.as_deref() {
+                morph_core::write_init_at_git_sha(&morph_dir, sha)?;
             }
+            let submode = if solo {
+                morph_core::RepoSubmode::Solo
+            } else {
+                morph_core::RepoSubmode::Stowaway
+            };
+            morph_core::write_repo_submode(&morph_dir, submode)?;
+            // Reference-mode default policy: empty `required_metrics`
+            // plus a carve-out for git-hook commits in `gate_check`.
+            // Every git commit produces a morph commit before the user
+            // has had a chance to certify it; without this carve-out
+            // the manual gate would always fail. The merge gate is
+            // unaffected — it still requires evidence on each parent.
+            // Written even when `--no-default-policy` is set, because
+            // reference-mode correctness *depends* on the carve-out.
+            let policy = morph_core::RepoPolicy {
+                exempt_origins: vec!["git-hook".to_string()],
+                ..Default::default()
+            };
+            morph_core::write_policy(&morph_dir, &policy)?;
+            let hook_report = morph_core::install_reference_hooks(&path, submode)?;
+            let exclude_added = morph_core::ensure_morph_in_git_info_exclude(&path)?;
+            let abs_morph = path
+                .canonicalize()
+                .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(&path))
+                .join(".morph");
+            println!("Initialized empty Morph repository in {}/", abs_morph.display());
+            if let Some(sha) = init_at.as_deref() {
+                println!("  bound to git HEAD {}", &sha[..sha.len().min(12)]);
+            } else {
+                println!("  bound to empty git repository (no commits yet)");
+            }
+            let total = hook_report.installed.len() + hook_report.already_present.len();
+            println!(
+                "  installed {} git hook(s) at .git/hooks/ ({} present, {} already up to date)",
+                total,
+                hook_report.installed.len(),
+                hook_report.already_present.len()
+            );
+            if exclude_added {
+                println!(
+                    "  morph state is local to this clone (.morph/ added to .git/info/exclude)"
+                );
+            } else {
+                println!(
+                    "  morph state is local to this clone (.git/info/exclude already excludes .morph/)"
+                );
+            }
+            match submode {
+                morph_core::RepoSubmode::Stowaway => {
+                    println!(
+                        "  teammates not using morph are unaffected — your git workflow is unchanged"
+                    );
+                }
+                morph_core::RepoSubmode::Solo => {
+                    println!(
+                        "  Solo submode: pre-merge-commit hook is active — plain `git merge` is gated"
+                    );
+                    println!(
+                        "  bypass the gate one-off with MORPH_NO_GATE=1; flip back with `morph install-hooks --stowaway`"
+                    );
+                }
+            }
+            // The opinionated default policy (with `git-hook` carve-
+            // out) is correctness-load-bearing for reference mode, so
+            // even `--no-default-policy` keeps it. The flag still has
+            // an effect on bare repos (handled above) and is kept for
+            // legacy spec fixtures.
+            let _ = no_default_policy;
         }
 
         Command::ReferenceSync { backfill } => {
@@ -1277,11 +1511,11 @@ Run `git init` first or pass a path that is already a git working tree.",
             let repo_root = morph_core::find_repo(&cwd)
                 .ok_or_else(|| anyhow::anyhow!("not in a morph repository"))?;
             let morph_dir = repo_root.join(".morph");
-            let mode = morph_core::read_repo_mode(&morph_dir)?;
-            if mode != morph_core::RepoMode::Reference {
+            if !morph_core::is_git_working_tree(&repo_root) {
                 eprintln!(
-                    "morph reference-sync: not in reference mode. Run `morph init --reference` \
-in a git repository first."
+                    "morph reference-sync: {} is not a git working tree (no .git/ found). \
+                     Reference-mode sync needs a git repository alongside the morph one.",
+                    repo_root.display()
                 );
                 std::process::exit(1);
             }
@@ -1331,11 +1565,11 @@ in a git repository first."
             let repo_root = morph_core::find_repo(&cwd)
                 .ok_or_else(|| anyhow::anyhow!("not in a morph repository"))?;
             let morph_dir = repo_root.join(".morph");
-            let mode = morph_core::read_repo_mode(&morph_dir)?;
-            if mode != morph_core::RepoMode::Reference {
+            if !morph_core::is_git_working_tree(&repo_root) {
                 eprintln!(
-                    "morph install-hooks: not in reference mode. Run `morph init --reference` \
-in a git repository first."
+                    "morph install-hooks: {} is not a git working tree (no .git/ found). \
+                     Hooks live in `.git/hooks/`; this morph repo has no git to install into.",
+                    repo_root.display()
                 );
                 std::process::exit(1);
             }
@@ -1524,6 +1758,43 @@ in a git repository first."
                     report.initial_version,
                     report.final_version,
                     detail.join(", ")
+                );
+            }
+
+            // v0.40 standalone → reference migration. Pre-0.40 repos
+            // could carry `repo_mode: "standalone"` in their config;
+            // that flag is gone as of 0.40 (reference is the only
+            // mode). The migration:
+            //   1. Drop the legacy `repo_mode` key from config.
+            //   2. If a sibling `.git/` exists, install the
+            //      reference-mode hooks + `.git/info/exclude` line +
+            //      capture `init_at_git_sha` so the repo gets the
+            //      same wiring fresh `morph init` produces.
+            //   3. If no `.git/` exists, error out with the recipe.
+            let was_legacy = morph_core::is_legacy_standalone(&morph_dir)?;
+            if was_legacy {
+                if !morph_core::is_git_working_tree(&repo_root) {
+                    anyhow::bail!(
+                        "morph upgrade: this repo was Standalone (pre-0.40) and has no `.git/` \
+                         alongside. v0.40+ requires git. Either run `git init` here and \
+                         re-run `morph upgrade`, or pin to morph 0.39.x with `cargo install \
+                         --version 0.39.2 morph-cli`."
+                    );
+                }
+                morph_core::drop_legacy_repo_mode(&morph_dir)?;
+                if morph_core::read_init_at_git_sha(&morph_dir)?.is_none() {
+                    if let Some(sha) = morph_core::git_head_sha(&repo_root)? {
+                        morph_core::write_init_at_git_sha(&morph_dir, &sha)?;
+                    }
+                }
+                let submode = morph_core::read_repo_submode(&morph_dir)?;
+                let _ = morph_core::install_reference_hooks(&repo_root, submode)?;
+                let _ = morph_core::ensure_morph_in_git_info_exclude(&repo_root)?;
+                println!(
+                    "Migrated repo mode: standalone → reference. \
+                     `.morph/` is now in `.git/info/exclude`; reference-mode hooks installed. \
+                     If `.morph/` was previously tracked by git, run \
+                     `git rm -r --cached .morph && git commit` to stop tracking it."
                 );
             }
         }
@@ -1809,13 +2080,15 @@ in a git repository first."
                 }
             }
 
-            // PR 2 / PR 6 (reference mode): the user's compass for
-            // the git ↔ morph relationship. Surfaces:
+            // The user's compass for the git ↔ morph relationship.
+            // Surfaces:
             //   - drift count (git ahead of morph),
             //   - uncertified git-hook commits,
             //   - stale certifications from amend/rebase rewrites.
-            // Standalone repos skip this entire block.
-            if morph_core::read_repo_mode(&morph_dir)? == morph_core::RepoMode::Reference {
+            // Reference mode is the only mode (v0.40+); the
+            // `is_git_working_tree` guard exists so unit-test
+            // tempdirs without a `.git/` skip the block.
+            if morph_core::is_git_working_tree(&repo_root) {
                 let drift = morph_core::drift_summary(store.as_ref(), &repo_root)?;
                 println!("Reference mode (git ↔ morph)");
                 if let Some(sha) = drift.git_head.as_deref() {
@@ -1916,6 +2189,20 @@ in a git repository first."
                 p.as_os_str() == "." || repo_root.join(p).is_dir()
             });
             let hashes = morph_core::add_paths(&store, &repo_root, &paths)?;
+            // Reference mode is the only mode (v0.40+); morph
+            // commits ride on top of git commits. Mirror the user's
+            // `morph add <paths>` to `git add <paths>` so a follow-up
+            // `morph commit` (which wraps `git commit`) actually has
+            // something to commit. Skip silently for the unit-test
+            // tempdir case where there's no `.git/`.
+            if morph_core::is_git_working_tree(&repo_root) {
+                let mut cmd = std::process::Command::new("git");
+                cmd.current_dir(&repo_root).arg("add").arg("--");
+                for p in &paths {
+                    cmd.arg(p);
+                }
+                let _ = cmd.status();
+            }
             if any_dir && !verbose {
                 if !hashes.is_empty() {
                     eprintln!("{} file{} staged", hashes.len(), if hashes.len() == 1 { "" } else { "s" });
@@ -1931,11 +2218,14 @@ in a git repository first."
             let (repo_root, store) = get_store(verbose)?;
             let morph_dir = repo_root.join(".morph");
             let version = read_repo_version(&morph_dir)?;
-            // Reference mode: `morph commit` is a thin wrapper around
-            // `git commit` with `MORPH_INTERNAL=1` to suppress the
-            // post-commit hook, followed by an explicit morph mirror
-            // tagged `morph_origin = "cli"`. Standalone falls through.
-            if morph_core::read_repo_mode(&morph_dir)? == morph_core::RepoMode::Reference {
+            // `morph commit` is a thin wrapper around `git commit`
+            // with `MORPH_INTERNAL=1` to suppress the post-commit
+            // hook, followed by an explicit morph mirror tagged
+            // `morph_origin = "cli"`. Reference mode is the only
+            // mode (v0.40+); the `is_git_working_tree` guard exists
+            // so unit-test tempdirs without a `.git/` fall through
+            // to the legacy structural commit path.
+            if morph_core::is_git_working_tree(&repo_root) {
                 run_reference_commit(
                     store.as_ref(),
                     &repo_root,
@@ -1946,6 +2236,7 @@ in a git repository first."
                     from_run.as_deref(),
                     new_cases.as_deref(),
                     eval_suite.as_deref(),
+                    pipeline.as_deref(),
                     author.as_deref(),
                     allow_empty_metrics,
                     allow_empty_commit,
@@ -2368,6 +2659,17 @@ in a git repository first."
                 let head = morph_core::resolve_head(&store)?
                     .ok_or_else(|| anyhow::anyhow!("no commit yet; make a commit first"))?;
                 store.ref_write(&format!("heads/{}", branch_name), &head)?;
+                // Reference mode (v0.40+): mirror the morph branch
+                // ref into git so `morph checkout`, `morph merge`,
+                // and the underlying `git merge` see the same set
+                // of branches. Idempotent: if the branch already
+                // exists in git we leave it alone.
+                if morph_core::is_git_working_tree(&repo_root) {
+                    let _ = std::process::Command::new("git")
+                        .current_dir(&repo_root)
+                        .args(["branch", "--quiet", &branch_name])
+                        .status();
+                }
                 println!("Created branch {}", branch_name);
             } else {
                 // Use the transport-neutral `list_branches` so the
@@ -2403,8 +2705,33 @@ in a git repository first."
 
         Command::Checkout { ref_name } => {
             let (repo_root, store) = get_store(verbose)?;
+            // Reference mode (v0.40+): in a git working tree, the
+            // git checkout is what actually moves files around and
+            // updates `HEAD`. Drive git first; the post-checkout
+            // hook (or the explicit morph step below) updates morph
+            // refs to keep them aligned. Skip the git step for bare
+            // hex hashes — git wouldn't know about a morph object
+            // hash, and morph's detached-HEAD semantics still apply.
+            let is_hex_hash = ref_name.len() == 64
+                && ref_name.chars().all(|c| c.is_ascii_hexdigit());
+            if !is_hex_hash && morph_core::is_git_working_tree(&repo_root) {
+                let status = std::process::Command::new("git")
+                    .current_dir(&repo_root)
+                    .args(["checkout", "--quiet", &ref_name])
+                    .env("MORPH_INTERNAL", "1")
+                    .status();
+                if let Ok(s) = &status {
+                    if !s.success() {
+                        return Err(anyhow::anyhow!(
+                            "git checkout {} failed (exit {})",
+                            ref_name,
+                            s.code().unwrap_or(-1)
+                        ));
+                    }
+                }
+            }
             let (hash, tree_restored) = morph_core::checkout_tree(&store, &repo_root, &ref_name)?;
-            if ref_name.len() == 64 && ref_name.chars().all(|c| c.is_ascii_hexdigit()) {
+            if is_hex_hash {
                 println!("Detached HEAD at {}", hash);
             } else {
                 println!("Switched to branch {}", ref_name.trim_start_matches("heads/"));

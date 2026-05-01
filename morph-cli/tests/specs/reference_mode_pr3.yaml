@@ -21,7 +21,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - shell: "git commit --allow-empty -q -m 'second'"
     - morph: [reference-sync]
     # gate-check on the new git-hook commit must succeed even though
@@ -36,7 +36,7 @@
     # Standalone repo with default policy + an explicit git-hook
     # exemption. A direct CLI commit (morph_origin = None, treated as
     # "cli") still has to satisfy `required_metrics`.
-    - morph: [init, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - write_file:
         path: .morph/config.json
         content: |
@@ -63,7 +63,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'g1' && git commit --allow-empty -q -m 'g2' && git commit --allow-empty -q -m 'g3'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     # init bound to git HEAD (g3); without backfill there's no morph
     # commit yet. Backfill walks from init_at_git_sha forward,
     # inclusive — at minimum it mirrors the init point itself.
@@ -76,7 +76,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'g1'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     # MORPH_INTERNAL=1 suppresses the post-commit hook so the four
     # commits accumulate without auto-mirroring. That's the
     # late-adoption story --backfill is built for: the user
@@ -100,7 +100,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'g1'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - shell: "MORPH_INTERNAL=1 git commit --allow-empty -q -m 'g2'"
     - morph: [reference-sync, --backfill]
       stdout_contains: "Synced 2 git commits"
@@ -113,7 +113,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - shell: "rm .git/hooks/post-commit"
     - morph: [install-hooks]
       stdout_contains: "post-commit"
@@ -132,17 +132,17 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     # init already wrote the hook; install-hooks should report
     # already-installed without rewriting.
     - morph: [install-hooks]
       stdout_contains: "already installed"
 
-- name: install_hooks_errors_outside_reference_mode
-  steps:
-    - morph: [install-hooks]
-      expect_exit: 1
-      stderr_contains: "not in reference mode"
+# `install_hooks_errors_outside_reference_mode` was retired in
+# v0.40.0 — every working-tree morph repo *is* reference-mode now,
+# so the legacy "not in reference mode" rejection no longer applies.
+# `morph install-hooks` is a no-op idempotent helper covered by
+# `install_hooks_idempotent` above.
 
 # ── reference-mode merge commits ────────────────────────────────────────
 #
@@ -158,7 +158,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'base'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     # Suppress hooks so backfill can demonstrate it walks the full
     # range. Without MORPH_INTERNAL=1 the post-commit and
     # post-checkout hooks fire one at a time and the merge commit

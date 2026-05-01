@@ -309,6 +309,157 @@ pub fn git_log_range(
         .collect())
 }
 
+/// Snapshot the git tree at `sha` into a content-addressed Morph tree.
+/// Mirrors what `morph add .` would produce for the commit's working
+/// state, but reads file contents from git so we don't depend on the
+/// working directory matching the commit. Returns the morph root tree
+/// hash; the caller stamps it onto the mirrored Commit so `morph
+/// diff`, `morph checkout`, and `morph merge` can operate on the same
+/// content git sees.
+///
+/// Implementation: `git ls-tree -r -z <sha>` enumerates every blob in
+/// the tree, and `git cat-file --batch` streams their contents in a
+/// single subprocess so we don't pay per-file fork overhead. Symlinks
+/// (`120000`) are mirrored as morph blobs whose content is the link
+/// target — same as how `morph add` would handle them on a unix file
+/// system. Submodules (`160000`) are skipped: the submodule pointer
+/// is part of git's index, not a tracked content blob.
+pub fn snapshot_git_tree_to_morph(
+    store: &dyn Store,
+    repo_root: &Path,
+    sha: &str,
+) -> Result<Hash, MorphError> {
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::process::Stdio;
+
+    let ls = Command::new("git")
+        .args(["ls-tree", "-r", "-z", sha])
+        .current_dir(repo_root)
+        .output()
+        .map_err(|e| MorphError::Other(format!("git ls-tree failed to spawn: {}", e)))?;
+    if !ls.status.success() {
+        return Err(MorphError::Other(format!(
+            "git ls-tree failed for {}: {}",
+            sha,
+            String::from_utf8_lossy(&ls.stderr).trim()
+        )));
+    }
+
+    // Collect (path, git_blob_oid) entries up front so we can drive
+    // `git cat-file --batch` on the gathered oids.
+    let mut entries: Vec<(String, String)> = Vec::new();
+    for chunk in ls.stdout.split(|b| *b == 0u8) {
+        if chunk.is_empty() {
+            continue;
+        }
+        let line = String::from_utf8_lossy(chunk);
+        let mut parts = line.splitn(2, '\t');
+        let meta = parts.next().unwrap_or("");
+        let path = match parts.next() {
+            Some(p) => p.to_string(),
+            None => continue,
+        };
+        let mut meta_iter = meta.split_whitespace();
+        let mode = meta_iter.next().unwrap_or("");
+        let kind = meta_iter.next().unwrap_or("");
+        let oid = meta_iter.next().unwrap_or("");
+        if kind != "blob" {
+            // Submodules (160000) and tree placeholders are skipped.
+            continue;
+        }
+        let _ = mode;
+        entries.push((path, oid.to_string()));
+    }
+
+    if entries.is_empty() {
+        return crate::tree::empty_tree_hash(store);
+    }
+
+    // Stream every blob through one `git cat-file --batch` so file-heavy
+    // commits don't fork once per file. The protocol is line-based:
+    // we send `<oid>\n` on stdin and read `<oid> blob <size>\n<size
+    // bytes>\n` on stdout for each request.
+    let mut child = Command::new("git")
+        .args(["cat-file", "--batch"])
+        .current_dir(repo_root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| MorphError::Other(format!("git cat-file failed to spawn: {}", e)))?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| MorphError::Other("git cat-file stdin missing".into()))?;
+    let mut stdout = BufReader::new(
+        child
+            .stdout
+            .take()
+            .ok_or_else(|| MorphError::Other("git cat-file stdout missing".into()))?,
+    );
+
+    let mut path_to_blob: BTreeMap<String, String> = BTreeMap::new();
+    for (path, oid) in &entries {
+        writeln!(stdin, "{}", oid)
+            .map_err(|e| MorphError::Other(format!("git cat-file write failed: {}", e)))?;
+        stdin
+            .flush()
+            .map_err(|e| MorphError::Other(format!("git cat-file flush failed: {}", e)))?;
+
+        let mut header = String::new();
+        stdout
+            .read_line(&mut header)
+            .map_err(|e| MorphError::Other(format!("git cat-file read header failed: {}", e)))?;
+        let header = header.trim_end_matches('\n');
+        let mut hparts = header.split_whitespace();
+        let _hoid = hparts.next();
+        let kind = hparts.next().unwrap_or("");
+        let size: usize = hparts
+            .next()
+            .and_then(|s| s.parse().ok())
+            .ok_or_else(|| MorphError::Other(format!("git cat-file: bad header `{}`", header)))?;
+        if kind != "blob" {
+            return Err(MorphError::Other(format!(
+                "git cat-file returned non-blob `{}` for {}",
+                kind, oid
+            )));
+        }
+        let mut content = vec![0u8; size];
+        stdout
+            .read_exact(&mut content)
+            .map_err(|e| MorphError::Other(format!("git cat-file read body failed: {}", e)))?;
+        // `--batch` writes a trailing `\n` after each object body.
+        let mut tail = [0u8; 1];
+        let _ = stdout.read_exact(&mut tail);
+
+        // Match `blob_from_file`'s encoding: utf-8 inline, anything
+        // else base64-tagged. Keeps `morph diff` against a `morph
+        // add`-built tree from showing spurious diffs purely from
+        // representation mismatch.
+        let content_value = match std::str::from_utf8(&content) {
+            Ok(s) => serde_json::json!({ "body": s }),
+            Err(_) => {
+                use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+                serde_json::json!({
+                    "body": BASE64.encode(&content),
+                    "encoding": "base64",
+                })
+            }
+        };
+        let blob = MorphObject::Blob(crate::objects::Blob {
+            kind: "blob".to_string(),
+            content: content_value,
+        });
+        let blob_hash = store.put(&blob)?;
+        path_to_blob.insert(path.clone(), blob_hash.to_string());
+    }
+
+    drop(stdin);
+    let _ = child.wait();
+
+    crate::tree::build_tree(store, &path_to_blob)
+}
+
 pub fn read_git_commit(repo_root: &Path, sha: &str) -> Result<GitCommitInfo, MorphError> {
     let mut cmd = Command::new("git");
     cmd.arg("log")
@@ -493,8 +644,17 @@ fn sync_one_commit(
     let suite_hash = store.put(&empty_suite)?;
 
     let morph_dir = repo_root.join(".morph");
+    // Snapshot the git tree into morph so `morph diff`, `morph
+    // checkout`, and `morph merge` work on the same content git sees.
+    // A tree-population failure (e.g. shallow clone, missing object)
+    // is non-fatal — we fall back to `tree: None` and let downstream
+    // tools surface "no tree available" instead of bailing out of
+    // sync entirely.
+    let tree_hash = snapshot_git_tree_to_morph(store, repo_root, git_sha)
+        .ok()
+        .map(|h| h.to_string());
     let commit = MorphObject::Commit(Commit {
-        tree: None,
+        tree: tree_hash,
         pipeline: pipeline_hash.to_string(),
         parents: morph_parents,
         message: info.message,
@@ -713,6 +873,14 @@ pub fn run_git_commit_with_morph_internal(
         .env("MORPH_INTERNAL", "1");
     if allow_empty {
         cmd.arg("--allow-empty");
+    }
+    // Morph commits are behavioral checkpoints; the message is for
+    // human readability and is not load-bearing for the merge gate.
+    // Empty messages are common in eval-driven flows (the metrics
+    // are the contract), so we always pass `--allow-empty-message`
+    // to git rather than bubbling its default refusal.
+    if message.trim().is_empty() {
+        cmd.arg("--allow-empty-message");
     }
     if let Some(a) = author {
         cmd.arg(format!("--author={}", a));

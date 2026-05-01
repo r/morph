@@ -8,7 +8,7 @@
   dirs:
     - source
   steps:
-    - morph: [init, "${repo}/source"]
+    - morph: [init, --git-init, "${repo}/source"]
     - write_file:
         path: source/hello.txt
         content: "world"
@@ -36,7 +36,7 @@
   dirs:
     - source
   steps:
-    - morph: [init, "${repo}/source"]
+    - morph: [init, --git-init, "${repo}/source"]
     - write_file:
         path: source/main.txt
         content: "on main"
@@ -72,7 +72,7 @@
   dirs:
     - source
   steps:
-    - morph: [init, "${repo}/source"]
+    - morph: [init, --git-init, "${repo}/source"]
     - write_file:
         path: source/data.txt
         content: "data"
@@ -101,7 +101,7 @@
     - source
     - dest
   steps:
-    - morph: [init, "${repo}/source"]
+    - morph: [init, --git-init, "${repo}/source"]
     - write_file:
         path: source/x.txt
         content: "x"
@@ -129,7 +129,7 @@
   dirs:
     - source
   steps:
-    - morph: [init, "${repo}/source"]
+    - morph: [init, --git-init, "${repo}/source"]
     - write_file:
         path: source/r.txt
         content: "r"

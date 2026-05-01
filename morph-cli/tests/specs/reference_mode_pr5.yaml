@@ -25,7 +25,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - shell: "echo hi > a.txt && git add a.txt"
     # Without --metrics, default policy is required_metrics=[tests_total,tests_passed].
     # In reference mode we still respect that, so the wrapper rejects
@@ -42,7 +42,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - shell: "echo hi > a.txt && git add a.txt"
     - morph: [commit, -m, "add a", --allow-empty-metrics]
     - shell: "git rev-parse HEAD > /tmp/morph_pr5_git_sha.txt"
@@ -62,7 +62,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [reference-sync, --backfill]
     - shell: "echo hi > a.txt && git add a.txt"
     - morph: [commit, -m, "add a", --allow-empty-metrics]
@@ -86,7 +86,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - shell: "echo hi > a.txt && git add a.txt"
     - morph: [commit, -m, "add a", --metrics, '{"tests_total":10,"tests_passed":10,"pass_rate":1.0}']
     # `morph head --json` returns *effective_metrics*, which walks
@@ -98,43 +98,54 @@
         - '"tests_passed": 10'
         - '"pass_rate": 1'
 
-# ── failure flow: git failure short-circuits the wrapper ──────────────
+# ── empty-commit / behavioral-checkpoint flow ─────────────────────────
 #
-# If `git commit` rejects (nothing staged), we must not create a
-# stranded morph commit. The user's morph history should look exactly
-# the same before and after.
+# Reference-mode `morph commit` is semantically a *behavioral
+# checkpoint*: even when the working tree has no diff, recording a
+# new run / metric bundle / certification milestone is a valid
+# operation. So the wrapper auto-stages every working-tree change
+# (`git add -A`) and passes `--allow-empty` to `git commit`, which
+# means an empty diff lands an empty git commit (with the morph
+# mirror tagged `morph_origin = "cli"`) instead of bubbling git's
+# "nothing to commit" error.
 
-- name: morph_commit_in_reference_mode_fails_if_no_staged_changes
+- name: morph_commit_in_reference_mode_creates_empty_commit_when_no_diff
   init: false
   steps:
     - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [reference-sync, --backfill]
-    # Capture the morph head before the failed attempt.
+    # Capture the morph head before the empty-diff commit.
     - morph: [head, --json]
       capture_json_field:
         var: head_before
         field: hash
-    # No `git add` → nothing staged → git commit will refuse.
-    - morph: [commit, -m, "nothing", --allow-empty-metrics]
-      expect_exit: 1
-      stderr_contains: "git commit"
-    # Morph HEAD must not have moved.
+    # No `git add` → no working-tree diff → reference-mode auto-allow-empty
+    # kicks in and records the morph commit anyway.
+    - morph: [commit, -m, "milestone", --allow-empty-metrics]
+    # New git commit (now 2 total).
+    - shell: "test \"$(git log --oneline | wc -l | tr -d ' ')\" = 2"
     - morph: [head, --json]
-      stdout_contains: "${head_before}"
+      capture_json_field:
+        var: head_after
+        field: hash
+      stdout_contains:
+        - '"message": "milestone"'
+        - '"morph_origin": "cli"'
+    # The new HEAD parents the prior HEAD, so the prior hash will
+    # appear inside the JSON; comparing the captured `hash` field
+    # directly is the unambiguous check.
+    - shell: 'test "${head_after}" != "${head_before}"'
 
-# ── --allow-empty-commit: opt-in to git's `--allow-empty` ─────────────
-#
-# Sometimes you want a morph commit purely for evidence (e.g. a
-# certification milestone). `--allow-empty-commit` is the explicit
-# escape hatch: it tells git not to refuse on an empty diff. Without
-# it, the wrapper bubbles git's normal "nothing to commit" error.
+# `--allow-empty-commit` is preserved as an explicit script signal —
+# it always succeeds in reference mode (same as the default), but
+# scripts that want to declare intent explicitly can still pass it.
 
 - name: morph_commit_in_reference_mode_with_allow_empty_commit_creates_empty
   init: false
   steps:
     - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [commit, -m, "milestone", --allow-empty-commit, --allow-empty-metrics]
     # One new git commit (now 2 total).
     - shell: "test \"$(git log --oneline | wc -l | tr -d ' ')\" = 2"
@@ -153,31 +164,22 @@
   init: false
   steps:
     - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [commit, -m, "milestone", --allow-empty-commit, --allow-empty-metrics, "--new-cases", "demo:case_a"]
     - morph: [annotations, HEAD]
       stdout_contains:
         - "introduces_cases"
         - "demo:case_a"
 
-# ── standalone mode regression: wrapper does not engage ───────────────
+# ── (legacy) standalone-mode regression test retired ────────────────
 #
-# A standalone `morph init` followed by `morph commit` must keep the
-# pre-PR5 behaviour: morph creates the commit directly, no git
-# involvement, `morph_origin` defaults to null.
-
-- name: morph_commit_standalone_mode_remains_pre_pr5_behaviour
-  init: true
-  files:
-    a.txt: "hi\n"
-  steps:
-    - morph: [add, "a.txt"]
-    - morph: [commit, -m, "add a", --allow-empty-metrics]
-    - morph: [head, --json]
-      stdout_contains:
-        - '"message": "add a"'
-        - '"morph_origin": null'
-        - '"git_origin_sha": null'
+# The pre-PR5 "morph creates the commit directly without git, with
+# `morph_origin = null`" path was Standalone-only and no longer
+# exists in v0.40+. Reference is the only mode; every `morph commit`
+# wraps `git commit` and the resulting morph commit always carries
+# `morph_origin = "cli"` (or `"git-hook"` from the post-commit hook).
+# Coverage for the wrapper engagement comes from
+# `morph_commit_in_reference_mode_records_*` above.
 
 # ── policy gate: required_metrics still enforced for cli commits ──────
 #
@@ -190,7 +192,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     # Build harness auto-injects `--no-default-policy` into in-spec
     # `morph init` calls, leaving required_metrics empty. Set them
     # explicitly so the wrapper has something to enforce.

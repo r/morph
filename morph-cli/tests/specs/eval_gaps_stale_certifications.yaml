@@ -18,7 +18,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [reference-sync, --backfill]
     # Capture the original git SHA + morph hash before certifying so we
     # can drive `morph hook post-rewrite` manually below. Driving the
@@ -84,7 +84,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [reference-sync, --backfill]
     - shell: "git rev-parse HEAD > .morph/old_git_sha.txt"
     - morph: [head, --json]

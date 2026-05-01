@@ -31,7 +31,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [reference-sync, --backfill]
     # Teammate workflow: every git operation runs with MORPH_INTERNAL=1
     # so morph never observes the branch via hooks. This is the
@@ -66,7 +66,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [reference-sync, --backfill]
     # First mirror the feature branch fully (hooks on) so morph has
     # the commit in objects and `heads/feature` points at it.
@@ -103,7 +103,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [reference-sync, --backfill]
     - shell: |
         MORPH_INTERNAL=1 git checkout -q -b feature
@@ -128,7 +128,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [reference-sync, --backfill]
     - shell: |
         MORPH_INTERNAL=1 git checkout -q -b feature
@@ -152,7 +152,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [reference-sync, --backfill]
     - morph: [certify, --commit, HEAD, --metrics, '{"tests_passed":1.0,"tests_total":1.0}']
     - shell: |
@@ -180,7 +180,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [reference-sync, --backfill]
     # User commits twice via plain git with the hook suppressed.
     # Morph HEAD stays at 'first' until merge time.

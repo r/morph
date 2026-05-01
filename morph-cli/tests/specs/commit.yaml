@@ -18,7 +18,11 @@
     - morph: [log]
       stdout_contains: first commit
 
-# Commit prints git-style summary to stdout by default.
+# Commit prints reference-mode summary to stdout by default. Format
+# (v0.40+): `[<short-hash> (cli)] <message>` followed by `git: <git
+# short sha>`. The `(cli)` tag distinguishes commits driven by `morph
+# commit` (which wraps `git commit`) from those that originate as
+# pure `git commit`s mirrored by the post-commit hook (`(git-hook)`).
 - name: commit_prints_summary
   files:
     foo.txt: "hello"
@@ -26,11 +30,14 @@
     - morph: [add, foo.txt]
     - morph: [commit, -m, "my first commit"]
       stdout_contains:
-        - "[main (root-commit)"
+        - "(cli)"
         - "my first commit"
-        - "1 file committed"
+        - "git:"
 
-# Commit --json outputs structured JSON.
+# Commit --json outputs structured JSON. Reference-mode shape
+# (v0.40+) records the morph hash, the underlying git SHA, and the
+# `morph_origin` tag. Older standalone-only fields (`branch`,
+# `root_commit`, `files_committed`) were retired with standalone mode.
 - name: commit_json_output
   files:
     bar.txt: "world"
@@ -43,9 +50,8 @@
       assert_hash: true
       stdout_contains:
         - "\"hash\""
-        - "\"branch\""
-        - "\"root_commit\""
-        - "\"files_committed\""
+        - "\"git_origin_sha\""
+        - "\"morph_origin\""
 
 # Commit project files only (no prompt/response yet). Check filesystem and CLI.
 - name: commit_project_files_only

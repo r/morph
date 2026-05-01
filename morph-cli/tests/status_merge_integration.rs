@@ -10,6 +10,7 @@ use std::fs;
 fn init_repo_at(path: &std::path::Path) {
     cargo_bin_cmd!("morph")
         .arg("init")
+        .arg("--git-init")
         .arg("--no-default-policy")
         .arg(path)
         .assert()
@@ -27,25 +28,38 @@ fn morph(repo: &std::path::Path, args: &[&str]) -> assert_cmd::assert::Assert {
     cargo_bin_cmd!("morph").current_dir(repo).args(args).assert()
 }
 
+fn git_add(repo: &std::path::Path, path: &str) {
+    let status = std::process::Command::new("git")
+        .current_dir(repo)
+        .args(["add", path])
+        .status()
+        .unwrap();
+    assert!(status.success(), "git add {} failed", path);
+}
+
 #[test]
+#[ignore = "v0.40+ reference-mode merge wraps `git merge`; the morph-internal \
+            structural merge state this test drives is no longer the user-facing \
+            merge path. Re-author once we have an end-to-end reference-mode merge \
+            spec."]
 fn status_during_textual_merge_lists_unmerged_paths_and_hint() {
     let dir = tempfile::tempdir().unwrap();
     let repo = dir.path();
     init_repo_at(repo);
 
     write(&repo.join("file.txt"), "line1\nbase\nline3\n");
-    morph(repo, &["add", "file.txt"]).success();
+    git_add(repo, "file.txt");
     morph(repo, &["commit", "-m", "base"]).success();
 
     morph(repo, &["branch", "feature"]).success();
 
     write(&repo.join("file.txt"), "line1\nMAIN\nline3\n");
-    morph(repo, &["add", "file.txt"]).success();
+    git_add(repo, "file.txt");
     morph(repo, &["commit", "-m", "main"]).success();
 
     morph(repo, &["checkout", "feature"]).success();
     write(&repo.join("file.txt"), "line1\nFEATURE\nline3\n");
-    morph(repo, &["add", "file.txt"]).success();
+    git_add(repo, "file.txt");
     morph(repo, &["commit", "-m", "feature"]).success();
     morph(repo, &["checkout", "main"]).success();
 
@@ -77,11 +91,7 @@ fn status_outside_merge_does_not_show_merge_hints() {
     init_repo_at(repo);
 
     write(&repo.join("hello.txt"), "world");
-    cargo_bin_cmd!("morph")
-        .current_dir(repo)
-        .args(["add", "hello.txt"])
-        .assert()
-        .success();
+    git_add(repo, "hello.txt");
     cargo_bin_cmd!("morph")
         .current_dir(repo)
         .args(["commit", "-m", "first"])

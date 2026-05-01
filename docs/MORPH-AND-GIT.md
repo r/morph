@@ -1,140 +1,137 @@
-# Running Morph and Git Side by Side
+# Running Morph alongside Git
 
 ## What Morph actually tracks
 
-Morph is not a metadata sidecar for Git. It is a full version control system.
+Morph is not a replacement for Git. Morph **wraps** Git: it runs in
+the same working directory as your existing git repo, mirrors every
+git commit into its own behavioral DAG, and adds the layer git can't
+represent — runs, traces, prompts, evaluation contracts, evidence.
 
-A Morph commit stores the complete file tree — every file in your working directory, content-addressed and snapshotted, exactly like a Git commit. `morph add .` stages files. `morph commit` seals the tree. `morph checkout` restores it. If you've used Git, you already know the mechanics.
-
-The difference is what else is in the commit. A Git commit is a tree hash plus a message. A Morph commit is a tree hash plus a pipeline, an evaluation contract (which tests ran, what scores were achieved), environment constraints, and evidence references to the runs and traces that back up the claim. The file tree is the same; the behavioral record on top of it is what Git cannot represent.
-
-Morph also stores the agent's prompts and responses. Every agent interaction can be recorded as a Run (execution receipt) with a Trace (the full sequence of events — prompts sent, responses received, tool calls made, files edited). These are immutable objects in the same content-addressed store as the file tree.
+A Morph commit is a git commit plus everything else: a tree hash plus
+a pipeline, an evaluation contract (which tests ran, what scores were
+achieved), environment constraints, and evidence references to the
+runs and traces that back up the claim. The file tree is the same
+content-addressed snapshot git would see; the behavioral record on
+top is what git cannot represent.
 
 So Morph tracks three layers:
 
-1. **The codebase** — file tree snapshots, same as Git
-2. **The process** — runs and traces recording how the code got there
-3. **The outcome** — evaluation scores certifying that it works
+1. **The codebase** — file tree snapshots, mirrored from git.
+2. **The process** — runs and traces recording how the code got
+   there (prompts, tool calls, file edits, shell stdout/stderr,
+   model + token usage).
+3. **The outcome** — evaluation scores certifying that it works.
 
-In principle, Morph can replace Git entirely. In practice, Morph is new and Git is battle-tested. That's what the rest of this document is about.
+Morph does not aspire to replace git. Git is the source-of-truth for
+code; Morph is the source-of-truth for *why* the code looks the way
+it does.
 
-## The Early-Days Story
+## Reference mode (the only mode)
 
-Morph is new. Git is battle-tested. You should use both.
+Since v0.40.0, Morph runs in **reference mode** unconditionally.
+There is no "standalone mode" any more, and `.morph/` is **never
+checked into git**.
 
-During this period, **Git is your safety net and Morph is the thing you are exercising.** Nothing about your Git workflow changes. You keep staging, committing, pushing, and pulling exactly as you do today. Morph runs in parallel — same working directory, its own dot-directory — recording everything Git records plus the behavioral history Git cannot: which agent wrote which code, what the pipeline did, whether the tests passed, what the merge actually achieved.
+What this means concretely:
 
-The goal is to build confidence in Morph's recording and merge machinery without ever being in a position where you've lost work. If Morph has a bug, your code is still in Git. If you decide Morph isn't for you, `rm -rf .morph/` and you're back where you started.
+- Every `.morph/` directory in the world sits next to a `.git/` and
+  is automatically added to `.git/info/exclude` by `morph init`.
+- Teammates pulling from your git remote see ordinary git commits
+  and a clean working tree. They do not see your prompts, traces,
+  or runs unless they pull from a **morph remote** (a separate,
+  opt-in channel — see "Sharing behavioral history" below).
+- `morph commit` is a behavioral wrapper around `git commit`: it
+  runs `git add -A`, performs the underlying git commit (with
+  `--allow-empty --allow-empty-message` so empty behavioral
+  checkpoints are legal), and records the metrics / evidence /
+  contributors that justify the change.
+- `morph branch` and `morph checkout` mirror to git, so the git
+  working tree and the morph view of "current branch" never drift.
 
-Here's what the parallel workflow looks like in practice.
+## Day one
 
-### Day one: initialize both
+You need a git repo. If you don't have one yet, `morph init` will
+prompt you:
 
-```bash
-cd your-project
-git init          # if not already a Git repo
-morph init        # creates .morph/ alongside .git/
+```
+$ morph init
+morph requires a git repository here. Run `git init` for you? [y/N]
 ```
 
-Your directory now looks like this:
+Pressing Enter (or running non-interactively) exits non-zero with
+the recipe `not a git repository at <path>; run \`git init\` first
+or pass \`--git-init\` to morph init.`. For scripted setups:
+
+- `morph init --git-init` — always run `git init` first, then
+  initialize morph.
+- `morph init --no-git-init` — never prompt, never init git; fail
+  fast if `.git/` is missing.
+
+Once initialized, your directory looks like this:
 
 ```
 your-project/
-  .git/           # Git's objects, refs, config
-  .morph/         # Morph's objects, refs, config, runs, traces
+  .git/           # git's objects, refs, config
+  .morph/         # morph's objects, refs, config, runs, traces
   .gitignore
-  .morphignore    # same syntax as .gitignore
   src/            # your code — shared working tree
 ```
 
-Both systems track the same working directory. Neither reads the other's metadata. They are fully independent.
+`.morph/` is excluded from git automatically; you don't need to
+touch `.gitignore`.
 
-### Daily workflow: do everything twice
+## Daily workflow
 
-This sounds like overhead, but it's mostly automatic if you have the MCP server or hooks set up (see [CURSOR-SETUP.md](CURSOR-SETUP.md), [CLAUDE-CODE-SETUP.md](CLAUDE-CODE-SETUP.md), or [OPENCODE-SETUP.md](OPENCODE-SETUP.md)). The manual version:
+You don't do everything twice. The common path is:
 
 ```bash
-# You write code (or an agent does), then:
-
-# Git side — exactly what you do today
-git add .
-git commit -m "add retry logic to auth service"
+# you write code (or an agent does), then:
+morph commit -m "add retry logic to auth service" \
+    --metrics '{"tests_passed": 42, "tests_total": 42, "pass_rate": 1.0}'
 git push origin main
-
-# Morph side — record the behavioral evidence
-morph add .
-morph commit -m "add retry logic to auth service" --metrics '{"tests_passed": 42, "tests_total": 42, "pass_rate": 1.0}'
 ```
 
-Both commits record what the files look like. The Morph commit also records what the pipeline scored. Over time, the Morph history accumulates runs, traces, and evaluation evidence that the Git history simply cannot represent — but both have the full codebase.
+Behind the scenes `morph commit` does the `git add -A` and `git
+commit` for you, then attaches the metrics and any
+`--from-run <hash>` evidence as a behavioral commit on top of the
+git commit it just produced. Both worlds stay in sync without you
+having to keep two commit messages aligned.
 
-You don't need to keep the commit messages in sync. You don't need to commit at the same frequency. Git and Morph commits are independent — make a Git commit whenever you want, make a Morph commit whenever you have behavioral evidence worth recording. In the early days, it's natural for them to roughly correspond, but there's no requirement.
+If you want to make a pure git commit (no behavioral evidence,
+e.g. for a quick chore), `git commit` directly still works — the
+git post-commit hook will mirror it into Morph as a commit with
+empty metrics. `morph status` will surface that as a metrics gap
+the next time you check.
 
-### Branching: align names, keep histories independent
-
-If you're working on a feature branch:
+### Branching
 
 ```bash
-git checkout -b feature/new-retrieval
 morph branch feature/new-retrieval
 morph checkout feature/new-retrieval
 ```
 
-You can align branch names for your own sanity, but Morph never reads Git refs and Git never reads Morph refs. They could have completely different branch structures and nothing would break.
+These commands drive both Morph's refs and the underlying git
+branch / checkout, so the git working tree always matches the
+branch you think you're on. Same for `morph merge`.
 
-When you merge in Morph, the behavioral gating kicks in — the merged pipeline must dominate both parents on every metric. When you merge in Git, it's the same text reconciliation it's always been. The Morph merge is the one that tells you whether the result actually works.
+## Sharing behavioral history (opt-in)
 
----
-
-## Should `.morph/` be checked into Git?
-
-**Yes. During the early days, check it in.**
-
-Remove `.morph/` from your `.gitignore`:
+Code goes through your **git remote** (GitHub, GitLab, etc.), as
+always. Behavioral history goes through a separate **morph remote**.
+Both channels are intentional choices the team makes; neither one
+is silent.
 
 ```bash
-# Edit .gitignore — remove the .morph/ line if present
-git add .morph/
-git commit -m "track morph metadata in git"
+morph remote add team /path/to/shared/morph-repo
+morph push team main
+morph fetch team
 ```
 
-Here's why this is the right default for now:
-
-1. **It's your backup.** If Morph has a bug that corrupts its object store, you can recover from Git. This is the entire point of running both systems in parallel during a testing period.
-
-2. **Collaborators get the behavioral history.** When someone clones the repo, they get the full Morph object graph — commits, runs, traces, evaluation evidence. They can run `morph log` and `morph show` without having to reconstruct anything.
-
-3. **It exercises the full round-trip.** Clone → work → morph commit → git commit → push → someone else clones → morph log works. Checking in `.morph/` is what makes this loop testable.
-
-4. **The objects are small.** Morph objects are JSON files, typically a few KB each. In the early days, before you have thousands of runs and traces, the storage overhead is negligible. Git handles it fine.
-
-### When to reconsider
-
-As a project matures and the Morph object store grows (many runs, long traces, large artifacts), you might want to stop checking in everything. At that point, there are two intermediate options:
-
-**Option B — Git only for source, Morph is standalone:**
-
-```gitignore
-.morph/
-```
-
-Use this when Morph has its own remote (via `morph push`/`morph pull`) and you no longer need Git as a backup for the behavioral history. This is the long-term state.
-
-**Option C — Check in refs and config, ignore the object store:**
-
-```gitignore
-.morph/objects/
-```
-
-A compromise: Git backs up the branch pointers, config, and small metadata. The bulk of the data (content-addressed objects, runs, traces) stays local or syncs via Morph remotes. Useful when the object store is large but you still want Git to have a record of the Morph branch structure.
-
-### What's the long-term answer?
-
-Morph already stores the full file tree in every commit. It has branching, merging, staging, and checkout. It is architecturally capable of being the only VCS in a project. The reason to keep Git around today is trust, not capability — Git has decades of battle-testing, a mature remote protocol, and an ecosystem of hosting and review tools.
-
-Morph will have its own network remote protocol (today it supports local-path remotes via `morph remote add`; HTTP/SSH transport is planned). Once Morph remotes are mature and the tool has proven itself reliable, a project could drop Git entirely and use Morph as the single system that tracks code, process, and outcomes. Until then, Git is the safety net — and checking `.morph/` into Git is how you get the benefits of both during the transition.
-
----
+This separation exists so the team can have different access
+policies on each — e.g. the git remote may be open to contractors
+while the morph remote is restricted to full-time staff. The
+sharing model and the privacy implications are written up in detail
+in [`SECURITY.md`](SECURITY.md) (landing in v0.40.2).
 
 ## Reference
 
@@ -142,38 +139,29 @@ Morph will have its own network remote protocol (today it supports local-path re
 
 ```
 your-project/
-  .git/         # Git's objects, refs, config
-  .morph/       # Morph's objects, refs, config, runs, traces
-  .gitignore    # Git ignore rules
-  .morphignore  # Morph ignore rules (same syntax as .gitignore)
+  .git/         # git's objects, refs, config
+  .morph/       # morph's objects, refs, config, runs, traces
+                # — auto-excluded from git via .git/info/exclude
+  .gitignore    # git ignore rules
+  .morphignore  # optional: morph-only ignore rules (same syntax)
   src/          # shared working tree
 ```
 
-Keep `.gitignore` and `.morphignore` in sync for shared exclusions (e.g. `target/`, `node_modules/`), or let them differ when you want Morph to track something Git ignores.
-
-### Morph remotes
-
-Morph has its own remote model, independent from Git remotes:
+`.morph/` is **never** tracked by git. If you have an old
+Standalone-mode repo where `.morph/` was checked in, run
+`morph upgrade` and then:
 
 ```bash
-morph remote add origin /path/to/shared/morph-repo
-morph push origin main
-morph fetch origin
-morph pull origin main
+git rm -r --cached .morph
+git commit -m "stop tracking .morph/"
 ```
-
-Use Git remotes for source code collaboration. Use Morph remotes for behavioral history sync. They are independent.
-
-### Branches
-
-Each system has its own branch namespace. You can align names (`main` in both) for clarity, but Morph never reads Git refs and Git never reads Morph refs.
 
 ### CI integration
 
-In CI, clone the Git repo (which includes `.morph/` if you checked it in), then use Morph CLI for behavioral gating:
+In CI, clone the git repo as usual, then use Morph for behavioral
+gating against the freshly produced metrics:
 
 ```yaml
-# GitHub Actions example
 - name: Run tests
   run: cargo test --workspace 2>&1 | tee test-output.txt
 
@@ -183,14 +171,18 @@ In CI, clone the Git repo (which includes `.morph/` if you checked it in), then 
     TOTAL=$(grep -c "^test " test-output.txt || echo 0)
     echo "{\"tests_passed\": $PASSED, \"tests_total\": $TOTAL}" > metrics.json
 
-- name: Certify with Morph
+- name: Certify with morph
   run: morph certify --metrics-file metrics.json --runner github-actions
 
 - name: Gate check
   run: morph gate
 ```
 
-Both `certify` and `gate` support `--json` for machine-readable output. Gate exit code 0 = pass, 1 = fail.
+Both `certify` and `gate` support `--json` for machine-readable
+output. Gate exit code `0` = pass, `1` = fail.
+
+If your CI also pushes behavioral history to a team morph remote,
+add `morph push team main` after `morph certify`.
 
 ### Policy
 
@@ -202,7 +194,8 @@ morph policy show               # inspect current policy
 ### Hosted service
 
 ```bash
-morph serve                     # browse Morph state in a browser
+morph serve                     # browse morph state in a browser
 ```
 
-Complements Git hosting (GitHub, GitLab) — a behavioral evidence dashboard alongside your code review tool.
+Complements git hosting (GitHub, GitLab) — a behavioral evidence
+dashboard alongside your code review tool.

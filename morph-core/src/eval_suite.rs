@@ -80,15 +80,13 @@ pub fn compute_eval_gaps(
         }));
     }
 
-    // PR 6 (Stowaway hardening): in reference mode, drift between
-    // git HEAD and the last-mirrored morph commit is a real evidence
-    // gap — uncertified git commits are invisible to the merge gate
-    // until they're synced. Standalone repos skip this check.
+    // Drift between git HEAD and the last-mirrored morph commit is a
+    // real evidence gap — uncertified git commits are invisible to the
+    // merge gate until they're synced. Reference mode is the only
+    // mode (v0.40+); we still guard on `is_git_working_tree` because
+    // tempdir-based unit tests use `init_repo` without a `.git/`.
     if let Some(repo_root) = morph_dir.parent() {
-        if crate::reference::is_git_working_tree(repo_root)
-            && crate::repo::read_repo_mode(morph_dir).unwrap_or(crate::repo::RepoMode::Standalone)
-                == crate::repo::RepoMode::Reference
-        {
+        if crate::reference::is_git_working_tree(repo_root) {
             let drift = crate::reference::drift_summary(store, repo_root)?;
             if !drift.is_up_to_date() {
                 gaps.push(json!({

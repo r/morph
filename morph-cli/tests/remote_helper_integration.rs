@@ -11,10 +11,12 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 fn init_repo_at(path: &std::path::Path) {
-    // Use the test-only `--no-default-policy` so legacy fixtures
-    // that commit without metrics keep working post-Phase-2a.
+    // Reference mode is the only mode (v0.40+); `morph init` needs a
+    // git repo alongside, so `--git-init` makes the tempdir into one
+    // first. `--no-default-policy` keeps legacy fixtures permissive.
     let mut cmd = cargo_bin_cmd!("morph");
     cmd.arg("init")
+        .arg("--git-init")
         .arg("--no-default-policy")
         .arg(path)
         .assert()
@@ -118,13 +120,14 @@ fn remote_helper_lists_branches() {
     let repo = dir.path();
     init_repo_at(repo);
 
-    // Make two branches via the CLI.
+    // Make two branches via the CLI. Reference-mode (the only mode
+    // in v0.40+) wraps `git commit`, so we need `git add` first.
     std::fs::write(repo.join("a.txt"), "A").unwrap();
-    cargo_bin_cmd!("morph")
+    std::process::Command::new("git")
         .current_dir(repo)
         .args(["add", "a.txt"])
-        .assert()
-        .success();
+        .status()
+        .unwrap();
     cargo_bin_cmd!("morph")
         .current_dir(repo)
         .args(["commit", "-m", "first"])
@@ -160,11 +163,11 @@ fn remote_helper_ref_read_returns_hash_or_null() {
     init_repo_at(repo);
 
     std::fs::write(repo.join("a.txt"), "A").unwrap();
-    cargo_bin_cmd!("morph")
+    std::process::Command::new("git")
         .current_dir(repo)
         .args(["add", "a.txt"])
-        .assert()
-        .success();
+        .status()
+        .unwrap();
     let out = cargo_bin_cmd!("morph")
         .current_dir(repo)
         .args(["commit", "-m", "first", "--json"])
@@ -206,11 +209,11 @@ fn remote_helper_has_and_get_object() {
     init_repo_at(repo);
 
     std::fs::write(repo.join("a.txt"), "A").unwrap();
-    cargo_bin_cmd!("morph")
+    std::process::Command::new("git")
         .current_dir(repo)
         .args(["add", "a.txt"])
-        .assert()
-        .success();
+        .status()
+        .unwrap();
     let out = cargo_bin_cmd!("morph")
         .current_dir(repo)
         .args(["commit", "-m", "first", "--json"])

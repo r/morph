@@ -19,7 +19,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'v1'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [reference-sync, --backfill]
     # Stack 5 git commits with the post-commit hook suppressed so
     # none of them get mirrored. With Bug 2 in place, drift_summary
@@ -43,7 +43,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'v1'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [reference-sync, --backfill]
     - shell: |
         for i in 2 3 4 5 6; do
@@ -74,7 +74,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'v1'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [reference-sync, --backfill]
     - shell: |
         for i in 2 3 4 5 6; do

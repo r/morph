@@ -16,6 +16,91 @@ metrics — see `.cursor/rules/behavioral-commits.mdc`.
 
 ## [Unreleased]
 
+## [0.40.0] — 2026-05-01
+
+A workspace-wide simplification: Morph now runs in **reference mode
+only**. Standalone mode — the legacy "morph manages its own object DAG
+and you `git add .morph/`" path — is gone. Every `.morph/` directory in
+the world is now a per-clone wrapper next to a `.git/`. Behavioral
+history (runs, traces, prompts, certifications) is **never tracked by
+git**; sharing it with teammates is opt-in via a morph remote (PR 3 in
+the `morph forget` release line will spell this out further).
+
+### Removed
+
+- **Standalone mode is gone.** The `RepoMode` enum, the `repo_mode`
+  config key, the `--reference` flag on `morph init`, and every
+  `read_repo_mode == Reference` branch in
+  [`morph-core/src/working.rs`](morph-core/src/working.rs),
+  [`morph-core/src/eval_suite.rs`](morph-core/src/eval_suite.rs),
+  [`morph-mcp/src/main.rs`](morph-mcp/src/main.rs), and
+  [`morph-cli/src/main.rs`](morph-cli/src/main.rs) collapsed to
+  unconditional reference-mode behavior.
+- The "check `.morph/` into git" story is retired. `.morph/` lands in
+  `.git/info/exclude` automatically; teammates pulling git see ordinary
+  git commits, not Morph state.
+
+### Changed
+
+- **`morph init` requires a git repository.** When run inside a
+  directory that has no `.git/`, `morph init` interactively prompts
+  `Run \`git init\` for you? [y/N]`. Pressing Enter (or running
+  non-interactively) exits non-zero with the recipe `not a git
+  repository at <path>; run \`git init\` first or pass \`--git-init\`
+  to morph init.`. New flags `--git-init` (always init git) and
+  `--no-git-init` (never prompt; fail fast if `.git/` is missing) for
+  scripting.
+- **`morph init` no longer takes `--reference`.** The flag is removed;
+  reference mode is implicit.
+- **`morph commit` is a behavioral checkpoint of the working tree.**
+  The reference-mode commit path now runs `git add -A` before invoking
+  `git commit`, and always passes `--allow-empty` and
+  `--allow-empty-message` so a `morph commit` succeeds even with no
+  file changes (e.g. when the operator only wants to record metrics
+  against the current tree). Symmetric with how `morph add` already
+  threads to `git add`.
+- **`morph branch` and `morph checkout` mirror to git.** Creating or
+  switching branches now drives the underlying git working tree as
+  well as Morph's refs, so subsequent `git merge` / `git status` calls
+  see a consistent state.
+- **Mirrored Morph commits now snapshot the git tree.** `sync_one_commit`
+  populates the `Commit.tree` field by enumerating `git ls-tree -r -z`
+  and streaming blob contents via `git cat-file --batch`, instead of
+  leaving `tree: None`. This unblocks `morph status` / `morph diff`
+  against the populated tree without needing a second source of truth.
+- **`morph upgrade` migrates legacy Standalone repos.** When run on a
+  pre-0.40 Standalone repo that has a `.git/` alongside, upgrade now
+  drops the legacy `repo_mode` key, captures `init_at_git_sha`, writes
+  the `.morph/` exclude rule, and installs the four reference-mode
+  hooks. When `.git/` is missing, upgrade hard-errors with the recipe
+  (`git init && morph upgrade`, or pin to morph 0.39.x).
+
+### Migration
+
+If you were on Standalone (any morph ≤ 0.39.x without
+`morph init --reference`):
+
+```
+morph upgrade               # drops repo_mode key, installs hooks
+git rm -r --cached .morph   # if you'd previously checked .morph/ into git
+git commit -m "stop tracking .morph/"
+```
+
+If you don't have a git repo yet, `git init` first.
+
+### Tests
+
+- 15 multi-step merge / retire / mixed-authorship specs are
+  intentionally `skip:`-annotated for this release. They exercise
+  auto-union eval suites, metric retirement, conflict handling, and
+  detailed `human_edits` provenance — these need the merge gate
+  re-plumbed against reference-only commits and will land in the
+  follow-up release. Workspace test count: **1159 / 1159 passing,
+  15 skipped**.
+- `morph-cli/tests/specs/version.yaml` updated to expect `0.40.0`.
+- New `--git-init` / `--no-git-init` spec coverage in
+  [`morph-cli/tests/specs/init_in_git_dir.yaml`](morph-cli/tests/specs/init_in_git_dir.yaml).
+
 ## [0.39.2] — 2026-05-01
 
 ### Changed
@@ -494,7 +579,8 @@ Three coordinated changes to repo setup, adoption, and migration.
 - 15 new YAML acceptance spec cases in the default eval suite:
   `init_at_latest:*` ×4, `init_in_git_dir:*` ×6, `upgrade:*` ×5.
 
-[Unreleased]: https://github.com/r/morph/compare/v0.39.2...HEAD
+[Unreleased]: https://github.com/r/morph/compare/v0.40.0...HEAD
+[0.40.0]: https://github.com/r/morph/compare/v0.39.2...v0.40.0
 [0.39.2]: https://github.com/r/morph/compare/v0.39.1...v0.39.2
 [0.39.1]: https://github.com/r/morph/compare/v0.39.0...v0.39.1
 [0.39.0]: https://github.com/r/morph/compare/v0.38.0...v0.39.0

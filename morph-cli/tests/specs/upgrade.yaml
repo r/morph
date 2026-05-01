@@ -70,7 +70,7 @@
   # an older binary.
   init: false
   steps:
-    - morph: [init, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [upgrade]
       stdout_contains: "No upgrade needed"
 

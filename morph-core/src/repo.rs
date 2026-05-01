@@ -193,45 +193,18 @@ pub fn is_bare(morph_dir: &Path) -> Result<bool, MorphError> {
     Ok(config.get("bare").and_then(|v| v.as_bool()).unwrap_or(false))
 }
 
-/// PR 2: how a Morph repository relates to its enclosing Git repo.
-///
-/// `Standalone` (default) — Morph owns its own object DAG end to end.
-/// Pre-PR-2 repos are always `Standalone` because the field didn't
-/// exist; treating absence as standalone is forward-compatible.
-///
-/// `Reference` — Morph sits alongside an existing Git repo and mirrors
-/// every Git commit into a Morph commit (via `morph reference-sync` or
-/// the installed post-commit hook). File contents stay in Git's object
-/// database; Morph stores only behavioral metadata (Pipelines,
-/// EvalSuites, Commits, Runs, Traces, Annotations).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RepoMode {
-    Standalone,
-    Reference,
-}
+// Reference mode is the only mode (v0.40+). Repos created by `morph
+// init` are always reference-mode wrappers next to a `.git/`. The
+// `repo_mode` config key still exists in the schema for forward-
+// compatibility — `morph upgrade` strips it from legacy Standalone
+// repos — but nothing in the codebase branches on it anymore.
 
-impl RepoMode {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            RepoMode::Standalone => "standalone",
-            RepoMode::Reference => "reference",
-        }
-    }
-    pub fn from_config_str(s: &str) -> Option<Self> {
-        match s {
-            "standalone" => Some(RepoMode::Standalone),
-            "reference" => Some(RepoMode::Reference),
-            _ => None,
-        }
-    }
-}
-
-const REPO_MODE_KEY: &str = "repo_mode";
 const REPO_SUBMODE_KEY: &str = "repo_submode";
 const INIT_AT_GIT_SHA_KEY: &str = "init_at_git_sha";
+const LEGACY_REPO_MODE_KEY: &str = "repo_mode";
 
-/// PR 10: within `RepoMode::Reference`, distinguishes how aggressively
-/// Morph asserts authority over the local git workflow.
+/// PR 10: distinguishes how aggressively Morph asserts authority
+/// over the local git workflow.
 ///
 /// `Stowaway` (default) — Morph is one teammate's private layer on
 /// top of a shared git repo. The repo also produces git commits via
@@ -272,27 +245,54 @@ impl RepoSubmode {
     }
 }
 
-/// Read the repo mode from `<morph_dir>/config.json`. Returns
-/// `RepoMode::Standalone` when the field is missing or unrecognised so
-/// every pre-PR-2 repo continues to behave exactly as before.
-pub fn read_repo_mode(morph_dir: &Path) -> Result<RepoMode, MorphError> {
+/// True when `<morph_dir>/config.json` carries a legacy
+/// `repo_mode: "standalone"` field. Used by `morph upgrade` to detect
+/// pre-0.40 repos that need the reference-mode bootstrap (write
+/// `.git/info/exclude`, install hooks, capture `init_at_git_sha`).
+/// Repos that never had the key (or that have `repo_mode: "reference"`)
+/// return `false`.
+pub fn is_legacy_standalone(morph_dir: &Path) -> Result<bool, MorphError> {
     let config_path = morph_dir.join(CONFIG_FILE);
     if !config_path.exists() {
-        return Ok(RepoMode::Standalone);
+        return Ok(false);
     }
     let data = std::fs::read_to_string(&config_path)?;
     let config: serde_json::Value =
         serde_json::from_str(&data).map_err(|e| MorphError::Serialization(e.to_string()))?;
     Ok(config
-        .get(REPO_MODE_KEY)
+        .get(LEGACY_REPO_MODE_KEY)
         .and_then(|v| v.as_str())
-        .and_then(RepoMode::from_config_str)
-        .unwrap_or(RepoMode::Standalone))
+        .map(|s| s == "standalone")
+        .unwrap_or(false))
 }
 
-/// Read the git SHA that was HEAD at `morph init --reference` time.
-/// `None` when not in reference mode or when init happened against an
-/// empty git repo (no commits yet).
+/// Strip the legacy `repo_mode` config key from
+/// `<morph_dir>/config.json` (and write back). Idempotent — returns
+/// `Ok(false)` when the key was already absent. Called by
+/// `morph upgrade` after the standalone→reference bootstrap so the
+/// schema reflects the new world.
+pub fn drop_legacy_repo_mode(morph_dir: &Path) -> Result<bool, MorphError> {
+    let config_path = morph_dir.join(CONFIG_FILE);
+    if !config_path.exists() {
+        return Ok(false);
+    }
+    let data = std::fs::read_to_string(&config_path)?;
+    let mut config: serde_json::Value =
+        serde_json::from_str(&data).map_err(|e| MorphError::Serialization(e.to_string()))?;
+    let obj = match config.as_object_mut() {
+        Some(o) => o,
+        None => return Ok(false),
+    };
+    if obj.remove(LEGACY_REPO_MODE_KEY).is_none() {
+        return Ok(false);
+    }
+    std::fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap())?;
+    Ok(true)
+}
+
+/// Read the git SHA that was HEAD at `morph init` time. `None` when
+/// init happened against an empty git repo (no commits yet) or when
+/// the field is missing (pre-PR-2 repos that never recorded it).
 pub fn read_init_at_git_sha(morph_dir: &Path) -> Result<Option<String>, MorphError> {
     let config_path = morph_dir.join(CONFIG_FILE);
     if !config_path.exists() {
@@ -307,12 +307,13 @@ pub fn read_init_at_git_sha(morph_dir: &Path) -> Result<Option<String>, MorphErr
         .map(|s| s.to_string()))
 }
 
-/// Mark a repo as reference mode. Writes `repo_mode: "reference"` and
-/// optionally `init_at_git_sha` to `<morph_dir>/config.json`. Idempotent
-/// — overwrites prior values. Used by `morph init --reference`.
-pub fn write_reference_mode(
+/// Write `init_at_git_sha` to `<morph_dir>/config.json`. Called by
+/// `morph init` to record the git HEAD that morph was bootstrapped
+/// against, so `morph reference-sync --backfill` knows where to
+/// start walking. Idempotent — overwrites prior values.
+pub fn write_init_at_git_sha(
     morph_dir: &Path,
-    init_at_git_sha: Option<&str>,
+    init_at_git_sha: &str,
 ) -> Result<(), MorphError> {
     let config_path = morph_dir.join(CONFIG_FILE);
     let mut config: serde_json::Value = if config_path.exists() {
@@ -326,10 +327,7 @@ pub fn write_reference_mode(
             "config.json is not a JSON object".into(),
         ));
     }
-    config[REPO_MODE_KEY] = serde_json::Value::String(RepoMode::Reference.as_str().into());
-    if let Some(sha) = init_at_git_sha {
-        config[INIT_AT_GIT_SHA_KEY] = serde_json::Value::String(sha.to_string());
-    }
+    config[INIT_AT_GIT_SHA_KEY] = serde_json::Value::String(init_at_git_sha.to_string());
     std::fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap())?;
     Ok(())
 }

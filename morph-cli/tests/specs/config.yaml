@@ -54,7 +54,13 @@
     - morph: [config, "user.name"]
       stdout_contains: "Second"
 
-# PR 6 stage A cycle 3: name-only config is reflected on commits.
+# Reference-mode commits shell out to `git commit --author`, which
+# requires the `Name <email>` shape. When morph identity has only
+# `user.name` set, the wrapper synthesises a placeholder local-part
+# email under `morph.local` so git accepts the author. The placeholder
+# is preserved on the recorded morph commit (read back via `git log
+# %aN <%aE>`); subsequent commits with `user.email` set produce a
+# clean `Name <email>` author.
 - name: commit_uses_user_name_from_config
   files:
     a.txt: "x"
@@ -67,7 +73,7 @@
         field: hash
       assert_hash: true
     - morph: [show, "${commit_hash}"]
-      stdout_contains: '"author": "Raffi"'
+      stdout_contains: '"author": "Raffi <raffi@morph.local>"'
 
 # Cycle 4: name + email combined.
 - name: commit_uses_user_name_and_email_from_config
@@ -86,6 +92,9 @@
       stdout_contains: '"author": "Raffi <r@example.com>"'
 
 # Cycle 5: explicit --author wins over env, env wins over config.
+# Reference mode formats bare names as `Name <name@morph.local>` so
+# `git commit --author` accepts the value (see commit_uses_user_name_from_config
+# for the rationale).
 - name: commit_explicit_author_overrides_config
   files:
     a.txt: "x"
@@ -98,7 +107,7 @@
         field: hash
       assert_hash: true
     - morph: [show, "${commit_hash}"]
-      stdout_contains: '"author": "Override"'
+      stdout_contains: '"author": "Override <override@morph.local>"'
 
 # PR 6 stage B cycle 8: every commit carries the repo's
 # auto-generated `agent.instance_id` so cross-machine merges can

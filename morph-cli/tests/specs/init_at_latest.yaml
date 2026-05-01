@@ -9,7 +9,7 @@
 - name: init_writes_repo_version_at_latest
   init: false
   steps:
-    - morph: [init, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
   assert:
     - kind: file_contains
       path: .morph/config.json
@@ -37,7 +37,7 @@
   files:
     .morph/prompts/p.txt: "hello"
   steps:
-    - morph: [init, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - shell: "echo hello > note.txt"
     - morph: [add, note.txt]
     - morph: [commit, -m, "first", --allow-empty-metrics]
@@ -55,6 +55,6 @@
   # any future regression is caught at the spec level.
   init: false
   steps:
-    - morph: [init, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [status]
       stdout_contains: "nothing to commit"

@@ -7,8 +7,8 @@
     - repo_a
     - repo_b
   steps:
-    - morph: [init, "${repo}/repo_a"]
-    - morph: [init, "${repo}/repo_b"]
+    - morph: [init, --git-init, "${repo}/repo_a"]
+    - morph: [init, --git-init, "${repo}/repo_b"]
 
     # Create a commit in repo_a
     - write_file:
@@ -39,8 +39,8 @@
     - repo_a
     - repo_b
   steps:
-    - morph: [init, "${repo}/repo_a"]
-    - morph: [init, "${repo}/repo_b"]
+    - morph: [init, --git-init, "${repo}/repo_a"]
+    - morph: [init, --git-init, "${repo}/repo_b"]
 
     # Create commit in repo_a
     - write_file:
@@ -69,8 +69,8 @@
     - local
     - remote
   steps:
-    - morph: [init, "${repo}/local"]
-    - morph: [init, "${repo}/remote"]
+    - morph: [init, --git-init, "${repo}/local"]
+    - morph: [init, --git-init, "${repo}/remote"]
 
     # Divergent histories
     - write_file:
@@ -103,8 +103,8 @@
     - local
     - remote
   steps:
-    - morph: [init, "${repo}/local"]
-    - morph: [init, "${repo}/remote"]
+    - morph: [init, --git-init, "${repo}/local"]
+    - morph: [init, --git-init, "${repo}/remote"]
 
     # Record a session in local
     - morph: [run, record-session, --prompt, "fix bug", --response, "done"]
@@ -148,8 +148,8 @@
     - repo_a
     - repo_b
   steps:
-    - morph: [init, "${repo}/repo_a"]
-    - morph: [init, "${repo}/repo_b"]
+    - morph: [init, --git-init, "${repo}/repo_a"]
+    - morph: [init, --git-init, "${repo}/repo_b"]
 
     - write_file:
         path: repo_a/shared.txt
@@ -197,8 +197,8 @@
     - repo_a
     - repo_b
   steps:
-    - morph: [init, "${repo}/repo_a"]
-    - morph: [init, "${repo}/repo_b"]
+    - morph: [init, --git-init, "${repo}/repo_a"]
+    - morph: [init, --git-init, "${repo}/repo_b"]
 
     - write_file:
         path: repo_a/shared.txt
@@ -254,8 +254,8 @@
     - repo_a
     - repo_b
   steps:
-    - morph: [init, "${repo}/repo_a"]
-    - morph: [init, "${repo}/repo_b"]
+    - morph: [init, --git-init, "${repo}/repo_a"]
+    - morph: [init, --git-init, "${repo}/repo_b"]
 
     - write_file:
         path: repo_a/shared.txt
@@ -305,8 +305,8 @@
     - repo_a
     - repo_b
   steps:
-    - morph: [init, "${repo}/repo_a"]
-    - morph: [init, "${repo}/repo_b"]
+    - morph: [init, --git-init, "${repo}/repo_a"]
+    - morph: [init, --git-init, "${repo}/repo_b"]
 
     - write_file:
         path: repo_a/data.txt
@@ -332,7 +332,7 @@
   dirs:
     - repo
   steps:
-    - morph: [init, "${repo}/repo"]
+    - morph: [init, --git-init, "${repo}/repo"]
     - write_file:
         path: repo/a.txt
         content: "x"
@@ -353,8 +353,8 @@
     - repo_a
     - repo_b
   steps:
-    - morph: [init, "${repo}/repo_a"]
-    - morph: [init, "${repo}/repo_b"]
+    - morph: [init, --git-init, "${repo}/repo_a"]
+    - morph: [init, --git-init, "${repo}/repo_b"]
 
     # Create commit in repo_a
     - write_file:

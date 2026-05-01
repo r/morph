@@ -9,7 +9,7 @@
 - name: setup_claude_code_creates_settings_json
   init: false
   steps:
-    - morph: [init, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [setup, claude-code, --path, "${repo}"]
       stdout_contains: "Claude Code integration installed"
   assert:
@@ -25,7 +25,7 @@
 - name: setup_claude_code_settings_has_mcp_morph
   init: false
   steps:
-    - morph: [init, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [setup, claude-code, --path, "${repo}"]
   assert:
     # Use file_contains so we don't pin exact JSON formatting.
@@ -42,7 +42,7 @@
 - name: setup_claude_code_settings_has_hooks
   init: false
   steps:
-    - morph: [init, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [setup, claude-code, --path, "${repo}"]
   assert:
     - kind: file_contains
@@ -61,7 +61,7 @@
 - name: setup_claude_code_hook_scripts_have_shebang
   init: false
   steps:
-    - morph: [init, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [setup, claude-code, --path, "${repo}"]
   assert:
     - kind: file_contains
@@ -81,7 +81,7 @@
 - name: setup_claude_code_idempotent
   init: false
   steps:
-    - morph: [init, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [setup, claude-code, --path, "${repo}"]
     - morph: [setup, claude-code, --path, "${repo}"]
       stdout_contains: "Claude Code integration installed"
@@ -115,7 +115,7 @@
         }
       }
   steps:
-    - morph: [init, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [setup, claude-code, --path, "${repo}"]
   assert:
     # Existing top-level settings preserved

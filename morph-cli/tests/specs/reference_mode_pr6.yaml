@@ -29,7 +29,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
   assert:
     - kind: file_exists
       path: .git/info/exclude
@@ -44,14 +44,14 @@
     # Pre-seed the exclude file with the same line — init must not
     # duplicate it.
     - shell: "mkdir -p .git/info && printf '.morph/\\n' > .git/info/exclude"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - shell: "test \"$(grep -c '^\\.morph/$' .git/info/exclude)\" = 1"
 
 - name: install_hooks_writes_morph_to_git_info_exclude_when_missing
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     # Wipe the exclude so install-hooks has work to do.
     - shell: "rm -f .git/info/exclude"
     - morph: [install-hooks]
@@ -67,7 +67,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
       stdout_contains:
         - "local to this clone"
 
@@ -84,7 +84,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
   assert:
     - kind: file_exists
       path: .git/hooks/post-merge
@@ -96,7 +96,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - shell: "MORPH_INTERNAL=1 git commit --allow-empty -q -m 'second'"
     # Calling the dispatcher directly is what `git merge` does after
     # the post-merge hook is wired. Should mirror the new HEAD.
@@ -110,7 +110,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [reference-sync, --backfill]
     # Build a divergent branch + merge it back with --no-ff so a
     # merge commit is produced. The installed post-merge hook should
@@ -130,7 +130,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [reference-sync, --backfill]
     - morph: [status]
       stdout_contains:
@@ -141,7 +141,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [reference-sync, --backfill]
     # Add two git commits with the hook suppressed so morph stays
     # behind. This is the shape of a fast-forward pull from
@@ -164,7 +164,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [reference-sync, --backfill]
     # Capture both the original git SHA and the original morph commit
     # hash so we can drive `morph hook post-rewrite` manually below.
@@ -201,7 +201,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [reference-sync, --backfill]
     - shell: "MORPH_INTERNAL=1 git commit --allow-empty -q -m 'teammate'"
     - morph: [eval, gaps, --json]
@@ -211,7 +211,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [reference-sync, --backfill]
     - shell: "MORPH_INTERNAL=1 git commit --allow-empty -q -m 'teammate'"
     - morph: [reference-sync]

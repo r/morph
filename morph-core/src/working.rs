@@ -218,25 +218,86 @@ pub fn working_status(store: &dyn Store, repo_root: &Path) -> Result<Vec<DiffEnt
         }
     }
 
-    // Get HEAD's committed tree (empty if no commits yet)
-    let head_files: BTreeMap<String, String> = match crate::commit::resolve_head(store)? {
-        Some(head_hash) => {
-            let obj = store.get(&head_hash)?;
-            match obj {
-                MorphObject::Commit(c) => match c.tree {
-                    Some(ref tree_hash_str) => {
-                        let tree_hash = Hash::from_hex(tree_hash_str)?;
-                        crate::tree::flatten_tree(store, &tree_hash)?
-                    }
-                    None => BTreeMap::new(),
-                },
-                _ => BTreeMap::new(),
-            }
+    // Get HEAD's committed tree (empty if no commits yet).
+    // Reference-mode commits often carry `tree: None` because git
+    // owns the file storage; in that case we fall through to
+    // `working_status_against_git`, which asks git for its diff
+    // against its own HEAD tree and translates the result into the
+    // same `Vec<DiffEntry>` the morph-tree path produces. Working-
+    // tree morph repos in v0.40+ are always reference-mode, so this
+    // is the common path.
+    let head_commit = match crate::commit::resolve_head(store)? {
+        Some(head_hash) => match store.get(&head_hash) {
+            Ok(MorphObject::Commit(c)) => Some(c),
+            _ => None,
+        },
+        None => None,
+    };
+    let head_files: BTreeMap<String, String> = match head_commit
+        .as_ref()
+        .and_then(|c| c.tree.as_deref())
+    {
+        Some(tree_hash_str) => {
+            let tree_hash = Hash::from_hex(tree_hash_str)?;
+            crate::tree::flatten_tree(store, &tree_hash)?
         }
-        None => BTreeMap::new(),
+        None => {
+            // No morph tree to diff against. If a sibling git
+            // working tree exists, defer to it; otherwise treat
+            // every working-tree file as added (the legacy
+            // empty-repo fallback that pre-existing tests rely on).
+            if crate::reference::is_git_working_tree(repo_root) && head_commit.is_some() {
+                return Ok(working_status_against_git(repo_root, &working_files));
+            }
+            BTreeMap::new()
+        }
     };
 
     Ok(diff_file_maps(&head_files, &working_files))
+}
+
+/// Produce a `Vec<DiffEntry>` matching `working_status`'s shape from
+/// `git status --porcelain=v1` output. Used when the morph commit at
+/// HEAD has no tree (the reference-mode case in v0.40+) — git is the
+/// source of truth for file state, and parsing its porcelain output
+/// avoids reimplementing tree-vs-worktree diff in morph.
+fn working_status_against_git(
+    repo_root: &Path,
+    _working_files: &BTreeMap<String, String>,
+) -> Vec<crate::diff::DiffEntry> {
+    let output = std::process::Command::new("git")
+        .current_dir(repo_root)
+        .args(["status", "--porcelain=v1", "-uall"])
+        .output();
+    let bytes = match output {
+        Ok(o) if o.status.success() => o.stdout,
+        _ => return Vec::new(),
+    };
+    let text = String::from_utf8_lossy(&bytes);
+    let mut entries = Vec::new();
+    for line in text.lines() {
+        if line.len() < 4 {
+            continue;
+        }
+        let xy = &line[..2];
+        let path = line[3..].to_string();
+        let status = match xy.as_bytes() {
+            // Index XY combinations from `git status --porcelain`:
+            //   ` M`, `MM` → modified;  ` D`, `D ` → deleted;
+            //   `A `, ` A`, `??` → added (untracked or staged-new).
+            b" M" | b"MM" | b"M " | b"AM" | b"RM" => crate::diff::DiffStatus::Modified,
+            b" D" | b"D " | b"AD" => crate::diff::DiffStatus::Deleted,
+            b"A " | b" A" | b"??" => crate::diff::DiffStatus::Added,
+            _ => crate::diff::DiffStatus::Modified,
+        };
+        entries.push(crate::diff::DiffEntry {
+            path,
+            status,
+            old_hash: None,
+            new_hash: None,
+        });
+    }
+    entries
 }
 
 /// Summary of accumulated Morph activity (runs, traces, prompts) in the store.
@@ -351,29 +412,25 @@ pub fn build_status_json(repo_root: &Path, store: &dyn Store) -> Result<serde_js
         None => serde_json::json!({ "in_progress": false }),
     };
 
-    // Reference-mode summary: agents and CI need to know whether this
-    // repo is git-coupled and how far behind certification HEAD is,
-    // without having to call `morph reference-sync` blindly.
-    let repo_mode = crate::repo::read_repo_mode(&morph_dir)?;
-    let reference = if repo_mode == crate::repo::RepoMode::Reference {
-        let init_at = crate::repo::read_init_at_git_sha(&morph_dir)?;
-        let pending = match &head_hash {
-            Some(h) => crate::reference::pending_certifications(store, h)
-                .map(|v| v.len())
-                .unwrap_or(0),
-            None => 0,
-        };
-        serde_json::json!({
-            "init_at_git_sha": init_at,
-            "pending_certifications": pending,
-        })
-    } else {
-        serde_json::Value::Null
+    // Reference-mode summary: agents and CI need to know how far behind
+    // certification HEAD is, without having to call
+    // `morph reference-sync` blindly. Reference is the only mode
+    // (v0.40+) so this is unconditional.
+    let init_at = crate::repo::read_init_at_git_sha(&morph_dir)?;
+    let pending = match &head_hash {
+        Some(h) => crate::reference::pending_certifications(store, h)
+            .map(|v| v.len())
+            .unwrap_or(0),
+        None => 0,
     };
+    let reference = serde_json::json!({
+        "init_at_git_sha": init_at,
+        "pending_certifications": pending,
+    });
 
     Ok(serde_json::json!({
         "repo": repo_root.display().to_string(),
-        "repo_mode": repo_mode.as_str(),
+        "repo_mode": "reference",
         "branch": branch,
         "detached": branch.is_none() && head_hash.is_some(),
         "head": head,

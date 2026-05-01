@@ -27,46 +27,58 @@ fn long_version() -> &'static str {
 
 #[derive(clap::Subcommand)]
 pub enum Command {
-    /// Initialize a Morph repository
+    /// Initialize a Morph repository alongside a Git repository.
+    /// `morph init` always sets up reference mode (Morph wraps Git;
+    /// `.morph/` is excluded from Git via `.git/info/exclude`; the
+    /// post-commit hook mirrors every `git commit` into a Morph
+    /// commit). When `path` isn't a Git working tree, the command
+    /// asks interactively whether to run `git init` for you;
+    /// `--git-init` and `--no-git-init` make that decision explicit
+    /// for scripts and CI.
     Init {
         #[arg(default_value = ".")]
         path: PathBuf,
         /// Create a bare repository at `path` (no working tree, no
-        /// `.morph/` wrapper). Use this on a server you intend to
-        /// `morph push` to via SSH.
-        #[arg(long, conflicts_with = "reference")]
+        /// `.morph/` wrapper, no Git requirement). Use this on a
+        /// server you intend to `morph push` to via SSH. Mutually
+        /// exclusive with the working-tree flags.
+        #[arg(long, conflicts_with_all = ["solo", "git_init", "no_git_init"])]
         bare: bool,
-        /// Initialize in *reference mode*: Morph sits alongside an
-        /// existing Git repository. Git owns file storage; Morph
-        /// stores only behavioral metadata and mirrors every git
-        /// commit into a Morph commit (via the post-commit hook
-        /// installed automatically). Requires `path` to be a git
-        /// working tree. Mutually exclusive with `--bare`.
-        #[arg(long, conflicts_with = "bare")]
-        reference: bool,
         /// Skip writing the opinionated default RepoPolicy. Used by
         /// the spec-test harness to keep pre-Phase-2a fixtures
         /// permissive; humans should leave this off so new repos
         /// require behavioral evidence by default.
         #[arg(long, hide = true)]
         no_default_policy: bool,
-        /// Initialize reference mode in *Solo submode* — a stronger
-        /// contract than the default Stowaway. Solo installs a
-        /// `pre-merge-commit` git hook that blocks plain `git merge`
-        /// when the merged result would regress on a parent's
-        /// certified metrics. Use this only when every developer on
-        /// the project uses morph; otherwise teammates' git workflows
-        /// can be surprised by a sudden gate. Requires `--reference`.
-        #[arg(long, requires = "reference")]
+        /// Initialize in *Solo submode* — a stronger contract than
+        /// the default Stowaway. Solo installs a `pre-merge-commit`
+        /// git hook that blocks plain `git merge` when the merged
+        /// result would regress on a parent's certified metrics. Use
+        /// this only when every developer on the project uses morph;
+        /// otherwise teammates' git workflows can be surprised by a
+        /// sudden gate.
+        #[arg(long)]
         solo: bool,
+        /// Run `git init` first when `path` is not a Git working
+        /// tree. Skips the interactive prompt — useful for scripts
+        /// and CI that need a non-interactive `morph init` to
+        /// succeed in a fresh directory. Mutually exclusive with
+        /// `--no-git-init`.
+        #[arg(long, conflicts_with = "no_git_init")]
+        git_init: bool,
+        /// Refuse to run `git init` even when `path` is not a Git
+        /// working tree. Errors immediately with the recipe instead
+        /// of prompting. Mutually exclusive with `--git-init`.
+        #[arg(long, conflicts_with = "git_init")]
+        no_git_init: bool,
     },
-    /// Mirror the current Git HEAD into a Morph commit. In reference
-    /// mode this is invoked by the installed post-commit hook after
-    /// every `git commit`; you can also run it manually to recover
-    /// from a missed sync. Errors when the repo is not in reference
-    /// mode. The created Morph commit has `morph_origin = "git-hook"`
-    /// and empty inline metrics — late certification (`morph certify`)
-    /// attaches evidence afterwards.
+    /// Mirror the current Git HEAD into a Morph commit. Invoked by
+    /// the installed post-commit hook after every `git commit`; you
+    /// can also run it manually to recover from a missed sync.
+    /// Errors when there's no Git working tree alongside the morph
+    /// repo. The created Morph commit has `morph_origin =
+    /// "git-hook"` and empty inline metrics — late certification
+    /// (`morph certify`) attaches evidence afterwards.
     #[command(name = "reference-sync")]
     ReferenceSync {
         /// Walk git log from `init_at_git_sha` (inclusive) to HEAD and
@@ -80,8 +92,11 @@ pub enum Command {
     /// hooks that already match the canonical script; refuses to
     /// clobber a hook with foreign content. The `--solo` /
     /// `--stowaway` flags also flip the repo's submode (PR 10):
-    /// Stowaway (default) installs four passive observers, Solo adds
-    /// the active `pre-merge-commit` gate.
+    /// Stowaway (the default) installs four passive observers, Solo
+    /// adds the active `pre-merge-commit` gate. Errors when this
+    /// morph repo isn't sitting next to a `.git/` (reference mode is
+    /// the only mode in v0.40+; bare repos don't host a working tree
+    /// and don't need hooks).
     #[command(name = "install-hooks")]
     InstallHooks {
         /// Switch to Solo submode and install the `pre-merge-commit`

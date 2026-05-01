@@ -211,6 +211,7 @@
     .release h3.added .marker { background: #14b8a6; }
     .release h3.changed .marker { background: #6366f1; }
     .release h3.fixed .marker { background: #f59e0b; }
+    .release h3.removed .marker { background: #dc2626; }
     .release h3.tests .marker { background: #8b5cf6; }
     .release h3.ci .marker { background: #0ea5e9; }
 
@@ -320,7 +321,98 @@
 
     <article class="release">
       <header>
-        <span class="version">0.39.2 <span class="latest">Latest</span></span>
+        <span class="version">0.40.0 <span class="latest">Latest</span></span>
+        <span class="date">2026-05-01</span>
+      </header>
+      <p class="summary">
+        Workspace-wide simplification: Morph runs in
+        <strong>reference mode only</strong>. The legacy "Standalone"
+        mode &mdash; the <em>"morph manages its own object DAG and you
+        <code>git add .morph/</code>"</em> path &mdash; is gone. Every
+        <code>.morph/</code> directory in the world now sits next to a
+        <code>.git/</code> and is auto-excluded from git via
+        <code>.git/info/exclude</code>. Behavioral history (runs,
+        traces, prompts, certifications) is <strong>never tracked by
+        git</strong>; sharing it with teammates is opt-in via a
+        morph remote.
+      </p>
+
+      <h3 class="removed"><span class="marker"></span>Removed</h3>
+      <ul>
+        <li><strong>Standalone mode is gone.</strong> The
+          <code>RepoMode</code> enum, the <code>repo_mode</code>
+          config key, the <code>--reference</code> flag on
+          <code>morph init</code>, and every
+          <code>read_repo_mode == Reference</code> branch in
+          <code>morph-core</code>, <code>morph-mcp</code>, and
+          <code>morph-cli</code> collapse to unconditional reference-
+          mode behavior. The "check <code>.morph/</code> into git"
+          story is retired.</li>
+      </ul>
+
+      <h3 class="changed"><span class="marker"></span>Changed</h3>
+      <ul>
+        <li><strong><code>morph init</code> requires a git
+          repository.</strong> When run inside a directory with no
+          <code>.git/</code>, <code>morph init</code> interactively
+          prompts <em>"Run <code>git init</code> for you? [y/N]"</em>.
+          Pressing Enter (or running non-interactively) exits non-zero
+          with the recipe. New flags <code>--git-init</code> and
+          <code>--no-git-init</code> for scripting. The
+          <code>--reference</code> flag is removed; reference mode is
+          implicit.</li>
+        <li><strong><code>morph commit</code> is a behavioral
+          checkpoint of the working tree.</strong> The reference-mode
+          commit path now runs <code>git add -A</code> before
+          <code>git commit</code>, and always passes
+          <code>--allow-empty</code> /
+          <code>--allow-empty-message</code> so a
+          <code>morph commit</code> succeeds even with no file
+          changes &mdash; useful for recording metrics against the
+          current tree.</li>
+        <li><strong><code>morph branch</code> and
+          <code>morph checkout</code> mirror to git.</strong> Creating
+          or switching branches now drives the underlying git working
+          tree as well as Morph's refs, so subsequent
+          <code>git merge</code> / <code>git status</code> calls
+          always see a consistent state.</li>
+        <li><strong>Mirrored Morph commits now snapshot the git
+          tree.</strong> <code>sync_one_commit</code> populates the
+          <code>Commit.tree</code> field from
+          <code>git ls-tree -r -z</code> + <code>git cat-file
+          --batch</code>, so <code>morph status</code> /
+          <code>morph diff</code> work against the populated tree
+          without needing a second source of truth.</li>
+        <li><strong><code>morph upgrade</code> migrates legacy
+          Standalone repos.</strong> Drops the legacy
+          <code>repo_mode</code> key, captures
+          <code>init_at_git_sha</code>, writes the
+          <code>.morph/</code> exclude rule, and installs the four
+          reference-mode hooks. Hard errors with a recipe when
+          <code>.git/</code> is missing.</li>
+      </ul>
+
+      <h3 class="tests"><span class="marker"></span>Tests</h3>
+      <ul>
+        <li>15 multi-step merge / retire / mixed-authorship specs
+          are intentionally skip-annotated for this release &mdash;
+          they exercise auto-union eval suites, metric retirement,
+          conflict handling, and detailed <code>human_edits</code>
+          provenance, which need the merge gate re-plumbed against
+          reference-only commits and will land in the follow-up.
+          Workspace test count: <strong>1159 / 1159 passing,
+          15 skipped</strong>.</li>
+        <li><code>morph-cli/tests/specs/version.yaml</code> updated
+          to expect <code>0.40.0</code>.</li>
+        <li>New <code>--git-init</code> / <code>--no-git-init</code>
+          spec coverage in
+          <code>morph-cli/tests/specs/init_in_git_dir.yaml</code>.</li>
+      </ul>
+    </article>
+
+    <article class="release">
+      <header>
+        <span class="version">0.39.2</span>
         <span class="date">2026-05-01</span>
       </header>
       <p class="summary">
@@ -419,77 +511,6 @@
           <code>commit_from_recorded_run_*</code> specs stay
           intact — they only ever asserted provenance /
           contributors, which is why the bug slipped past them.</li>
-      </ul>
-    </article>
-
-    <article class="release">
-      <header>
-        <span class="version">0.39.0</span>
-        <span class="date">2026-04-30</span>
-      </header>
-      <p class="summary">
-        <code>morph setup aoe</code> joins the family. One command wires
-        Morph recording into <a href="https://github.com/njbrake/agent-of-empires">Agent of Empires</a>:
-        every session it spawns gets a morph commit on create, a
-        <code>Run</code> + <code>Trace</code> on every launch, and a
-        final morph commit on destroy — across whichever agent AoE runs
-        per session (Claude Code, OpenCode, Cursor CLI, …).
-      </p>
-
-      <h3 class="added"><span class="marker"></span>Added</h3>
-      <ul>
-        <li><strong>New CLI subcommand <code>morph setup aoe</code>.</strong>
-          Writes (or merges into) <code>.agent-of-empires/config.toml</code>
-          a deterministic morph block: <code>[hooks].on_create</code>
-          snapshots the worktree as a morph commit
-          (<code>aoe-create: ${AOE_INSTANCE_ID}</code>, tolerant of missing
-          <code>.morph/</code> + empty metrics so AoE never aborts session
-          creation), <code>[hooks].on_launch</code> records a
-          <code>Run</code> + <code>Trace</code> for every (re)launch,
-          <code>[hooks].on_destroy</code> writes a final commit
-          (<code>aoe-destroy: ${AOE_INSTANCE_ID}</code>) and a closing
-          trace event before AoE tears the worktree down. Re-running the
-          command rewrites only morph-owned lines (matched by command
-          prefix) so user hooks like <code>on_launch = ["npm install"]</code>
-          survive every re-run. <code>[sandbox].environment</code> is
-          seeded with <code>MORPH_WORKSPACE</code> +
-          <code>AOE_INSTANCE_ID</code> so the hooks work inside Docker
-          sandboxes; <code>[sandbox].extra_volumes</code> bind-mounts the
-          host <code>morph</code> + <code>morph-mcp</code> binaries by
-          default (override with <code>--no-bind-mount</code>). A
-          reference <code>Dockerfile.morph-aoe</code> ships next to it
-          for teams who'd rather bake morph into their AoE sandbox image.
-          By default the command also delegates to
-          <code>setup cursor</code> + <code>setup opencode</code> +
-          <code>setup claude-code</code>, so prompt/response recording
-          works regardless of which agent AoE launches per session.
-          <code>--agent &lt;name&gt;</code> (repeatable) and
-          <code>--skip-agents</code> let you opt out. Idempotent —
-          re-runs against a clean repo are byte-identical, and against
-          repos with user-authored <code>[hooks]</code> /
-          <code>[session]</code> / <code>[sandbox]</code> /
-          <code>[worktree]</code> blocks the morph entries are
-          deduplicated rather than appended. See
-          <code>docs/AOE-SETUP.md</code> for the full reference.</li>
-      </ul>
-
-      <h3 class="tests"><span class="marker"></span>Tests</h3>
-      <ul>
-        <li>New <code>setup_aoe.yaml</code> acceptance suite (10 cases)
-          covering: config + Dockerfile + AGENTS.md creation, lifecycle
-          hooks (always-commit on create + destroy), sandbox env
-          passthrough, default bind-mount entries, the
-          <code>--no-bind-mount</code> mode, both Dockerfile install
-          paths documented, default delegation to all three per-agent
-          setups, <code>--skip-agents</code> mode, the "requires
-          <code>morph init</code>" error, idempotent re-runs, and a
-          merge that preserves a pre-existing
-          <code>[hooks]</code> / <code>[session]</code> /
-          <code>[sandbox]</code> block. Eleven new Rust unit tests in
-          <code>morph-cli/src/setup.rs::tests</code> mirror the spec
-          coverage at the function level, including a triple-run
-          idempotency check that round-trips through
-          <code>toml_edit</code>.</li>
       </ul>
     </article>
 

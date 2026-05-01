@@ -9,7 +9,7 @@ This page is the full reference for using Morph in Claude Code. For a single can
 ## Quick start (installation order)
 
 1. **Install the Morph binaries** -- see [Installation: Install the Morph binaries](INSTALLATION.md#1-install-the-morph-binaries).
-2. **Initialize** a Morph repo: `morph init` -- see [Installation: Initialize a Morph repo](INSTALLATION.md#2-initialize-a-morph-repo).
+2. **Initialize** a Morph repo *inside an existing git repo*: `morph init` -- see [Installation: Initialize a Morph repo](INSTALLATION.md#2-initialize-a-morph-repo). (If your project is not a git repo yet, `morph init` will offer to run `git init` for you.)
 3. **Run setup** to install MCP config + hooks + the recording scripts:
 
 ```bash

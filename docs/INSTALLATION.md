@@ -37,14 +37,24 @@ This installs to `~/.cargo/bin`. Ensure that directory is on your PATH.
 
 ## 2. Initialize a Morph repo
 
-In the root of the project you want to track:
+Morph requires a git repository. If your project is not yet a git
+repo, either run `git init` first or pass `--git-init` to `morph
+init` so it does it for you. From the root of the project you want
+to track:
 
 ```bash
 cd /path/to/your/project
-morph init
+morph init                # prompts to run `git init` for you if .git/ is missing
+# or, equivalent for scripts:
+morph init --git-init     # always runs `git init` first
+morph init --no-git-init  # never prompt; fail fast if .git/ is missing
 ```
 
-This creates a `.morph/` directory (objects, refs, config, prompts, runs, traces). Nothing else is modified. You only need to do this once per project.
+This creates a `.morph/` directory (objects, refs, config, prompts,
+runs, traces) **alongside** the existing `.git/` and adds `.morph/`
+to `.git/info/exclude` so morph state is never tracked by git.
+Nothing else is modified. You only need to do this once per
+project.
 
 `morph init` also writes an opinionated default `RepoPolicy` that requires `tests_total` and `tests_passed` on every commit. Use `morph policy require-metrics <name>...` to relax or change the gate (pass no names to disable it). If you need a policy-free repo for scripted tests, the hidden `--no-default-policy` flag opts out at init time. See [EVAL-DRIVEN.md](EVAL-DRIVEN.md) for the full spec-first workflow.
 

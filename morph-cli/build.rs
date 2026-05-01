@@ -20,6 +20,14 @@ struct TestSpec {
     steps: Vec<Step>,
     #[serde(default, rename = "assert")]
     assertions: Vec<Assertion>,
+    /// When set, the test is wrapped in `#[ignore]` so it compiles
+    /// (and stays visible in `cargo test --list`) but is skipped on
+    /// a default `cargo test` run. Use sparingly: typically for
+    /// behaviour that's known-broken pending a follow-up PR. The
+    /// string is the reason; rendered into the generated test as a
+    /// comment so the skip reason is greppable.
+    #[serde(default)]
+    skip: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -138,6 +146,10 @@ fn emit_test(spec: &TestSpec) -> String {
     let fn_name = spec.name.replace('-', "_");
     let do_init = spec.init.unwrap_or(true);
 
+    if let Some(reason) = &spec.skip {
+        writeln!(code, "// SKIPPED: {}", reason).unwrap();
+        writeln!(code, "#[ignore = {:?}]", reason).unwrap();
+    }
     writeln!(code, "#[test]").unwrap();
     writeln!(code, "#[allow(unused_variables)]").unwrap();
     writeln!(code, "fn spec_{}() {{", fn_name).unwrap();
@@ -147,8 +159,12 @@ fn emit_test(spec: &TestSpec) -> String {
     writeln!(code, "    let repo = path.display();").unwrap();
 
     if do_init {
-        // Pass `--no-default-policy` so pre-Phase-2a specs keep their
-        // permissive policy. Specs that test the default policy use
+        // Reference mode is the only mode (v0.40+); `morph init`
+        // requires a git repo alongside. `--git-init` does the
+        // `git init` for us so specs don't have to bracket every
+        // default-init case with their own shell step.
+        // `--no-default-policy` keeps pre-Phase-2a specs permissive
+        // — fresh specs that exercise the default policy use
         // `init: false` and run `morph init` themselves.
         writeln!(code, "    {{").unwrap();
         writeln!(
@@ -158,7 +174,7 @@ fn emit_test(spec: &TestSpec) -> String {
         .unwrap();
         writeln!(
             code,
-            "        cmd.arg(\"init\").arg(\"--no-default-policy\").arg(path).assert().success();"
+            "        cmd.arg(\"init\").arg(\"--git-init\").arg(\"--no-default-policy\").arg(path).assert().success();"
         ).unwrap();
         writeln!(code, "    }}").unwrap();
     }

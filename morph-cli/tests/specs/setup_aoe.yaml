@@ -11,7 +11,7 @@
 - name: setup_aoe_creates_config_toml
   init: false
   steps:
-    - morph: [init, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [setup, aoe, --path, "${repo}"]
       stdout_contains: "Agent of Empires integration installed"
   assert:
@@ -25,7 +25,7 @@
 - name: setup_aoe_config_has_lifecycle_hooks
   init: false
   steps:
-    - morph: [init, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [setup, aoe, --path, "${repo}"]
   assert:
     - kind: file_contains
@@ -58,7 +58,7 @@
 - name: setup_aoe_config_has_sandbox_env_and_volumes
   init: false
   steps:
-    - morph: [init, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [setup, aoe, --path, "${repo}"]
   assert:
     - kind: file_contains
@@ -81,7 +81,7 @@
 - name: setup_aoe_no_bind_mount_skips_volume_entries
   init: false
   steps:
-    - morph: [init, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [setup, aoe, --path, "${repo}", --no-bind-mount]
   assert:
     # The bind-mount paths must be absent in --no-bind-mount mode; the user
@@ -93,7 +93,7 @@
 - name: setup_aoe_dockerfile_documents_both_paths
   init: false
   steps:
-    - morph: [init, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [setup, aoe, --path, "${repo}"]
   assert:
     - kind: file_contains
@@ -109,7 +109,7 @@
 - name: setup_aoe_delegates_to_per_agent_setups_by_default
   init: false
   steps:
-    - morph: [init, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [setup, aoe, --path, "${repo}"]
   assert:
     # Cursor delegate: hooks + MCP config land under .cursor/.
@@ -131,7 +131,7 @@
 - name: setup_aoe_skip_agents_does_not_delegate
   init: false
   steps:
-    - morph: [init, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [setup, aoe, --path, "${repo}", --skip-agents]
   assert:
     - kind: file_exists
@@ -150,7 +150,7 @@
 - name: setup_aoe_idempotent
   init: false
   steps:
-    - morph: [init, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [setup, aoe, --path, "${repo}"]
     - morph: [setup, aoe, --path, "${repo}"]
       stdout_contains: "Agent of Empires integration installed"
@@ -176,7 +176,7 @@
       environment = ["MY_API_KEY"]
       extra_volumes = ["/data:/data:ro"]
   steps:
-    - morph: [init, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [setup, aoe, --path, "${repo}"]
   assert:
     # User's existing settings preserved.

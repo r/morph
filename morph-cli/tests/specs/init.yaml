@@ -1,7 +1,7 @@
 - name: init_creates_morph_dir
   init: false
   steps:
-    - morph: [init, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
   assert:
     - kind: dir_exists
       path: .morph
@@ -28,14 +28,14 @@
 - name: init_prints_message
   init: false
   steps:
-    - morph: [init, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
       stdout_contains: "Initialized empty Morph repository"
 
 # After fresh init, CLI commands in repo root should behave sensibly (Cursor perspective).
 - name: init_then_cli_sane
   init: false
   steps:
-    - morph: [init, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
       stdout_contains: "Initialized empty Morph repository"
     - morph: [status]
       stdout_contains: "nothing to commit"
@@ -46,16 +46,16 @@
 - name: init_already_initialized
   init: false
   steps:
-    - morph: [init, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
       stdout_contains: "Initialized empty Morph repository"
-    - morph: [init, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
       expect_exit: 1
       stderr_contains: "already a morph repository"
 
 - name: init_shows_absolute_path
   init: false
   steps:
-    - morph: [init, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
       stdout_contains: ".morph/"
 
 # PR 6 stage D cycle 16: `morph init --bare` lays out the repo at

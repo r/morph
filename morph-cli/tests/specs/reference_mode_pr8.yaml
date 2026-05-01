@@ -17,7 +17,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'initial'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
       stdout_contains:
         - "local to this clone"
     # All four hooks installed.
@@ -54,7 +54,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'initial'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [reference-sync, --backfill]
     # Teammate work arrives, no hooks fire (simulated via MORPH_INTERNAL=1).
     - shell: |
@@ -90,7 +90,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'initial'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [reference-sync, --backfill]
     - morph: [certify, --commit, HEAD, --metrics, '{"tests_passed":3.0,"tests_total":3.0,"pass_rate":1.0}']
     # Capture both the original git SHA and the original morph hash
@@ -134,7 +134,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'initial'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [reference-sync, --backfill]
     - morph: [certify, --commit, HEAD, --metrics, '{"tests_passed":2.0,"tests_total":2.0,"pass_rate":1.0}']
     # Teammate creates a branch and commits with hooks suppressed

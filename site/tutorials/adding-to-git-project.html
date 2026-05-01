@@ -503,7 +503,7 @@
         <ol>
           <li><a href="#prereqs">Before you start</a></li>
           <li><a href="#picture">How it works (in plain English)</a></li>
-          <li><a href="#init">morph init --reference</a></li>
+          <li><a href="#init">morph init</a></li>
           <li><a href="#backfill">Mirror your existing history</a></li>
           <li><a href="#git-commit">Plain git commit, automatic mirror</a></li>
           <li><a href="#teammate-pull">Pulling from teammates</a></li>
@@ -658,12 +658,12 @@
 
       <!-- 3 -->
       <section id="init">
-        <h2><span class="step-num">03</span><code>morph init --reference</code></h2>
+        <h2><span class="step-num">03</span><code>morph init</code></h2>
         <p>
           From the root of your Git working tree, run:
         </p>
-<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph init <span class="flag">--reference</span> .</span>
-<span class="out-good">Initialized Morph repository in reference mode in /…/converter/.morph/</span>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph init .</span>
+<span class="out-good">Initialized empty Morph repository in /…/converter/.morph/</span>
 <span class="out">  bound to git HEAD d12b9aaa7fda</span>
 <span class="out">  installed 4 git hook(s) at .git/hooks/ (4 present, 0 already up to date)</span>
 <span class="out">  morph state is local to this clone (.morph/ added to .git/info/exclude)</span>
@@ -680,7 +680,7 @@
         <p>Peek at one of the hooks if you're curious:</p>
 <div class="cli-block"><span class="prompt">$ </span><span class="cmd">cat .git/hooks/post-commit</span>
 <span class="comment">#!/bin/sh</span>
-<span class="comment"># Installed by morph (`morph init --reference` / `morph install-hooks`).</span>
+<span class="comment"># Installed by morph (`morph init` / `morph install-hooks`).</span>
 <span class="comment"># Mirrors every git commit into a Morph commit with morph_origin=git-hook.</span>
 [ <span class="str">"$MORPH_INTERNAL"</span> = <span class="str">"1"</span> ] &amp;&amp; <span class="kw">exit</span> 0
 <span class="kw">exec</span> morph hook post-commit &gt;/dev/null 2&gt;&amp;1 || <span class="kw">true</span></div>
@@ -698,7 +698,7 @@
         <p>
           Right after init, <code>morph status</code> tells you about the elephant in
           the room: any Git commits that existed <em>before</em> you ran
-          <code>morph init --reference</code> aren't mirrored yet.
+          <code>morph init</code> aren't mirrored yet.
         </p>
 <div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph status</span>
 <span class="out-warn">Reference mode (git ↔ morph)</span>
@@ -1011,7 +1011,7 @@
         <ul>
           <li><code>git fetch</code> followed by <code>git reset --hard origin/main</code> &mdash; resets don't fire any of the four hooks Morph installs.</li>
           <li>You disabled the hooks (<code>chmod -x .git/hooks/post-merge</code>) or deleted them by accident.</li>
-          <li>You cloned the repo fresh and forgot to run <code>morph init --reference</code> in the new clone &mdash; hooks live in <code>.git/hooks/</code>, which Git never tracks, so a fresh clone has none.</li>
+          <li>You cloned the repo fresh and forgot to run <code>morph init</code> in the new clone &mdash; hooks live in <code>.git/hooks/</code>, which Git never tracks, so a fresh clone has none.</li>
         </ul>
         <p>
           When that happens, Morph doesn't blow up &mdash; it falls behind Git,
@@ -1248,7 +1248,7 @@
           Your teammate is in their existing Git clone, still on plain
           Git. They run two commands:
         </p>
-<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph init <span class="flag">--reference</span> .</span>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph init .</span>
 <span class="prompt">$ </span><span class="cmd">morph remote add origin you@homelab:repos/converter.morph</span>
 <span class="prompt">$ </span><span class="cmd">morph fetch origin</span>
 <span class="out-good">origin/main -&gt; 3006006a</span></div>

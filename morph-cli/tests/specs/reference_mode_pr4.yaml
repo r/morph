@@ -28,7 +28,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - shell: "git commit --allow-empty -q -m 'second'"
     # Calling the dispatcher directly is exactly what the installed
     # hook does. Should mirror HEAD into a morph commit.
@@ -42,7 +42,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [hook, no-such-event]
       expect_exit: 1
       stderr_contains: "unknown hook event"
@@ -59,7 +59,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     # The post-commit hook on this `git commit` mirrors 'second'
     # into morph; the trailing checkout fires post-checkout, which
     # finds a matching morph commit (git branching keeps the SHA)
@@ -72,7 +72,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'main 1'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     # Backfill so morph has a mirror for 'main 1' before we start
     # switching branches. Without this, the first git checkout
     # post-checkout hook can't fast-forward the morph branch ref
@@ -90,7 +90,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - morph: [reference-sync, --backfill]
     # Detached HEAD: post-checkout fires but symbolic-ref returns
     # nothing; the handler returns DetachedHead and morph state is
@@ -114,7 +114,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     # Establish a morph commit for the current git HEAD, then
     # certify it so we have evidence whose staleness matters.
     - shell: "git commit --allow-empty -q -m 'real one'"
@@ -143,7 +143,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'base'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     - shell: "git commit --allow-empty -q -m 'a' && git commit --allow-empty -q -m 'b'"
     # Reset rewrites the branch tip without firing post-rewrite
     # (reset is not a rewrite-class command). Subsequent commits
@@ -164,7 +164,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     # Mirror the init point first so the post-MORPH_INTERNAL sync
     # count is exactly 1 (the new commit). Without this, Fix 1's
     # walk-back-to-last-mirrored-ancestor would correctly mirror
@@ -183,7 +183,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     # Wipe so install-hooks has work to do. PR 6 adds post-merge to
     # the lifecycle hook set; this test now covers all four.
     - shell: "rm -f .git/hooks/post-commit .git/hooks/post-checkout .git/hooks/post-rewrite .git/hooks/post-merge"
@@ -215,7 +215,7 @@
   init: false
   steps:
     - shell: "git init -q -b main && git commit --allow-empty -q -m 'first'"
-    - morph: [init, --reference, "${repo}"]
+    - morph: [init, --git-init, "${repo}"]
     # Already wrote all three at init time.
     - morph: [install-hooks]
       stdout_contains: "already installed"

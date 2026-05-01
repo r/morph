@@ -39,15 +39,16 @@ pub mod ssh_store;
 pub mod reference;
 
 pub use hash::{canonical_json, content_hash, content_hash_git, Hash};
-pub use objects::MorphObject;
+pub use objects::{CommitContributor, EvalContract, MorphObject};
 #[allow(deprecated)]
 pub use store::GixStore;
 pub use store::{resolve_hash_prefix, resolve_revision, FsStore, MorphError, ObjectType, Store};
 pub use repo::{
     init_repo, init_bare, is_bare, open_store, read_repo_version, require_store_version,
     resolve_morph_dir,
-    read_repo_mode, read_init_at_git_sha, read_repo_submode, write_reference_mode,
-    write_repo_submode, write_repo_version, RepoMode, RepoSubmode,
+    read_init_at_git_sha, read_repo_submode, write_init_at_git_sha,
+    write_repo_submode, write_repo_version, RepoSubmode,
+    is_legacy_standalone, drop_legacy_repo_mode,
     STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_0_4, STORE_VERSION_0_5, STORE_VERSION_INIT,
     STORE_VERSION_LATEST, SUPPORTED_REPO_VERSIONS,
 };

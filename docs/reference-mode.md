@@ -1,9 +1,10 @@
 # Reference mode
 
-> **TL;DR.** `morph init --reference` lets you adopt morph in an existing
-> git repo without touching the team's git workflow. Morph state lives
-> entirely in your local clone; teammates not using morph see nothing.
-> When morph and git fall out of step, you get explicit signals — never
+> **TL;DR.** Reference mode is the only mode (since v0.40.0). `morph
+> init` adopts morph alongside your existing git repo without
+> touching the team's git workflow. Morph state lives entirely in
+> your local clone; teammates not using morph see nothing. When
+> morph and git fall out of step, you get explicit signals — never
 > a silent block.
 
 This document explains the contract that makes this work, the two
@@ -12,22 +13,22 @@ not) do to your git repo.
 
 ## Two adoption shapes (submodes)
 
-When you run `morph init --reference` in a git working tree, you're
-opting into one of two **submodes**, recorded in
-`.morph/config.json` as `repo_submode`. The submode is local to the
-clone — it never travels with git, so a teammate flipping their own
-clone to Solo cannot surprise anyone else.
+When you run `morph init` in a git working tree, you're opting into
+one of two **submodes**, recorded in `.morph/config.json` as
+`repo_submode`. The submode is local to the clone — it never travels
+with git, so a teammate flipping their own clone to Solo cannot
+surprise anyone else.
 
 ### Stowaway submode (default)
 
 You install morph because you want to use it for your own workflow,
 but the rest of the team is on plain git. They will keep
 `git pull`/`git push`/`git rebase`-ing. **Your morph install must not
-disrupt that.** Stowaway is the default for `morph init --reference`
-and installs only the four passive observer hooks below.
+disrupt that.** Stowaway is the default for `morph init` and
+installs only the four passive observer hooks below.
 
 ```sh
-$ morph init --reference .       # Stowaway is the default
+$ morph init .       # Stowaway is the default
 ```
 
 ### Solo submode (opt-in)
@@ -40,9 +41,9 @@ contract. The team has bought in to morph semantics for branching
 and merging.
 
 ```sh
-$ morph init --reference --solo .   # opt into Solo
-$ morph install-hooks --solo        # flip an existing repo to Solo
-$ morph install-hooks --stowaway    # flip back
+$ morph init --solo .                # opt into Solo at init time
+$ morph install-hooks --solo         # flip an existing repo to Solo
+$ morph install-hooks --stowaway     # flip back
 ```
 
 You may move between the two submodes over time — for example, by
@@ -83,7 +84,7 @@ Two environment-variable escapes are honored:
 In reference mode, morph holds itself to four hard rules:
 
 1. **Nothing morph writes is ever tracked by git.** All morph state
-   lives in `.morph/`, which `morph init --reference` adds to
+   lives in `.morph/`, which `morph init` adds to
    `.git/info/exclude` (a per-clone, untracked file). A stray
    `git add .` cannot pull morph state into the shared repo.
 2. **Hooks live in `.git/hooks/`, which git never tracks.** Teammates
@@ -100,9 +101,9 @@ In reference mode, morph holds itself to four hard rules:
    The one exception is **Solo's `pre-merge-commit` hook**: it
    intentionally *can* exit non-zero so a `git merge` that would
    regress on a parent's certified metrics is blocked. Solo is
-   opt-in (`morph init --reference --solo`); choose it only when
-   every developer on the project uses morph and you want the
-   behavioral gate enforced at git-time.
+   opt-in (`morph init --solo`); choose it only when every developer
+   on the project uses morph and you want the behavioral gate
+   enforced at git-time.
 4. **Git commits produced by `morph commit` are byte-identical to
    ones a non-morph user would produce.** The wrapper just runs
    `git commit -m <message>`; the morph-only metadata
@@ -361,8 +362,8 @@ where everyone else is on plain git.
 ```sh
 # Day 1: adopt morph in an existing repo.
 $ git pull
-$ morph init --reference .
-Initialized morph reference-mode repository at .
+$ morph init .
+Initialized empty Morph repository at .
   - .morph/ added to .git/info/exclude (local to this clone, never tracked)
   - 4 git hooks installed in .git/hooks/ (Stowaway submode)
 
@@ -415,7 +416,7 @@ git:
 
 ```sh
 rm -rf .morph
-morph init --reference .
+morph init .
 ```
 
 If you want to remove the morph hooks without removing morph entirely:
@@ -430,7 +431,8 @@ Either is safe. Neither touches anything teammates can observe.
 
 ## See also
 
-- `morph init --help` — flags and defaults (`--reference`, `--solo`).
+- `morph init --help` — flags and defaults (`--solo`,
+  `--git-init`, `--no-git-init`).
 - `morph install-hooks --help` — flip submode (`--solo` /
   `--stowaway`) without re-initializing.
 - `morph merge --help` — `--continue` / `--abort` flags for stateful
