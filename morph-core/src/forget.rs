@@ -40,6 +40,7 @@
 use crate::hash::Hash;
 use crate::objects::{MorphObject, Tombstone};
 use crate::store::{FsStore, MorphError, ObjectType};
+use crate::time::now_rfc3339_utc;
 
 /// Identifies the result of a forget operation. Used by the CLI to
 /// surface a one-line confirmation to the operator.
@@ -171,7 +172,7 @@ pub fn forget_local(
     let tombstone = Tombstone {
         original_hash: target.to_string(),
         original_kind: kind.to_string(),
-        forgotten_at: now_iso8601(),
+        forgotten_at: now_rfc3339_utc(),
         actor: actor.to_string(),
         reason: reason.map(|s| s.to_string()),
     };
@@ -217,47 +218,6 @@ pub const RETROACTIVE_NOTE: &str =
     "Note: tombstones do not reach copies that were already fetched \
      before the deletion. If a teammate previously pulled this hash, \
      ask them to fetch from the remote again or delete it by hand.";
-
-fn now_iso8601() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    chrono_strftime_rfc3339_utc(secs)
-}
-
-/// Tiny self-contained RFC-3339 (UTC) formatter so we don't pull
-/// in `chrono` here. Equivalent of `chrono::DateTime::<Utc>::from_timestamp(secs, 0).format(...)`.
-fn chrono_strftime_rfc3339_utc(secs: u64) -> String {
-    let days = (secs / 86400) as i64;
-    let secs_of_day = secs % 86400;
-    let h = secs_of_day / 3600;
-    let m = (secs_of_day % 3600) / 60;
-    let s = secs_of_day % 60;
-
-    let (y, mo, d) = days_to_ymd(days + 719468);
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-        y, mo, d, h, m, s
-    )
-}
-
-/// Howard Hinnant's date algorithm — converts days since
-/// 0000-03-01 (proleptic Gregorian) to a (year, month, day).
-fn days_to_ymd(days_since_epoch: i64) -> (i64, u32, u32) {
-    let z = days_since_epoch;
-    let era = if z >= 0 { z } else { z - 146096 } / 146097;
-    let doe = (z - era * 146097) as u64;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { (mp + 3) as u32 } else { (mp - 9) as u32 };
-    let y = if m <= 2 { y + 1 } else { y };
-    (y, m, d)
-}
 
 trait ObjectTypeName {
     fn object_type_name(&self) -> &'static str;

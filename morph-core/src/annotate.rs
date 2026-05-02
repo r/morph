@@ -2,8 +2,8 @@
 
 use crate::objects::{Annotation, MorphObject};
 use crate::store::{MorphError, ObjectType, Store};
+use crate::time::now_rfc3339_utc;
 use crate::Hash;
-use chrono::Utc;
 use std::collections::BTreeMap;
 
 /// Create an Annotation object (caller puts it). Returns the object so store.put can be used.
@@ -14,7 +14,7 @@ pub fn create_annotation(
     data: BTreeMap<String, serde_json::Value>,
     author: Option<String>,
 ) -> MorphObject {
-    let timestamp = Utc::now().to_rfc3339();
+    let timestamp = now_rfc3339_utc();
     let author = author.unwrap_or_else(|| "morph".to_string());
     MorphObject::Annotation(Annotation {
         target: target.to_string(),

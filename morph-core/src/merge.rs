@@ -12,6 +12,7 @@ use crate::objects::{
 };
 use crate::policy::read_policy;
 use crate::store::{MorphError, ObjectType, Store};
+use crate::time::now_rfc3339_utc;
 use crate::Hash;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -630,7 +631,7 @@ pub fn execute_merge(
     let merged_contributors = crate::commit::merge_contributors(&plan.head_commit, &plan.other_commit);
 
     let parents = vec![plan.head_hash.to_string(), plan.other_hash.to_string()];
-    let timestamp = chrono::Utc::now().to_rfc3339();
+    let timestamp = now_rfc3339_utc();
     let author = author.unwrap_or_else(|| "morph".to_string());
     let morph_instance = repo_root
         .and_then(|r| crate::agent::read_instance_id(&r.join(".morph")).ok().flatten());

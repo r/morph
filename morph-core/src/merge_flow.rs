@@ -23,6 +23,7 @@ use std::path::Path;
 use crate::hash::Hash;
 use crate::pipemerge::NodeConflict;
 use crate::store::{MorphError, Store};
+use crate::time::now_rfc3339_utc;
 use std::collections::BTreeMap;
 
 /// Options to [`start_merge`].
@@ -640,7 +641,7 @@ pub fn continue_merge(
         &morph_dir,
         opts.author.as_deref(),
     )?;
-    let timestamp = chrono::Utc::now().to_rfc3339();
+    let timestamp = now_rfc3339_utc();
     let contributors = crate::commit::merge_contributors(&head_commit, &other_commit);
 
     // PR 6 stage C cycle 13: union evidence_refs from both parents

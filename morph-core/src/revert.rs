@@ -6,9 +6,9 @@
 use crate::commit::resolve_head;
 use crate::objects::{Commit, EvalContract, MorphObject};
 use crate::store::{MorphError, Store};
+use crate::time::now_rfc3339_utc;
 use crate::tree::empty_tree_hash;
 use crate::Hash;
-use chrono::Utc;
 use std::collections::BTreeMap;
 
 /// Create a revert commit that undoes the given commit's changes.
@@ -48,7 +48,7 @@ pub fn revert_commit(
         pipeline: target.pipeline.clone(),
         parents: vec![head.to_string()],
         message: format!("Revert \"{}\"", target.message),
-        timestamp: Utc::now().to_rfc3339(),
+        timestamp: now_rfc3339_utc(),
         author: author.unwrap_or_else(|| target.author.clone()),
         contributors: None,
         eval_contract: EvalContract {

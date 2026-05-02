@@ -118,7 +118,7 @@ pub fn record_last_run(
         run: run_hash.to_string(),
         head,
         index_fingerprint: fingerprint_index(&index),
-        recorded_at: chrono::Utc::now().to_rfc3339(),
+        recorded_at: crate::time::now_rfc3339_utc(),
     };
     write_last_run(morph_dir, &last)?;
     Ok(last)

@@ -3,6 +3,7 @@
 use crate::identity::identity_pipeline;
 use crate::objects::{AgentInfo, Blob, MorphObject, Run, RunEnvironment, Trace, TraceEvent};
 use crate::store::{MorphError, Store};
+use crate::time::now_rfc3339_utc;
 use crate::Hash;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -97,7 +98,7 @@ pub fn record_conversation(
     model_name: Option<&str>,
     agent_id: Option<&str>,
 ) -> Result<Hash, MorphError> {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = now_rfc3339_utc();
 
     let events: Vec<TraceEvent> = messages
         .iter()
@@ -181,7 +182,7 @@ pub fn record_eval_run(
     captured_stdout: Option<&str>,
     exit_code: Option<i32>,
 ) -> Result<Hash, MorphError> {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = now_rfc3339_utc();
 
     let mut payload: BTreeMap<String, serde_json::Value> = BTreeMap::new();
     payload.insert(

@@ -215,7 +215,7 @@ mod tests {
     }
 
     fn store_session_run_with_reviewer(store: &dyn Store) -> (Hash, Hash) {
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = crate::time::now_rfc3339_utc();
         let mut prompt_payload = BTreeMap::new();
         prompt_payload.insert("text".into(), serde_json::Value::String("Build feature X".into()));
         let mut response_payload = BTreeMap::new();

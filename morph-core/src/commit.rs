@@ -2,8 +2,8 @@
 
 use crate::objects::{Blob, Commit, CommitContributor, EvalContract, EvalSuite, HumanEdit, MorphObject};
 use crate::store::{MorphError, Store};
+use crate::time::now_rfc3339_utc;
 use crate::Hash;
-use chrono::Utc;
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -282,7 +282,7 @@ pub fn create_commit(
     let parent_list: Vec<String> = resolve_head(store)?
         .map(|h| vec![h.to_string()])
         .unwrap_or_default();
-    let timestamp = Utc::now().to_rfc3339();
+    let timestamp = now_rfc3339_utc();
     let author = author.unwrap_or_else(|| "morph".to_string());
     let commit = MorphObject::Commit(Commit {
         tree: None,
@@ -380,7 +380,7 @@ pub fn create_tree_commit_with_provenance(
     let parent_list: Vec<String> = resolve_head(store)?
         .map(|h| vec![h.to_string()])
         .unwrap_or_default();
-    let timestamp = Utc::now().to_rfc3339();
+    let timestamp = now_rfc3339_utc();
     let author = author.unwrap_or_else(|| "morph".to_string());
 
     let (contributors, env_constraints, evidence_refs) = match provenance {
@@ -659,7 +659,7 @@ pub fn create_merge_commit_with_retirement(
     let merged_contributors = merge_contributors(&head_commit, &other_commit);
 
     let parents = vec![head_hash.to_string(), other_hash.to_string()];
-    let timestamp = chrono::Utc::now().to_rfc3339();
+    let timestamp = now_rfc3339_utc();
     let author = author.unwrap_or_else(|| "morph".to_string());
     let commit = MorphObject::Commit(Commit {
         tree: tree_hash,
@@ -741,7 +741,7 @@ pub fn rollup(
     };
 
     let message = message.unwrap_or_else(|| format!("Rollup to {}", tip_hash));
-    let timestamp = chrono::Utc::now().to_rfc3339();
+    let timestamp = now_rfc3339_utc();
     let commit = MorphObject::Commit(Commit {
         tree: tip_commit.tree.clone(),
         pipeline: tip_commit.pipeline.clone(),
