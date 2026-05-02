@@ -343,8 +343,7 @@ fn load_run_and_trace(store: &dyn Store, run_hash: &Hash) -> Result<(Run, Trace,
         MorphObject::Run(r) => r,
         _ => return Err(MorphError::Serialization(format!("object {} is not a Run", run_hash))),
     };
-    let trace_hash = Hash::from_hex(&run.trace)
-        .map_err(|_| MorphError::InvalidHash(run.trace.clone()))?;
+    let trace_hash = Hash::from_hex(&run.trace)?;
     let trace = match store.get(&trace_hash)? {
         MorphObject::Trace(t) => t,
         _ => return Err(MorphError::Serialization(format!(

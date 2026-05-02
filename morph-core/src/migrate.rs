@@ -139,7 +139,7 @@ pub fn migrate_0_0_to_0_2(morph_dir: &Path) -> Result<(), MorphError> {
         if name.len() != 64 {
             continue;
         }
-        let old_hash = Hash::from_hex(name).map_err(|_| MorphError::InvalidHash(name.into()))?;
+        let old_hash = Hash::from_hex(name)?;
         let bytes = std::fs::read(&path)?;
         let obj: MorphObject =
             serde_json::from_slice(&bytes).map_err(|e| MorphError::Serialization(e.to_string()))?;

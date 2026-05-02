@@ -35,7 +35,7 @@ pub fn extract_pipeline_from_run(
     };
 
     let trace_hash =
-        Hash::from_hex(&run.trace).map_err(|_| MorphError::InvalidHash(run.trace.clone()))?;
+        Hash::from_hex(&run.trace)?;
     let trace = match store.get(&trace_hash)? {
         MorphObject::Trace(t) => t,
         _ => {

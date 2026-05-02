@@ -305,7 +305,7 @@ fn parse_tree_hash(opt_tree: &Option<String>) -> Result<Hash, MorphError> {
     let s = opt_tree
         .as_ref()
         .ok_or_else(|| MorphError::NotFound("commit has no tree".into()))?;
-    Hash::from_hex(s).map_err(|_| MorphError::InvalidHash(s.clone()))
+    Hash::from_hex(s)
 }
 
 /// Load the Pipeline objects for `head`, `other`, and (optionally) the base
@@ -335,7 +335,7 @@ fn resolve_pipeline_merge(
 }
 
 fn load_pipeline_by_hex(store: &dyn Store, hex: &str) -> Result<crate::objects::Pipeline, MorphError> {
-    let hash = Hash::from_hex(hex).map_err(|_| MorphError::InvalidHash(hex.to_string()))?;
+    let hash = Hash::from_hex(hex)?;
     match store.get(&hash)? {
         MorphObject::Pipeline(p) => Ok(p),
         _ => Err(MorphError::Serialization(format!("expected Pipeline at {}", hash))),
@@ -437,8 +437,7 @@ fn load_suite_for_commit(
     if suite_hex.chars().all(|c| c == '0') {
         return Ok(None);
     }
-    let suite_hash = Hash::from_hex(&suite_hex)
-        .map_err(|_| MorphError::InvalidHash(suite_hex.clone()))?;
+    let suite_hash = Hash::from_hex(&suite_hex)?;
     match store.get(&suite_hash)? {
         MorphObject::EvalSuite(s) => Ok(Some(s)),
         _ => Err(MorphError::Serialization(format!(

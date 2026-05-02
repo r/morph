@@ -35,8 +35,7 @@ pub fn resolve_provenance_from_run(
         ))),
     };
 
-    let trace_hash = Hash::from_hex(&run.trace)
-        .map_err(|_| MorphError::InvalidHash(run.trace.clone()))?;
+    let trace_hash = Hash::from_hex(&run.trace)?;
     match store.get(&trace_hash)? {
         MorphObject::Trace(_) => {}
         _ => return Err(MorphError::Serialization(format!(
@@ -194,8 +193,7 @@ fn load_parent_tree(
     let Some(parent_hex) = parent_hash_str else {
         return Ok(None);
     };
-    let parent_hash = Hash::from_hex(parent_hex)
-        .map_err(|_| MorphError::InvalidHash(parent_hex.to_string()))?;
+    let parent_hash = Hash::from_hex(parent_hex)?;
     let parent_commit = match store.get(&parent_hash)? {
         MorphObject::Commit(c) => c,
         _ => return Ok(None),
@@ -203,8 +201,7 @@ fn load_parent_tree(
     let Some(tree_hex) = parent_commit.tree else {
         return Ok(None);
     };
-    let tree_hash = Hash::from_hex(&tree_hex)
-        .map_err(|_| MorphError::InvalidHash(tree_hex.clone()))?;
+    let tree_hash = Hash::from_hex(&tree_hex)?;
     Ok(Some(crate::tree::flatten_tree(store, &tree_hash)?))
 }
 
@@ -251,7 +248,7 @@ pub fn resolve_head(store: &dyn Store) -> Result<Option<Hash>, MorphError> {
         let ref_path = rest.trim();
         return store.ref_read(ref_path);
     }
-    Hash::from_hex(content).map(Some).map_err(|_| MorphError::InvalidHash("HEAD".into()))
+    Hash::from_hex(content).map(Some)
 }
 
 /// Current branch name if HEAD is symbolic, else None.
@@ -403,8 +400,7 @@ pub fn create_tree_commit_with_provenance(
     // (see `resolve_provenance_from_run`).
     let human_edits = match evidence_refs.as_deref() {
         Some(refs) if !refs.is_empty() => {
-            let run_hash = Hash::from_hex(&refs[0])
-                .map_err(|_| MorphError::InvalidHash(refs[0].clone()))?;
+            let run_hash = Hash::from_hex(&refs[0])?;
             let parent_tree = load_parent_tree(store, parent_list.first().map(|s| s.as_str()))?;
             let edits = compute_human_edits(store, &run_hash, &filtered, parent_tree.as_ref())?;
             if edits.is_empty() { None } else { Some(edits) }

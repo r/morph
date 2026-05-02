@@ -52,12 +52,18 @@ impl Hash {
         &self.0
     }
 
-    /// Parse from hex string (64 chars).
+    /// Parse from hex string (64 chars). On failure the
+    /// [`MorphError::InvalidHash`] carries the *input string itself*
+    /// — that's what an operator looking at "invalid hash: <X>"
+    /// actually wants to see, so the 22 call sites that used to
+    /// `map_err(|_| MorphError::InvalidHash(s.into()))` to swap out
+    /// the underlying hex parser's complaint can just use `?`.
     pub fn from_hex(s: &str) -> Result<Self, crate::store::MorphError> {
-        let bytes = hex::decode(s).map_err(|e| crate::store::MorphError::InvalidHash(e.to_string()))?;
+        let bytes = hex::decode(s)
+            .map_err(|_| crate::store::MorphError::InvalidHash(s.to_string()))?;
         let arr: [u8; 32] = bytes
             .try_into()
-            .map_err(|_| crate::store::MorphError::InvalidHash("expected 32 bytes".into()))?;
+            .map_err(|_| crate::store::MorphError::InvalidHash(s.to_string()))?;
         Ok(Hash(arr))
     }
 

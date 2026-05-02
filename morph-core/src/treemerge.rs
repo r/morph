@@ -232,7 +232,7 @@ pub fn merge_trees(
 }
 
 fn read_blob_bytes(store: &dyn Store, hash_hex: &str) -> Result<Vec<u8>, MorphError> {
-    let h = Hash::from_hex(hash_hex).map_err(|_| MorphError::InvalidHash(hash_hex.to_string()))?;
+    let h = Hash::from_hex(hash_hex)?;
     match store.get(&h)? {
         MorphObject::Blob(b) => extract_blob_bytes(&b),
         _ => Err(MorphError::Serialization(format!(

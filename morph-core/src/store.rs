@@ -443,9 +443,7 @@ impl FsStore {
             return Ok(None);
         }
         let body = std::fs::read_to_string(&path)?;
-        let tombstone_hash_hex = body.trim();
-        let tombstone_hash = Hash::from_hex(tombstone_hash_hex)
-            .map_err(|_| MorphError::InvalidHash(tombstone_hash_hex.into()))?;
+        let tombstone_hash = Hash::from_hex(body.trim())?;
         let obj = fs_get(&self.object_path(&tombstone_hash), &tombstone_hash)?;
         match obj {
             MorphObject::Tombstone(t) => Ok(Some(t)),
@@ -476,8 +474,7 @@ impl FsStore {
         &self,
         tombstone: &crate::objects::Tombstone,
     ) -> Result<Hash, MorphError> {
-        let original_hash = Hash::from_hex(&tombstone.original_hash)
-            .map_err(|_| MorphError::InvalidHash(tombstone.original_hash.clone()))?;
+        let original_hash = Hash::from_hex(&tombstone.original_hash)?;
         let _ = self.delete_object(&original_hash);
         let _ = self.delete_from_type_indexes(&original_hash);
         let obj = MorphObject::Tombstone(tombstone.clone());
@@ -510,7 +507,7 @@ impl FsStore {
             if stem.len() != 64 {
                 continue;
             }
-            out.push(Hash::from_hex(stem).map_err(|_| MorphError::InvalidHash(stem.into()))?);
+            out.push(Hash::from_hex(stem)?);
         }
         Ok(out)
     }
@@ -584,11 +581,7 @@ impl Store for FsStore {
                     if !stem.starts_with(rest_prefix) {
                         continue;
                     }
-                    let full_hex = format!("{}{}", fanout, stem);
-                    out.push(
-                        Hash::from_hex(&full_hex)
-                            .map_err(|_| MorphError::InvalidHash(full_hex))?,
-                    );
+                    out.push(Hash::from_hex(&format!("{}{}", fanout, stem))?);
                 }
                 Ok(out)
             }
@@ -764,7 +757,7 @@ fn fs_list_hashes_from_dir(dir: &Path) -> Result<Vec<Hash>, MorphError> {
         if name.len() != 64 {
             continue;
         }
-        hashes.push(Hash::from_hex(name).map_err(|_| MorphError::InvalidHash(name.into()))?);
+        hashes.push(Hash::from_hex(name)?);
     }
     Ok(hashes)
 }
@@ -793,8 +786,7 @@ fn fs_list_hashes_fanout(objects_dir: &Path) -> Result<Vec<Hash>, MorphError> {
             if rest.len() != 62 {
                 continue;
             }
-            let full_hex = format!("{}{}", prefix, rest);
-            hashes.push(Hash::from_hex(&full_hex).map_err(|_| MorphError::InvalidHash(full_hex))?);
+            hashes.push(Hash::from_hex(&format!("{}{}", prefix, rest))?);
         }
     }
     Ok(hashes)
@@ -1071,7 +1063,7 @@ fn fs_put(
 pub fn resolve_hash_prefix(store: &dyn Store, s: &str) -> Result<Hash, MorphError> {
     let s = s.trim();
     if s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Hash::from_hex(s).map_err(|e| MorphError::InvalidHash(format!("invalid hash: {}", e)));
+        return Hash::from_hex(s);
     }
     if s.is_empty() || s.len() < 4 || !s.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(MorphError::InvalidHash(format!(
@@ -1112,7 +1104,7 @@ pub fn resolve_revision(store: &dyn Store, s: &str) -> Result<Hash, MorphError> 
         return Err(MorphError::InvalidHash("empty revision".into()));
     }
     if s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Hash::from_hex(s).map_err(|e| MorphError::InvalidHash(format!("invalid hash: {}", e)));
+        return Hash::from_hex(s);
     }
     if s == "HEAD" {
         return crate::commit::resolve_head(store)?

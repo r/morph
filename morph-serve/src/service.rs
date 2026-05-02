@@ -405,7 +405,7 @@ impl RepoContext {
 // ── Helpers ─────────────────────────────────────────────────────────
 
 fn parse_hash(s: &str) -> Result<Hash, MorphError> {
-    Hash::from_hex(s).map_err(|_| MorphError::InvalidHash(s.to_string()))
+    Hash::from_hex(s)
 }
 
 fn list_branch_names(store: &dyn Store) -> Result<Vec<String>, MorphError> {

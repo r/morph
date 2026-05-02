@@ -392,7 +392,7 @@ impl Store for SshStore {
         let hash = resp
             .hash
             .ok_or_else(|| MorphError::Serialization("put: missing hash field".into()))?;
-        Hash::from_hex(&hash).map_err(|_| MorphError::InvalidHash(hash))
+        Hash::from_hex(&hash)
     }
 
     fn get(&self, hash: &Hash) -> Result<MorphObject, MorphError> {
@@ -422,7 +422,7 @@ impl Store for SshStore {
         // Flat encoding: missing ref ⇒ field is JSON null ⇒
         // deserialized as None. A `put` response always sets it.
         match resp.hash {
-            Some(s) => Hash::from_hex(&s).map(Some).map_err(|_| MorphError::InvalidHash(s)),
+            Some(s) => Hash::from_hex(&s).map(Some),
             None => Ok(None),
         }
     }
@@ -480,11 +480,7 @@ impl Store for SshStore {
             .ok_or_else(|| MorphError::Serialization("list-refs: missing refs field".into()))?;
         entries
             .into_iter()
-            .map(|e| {
-                Hash::from_hex(&e.hash)
-                    .map(|h| (e.name, h))
-                    .map_err(|_| MorphError::InvalidHash(e.hash))
-            })
+            .map(|e| Hash::from_hex(&e.hash).map(|h| (e.name, h)))
             .collect()
     }
 
@@ -495,11 +491,7 @@ impl Store for SshStore {
         })?;
         entries
             .into_iter()
-            .map(|e| {
-                Hash::from_hex(&e.hash)
-                    .map(|h| (e.name, h))
-                    .map_err(|_| MorphError::InvalidHash(e.hash))
-            })
+            .map(|e| Hash::from_hex(&e.hash).map(|h| (e.name, h)))
             .collect()
     }
 }

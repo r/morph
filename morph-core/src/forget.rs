@@ -199,8 +199,7 @@ pub fn apply_tombstone(
     store: &FsStore,
     tombstone: &Tombstone,
 ) -> Result<bool, MorphError> {
-    let original_hash = Hash::from_hex(&tombstone.original_hash)
-        .map_err(|_| MorphError::InvalidHash(tombstone.original_hash.clone()))?;
+    let original_hash = Hash::from_hex(&tombstone.original_hash)?;
 
     if store.is_forgotten(&original_hash)? {
         return Ok(false);

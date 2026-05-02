@@ -98,9 +98,7 @@ fn read_hash(morph_dir: &Path, name: &str) -> Result<Option<Hash>, MorphError> {
     if s.is_empty() {
         return Ok(None);
     }
-    Hash::from_hex(s)
-        .map(Some)
-        .map_err(|_| MorphError::InvalidHash(s.to_string()))
+    Hash::from_hex(s).map(Some)
 }
 
 // ── public API ───────────────────────────────────────────────────────
