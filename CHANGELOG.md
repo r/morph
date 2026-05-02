@@ -16,6 +16,88 @@ metrics — see `.cursor/rules/behavioral-commits.mdc`.
 
 ## [Unreleased]
 
+## [0.45.0] — 2026-05-02
+
+Inspection collapse: three near-synonymous CLIs (`morph trace`,
+`morph tap`, `morph traces`) become one coherent
+`morph inspect` namespace. Third release of the multi-phase "make
+morph intuitive" effort. The old commands continue to work in v0.45
+and v0.46 with a one-line stderr deprecation notice; they're
+removed in v0.47. No on-disk format changes; no behavior changes
+for callers that migrate to the new spelling.
+
+### Added
+
+- **`morph inspect` namespace** with twelve subcommands:
+
+  ```text
+  morph inspect summary [--json]                 # repo aggregate (was tap summary)
+  morph inspect recent [--limit N] [--json]      # newest traces (was traces summary)
+  morph inspect show <hash>                      # auto-detects: trace → events, run → task
+  morph inspect diagnose [<hash>]                # recording quality (was tap diagnose)
+  morph inspect export [...]                     # eval-case export (was tap export)
+  morph inspect stats <trace_hash>               # event-level stats (was tap trace-stats)
+  morph inspect preview <run_hash>               # labeled preview (was tap preview)
+  morph inspect task <ref>                       # task structure (was traces task-structure)
+  morph inspect target <ref>                     # target context (was traces target-context)
+  morph inspect artifact <ref>                   # final artifact (was traces final-artifact)
+  morph inspect semantics <ref>                  # change semantics (was traces semantics)
+  morph inspect verification <ref>               # verification steps (was traces verification)
+  ```
+
+  `morph inspect show` collapses two old commands into one by
+  auto-detecting whether the hash points at a Trace (prints raw
+  events, like `morph trace show`) or a Run (prints the structured
+  task, like `morph tap inspect`). `all` iterates every Run.
+- New module `morph-cli/src/inspect.rs` factors the handlers out of
+  `main.rs` so the new namespace and the deprecated aliases both
+  call into one set of `pub(crate) fn run_*` entry points.
+- New specs: `inspect.yaml` (16 cases covering every subcommand
+  plus `--help` grouping) and `inspect_deprecated_aliases.yaml`
+  (6 cases pinning the deprecation-notice wording on every old
+  command).
+
+### Changed
+
+- **`morph --help` "INSPECT" group** now lists `inspect` first; the
+  deprecated `trace`, `tap`, `traces` are hidden from `--help` to
+  steer new readers at the right spelling. They still work on the
+  command line.
+- Doc + site sweep: every `morph tap` / `morph trace` / `morph
+  traces` mention in `README.md`, `docs/v0-spec.md`,
+  `docs/SECURITY.md`, `docs/SESSION-TRACKING.md`,
+  `site/index.html`, `site/tutorials/getting-started.html`, and
+  `site/tutorials/adding-to-git-project.html` rewritten to use
+  `morph inspect ...`. Architectural prose ("morph traces live in
+  the commit graph") is left untouched.
+
+### Deprecated
+
+- **`morph trace show <hash>`** — use `morph inspect show <hash>`.
+  Removed in v0.47.
+- **`morph tap summary`**, **`morph tap inspect`**, **`morph tap
+  diagnose`**, **`morph tap export`**, **`morph tap trace-stats`**,
+  **`morph tap preview`** — use the corresponding `morph inspect`
+  subcommand. Removed in v0.47.
+- **`morph traces summary`**, **`morph traces task-structure`**,
+  **`morph traces target-context`**, **`morph traces
+  final-artifact`**, **`morph traces semantics`**, **`morph traces
+  verification`** — use the corresponding `morph inspect`
+  subcommand. Removed in v0.47.
+
+  Each deprecated invocation prints a one-line stderr notice in the
+  `git`-style format:
+
+  ```text
+  warning: `morph tap summary` is deprecated; use `morph inspect summary` instead (removed in v0.47).
+  ```
+
+### Tests
+
+- Workspace **1226 / 1226 passing** (1203 baseline + 22 new
+  acceptance cases plus one extra registration). Cucumber 34 / 37
+  (3 skipped, 0 failed) — no change.
+
 ## [0.44.0] — 2026-05-02
 
 Commit ergonomics: `morph commit` becomes a one-liner even when you
@@ -1155,7 +1237,8 @@ Three coordinated changes to repo setup, adoption, and migration.
 - 15 new YAML acceptance spec cases in the default eval suite:
   `init_at_latest:*` ×4, `init_in_git_dir:*` ×6, `upgrade:*` ×5.
 
-[Unreleased]: https://github.com/r/morph/compare/v0.44.0...HEAD
+[Unreleased]: https://github.com/r/morph/compare/v0.45.0...HEAD
+[0.45.0]: https://github.com/r/morph/compare/v0.44.0...v0.45.0
 [0.44.0]: https://github.com/r/morph/compare/v0.43.0...v0.44.0
 [0.43.0]: https://github.com/r/morph/compare/v0.42.2...v0.43.0
 [0.42.2]: https://github.com/r/morph/compare/v0.42.1...v0.42.2

@@ -137,7 +137,7 @@ does not yet do" below.)
 
 A teammate running `morph fetch team` pulls the runs and traces
 you pushed. They land in their `.morph/`, addressable by hash. The
-teammate can `morph tap inspect <hash>` and read your prompts,
+teammate can `morph inspect show <hash>` and read your prompts,
 responses, and shell output verbatim.
 
 ### Two-channel model, drawn
@@ -286,7 +286,7 @@ do I do?"
 ```
 # 1. find the run/trace that holds the secret:
 morph run list                       # newest runs first; copy a hash
-morph tap inspect <run-hash>         # see the prompts/tool calls/files in that run
+morph inspect show <run-hash>        # see the prompts/tool calls/files in that run
 
 # 2. forget it locally and queue for the team remote:
 morph forget <run-or-trace-hash> \
@@ -340,7 +340,7 @@ the source.
 2. Is access to the morph remote at least as tight as access to
    your secrets manager / cloud provider?
 3. Have you at least browsed `.morph/traces/` for the commits
-   you're about to push? `morph tap inspect <run-hash>` is the
+   you're about to push? `morph inspect show <run-hash>` is the
    built-in viewer.
 4. Are you comfortable that any prompts, responses, file contents,
    or shell output in those traces *can* end up on every teammate's

@@ -1,0 +1,67 @@
+# Phase 3 (v0.45): old `morph trace`, `morph tap`, and `morph traces`
+# commands continue to work for one minor cycle, but each first-line
+# of stderr now warns the user the spelling is deprecated and points
+# them at `morph inspect ...`. The deprecated aliases are removed in
+# v0.47.
+#
+# These tests pin the deprecation notice text so a future change to
+# the wording is intentional.
+
+- name: morph_tap_summary_emits_deprecation_notice
+  steps:
+    - morph: [tap, summary]
+      stdout_contains:
+        - "Tap Repository Summary"
+      stderr_contains:
+        - "deprecated"
+        - "morph inspect summary"
+
+- name: morph_tap_inspect_emits_deprecation_notice
+  steps:
+    - morph: [run, record-session, --prompt, "p", --response, "r", --model-name, gpt-4o, --agent-id, test]
+      capture: run_hash
+      assert_hash: true
+    - morph: [tap, inspect, "${run_hash}"]
+      stderr_contains:
+        - "deprecated"
+        - "morph inspect show"
+
+- name: morph_tap_export_emits_deprecation_notice
+  steps:
+    - morph: [run, record-session, --prompt, "p", --response, "r", --model-name, gpt-4o, --agent-id, test]
+    - morph: [tap, export, --mode, prompt-only]
+      stderr_contains:
+        - "deprecated"
+        - "morph inspect export"
+
+- name: morph_trace_show_emits_deprecation_notice
+  steps:
+    - morph: [run, record-session, --prompt, "p", --response, "r"]
+      capture: run_hash
+      assert_hash: true
+    - morph: [run, show, "${run_hash}", --json]
+      capture_json_field:
+        var: trace_hash
+        field: trace
+    - morph: [trace, show, "${trace_hash}"]
+      stderr_contains:
+        - "deprecated"
+        - "morph inspect show"
+
+- name: morph_traces_summary_emits_deprecation_notice
+  steps:
+    - morph: [run, record-session, --prompt, "p", --response, "r", --model-name, gpt-4o, --agent-id, test]
+    - morph: [traces, summary]
+      stderr_contains:
+        - "deprecated"
+        - "morph inspect recent"
+
+- name: morph_traces_task_structure_emits_deprecation_notice
+  steps:
+    - morph: [run, record-session, --prompt, "p", --response, "r", --model-name, gpt-4o, --agent-id, test]
+      capture: run_hash
+      assert_hash: true
+    - morph: [traces, task-structure, "${run_hash}"]
+      stderr_contains:
+        - "deprecated"
+        - "morph inspect task"

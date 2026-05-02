@@ -1314,10 +1314,10 @@
       <span class="prompt">$ </span><span class="cmd">morph merge main</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="comment"># dominance required</span><br>
       <br>
       <span class="comment"># Inspect recorded agent work</span><br>
-      <span class="prompt">$ </span><span class="cmd">morph tap summary</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="comment"># overview of recorded runs</span><br>
-      <span class="prompt">$ </span><span class="cmd">morph tap inspect <span class="flag">&lt;run&gt;</span></span>&nbsp;&nbsp;&nbsp;<span class="comment"># grouped steps (prompts, tools, files)</span><br>
-      <span class="prompt">$ </span><span class="cmd">morph traces target-context <span class="flag">&lt;ref&gt;</span></span>&nbsp;<span class="comment"># the code the agent was working on</span><br>
-      <span class="prompt">$ </span><span class="cmd">morph traces final-artifact <span class="flag">&lt;ref&gt;</span></span>&nbsp;<span class="comment"># what the agent produced</span><br>
+      <span class="prompt">$ </span><span class="cmd">morph inspect summary</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="comment"># overview of recorded runs</span><br>
+      <span class="prompt">$ </span><span class="cmd">morph inspect show <span class="flag">&lt;run&gt;</span></span>&nbsp;&nbsp;&nbsp;<span class="comment"># grouped steps (prompts, tools, files)</span><br>
+      <span class="prompt">$ </span><span class="cmd">morph inspect target <span class="flag">&lt;ref&gt;</span></span>&nbsp;<span class="comment"># the code the agent was working on</span><br>
+      <span class="prompt">$ </span><span class="cmd">morph inspect artifact <span class="flag">&lt;ref&gt;</span></span>&nbsp;<span class="comment"># what the agent produced</span><br>
       <br>
       <span class="comment"># Policy, certification, gating</span><br>
       <span class="prompt">$ </span><span class="cmd">morph policy require-metrics tests_passed pass_rate</span><br>

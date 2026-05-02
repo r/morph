@@ -321,7 +321,94 @@
 
     <article class="release">
       <header>
-        <span class="version">0.44.0 <span class="latest">Latest</span></span>
+        <span class="version">0.45.0 <span class="latest">Latest</span></span>
+        <span class="date">2026-05-02</span>
+      </header>
+      <p class="summary">
+        <strong>Inspection collapse.</strong> Third release of the
+        &ldquo;make morph intuitive&rdquo; effort. Three
+        near-synonymous CLIs (<code>morph trace</code>,
+        <code>morph tap</code>, <code>morph traces</code>) become
+        one coherent <code>morph inspect</code> namespace with
+        twelve subcommands &mdash; <code>summary</code>,
+        <code>recent</code>, <code>show</code>,
+        <code>diagnose</code>, <code>export</code>,
+        <code>stats</code>, <code>preview</code>,
+        <code>task</code>, <code>target</code>,
+        <code>artifact</code>, <code>semantics</code>,
+        <code>verification</code>. The new
+        <code>inspect show &lt;hash&gt;</code> auto-detects whether
+        the hash points at a Trace (raw events) or a Run (structured
+        task), collapsing two old commands into one. The old
+        commands continue to work in v0.45 and v0.46 with a one-line
+        stderr deprecation notice; they're removed in v0.47.
+      </p>
+
+      <h3 class="added"><span class="marker"></span>Added</h3>
+      <ul>
+        <li><code>morph inspect</code> namespace with twelve
+          subcommands consolidating the older
+          <code>morph trace</code>, <code>morph tap</code>, and
+          <code>morph traces</code>. New module
+          <code>morph-cli/src/inspect.rs</code> factors the handlers
+          out of <code>main.rs</code> so the new namespace and the
+          deprecated aliases share one set of entry points. Spec
+          coverage:
+          <code>inspect.yaml</code>,
+          <code>inspect_deprecated_aliases.yaml</code>.</li>
+        <li><code>morph inspect show &lt;hash&gt;</code> auto-detects
+          Trace vs Run on the hash so users don't have to remember
+          which old subcommand applied. <code>all</code> still
+          iterates every Run.</li>
+      </ul>
+
+      <h3 class="changed"><span class="marker"></span>Changed</h3>
+      <ul>
+        <li><strong><code>morph --help</code> INSPECT group leads
+          with <code>inspect</code></strong>; the deprecated
+          <code>trace</code>, <code>tap</code>, <code>traces</code>
+          are hidden from the help output (they still work on the
+          command line) so new readers see the right spelling
+          first.</li>
+        <li><strong>Doc + site sweep.</strong> Every
+          <code>morph tap</code> / <code>morph trace</code> /
+          <code>morph traces</code> mention in
+          <code>README.md</code>, <code>docs/v0-spec.md</code>,
+          <code>docs/SECURITY.md</code>,
+          <code>docs/SESSION-TRACKING.md</code>, and the three
+          public site pages (<code>index.html</code>,
+          <code>tutorials/getting-started.html</code>,
+          <code>tutorials/adding-to-git-project.html</code>)
+          rewritten to use <code>morph inspect ...</code>.
+          Architectural prose (&ldquo;morph traces live in the
+          commit graph&rdquo;) is left alone.</li>
+      </ul>
+
+      <h3 class="removed"><span class="marker"></span>Deprecated</h3>
+      <ul>
+        <li><code>morph trace show</code>,
+          <code>morph tap {summary, inspect, diagnose, export, trace-stats, preview}</code>,
+          <code>morph traces {summary, task-structure, target-context, final-artifact, semantics, verification}</code>
+          &mdash; use the corresponding <code>morph inspect</code>
+          subcommand. Each invocation prints a one-line
+          <code>git</code>-style stderr notice
+          (<em>warning: `morph tap summary` is deprecated; use `morph
+          inspect summary` instead (removed in v0.47).</em>).
+          Removed in v0.47.</li>
+      </ul>
+
+      <h3 class="tests"><span class="marker"></span>Tests</h3>
+      <ul>
+        <li>Workspace <strong>1226 / 1226 passing</strong> (1203
+          baseline + 22 new acceptance cases plus one extra
+          registration). Cucumber 34 / 37 (3 skipped, 0 failed)
+          &mdash; no change.</li>
+      </ul>
+    </article>
+
+    <article class="release">
+      <header>
+        <span class="version">0.44.0</span>
         <span class="date">2026-05-02</span>
       </header>
       <p class="summary">
@@ -480,55 +567,6 @@
           workspace files cleared in a separate
           <code>chore: cargo fmt --all baseline</code> commit so
           this release lands on a fmt-clean base.</li>
-      </ul>
-    </article>
-
-    <article class="release">
-      <header>
-        <span class="version">0.42.2</span>
-        <span class="date">2026-05-02</span>
-      </header>
-      <p class="summary">
-        <strong><code>morph init --git-init</code> now lands on
-        <code>main</code> on every host.</strong> The ref-mode
-        contract treats <code>main</code> as the canonical default
-        branch (it's what <code>morph checkout</code>,
-        <code>morph branch</code>, <code>morph push</code>, and
-        the merge breadcrumbs all assume), but the underlying
-        <code>git init</code> shell-out picked up whatever the
-        host's <code>init.defaultBranch</code> happened to be
-        &mdash; <code>master</code> on a fresh GitHub-Actions
-        runner that hadn't opted in to the git 2.28+ rename.
-        Spec tests like <code>spec_checkout_branch</code> and
-        the entire <code>merge_*</code> family then failed with
-        <em>pathspec 'main' did not match any file(s) known to
-        git</em> because git landed the very first commit on
-        <code>master</code>.
-      </p>
-
-      <h3 class="fixed"><span class="marker"></span>Fixed</h3>
-      <ul>
-        <li><code>morph init --git-init</code> passes
-          <code>-b main</code> (anchored to
-          <code>morph_core::DEFAULT_BRANCH</code>) so the
-          initial branch matches morph's contract regardless of
-          host config. The on-failure error message now also
-          names the explicit invocation
-          (<code>git init -b main &lt;path&gt;</code>) so a
-          reader of the failure output can reproduce it without
-          guessing.</li>
-      </ul>
-
-      <h3 class="tests"><span class="marker"></span>Tests</h3>
-      <ul>
-        <li>Workspace (1187 tests) verified under a simulated CI
-          environment
-          (<code>GIT_CONFIG_COUNT=1
-          GIT_CONFIG_KEY_0=init.defaultBranch
-          GIT_CONFIG_VALUE_0=master</code>) &mdash;
-          <strong>1187 / 1187 passing, 0 ignored</strong>. No
-          regressions on hosts that already default to
-          <code>main</code>.</li>
       </ul>
     </article>
 

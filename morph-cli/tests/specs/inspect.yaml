@@ -1,0 +1,196 @@
+# Phase 3 (v0.45): the `morph inspect` namespace consolidates three
+# overlapping CLIs (`morph trace`, `morph tap`, `morph traces`) into
+# one coherent surface. Subcommand mapping:
+#
+#   morph inspect summary               (was: morph tap summary)
+#   morph inspect recent                (was: morph traces summary)
+#   morph inspect show <hash>           (was: morph trace show <hash>
+#                                        OR  morph tap inspect <run_hash>;
+#                                        auto-detects Trace vs Run)
+#   morph inspect diagnose [<hash>]     (was: morph tap diagnose)
+#   morph inspect export [...]          (was: morph tap export)
+#   morph inspect stats <trace_hash>    (was: morph tap trace-stats)
+#   morph inspect preview <run_hash>    (was: morph tap preview)
+#   morph inspect task <ref>            (was: morph traces task-structure)
+#   morph inspect target <ref>          (was: morph traces target-context)
+#   morph inspect artifact <ref>        (was: morph traces final-artifact)
+#   morph inspect semantics <ref>       (was: morph traces semantics)
+#   morph inspect verification <ref>    (was: morph traces verification)
+#
+# The old commands continue to work in v0.45 and v0.46 with a one-line
+# stderr deprecation notice; they're removed in v0.47. See
+# `inspect_deprecated_aliases.yaml` for the deprecation tests.
+
+- name: inspect_summary_empty_repo
+  steps:
+    - morph: [inspect, summary]
+      stdout_contains:
+        - "Tap Repository Summary"
+        - "Runs:           0"
+
+- name: inspect_summary_with_runs
+  steps:
+    - morph: [run, record-session, --prompt, "Fix the bug", --response, "Bug fixed", --model-name, gpt-4o, --agent-id, cursor]
+      capture: run_hash
+      assert_hash: true
+    - morph: [inspect, summary]
+      stdout_contains:
+        - "Runs:           1"
+        - "gpt-4o"
+
+- name: inspect_summary_json
+  steps:
+    - morph: [run, record-session, --prompt, "p", --response, "r", --model-name, gpt-4o, --agent-id, cursor]
+      capture: run_hash
+      assert_hash: true
+    - morph: [inspect, summary, --json]
+      stdout_contains:
+        - '"total_runs"'
+        - '"total_traces"'
+
+- name: inspect_show_trace_hash_prints_events
+  steps:
+    - morph: [run, record-session, --prompt, "Build the feature", --response, "Feature built successfully"]
+      capture: run_hash
+      assert_hash: true
+    - morph: [run, show, "${run_hash}", --json]
+      capture_json_field:
+        var: trace_hash
+        field: trace
+    - morph: [inspect, show, "${trace_hash}"]
+      stdout_contains:
+        - "Build the feature"
+        - "Feature built successfully"
+
+- name: inspect_show_run_hash_prints_extracted_task
+  steps:
+    - morph: [run, record-session, --prompt, "Explain recursion", --response, "Recursion is self-reference", --model-name, gpt-4o, --agent-id, test]
+      capture: run_hash
+      assert_hash: true
+    - morph: [inspect, show, "${run_hash}"]
+      stdout_contains:
+        - "Explain recursion"
+        - "model: gpt-4o"
+
+- name: inspect_show_all_iterates_runs
+  steps:
+    - morph: [run, record-session, --prompt, "Task 1", --response, "Done 1", --model-name, gpt-4o, --agent-id, test]
+      capture: h1
+      assert_hash: true
+    - morph: [run, record-session, --prompt, "Task 2", --response, "Done 2", --model-name, claude-4, --agent-id, test]
+      capture: h2
+      assert_hash: true
+    - morph: [inspect, show, all]
+      stdout_contains:
+        - "Task 1"
+        - "Task 2"
+
+- name: inspect_diagnose_single_run
+  steps:
+    - morph: [run, record-session, --prompt, "Do stuff", --response, "Stuff done", --model-name, cursor, --agent-id, cursor]
+      capture: run_hash
+      assert_hash: true
+    - morph: [inspect, diagnose, "${run_hash}"]
+      stdout_contains:
+        - "has_prompt"
+        - "has_response"
+        - "issues"
+
+- name: inspect_diagnose_all_default
+  steps:
+    - morph: [run, record-session, --prompt, "A", --response, "B", --model-name, cursor, --agent-id, cursor]
+      capture: h1
+      assert_hash: true
+    - morph: [inspect, diagnose]
+      stdout_contains:
+        - "Tap Diagnostic Summary"
+        - "Total issues"
+
+- name: inspect_export_prompt_only
+  steps:
+    - morph: [run, record-session, --prompt, "Write a hello world", --response, "Here is hello world", --model-name, gpt-4o, --agent-id, test]
+      capture: run_hash
+      assert_hash: true
+    - morph: [inspect, export, --mode, prompt-only]
+      stdout_contains:
+        - "Write a hello world"
+        - "Here is hello world"
+
+- name: inspect_recent_lists_traces_newest_first
+  steps:
+    - morph: [run, record-session, --prompt, "First task", --response, "Done", --model-name, gpt-4o, --agent-id, test]
+    - morph: [run, record-session, --prompt, "Second task", --response, "Done", --model-name, gpt-4o, --agent-id, test]
+    - morph: [inspect, recent]
+      stdout_contains:
+        - "Recent Traces"
+
+- name: inspect_recent_with_limit
+  steps:
+    - morph: [run, record-session, --prompt, "p", --response, "r", --model-name, gpt-4o, --agent-id, test]
+    - morph: [inspect, recent, --limit, "5"]
+      stdout_contains:
+        - "Recent Traces"
+
+- name: inspect_task_structure_for_run
+  steps:
+    - morph: [run, record-session, --prompt, "Add a function foo() to file bar.py", --response, "Done", --model-name, gpt-4o, --agent-id, cursor]
+      capture: run_hash
+      assert_hash: true
+    - morph: [inspect, task, "${run_hash}"]
+      stdout_contains:
+        - "task_phase"
+        - "task_scope"
+
+- name: inspect_target_context_for_run
+  steps:
+    - morph: [run, record-session, --prompt, "Edit foo.py", --response, "Done", --model-name, gpt-4o, --agent-id, cursor]
+      capture: run_hash
+      assert_hash: true
+    - morph: [inspect, target, "${run_hash}"]
+      stdout_contains:
+        - "target_file"
+
+- name: inspect_artifact_for_run
+  steps:
+    - morph: [run, record-session, --prompt, "Print hello", --response, "print('hello')", --model-name, gpt-4o, --agent-id, cursor]
+      capture: run_hash
+      assert_hash: true
+    - morph: [inspect, artifact, "${run_hash}"]
+      stdout_contains:
+        - "artifact_type"
+
+- name: inspect_semantics_for_run
+  steps:
+    - morph: [run, record-session, --prompt, "Refactor the loop", --response, "Loop refactored to a list comprehension", --model-name, gpt-4o, --agent-id, cursor]
+      capture: run_hash
+      assert_hash: true
+    - morph: [inspect, semantics, "${run_hash}"]
+      stdout_contains:
+        - "changed_construct_summary"
+
+- name: inspect_verification_for_run
+  steps:
+    - morph: [run, record-session, --prompt, "Add a test", --response, "Run pytest to verify", --model-name, gpt-4o, --agent-id, cursor]
+      capture: run_hash
+      assert_hash: true
+    - morph: [inspect, verification, "${run_hash}"]
+      stdout_contains:
+        - "verification_actions"
+
+- name: inspect_help_lists_grouped_subcommands
+  init: false
+  steps:
+    - morph: [inspect, --help]
+      stdout_contains:
+        - "summary"
+        - "recent"
+        - "show"
+        - "diagnose"
+        - "export"
+        - "stats"
+        - "preview"
+        - "task"
+        - "target"
+        - "artifact"
+        - "semantics"
+        - "verification"

@@ -52,7 +52,7 @@ into an intent — guessing at the agent's reasoning from the file
 changes alone.
 
 ```
-$ morph tap inspect abc123
+$ morph inspect show abc123
 === Run abc123 ===
   prompt:    "Add retry logic to the auth service. The current
               implementation gives up on the first 5xx; we want
@@ -92,8 +92,8 @@ is impossible without the prompt stored next to the commit it
 produced.
 
 ```
-$ morph traces target-context abc123 > context.json
-$ morph traces final-artifact abc123 > artifact.diff
+$ morph inspect target abc123 > context.json
+$ morph inspect artifact abc123 > artifact.diff
 # replay against a newer model:
 $ <your-replay-tool> --prompt-from abc123 --model claude-opus-5
 ```
@@ -218,7 +218,7 @@ A reviewer cannot ask "show me the prompt that produced commit
 `abc123`" and get a deterministic answer from on-disk transcripts.
 At best they can sort the JSONL files by mtime, look for one whose
 edits land roughly at that commit, and hope. Morph turns that
-hope into `morph traces final-artifact abc123`.
+hope into `morph inspect artifact abc123`.
 
 ## Why OTEL hooks aren't enough
 
@@ -291,10 +291,9 @@ The properties morph traces have, that the alternatives don't:
    laptop. Sharing them with the team is opt-in via a morph
    remote — see [`SECURITY.md`](SECURITY.md) for the sharing model
    and the privacy implications.
-7. **Designed to be read.** `morph tap`, `morph traces`, `morph
-   serve`, and the MCP `morph_inspect_run` tool all exist
-   specifically so a reviewer can ask the trace questions during
-   code review.
+7. **Designed to be read.** `morph inspect`, `morph serve`, and the
+   MCP `morph_inspect_run` tool all exist specifically so a reviewer
+   can ask the trace questions during code review.
 
 ## See also
 

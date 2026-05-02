@@ -1,6 +1,7 @@
 //! Morph CLI: read path and manual write operations.
 
 mod cli;
+mod inspect;
 mod remote_helper;
 #[cfg(feature = "cursor-setup")]
 mod setup;
@@ -15,7 +16,7 @@ use morph_core::{
 };
 use std::path::PathBuf;
 
-fn get_store(verbose: bool) -> anyhow::Result<(PathBuf, Box<dyn Store>)> {
+pub(crate) fn get_store(verbose: bool) -> anyhow::Result<(PathBuf, Box<dyn Store>)> {
     let cwd = std::env::current_dir()?;
     let repo_root =
         find_repo(&cwd).ok_or_else(|| anyhow::anyhow!("not a morph repository (or any parent)"))?;
@@ -37,7 +38,7 @@ fn parse_hash(s: &str) -> anyhow::Result<Hash> {
 /// Resolve a user-supplied identifier (hash, ref, prefix) against the
 /// store. Delegates to [`morph_core::resolve_revision`] so HEAD,
 /// branches, tags, and short prefixes all work uniformly.
-fn resolve_obj_hash(store: &dyn Store, s: &str) -> anyhow::Result<Hash> {
+pub(crate) fn resolve_obj_hash(store: &dyn Store, s: &str) -> anyhow::Result<Hash> {
     resolve_revision(store, s).map_err(|e| anyhow::anyhow!("{}", e))
 }
 
@@ -872,111 +873,6 @@ fn version_json() -> String {
         "supported_repo_versions": SUPPORTED_REPO_VERSIONS,
     });
     serde_json::to_string(&value).expect("version json serializes")
-}
-
-fn print_tap_task(task: &morph_core::TapTask) {
-    println!("=== Run {} ===", &task.run_hash[..12]);
-    println!(
-        "  model: {}  agent: {}  events: {}  steps: {}",
-        task.model, task.agent, task.event_count, task.step_count
-    );
-    for (i, step) in task.steps.iter().enumerate() {
-        println!("\n  --- Step {} ---", i + 1);
-        let prompt_preview = if step.prompt.len() > 120 {
-            format!(
-                "{}...",
-                &step.prompt[..step.prompt.floor_char_boundary(120)]
-            )
-        } else {
-            step.prompt.clone()
-        };
-        println!("  Prompt: {}", prompt_preview);
-        if !step.tool_calls.is_empty() {
-            println!("  Tool calls: {}", step.tool_calls.len());
-            for tc in &step.tool_calls {
-                println!(
-                    "    - {}{}",
-                    tc.name.as_deref().unwrap_or("(unnamed)"),
-                    if tc.output.is_some() {
-                        " [has output]"
-                    } else {
-                        ""
-                    }
-                );
-            }
-        }
-        if !step.file_reads.is_empty() {
-            println!("  File reads: {}", step.file_reads.len());
-        }
-        if !step.file_edits.is_empty() {
-            println!("  File edits: {}", step.file_edits.len());
-        }
-        let resp_preview = if step.response.len() > 200 {
-            format!(
-                "{}...",
-                &step.response[..step.response.floor_char_boundary(200)]
-            )
-        } else {
-            step.response.clone()
-        };
-        if resp_preview.is_empty() {
-            println!("  Response: (empty)");
-        } else {
-            println!("  Response: {}", resp_preview);
-        }
-    }
-    println!();
-}
-
-fn print_trace_events(trace: &morph_core::objects::Trace) {
-    for ev in &trace.events {
-        let text = ev
-            .payload
-            .get("text")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        match ev.kind.as_str() {
-            "prompt" | "user" => println!("--- prompt ---\n{}", text),
-            "response" | "assistant" => println!("--- response ---\n{}", text),
-            "tool_call" | "tool_use" | "function_call" => {
-                let name = ev
-                    .payload
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("(unnamed)");
-                println!("--- tool_call: {} ---\n{}", name, text);
-            }
-            "tool_result" | "tool_output" | "function_result" => {
-                let output = ev
-                    .payload
-                    .get("output")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(text);
-                let err = ev.payload.get("error").and_then(|v| v.as_str());
-                println!("--- tool_result ---\n{}", output);
-                if let Some(e) = err {
-                    println!("  error: {}", e);
-                }
-            }
-            "file_read" | "read_file" => {
-                let path = ev
-                    .payload
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("?");
-                println!("--- file_read: {} ---", path);
-            }
-            "file_edit" | "edit_file" | "write_file" | "file_write" => {
-                let path = ev
-                    .payload
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("?");
-                println!("--- file_edit: {} ---", path);
-            }
-            _ => println!("--- {} ---\n{}", ev.kind, text),
-        }
-    }
 }
 
 /// PR 9: reference-mode `morph merge` wrapper. Symmetric with PR 5's
@@ -3589,7 +3485,7 @@ fn main() -> anyhow::Result<()> {
                             let trace_obj = store.get(&parse_hash(&run.trace)?)?;
                             if let MorphObject::Trace(t) = &trace_obj {
                                 println!();
-                                print_trace_events(t);
+                                inspect::print_trace_events(t);
                             } else {
                                 anyhow::bail!("object {} is not a trace", run.trace);
                             }
@@ -3662,97 +3558,27 @@ fn main() -> anyhow::Result<()> {
             }
         },
 
+        Command::Inspect { sub } => inspect::run_inspect(verbose, sub)?,
+
         Command::Trace { sub } => match sub {
             TraceCmd::Show { hash } => {
-                let (_repo_root, store) = get_store(verbose)?;
-                let h = resolve_obj_hash(store.as_ref(), &hash)?;
-                match store.get(&h)? {
-                    MorphObject::Trace(t) => print_trace_events(&t),
-                    _ => anyhow::bail!("object {} is not a trace", hash),
-                }
+                inspect::deprecation_notice("morph trace show", "morph inspect show");
+                inspect::run_show(verbose, &hash)?;
             }
         },
 
         Command::Tap { sub } => match sub {
             TapCmd::Summary { json } => {
-                let (_repo_root, store) = get_store(verbose)?;
-                let summary = morph_core::summarize_repo(store.as_ref())?;
-                if json {
-                    println!("{}", serde_json::to_string_pretty(&summary)?);
-                    return Ok(());
-                }
-                println!("=== Tap Repository Summary ===\n");
-                println!("Runs:           {}", summary.total_runs);
-                println!("Traces:         {}", summary.total_traces);
-                println!("Total events:   {}", summary.total_events);
-                println!("Multi-step:     {}", summary.multi_step_runs);
-                println!("Empty response: {}", summary.empty_response_runs);
-                println!("With metrics:   {}", summary.runs_with_metrics);
-                println!("\nEvent kinds:");
-                for (kind, count) in &summary.event_kind_counts {
-                    println!("  {:<16} {}", kind, count);
-                }
-                println!("\nModels:");
-                for (model, count) in &summary.model_counts {
-                    println!("  {:<30} {}", model, count);
-                }
-                println!("\nAgents:");
-                for (agent, count) in &summary.agent_counts {
-                    println!("  {:<20} {}", agent, count);
-                }
-                if !summary.issues.is_empty() {
-                    println!("\nIssues:");
-                    for issue in &summary.issues {
-                        println!("  ⚠ {}", issue);
-                    }
-                }
+                inspect::deprecation_notice("morph tap summary", "morph inspect summary");
+                inspect::run_summary(verbose, json)?;
             }
             TapCmd::Inspect { run_hash } => {
-                let (_repo_root, store) = get_store(verbose)?;
-                if run_hash == "all" {
-                    let hashes = store.list(ObjectType::Run)?;
-                    for h in &hashes {
-                        match morph_core::extract_task(store.as_ref(), h) {
-                            Ok(task) => print_tap_task(&task),
-                            Err(e) => eprintln!("run {}: {}", h, e),
-                        }
-                    }
-                } else {
-                    let h = resolve_obj_hash(store.as_ref(), &run_hash)?;
-                    let task = morph_core::extract_task(store.as_ref(), &h)?;
-                    print_tap_task(&task);
-                }
+                inspect::deprecation_notice("morph tap inspect", "morph inspect show");
+                inspect::run_show(verbose, &run_hash)?;
             }
             TapCmd::Diagnose { run_hash } => {
-                let (_repo_root, store) = get_store(verbose)?;
-                if run_hash == "all" {
-                    let hashes = store.list(ObjectType::Run)?;
-                    let mut total_issues = 0;
-                    let mut issue_counts: std::collections::BTreeMap<String, usize> =
-                        std::collections::BTreeMap::new();
-                    for h in &hashes {
-                        match morph_core::diagnose_run(store.as_ref(), h) {
-                            Ok(diag) => {
-                                for issue in &diag.issues {
-                                    total_issues += 1;
-                                    let key =
-                                        issue.split(" — ").next().unwrap_or(issue).to_string();
-                                    *issue_counts.entry(key).or_insert(0) += 1;
-                                }
-                            }
-                            Err(e) => eprintln!("run {}: {}", h, e),
-                        }
-                    }
-                    println!("=== Tap Diagnostic Summary ({} runs) ===\n", hashes.len());
-                    println!("Total issues: {}\n", total_issues);
-                    for (issue, count) in &issue_counts {
-                        println!("  [{:>3}x] {}", count, issue);
-                    }
-                } else {
-                    let h = resolve_obj_hash(store.as_ref(), &run_hash)?;
-                    let diag = morph_core::diagnose_run(store.as_ref(), &h)?;
-                    println!("{}", serde_json::to_string_pretty(&diag)?);
-                }
+                inspect::deprecation_notice("morph tap diagnose", "morph inspect diagnose");
+                inspect::run_diagnose(verbose, &run_hash)?;
             }
             TapCmd::Export {
                 mode,
@@ -3761,208 +3587,16 @@ fn main() -> anyhow::Result<()> {
                 agent,
                 min_steps,
             } => {
-                let (_repo_root, store) = get_store(verbose)?;
-                let export_mode = match mode.as_str() {
-                    "prompt-only" => morph_core::ExportMode::PromptOnly,
-                    "with-context" => morph_core::ExportMode::WithContext,
-                    "agentic" => morph_core::ExportMode::Agentic,
-                    other => anyhow::bail!(
-                        "unknown export mode '{}' (use: prompt-only, with-context, agentic)",
-                        other
-                    ),
-                };
-
-                let cases = if model.is_some() || agent.is_some() || min_steps.is_some() {
-                    let filter = morph_core::TapFilter {
-                        model,
-                        agent,
-                        min_steps,
-                        has_tool_calls: None,
-                    };
-                    let run_hashes = morph_core::filter_runs(store.as_ref(), &filter)?;
-                    let mut all_cases = Vec::new();
-                    for run_hash in &run_hashes {
-                        if let Ok(task) = morph_core::extract_task(store.as_ref(), run_hash) {
-                            let task_cases = morph_core::task_to_eval_cases(&task, &export_mode);
-                            all_cases.extend(task_cases);
-                        }
-                    }
-                    all_cases
-                } else {
-                    morph_core::export_eval_cases(store.as_ref(), &export_mode)?
-                };
-
-                let json = serde_json::to_string_pretty(&cases)?;
-                if let Some(path) = output {
-                    std::fs::write(&path, &json)?;
-                    println!("Exported {} eval cases to {}", cases.len(), path.display());
-                } else {
-                    println!("{}", json);
-                }
+                inspect::deprecation_notice("morph tap export", "morph inspect export");
+                inspect::run_export(verbose, &mode, output.as_deref(), model, agent, min_steps)?;
             }
             TapCmd::TraceStats { trace_hash } => {
-                let (_repo_root, store) = get_store(verbose)?;
-                let h = resolve_obj_hash(store.as_ref(), &trace_hash)?;
-                let stats = morph_core::trace_stats(store.as_ref(), &h)?;
-                println!(
-                    "=== Trace {} ===\n",
-                    &trace_hash[..12.min(trace_hash.len())]
-                );
-                println!("Events:             {}", stats.event_count);
-                println!(
-                    "Structured events:  {}",
-                    if stats.has_structured_events {
-                        "yes"
-                    } else {
-                        "no"
-                    }
-                );
-                if let Some((first, last)) = &stats.timestamp_range {
-                    println!("Time range:         {} .. {}", first, last);
-                }
-                println!("\nEvent kinds (raw):");
-                for (kind, count) in &stats.event_kinds {
-                    println!("  {:<20} {}", kind, count);
-                }
-                println!("\nEvent kinds (normalized):");
-                for (kind, count) in &stats.normalized_kinds {
-                    println!("  {:<20} {}", kind, count);
-                }
-                println!("\nPayload keys:");
-                for (key, count) in &stats.payload_keys {
-                    println!("  {:<20} {}", key, count);
-                }
-                if !stats.prompt_lengths.is_empty() {
-                    let avg: f64 = stats.prompt_lengths.iter().sum::<usize>() as f64
-                        / stats.prompt_lengths.len() as f64;
-                    println!(
-                        "\nPrompt lengths:     {} prompts, avg {:.0} chars",
-                        stats.prompt_lengths.len(),
-                        avg
-                    );
-                }
-                if !stats.response_lengths.is_empty() {
-                    let avg: f64 = stats.response_lengths.iter().sum::<usize>() as f64
-                        / stats.response_lengths.len() as f64;
-                    println!(
-                        "Response lengths:   {} responses, avg {:.0} chars",
-                        stats.response_lengths.len(),
-                        avg
-                    );
-                }
+                inspect::deprecation_notice("morph tap trace-stats", "morph inspect stats");
+                inspect::run_stats(verbose, &trace_hash)?;
             }
             TapCmd::Preview { run_hash, mode } => {
-                let (_repo_root, store) = get_store(verbose)?;
-                let h = resolve_obj_hash(store.as_ref(), &run_hash)?;
-                let task = morph_core::extract_task(store.as_ref(), &h)?;
-                let export_mode = match mode.as_str() {
-                    "prompt-only" => morph_core::ExportMode::PromptOnly,
-                    "with-context" => morph_core::ExportMode::WithContext,
-                    "agentic" => morph_core::ExportMode::Agentic,
-                    other => anyhow::bail!(
-                        "unknown export mode '{}' (use: prompt-only, with-context, agentic)",
-                        other
-                    ),
-                };
-                let cases = morph_core::task_to_eval_cases(&task, &export_mode);
-
-                println!(
-                    "=== Preview: {} ({} steps, mode: {}) ===\n",
-                    &run_hash[..12.min(run_hash.len())],
-                    task.step_count,
-                    mode
-                );
-                println!("Model: {}  Agent: {}", task.model, task.agent);
-                println!();
-
-                for case in &cases {
-                    println!("--- Step {}/{} ---", case.step_index + 1, case.total_steps);
-                    println!("[PROMPT] ({} chars)", case.prompt.len());
-                    let prompt_preview = if case.prompt.len() > 300 {
-                        format!(
-                            "{}...",
-                            &case.prompt[..case.prompt.floor_char_boundary(300)]
-                        )
-                    } else {
-                        case.prompt.clone()
-                    };
-                    println!("{}", prompt_preview);
-
-                    if let Some(ref ctx) = case.context {
-                        println!("\n[CONTEXT] ({} chars)", ctx.len());
-                        let ctx_preview = if ctx.len() > 500 {
-                            format!("{}...", &ctx[..ctx.floor_char_boundary(500)])
-                        } else {
-                            ctx.clone()
-                        };
-                        println!("{}", ctx_preview);
-                    }
-
-                    if !case.file_reads.is_empty() {
-                        println!("\n[FILE READS] {}", case.file_reads.len());
-                        for fr in &case.file_reads {
-                            let has_content = fr.content.is_some();
-                            println!(
-                                "  {} {}",
-                                fr.path.as_deref().unwrap_or("?"),
-                                if has_content {
-                                    "(has content)"
-                                } else {
-                                    "(path only)"
-                                }
-                            );
-                        }
-                    }
-                    if !case.file_edits.is_empty() {
-                        println!("\n[FILE EDITS] {}", case.file_edits.len());
-                        for fe in &case.file_edits {
-                            let has_content = fe.content.is_some();
-                            println!(
-                                "  {} {}",
-                                fe.path.as_deref().unwrap_or("?"),
-                                if has_content {
-                                    "(has content)"
-                                } else {
-                                    "(path only)"
-                                }
-                            );
-                        }
-                    }
-                    if !case.tool_calls.is_empty() {
-                        println!("\n[TOOL CALLS] {}", case.tool_calls.len());
-                        for tc in &case.tool_calls {
-                            println!(
-                                "  {} {}{}",
-                                tc.name.as_deref().unwrap_or("(unnamed)"),
-                                if tc.output.is_some() {
-                                    "[has output]"
-                                } else {
-                                    ""
-                                },
-                                if tc.error.is_some() {
-                                    " [has error]"
-                                } else {
-                                    ""
-                                }
-                            );
-                        }
-                    }
-
-                    println!(
-                        "\n[EXPECTED RESPONSE] ({} chars)",
-                        case.expected_response.len()
-                    );
-                    let resp_preview = if case.expected_response.len() > 300 {
-                        format!(
-                            "{}...",
-                            &case.expected_response
-                                [..case.expected_response.floor_char_boundary(300)]
-                        )
-                    } else {
-                        case.expected_response.clone()
-                    };
-                    println!("{}\n", resp_preview);
-                }
+                inspect::deprecation_notice("morph tap preview", "morph inspect preview");
+                inspect::run_preview(verbose, &run_hash, &mode)?;
             }
         },
 
@@ -4899,65 +4533,40 @@ fn cmd_prompt_show(verbose: bool, run_ref: &str, run_upgrade: bool) -> anyhow::R
 /// latest Run pointing at that trace). Thin wrapper over
 /// `morph_core::resolve_run_or_trace_hash` that adds CLI-side
 /// hash-prefix resolution and converts errors to `anyhow`.
-fn resolve_run_hash(store: &dyn Store, hash_str: &str) -> anyhow::Result<Hash> {
+pub(crate) fn resolve_run_hash(store: &dyn Store, hash_str: &str) -> anyhow::Result<Hash> {
     let h = resolve_obj_hash(store, hash_str)?;
     morph_core::resolve_run_or_trace_hash(store, &h).map_err(|e| anyhow::anyhow!("{}", e))
 }
 
+/// Phase 3 (v0.45+): the deprecated `morph traces <subcommand>`
+/// dispatcher. Each arm prints a one-line stderr deprecation notice
+/// pointing the user at `morph inspect ...` and then forwards to the
+/// shared handler in [`crate::inspect`]. Removed in v0.47.
 fn handle_traces_command(verbose: bool, sub: TracesCmd) -> anyhow::Result<()> {
-    let (_repo_root, store) = get_store(verbose)?;
     match sub {
         TracesCmd::Summary { limit, json } => {
-            let summaries = morph_core::recent_trace_summaries(store.as_ref(), limit)?;
-            if json {
-                println!("{}", serde_json::to_string_pretty(&summaries)?);
-            } else {
-                println!("=== Recent Traces ({} shown) ===\n", summaries.len());
-                for s in &summaries {
-                    let short = &s.run_hash[..12.min(s.run_hash.len())];
-                    let phase = serde_json::to_string(&s.task_phase).unwrap_or_default();
-                    let scope = serde_json::to_string(&s.task_scope).unwrap_or_default();
-                    println!(
-                        "{} {}  phase={}  scope={}",
-                        short,
-                        s.timestamp,
-                        phase.trim_matches('"'),
-                        scope.trim_matches('"')
-                    );
-                    if !s.target_files.is_empty() {
-                        println!("  files:   {}", s.target_files.join(", "));
-                    }
-                    if !s.target_symbols.is_empty() {
-                        println!("  symbols: {}", s.target_symbols.join(", "));
-                    }
-                    println!("  prompt:  {}\n", s.prompt_preview);
-                }
-            }
+            inspect::deprecation_notice("morph traces summary", "morph inspect recent");
+            inspect::run_recent(verbose, limit, json)?;
         }
         TracesCmd::TaskStructure { hash } => {
-            let run_hash = resolve_run_hash(store.as_ref(), &hash)?;
-            let out = morph_core::task_structure(store.as_ref(), &run_hash)?;
-            println!("{}", serde_json::to_string_pretty(&out)?);
+            inspect::deprecation_notice("morph traces task-structure", "morph inspect task");
+            inspect::run_task(verbose, &hash)?;
         }
         TracesCmd::TargetContext { hash } => {
-            let run_hash = resolve_run_hash(store.as_ref(), &hash)?;
-            let out = morph_core::target_context(store.as_ref(), &run_hash)?;
-            println!("{}", serde_json::to_string_pretty(&out)?);
+            inspect::deprecation_notice("morph traces target-context", "morph inspect target");
+            inspect::run_target(verbose, &hash)?;
         }
         TracesCmd::FinalArtifact { hash } => {
-            let run_hash = resolve_run_hash(store.as_ref(), &hash)?;
-            let out = morph_core::final_artifact(store.as_ref(), &run_hash)?;
-            println!("{}", serde_json::to_string_pretty(&out)?);
+            inspect::deprecation_notice("morph traces final-artifact", "morph inspect artifact");
+            inspect::run_artifact(verbose, &hash)?;
         }
         TracesCmd::Semantics { hash } => {
-            let run_hash = resolve_run_hash(store.as_ref(), &hash)?;
-            let out = morph_core::change_semantics(store.as_ref(), &run_hash)?;
-            println!("{}", serde_json::to_string_pretty(&out)?);
+            inspect::deprecation_notice("morph traces semantics", "morph inspect semantics");
+            inspect::run_semantics(verbose, &hash)?;
         }
         TracesCmd::Verification { hash } => {
-            let run_hash = resolve_run_hash(store.as_ref(), &hash)?;
-            let out = morph_core::verification_steps(store.as_ref(), &run_hash)?;
-            println!("{}", serde_json::to_string_pretty(&out)?);
+            inspect::deprecation_notice("morph traces verification", "morph inspect verification");
+            inspect::run_verification(verbose, &hash)?;
         }
     }
     Ok(())

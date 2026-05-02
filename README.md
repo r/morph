@@ -162,10 +162,10 @@ morph policy init|show|set|require-metrics|set-default-eval ...
 morph certify --metrics(-file) ... [--commit <hash>] [--runner ...]
 morph gate [--commit <hash>] [--json]
 
-morph trace show <hash>
-morph tap summary | inspect <hash> | diagnose | export | trace-stats <hash> | preview <hash>
-morph traces summary | task-structure <ref> | target-context <ref> | final-artifact <ref>
-                    | semantics <ref> | verification <ref>
+morph inspect summary | recent | show <hash> | diagnose [<hash>] | export ...
+              | stats <trace_hash> | preview <run_hash>
+              | task <ref> | target <ref> | artifact <ref>
+              | semantics <ref> | verification <ref>
 
 morph annotate <hash> -k kind -d data
 morph annotations <hash> [--json]
@@ -183,12 +183,14 @@ morph visualize [<path>] [--port N]
 
 ## Inspecting recorded agent work
 
-The IDE hooks parse the agent's full transcript (tool calls, file reads/edits, shell commands, token usage) into structured Trace events. Browse them via:
+The IDE hooks parse the agent's full transcript (tool calls, file reads/edits, shell commands, token usage) into structured Trace events. Browse them via the consolidated `morph inspect` namespace (v0.45+):
 
-- `morph tap summary` — repo-level overview of recorded runs.
-- `morph tap inspect <run-hash>` — grouped steps for one run.
-- `morph traces summary` / `traces task-structure <ref>` / `traces final-artifact <ref>` — structured task views for replay or eval generation.
+- `morph inspect summary` — repo-level overview of recorded runs.
+- `morph inspect show <run-hash>` — grouped steps for one run (or pass a trace hash for raw events).
+- `morph inspect recent` / `morph inspect task <ref>` / `morph inspect artifact <ref>` — structured task views for replay or eval generation.
 - `morph run record-session --prompt "..." --response "..."` — record a session manually.
+
+The older `morph trace` / `morph tap` / `morph traces` spellings still work in v0.45 and v0.46 with a deprecation notice; they're removed in v0.47.
 
 See [docs/SESSION-TRACKING.md](docs/SESSION-TRACKING.md).
 

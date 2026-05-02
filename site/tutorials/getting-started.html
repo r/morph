@@ -1007,11 +1007,11 @@
       <section id="inspect">
         <h2><span class="step-num">10</span>Inspect what the agent did</h2>
         <p>
-          This is the part Git literally cannot do. <code>morph tap</code> is the read
-          surface for recorded agent work — runs, prompts, tool calls, file edits,
-          aggregated by trace.
+          This is the part Git literally cannot do. <code>morph inspect</code>
+          (v0.45+) is the read surface for recorded agent work — runs, prompts,
+          tool calls, file edits, aggregated by trace.
         </p>
-<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph tap summary</span>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph inspect summary</span>
 <span class="out">=== Tap Repository Summary ===</span>
 
 <span class="out">Runs:           5</span>
@@ -1034,7 +1034,7 @@
         <p>
           Drill into a specific run to see its grouped steps:
         </p>
-<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph tap inspect 52b35819</span>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph inspect show 52b35819</span>
 <span class="out">=== Run 52b35819 ===</span>
 <span class="out">  model: claude-opus-4  agent: cursor  events: 32  steps: 1</span>
 
@@ -1049,14 +1049,14 @@
           Or look at it through the trace lens, which understands phases and
           target-context:
         </p>
-<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph traces summary</span>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph inspect recent</span>
 <span class="out">=== Recent Traces (5 shown) ===</span>
 
 <span class="out">52b35819  2026-04-28T23:44Z  phase=create_code  scope=converter.py</span>
 <span class="out">  prompt: Add support for GBP at rate 0.79…</span>
 
-<span class="prompt">$ </span><span class="cmd">morph traces target-context 52b35819</span>     <span class="comment"># the snippet the agent was working on</span>
-<span class="prompt">$ </span><span class="cmd">morph traces final-artifact 52b35819</span>     <span class="comment"># what the agent produced</span></div>
+<span class="prompt">$ </span><span class="cmd">morph inspect target 52b35819</span>     <span class="comment"># the snippet the agent was working on</span>
+<span class="prompt">$ </span><span class="cmd">morph inspect artifact 52b35819</span>   <span class="comment"># what the agent produced</span></div>
         <p>
           Every one of those events is content-addressed and immutable. Six months
           from now, when someone asks "<em>why does the converter handle GBP this

@@ -903,26 +903,33 @@ Compares the file trees of two commits and reports added, deleted, and modified 
 ## 6.17 Tap (Trace Analysis)
 
 ```
-morph tap summary                          # overview of all runs in the repo
-morph tap inspect <run_hash>               # grouped steps for a single run (pass "all" for every run)
-morph tap diagnose [<run_hash>]            # recording quality report (default: all runs)
-morph tap export --mode <mode>             # export eval cases (prompt-only, with-context, agentic)
-morph tap trace-stats <trace_hash>         # detailed event-level statistics for a trace
-morph tap preview <run_hash> [--mode M]    # labeled prompt/context/response preview
+morph inspect summary                      # overview of all runs in the repo
+morph inspect show <hash>                  # grouped steps (Run) or raw events (Trace); "all" iterates Runs
+morph inspect diagnose [<run_hash>]        # recording quality report (default: all runs)
+morph inspect export --mode <mode>         # export eval cases (prompt-only, with-context, agentic)
+morph inspect stats <trace_hash>           # detailed event-level statistics for a trace
+morph inspect preview <run_hash> [--mode M] # labeled prompt/context/response preview
 ```
+
+(Through v0.46 the older `morph tap <subcommand>` and `morph trace
+show` spellings still work with a deprecation notice; they're
+removed in v0.47.)
 
 Tap reads traces and runs from the store, groups events into logical steps (prompt, response, tool calls, file operations), and produces structured output for evaluation frameworks. `export` supports filtering by model (`--model`), agent (`--agent`), and minimum step count (`--min-steps`), and writes to a file with `--output`.
 
 ### 6.17a Structured trace views
 
 ```
-morph traces summary [--limit N] [--json]
-morph traces task-structure <run_or_trace_hash>
-morph traces target-context <run_or_trace_hash>
-morph traces final-artifact <run_or_trace_hash>
-morph traces semantics <run_or_trace_hash>
-morph traces verification <run_or_trace_hash>
+morph inspect recent [--limit N] [--json]
+morph inspect task <run_or_trace_hash>
+morph inspect target <run_or_trace_hash>
+morph inspect artifact <run_or_trace_hash>
+morph inspect semantics <run_or_trace_hash>
+morph inspect verification <run_or_trace_hash>
 ```
+
+(Through v0.46 the older `morph traces <subcommand>` spellings still
+work with a deprecation notice; they're removed in v0.47.)
 
 Higher-level views over the same traces, for replay and eval-case construction: task classification (phase, scope, target files/symbols, goal), target file/function context, final artifact (function text / file snippet / patch summary), change semantics, and verification commands. These are also exposed as MCP tools (`morph_get_recent_trace_summaries`, `morph_get_trace_task_structure`, etc.).
 
