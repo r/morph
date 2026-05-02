@@ -982,8 +982,12 @@
         <p>
           That commit has <code>morph_origin: "cli"</code> (active, not passively
           mirrored), its certification carries the metrics, and <code>morph gate</code>
-          confirms it satisfies the default policy's
-          <code>required_metrics: [tests_total, tests_passed]</code>.
+          confirms it satisfies the policy we tightened earlier
+          (<code>required_metrics: [tests_total, tests_passed]</code>).
+          Fresh repos start with an empty <code>required_metrics</code> list so the
+          first commit goes through; opt into enforcement with
+          <code>morph policy init</code> or
+          <code>morph policy require-metrics&hellip;</code>.
         </p>
         <div class="callout">
           <strong>The everyday rhythm:</strong> use plain <code>git commit</code> for

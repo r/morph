@@ -98,6 +98,21 @@ fn write_last_run_breadcrumb(store: &dyn Store, repo_root: &std::path::Path, run
     }
 }
 
+/// Print a one-line policy summary at the end of `morph init` so a
+/// fresh user can see the behavioral gate they're under (and how to
+/// change it) without running `morph policy show`. The output is
+/// purely informational; it never fails the init.
+fn print_policy_summary(policy: &morph_core::RepoPolicy) {
+    if policy.required_metrics.is_empty() {
+        println!("  policy: relaxed (metrics optional) — tighten with `morph policy init`");
+    } else {
+        println!(
+            "  policy: strict (requires {}) — loosen with `morph policy require-metrics`",
+            policy.required_metrics.join(", ")
+        );
+    }
+}
+
 /// Dispatch a git-hook event into the right per-event handler. Called
 /// from `morph hook <event>`, which is what every installed
 /// reference-mode hook stub `exec`s. Errors out loudly when:
@@ -1575,6 +1590,15 @@ fn main() -> anyhow::Result<()> {
                     .canonicalize()
                     .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(&path));
                 println!("Initialized bare Morph repository in {}/", abs.display());
+                // Surface the active policy so the operator knows the
+                // gate they're under without `morph policy show`.
+                // Bare repos keep the opinionated default from
+                // `init_morph_dir_at` (tests_total + tests_passed
+                // required); print the loosening recipe alongside.
+                // Bare layout puts `config.json` directly at the repo
+                // root (no `.morph/` wrapper).
+                let bare_policy = morph_core::read_policy(&abs).unwrap_or_default();
+                print_policy_summary(&bare_policy);
                 return Ok(());
             }
 
@@ -1696,6 +1720,12 @@ fn main() -> anyhow::Result<()> {
                     "  morph state is local to this clone (.git/info/exclude already excludes .morph/)"
                 );
             }
+            // Surface the active policy so a fresh user knows the gate
+            // they're under without having to run `morph policy show`.
+            // Reference-mode init writes a permissive policy with a
+            // git-hook carve-out; print "relaxed" plus the tightening
+            // recipe (`morph policy init`).
+            print_policy_summary(&policy);
             match submode {
                 morph_core::RepoSubmode::Stowaway => {
                     println!(

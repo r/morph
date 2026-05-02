@@ -16,6 +16,58 @@ metrics — see `.cursor/rules/behavioral-commits.mdc`.
 
 ## [Unreleased]
 
+## [0.43.0] — 2026-05-02
+
+Onboarding polish: make Morph easier to discover and lean into without
+giving up rigor as an opt-in. First release of the multi-phase
+"make morph intuitive" effort. No behavior breaks; existing repos and
+flows are unaffected.
+
+### Added
+
+- **`morph init` prints the active policy** as the last line of init
+  output, with a one-liner showing how to switch:
+
+  ```
+    policy: relaxed (metrics optional) — tighten with `morph policy init`
+  ```
+
+  Bare repos see `policy: strict (...) — loosen with morph policy
+  require-metrics`. New users now know the gate they're under without
+  running `morph policy show`. Spec coverage:
+  `init_prints_active_policy.yaml`.
+
+- **Grouped subcommand overview in `morph --help`** under a new
+  `COMMANDS BY GROUP:` section (ESSENTIAL / REMOTES / EVALS &
+  METRICS / INSPECT / ADVANCED / INTEGRATIONS). Clap's auto-generated
+  alphabetical list still appears above; the grouping makes the
+  day-one happy path discoverable without scanning 46 entries. Spec
+  coverage: `help_is_grouped.yaml`.
+
+### Changed
+
+- **README leads with one command.** Quickstart is now `morph init`
+  + `morph commit -m "..."` and nothing else; the full surface is
+  preserved in a `Reference: full command list` section near the
+  bottom. The "When you want more" section gradually introduces
+  IDE recording, test-result attachment, and dominance gating as
+  opt-in upgrades rather than mandatory ceremony.
+- **`docs/EVAL-DRIVEN.md` documents reality.** §0 used to claim
+  reference-mode `morph init` installed a strict default policy;
+  in fact reference-mode has been writing a permissive one (with
+  the `git-hook` carve-out) since v0.40. The doc now matches
+  the code and points readers at `morph policy init` for opt-in
+  strict mode.
+- **`docs/EVAL-DRIVEN.md` §5 leads with the auto-pickup flow**
+  (`morph eval run` then plain `morph commit`) instead of the
+  manual `--from-run <hash>` ritual. The manual flow is preserved
+  in a "When you need precision" subsection. The
+  `LAST_RUN.json` breadcrumb already implemented the auto-pickup;
+  the docs are catching up.
+- **Site copy aligned** with the relaxed-by-default story:
+  `site/index.html` quickstart and "Behavioral commits" section,
+  `site/tutorials/adding-to-git-project.html` post-commit narration.
+
 ### Documentation
 
 - **Senior-engineer review pass on docs/site.** Removed stale
@@ -35,6 +87,15 @@ metrics — see `.cursor/rules/behavioral-commits.mdc`.
   `morph push <remote> <branch>` and `morph pull <remote>
   <branch>` in `README.md` to mark `<branch>` as required
   (matches `morph-cli/src/cli.rs`).
+
+### Tests
+
+- Workspace **1192 / 1192 passing** (1187 baseline + 5 new
+  acceptance cases across `init_prints_active_policy.yaml` and
+  `help_is_grouped.yaml`). Cucumber 34 / 37 (3 skipped, 0 failed)
+  — no change. Pre-existing fmt drift across 55 files in the
+  workspace was cleared in a separate `chore: cargo fmt --all
+  baseline` commit so this release lands on a fmt-clean base.
 
 ## [0.42.2] — 2026-05-02
 
@@ -1019,7 +1080,8 @@ Three coordinated changes to repo setup, adoption, and migration.
 - 15 new YAML acceptance spec cases in the default eval suite:
   `init_at_latest:*` ×4, `init_in_git_dir:*` ×6, `upgrade:*` ×5.
 
-[Unreleased]: https://github.com/r/morph/compare/v0.42.2...HEAD
+[Unreleased]: https://github.com/r/morph/compare/v0.43.0...HEAD
+[0.43.0]: https://github.com/r/morph/compare/v0.42.2...v0.43.0
 [0.42.2]: https://github.com/r/morph/compare/v0.42.1...v0.42.2
 [0.42.1]: https://github.com/r/morph/compare/v0.42.0...v0.42.1
 [0.42.0]: https://github.com/r/morph/compare/v0.41.1...v0.42.0

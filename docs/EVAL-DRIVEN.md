@@ -13,17 +13,29 @@ feature branch.
 ## 0. Initial setup
 
 ```bash
-morph init                          # writes a default RepoPolicy:
-                                    #   required_metrics: [tests_total, tests_passed]
+morph init                          # writes a relaxed RepoPolicy:
+                                    #   required_metrics: []
                                     #   merge_policy: dominance
-                                    #   push_gated_branches: []
+                                    #   exempt_origins: ["git-hook"]
 ```
 
-The default policy is opinionated: every commit must carry `tests_total`
-and `tests_passed` unless `--allow-empty-metrics` is passed. To relax
-or change it, use `morph policy require-metrics <name>...` (pass no
-names to disable the gate entirely). Tests can opt out at init time
-with the hidden `--no-default-policy` flag.
+Reference-mode `morph init` (the only working-tree mode in v0.40+)
+ships with a **relaxed** policy: commits without metrics are allowed
+to land, but the merge gate still requires evidence on each parent.
+This is the right default for getting started — you can run
+`morph commit -m "..."` immediately after init without having to
+attach metrics every time.
+
+When you're ready to enforce evidence on every commit, opt in:
+
+```bash
+morph policy init                   # required_metrics = [tests_total, tests_passed]
+# or set your own list:
+morph policy require-metrics tests_total tests_passed pass_rate
+```
+
+`morph init --bare` (server-side bare repos) keeps the strict default
+because servers receive evidence-bearing commits, not author them.
 
 ## 1. Write the acceptance case before the code
 
@@ -116,6 +128,31 @@ turn.
 
 ## 5. Commit from the recorded run
 
+The everyday flow is two commands: run the eval, commit. The most
+recent `morph eval run` drops a `LAST_RUN.json` breadcrumb under
+`.morph/`; the next `morph commit` (without explicit
+`--from-run`/`--metrics`) auto-attaches that run's metrics, evidence,
+and provenance — no hash copy-paste, no extra flags.
+
+```bash
+morph eval run -- cargo test --workspace
+morph commit -m "implement login"
+# metrics, evidence_refs, contributors all attached from the run above.
+# `morph commit` also auto-detects acceptance cases this commit added
+# to the default suite (vs HEAD's) and records them as
+# `introduces_cases` for `morph merge-plan` provenance.
+```
+
+The breadcrumb is single-use: after a successful commit it's cleared,
+so the next `morph commit` won't accidentally re-attach stale
+metrics. If HEAD changes between the run and the commit, the
+breadcrumb is invalidated automatically.
+
+### When you need precision
+
+Use the explicit form when you want to attach a specific run, override
+metrics, or commit without auto-pickup:
+
 ```bash
 morph eval run -- cargo test --workspace
 # Note the printed run hash, e.g. 3a7b9c…
@@ -126,13 +163,11 @@ morph commit \
   --new-cases login:user_can_login
 ```
 
-- `--from-run` attaches the run's metrics as the commit's
-  `observed_metrics`, satisfying the policy and giving the merge gate
-  evidence.
-- `--new-cases` records which acceptance cases this commit *introduced*
-  via an `introduces_cases` annotation. The annotation surfaces in
-  `morph merge-plan` so a reviewer can see which cases each branch
-  contributed.
+- `--from-run <hash>` attaches that specific run.
+- `--new-cases <ids>` overrides the auto-detection. Pass `""` to
+  suppress entirely.
+- `--no-auto-run` disables the breadcrumb pickup so the commit is
+  metrics-less unless `--metrics` / `--from-run` is also passed.
 
 If repo policy requires metrics and you genuinely need to commit without
 them (rare — e.g. rebasing or backporting), use `--allow-empty-metrics`.

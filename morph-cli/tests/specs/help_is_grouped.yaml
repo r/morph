@@ -1,0 +1,42 @@
+# Phase 1.6 (v0.43): `morph help` groups subcommands by purpose so a
+# new user can find the day-one commands without scanning 46
+# alphabetical entries. Groups are emitted via clap's
+# `next_help_heading` attribute on the Command enum.
+#
+# This spec doesn't pin the exact ordering inside each group; it only
+# verifies that every group heading appears in --help, that day-one
+# commands land somewhere visible, and that hidden commands don't
+# leak into help output.
+
+- name: help_top_level_shows_all_group_headings
+  init: false
+  steps:
+    - morph: [help]
+      stdout_contains:
+        - "ESSENTIAL"
+        - "REMOTES"
+        - "EVALS & METRICS"
+        - "INSPECT"
+        - "ADVANCED"
+        - "INTEGRATIONS"
+
+- name: help_essential_group_lists_day_one_commands
+  init: false
+  steps:
+    - morph: [help]
+      stdout_contains:
+        - "init"
+        - "status"
+        - "add"
+        - "commit"
+        - "log"
+        - "branch"
+        - "checkout"
+        - "merge"
+
+- name: help_does_not_leak_hidden_commands
+  init: false
+  steps:
+    - morph: [help]
+      stdout_not_contains:
+        - "remote-helper"

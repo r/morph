@@ -1,0 +1,28 @@
+# Phase 1.4 (v0.43): on `morph init`, print one line summarizing the
+# active policy and how to change it. New users see the gate they're
+# under without having to read docs or run `morph policy show`.
+#
+# Reference-mode init writes a permissive policy (empty
+# required_metrics) plus the `git-hook` carve-out — surface that as
+# "relaxed" with the tightening recipe.
+#
+# Bare init keeps the opinionated default policy from
+# `morph_core::init_morph_dir_at` (tests_total + tests_passed
+# required) — surface that as "strict" with the loosening recipe.
+
+- name: init_reference_mode_prints_relaxed_policy
+  init: false
+  steps:
+    - morph: [init, --git-init, "${repo}"]
+      stdout_contains:
+        - "policy: relaxed"
+        - "morph policy init"
+
+- name: init_bare_prints_strict_policy
+  init: false
+  steps:
+    - morph: [init, --bare, "${repo}"]
+      stdout_contains:
+        - "policy: strict"
+        - "tests_passed"
+        - "morph policy require-metrics"

@@ -7,6 +7,7 @@ use std::path::PathBuf;
 #[command(name = "morph")]
 #[command(about = "Version control for transformation pipelines")]
 #[command(version = long_version())]
+#[command(after_help = GROUPED_OVERVIEW)]
 pub struct Cli {
     #[arg(short, long, global = true)]
     pub verbose: bool,
@@ -24,6 +25,25 @@ fn long_version() -> &'static str {
     );
     V
 }
+
+/// Grouped subcommand overview rendered after clap's auto-generated
+/// alphabetical list. Clap's top-level `Subcommand` derive does not
+/// expose a heading mechanism, so we hand-craft the categories here.
+/// New users use this to find the day-one happy path; the full
+/// alphabetical list above remains the source of truth.
+const GROUPED_OVERVIEW: &str = "\
+COMMANDS BY GROUP:
+
+  ESSENTIAL:        init, status, add, commit, log, diff, branch, checkout, merge
+  REMOTES:          clone, remote, push, fetch, pull, sync
+  EVALS & METRICS:  eval, certify, gate, policy, merge-plan
+  INSPECT:          show, head, identify, refs, annotate, annotations, trace, tap, traces
+  ADVANCED:         prompt, pipeline, run, hash-object, rollup, files, config, tag, stash,
+                    revert, install-hooks, reference-sync, upgrade, gc, forget, version
+  INTEGRATIONS:     setup, visualize, serve
+
+Run `morph <command> --help` for detail on any command.
+";
 
 #[derive(clap::Subcommand)]
 pub enum Command {

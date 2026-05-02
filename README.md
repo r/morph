@@ -24,132 +24,162 @@ Git assumes identity is byte equality, reproducibility is identical output, and 
 - **Morph + Git:** [docs/MORPH-AND-GIT.md](docs/MORPH-AND-GIT.md)
 - **Multi-machine:** [docs/MULTI-MACHINE.md](docs/MULTI-MACHINE.md) (clients) · [docs/SERVER-SETUP.md](docs/SERVER-SETUP.md) (server) · [docs/MERGE.md](docs/MERGE.md) (merge engine)
 
-## Install and start in Cursor (quick)
+## Quickstart
 
-Install with Homebrew (recommended for macOS):
-
-```bash
-brew tap r/morph
-brew install morph
-```
-
-This installs both `morph` and `morph-mcp`.
-
-Or build from source:
+Install:
 
 ```bash
-git clone <morph-repo-url> && cd morph
-cargo install --path morph-cli && cargo install --path morph-mcp
+brew tap r/morph && brew install morph    # macOS, installs `morph` + `morph-mcp`
+# or from source:
+git clone <morph-repo-url> && cd morph && cargo install --path morph-cli && cargo install --path morph-mcp
 ```
 
-In your **project** (not the morph repo):
+Then in any project:
 
 ```bash
 cd /path/to/your/project
 morph init
-morph setup cursor   # writes .cursor/ (MCP, hooks, rules)
+morph commit -m "first morph commit"
 ```
 
-Then open the project in Cursor. Ensure `morph` and `morph-mcp` are on your PATH. The MCP server and hooks will record every prompt/response and let the agent commit via Morph. For Claude Code and OpenCode, see the IDE guides above.
+That's it. `morph init` runs alongside `git init` (it'll prompt to create a git repo if there isn't one yet) and installs a relaxed default policy so commits land immediately. `morph commit` wraps `git commit`, snapshots the working tree, and records the commit on Morph's behavioral DAG.
 
-## Core commands
-
-Git-shaped workflow, plus behavioral gating and agent-session recording:
+To see your existing work in Morph terms:
 
 ```bash
-morph init                       # initialize a morph repo (writes a default policy
-                                 #   requiring tests_total + tests_passed; see policy section)
-morph status                     # working tree + recent runs + behavioral evidence summary
-morph add .                      # stage files
-morph commit -m "message"        # create a commit (--pipeline/--eval-suite/--metrics/
-                                 #   --from-run <hash>/--allow-empty-metrics/
-                                 #   --new-cases id1,id2)
-morph log                        # view commit history
-morph diff <ref1> <ref2>         # compare two commits/branches
-morph show <hash>                # inspect any stored object as pretty JSON
-morph branch <name>              # create a branch
-morph checkout <ref>             # switch branch or detach to a commit
-morph merge <branch> ...         # behavioral merge (dominance required)
-morph merge-plan <branch>        # preview merge: parents, union suite, bar, case provenance
-morph tag <name>                 # tag the current commit
-morph stash save | pop | list    # save/restore staged work
-morph revert <hash>              # undo a commit
-morph remote add <name> <url>    # register a named remote (path or ssh://user@host/path)
-morph push <remote> <branch>     # push branch to a remote
-morph fetch <remote>             # update remote-tracking refs without merging
-morph pull <remote> <branch>     # fetch + fast-forward (or `--merge` for behavioral merge)
-morph branch --set-upstream origin/main   # configure per-branch upstream
-morph sync [branch]              # fetch + pull --merge against the configured upstream
-morph init --bare /srv/repo      # create a bare server repo (for `morph push`)
-morph clone <url> [dest]         # one-shot init + remote add + fetch + checkout
-morph certify --metrics-file f   # certify a commit against policy metrics
-morph gate                       # check if HEAD passes policy (exit 1 on fail)
-morph policy init|show|set|require-metrics|set-default-eval ...   # manage repo policy
-morph upgrade                    # migrate the store to the latest version
-morph gc                         # remove unreachable objects
+morph status      # changes + recent runs + behavioral-evidence gaps
+morph log         # commit history
+morph head        # current HEAD
 ```
 
-### Sit alongside Git
+When you want more — recording every agent session, attaching test metrics, gating merges on behavioral dominance — keep reading.
 
-Morph always runs coupled to Git in this workspace: Git owns file
-storage, Morph stores only behavioral metadata, and `morph init`
-installs git hooks that mirror every git commit into a Morph
-commit. See [docs/MORPH-AND-GIT.md](docs/MORPH-AND-GIT.md) and
-[docs/reference-mode.md](docs/reference-mode.md) for the details
-of how the two layers cooperate.
+## When you want more
+
+### Record every agent session in your IDE
+
+After `morph init`, drop in IDE hooks so every prompt, tool call, file edit, and response is recorded as an immutable `Run` + `Trace`:
 
 ```bash
-morph init                        # alongside an existing git repo (Stowaway: passive hooks)
-morph init --solo                 # Solo submode: install pre-merge-commit gate
+morph setup cursor       # writes .cursor/ (MCP server, hooks, rules)
+morph setup claude-code  # writes .claude/ (MCP server, hooks)
+morph setup opencode     # writes opencode.json + .opencode/plugins/
+```
+
+Make sure `morph` and `morph-mcp` are on your PATH, then open the project in your IDE. See the [Cursor](docs/CURSOR-SETUP.md), [Claude Code](docs/CLAUDE-CODE-SETUP.md), and [OpenCode](docs/OPENCODE-SETUP.md) guides for the per-IDE detail.
+
+### Tie commits to test results
+
+Two commands. The first runs your tests and records a Run; the second commits and auto-attaches its metrics:
+
+```bash
+morph eval run -- cargo test --workspace
+morph commit -m "fix retry logic"
+```
+
+The auto-attach uses a single-use `LAST_RUN.json` breadcrumb, so the next commit won't accidentally re-claim stale metrics. See [docs/EVAL-DRIVEN.md](docs/EVAL-DRIVEN.md) for the full spec-first workflow (acceptance cases as YAML, suite gating, case provenance through merges).
+
+### Gate merges on behavioral dominance
+
+When you want CI / your collaborators to enforce "no merge that regresses any tracked metric":
+
+```bash
+morph policy init                              # require tests_total + tests_passed on every commit
+morph policy require-metrics tests_passed pass_rate    # or pick your own
+```
+
+Now `morph merge` rejects any merge whose metrics don't dominate both parents. Preview with `morph merge-plan <branch>`. See [docs/MERGE.md](docs/MERGE.md) for the merge engine in detail.
+
+### Run alongside Git on a real project
+
+Morph never asks Git to step aside: Git owns file storage; Morph stores the behavioral overlay (Runs, Traces, EvalSuites, observed metrics, evidence refs). `.morph/` is auto-excluded from Git so teammates not using Morph see ordinary commits. See [docs/MORPH-AND-GIT.md](docs/MORPH-AND-GIT.md).
+
+```bash
+morph init                        # Stowaway (default): passive hooks, no surprises for git-only teammates
+morph init --solo                 # Solo submode: pre-merge-commit gate is active
 morph install-hooks               # (re-)install the git hooks
-morph reference-sync [--backfill] # rebuild Morph commits from git history
+morph reference-sync --backfill   # rebuild Morph commits from existing git history
 ```
 
-### Eval-driven workflow
+### Share behavioral history across machines
 
-Morph treats acceptance tests and metric-bearing runs as first-class
-objects so behavioral merge gating actually has evidence to compare.
-See [docs/EVAL-DRIVEN.md](docs/EVAL-DRIVEN.md) for the full guide.
+Code goes through your git remote (GitHub etc.) as always. Behavioral history goes through a separate, opt-in **morph remote**:
 
 ```bash
-morph eval add-case specs/login.yaml         # ingest YAML / Cucumber specs as EvalCases
-morph eval suite-from-specs specs/           # bulk-ingest a directory
-morph eval suite-show                        # display the registered default suite
-morph eval run -- cargo test --workspace     # exec, parse metrics, store a Run linked to HEAD
-morph eval from-output --runner pytest f.txt # parse already-captured stdout
-morph eval record metrics.json               # ingest a precomputed metrics file
-morph eval gaps [--json] [--fail-on-gap]     # report missing behavioral evidence
+morph remote add team /srv/morph-repo    # local path or ssh://user@host/path
+morph push team main
+morph fetch team
+morph init --bare /srv/repo              # create a bare server repo
+morph clone <url> [dest]                 # one-shot init + remote + fetch + checkout
 ```
 
-### Default policy on `morph init`
+See [docs/MULTI-MACHINE.md](docs/MULTI-MACHINE.md) and [docs/SERVER-SETUP.md](docs/SERVER-SETUP.md).
 
-Fresh repos get an opinionated `RepoPolicy` so commits without test
-results fail loudly:
-
-```json
-{ "required_metrics": ["tests_total", "tests_passed"], "merge_policy": "dominance" }
-```
-
-Override per-commit with `--allow-empty-metrics` (or pass `metrics`),
-or change the policy globally via `morph policy require-metrics`.
-
-## Recording and inspecting agent work
+## Reference: full command list
 
 ```bash
-morph run record-session --prompt "..." --response "..."   # one-shot record
-morph tap summary                 # repo-level overview of recorded runs
-morph tap inspect <run-hash>      # grouped steps (prompt, tool calls, files) for one run
-morph tap diagnose                # recording-quality report
-morph tap export --mode agentic   # export eval cases (for promptfoo, custom harnesses)
-morph tap trace-stats <hash>      # per-event payload / kind / length stats
-morph tap preview <run-hash>      # labeled prompt/context/response preview
-morph traces summary              # newest traces with task phase and target files
-morph traces task-structure <ref> # task phase, scope, target files/symbols, goal
-morph traces target-context <ref> # the scoped code snippet the agent was working on
-morph traces final-artifact <ref> # the final function/file/patch produced
+morph init [--bare] [--solo] [--git-init|--no-git-init]
+morph status [--json]
+morph add <paths>
+morph commit -m <msg> [--from-run <hash>] [--metrics <json>] [--new-cases ids]
+                     [--allow-empty-metrics] [--no-auto-run]
+morph log [<ref>] [-n N] [--oneline] [--json]
+morph diff <old> [<new>] [--json]
+morph show <hash|ref>
+morph head [--json]
+morph identify <ref> [--json]
+morph branch [<name>] [--set-upstream <remote>/<branch>] [--json]
+morph checkout <ref>
+morph merge <branch> [--continue|--abort|resolve-node ...] [--retire metric]
+morph merge-plan <branch>
+morph rollup <base> <tip> [-m <msg>]
+morph tag [<name>] [-d]
+morph stash save|pop|list
+morph revert <hash>
+
+morph clone <url> [<dest>] [--branch B] [--bare]
+morph remote add <name> <url> | list [--json]
+morph push <remote> <branch>
+morph fetch <remote>
+morph pull <remote> <branch> [--merge]
+morph sync [<branch>]
+
+morph eval add-case <files>... | suite-from-specs <dirs>... | suite-show [--suite H] [--json]
+morph eval run -- <cmd>... | from-output [--runner R] [--record] <file> | record <file.json>
+morph eval gaps [--json] [--fail-on-gap]
+morph policy init|show|set|require-metrics|set-default-eval ...
+morph certify --metrics(-file) ... [--commit <hash>] [--runner ...]
+morph gate [--commit <hash>] [--json]
+
+morph trace show <hash>
+morph tap summary | inspect <hash> | diagnose | export | trace-stats <hash> | preview <hash>
+morph traces summary | task-structure <ref> | target-context <ref> | final-artifact <ref>
+                    | semantics <ref> | verification <ref>
+
+morph annotate <hash> -k kind -d data
+morph annotations <hash> [--json]
+morph refs [--json]
+morph forget <hash> [--reason ...] [--remote <name>] [--dry-run] [--yes]
+morph upgrade
+morph gc
+
+morph setup cursor|opencode|claude-code|aoe ...
+morph serve [--repo name=path]... [--port N] [--org-policy file]
+morph visualize [<path>] [--port N]
 ```
 
-IDE hooks parse the agent's full transcript (tool calls, file reads/edits, shell commands, token usage) into structured Trace events — so `tap` and `traces` see real agentic behavior, not just prompt/response pairs.
+`morph --help` prints the same list grouped by purpose.
+
+## Inspecting recorded agent work
+
+The IDE hooks parse the agent's full transcript (tool calls, file reads/edits, shell commands, token usage) into structured Trace events. Browse them via:
+
+- `morph tap summary` — repo-level overview of recorded runs.
+- `morph tap inspect <run-hash>` — grouped steps for one run.
+- `morph traces summary` / `traces task-structure <ref>` / `traces final-artifact <ref>` — structured task views for replay or eval generation.
+- `morph run record-session --prompt "..." --response "..."` — record a session manually.
+
+See [docs/SESSION-TRACKING.md](docs/SESSION-TRACKING.md).
 
 ## Hosted service (team inspection)
 
