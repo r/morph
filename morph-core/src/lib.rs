@@ -72,7 +72,7 @@ pub use commit::{
     create_merge_commit_full, create_merge_commit_with_retirement, create_tree_commit,
     create_tree_commit_with_provenance, current_branch, fold_human_author_into_contributors,
     log_from, resolve_head, resolve_provenance_from_run, rollup, set_head_branch,
-    set_head_detached, CommitProvenance,
+    set_head_detached, CommitProvenance, DEFAULT_BRANCH,
 };
 pub use metrics::{aggregate, check_thresholds, check_dominance, check_dominance_with_suite, aggregate_suite, union_suites, retire_metrics};
 pub use merge::{

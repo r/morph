@@ -1565,14 +1565,29 @@ fn main() -> anyhow::Result<()> {
                     false
                 };
                 if should_git_init {
+                    // `-b main` pins the initial branch to `main`
+                    // regardless of the host's `init.defaultBranch`
+                    // setting. Without this, a fresh GitHub-Actions
+                    // runner (or any host that hasn't opted in to
+                    // git 2.28's default-branch rename) lands on
+                    // `master`, and downstream `morph checkout main`
+                    // / `morph branch feature` then fail with
+                    // `pathspec 'main' did not match` because git's
+                    // `main` ref doesn't exist. Morph's user-facing
+                    // contract is `main` (DEFAULT_BRANCH in
+                    // morph-core); aligning git on init avoids the
+                    // ref-mode mismatch from the start.
                     let status = std::process::Command::new("git")
                         .arg("init")
+                        .arg("-b")
+                        .arg(morph_core::DEFAULT_BRANCH)
                         .arg(&path)
                         .status()
                         .map_err(|e| anyhow::anyhow!("failed to spawn `git init`: {}", e))?;
                     if !status.success() {
                         anyhow::bail!(
-                            "`git init {}` failed (exit {}); fix the underlying error and re-run",
+                            "`git init -b {} {}` failed (exit {}); fix the underlying error and re-run",
+                            morph_core::DEFAULT_BRANCH,
                             path.display(),
                             status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".into())
                         );

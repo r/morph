@@ -16,6 +16,36 @@ metrics — see `.cursor/rules/behavioral-commits.mdc`.
 
 ## [Unreleased]
 
+## [0.42.2] — 2026-05-02
+
+Make `morph init --git-init` deterministic across hosts. The reference-mode
+contract uses `main` as the canonical default branch (it's what
+`morph checkout`, `morph branch`, `morph push`, and the merge breadcrumbs
+all assume), but the underlying `git init` shell-out picked up whatever
+the host's `init.defaultBranch` happened to be — `master` on a fresh
+GitHub-Actions runner that hadn't opted in to the git 2.28+ rename.
+Spec tests like `spec_checkout_branch`, `spec_clone_with_explicit_branch_checks_out_that_branch`,
+and the entire `merge_*` family then failed with
+`pathspec 'main' did not match any file(s) known to git` because
+git landed the very first commit on `master` and morph's
+`checkout main` had nothing to point at.
+
+### Fixed
+
+- **`morph init --git-init` now passes `-b main`** to `git init` so
+  the initial branch matches `morph_core::DEFAULT_BRANCH` regardless
+  of the host's `init.defaultBranch` setting. The error message on
+  failure now also names the explicit invocation
+  (`git init -b main <path>`), so a reader of the failure output
+  can reproduce it without guessing.
+
+### Tests
+
+- Verified the full workspace (1187 tests) under a simulated CI
+  environment (`GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=init.defaultBranch
+  GIT_CONFIG_VALUE_0=master`) passes 1187 / 1187 — no regressions on
+  hosts that already default to `main`.
+
 ## [0.42.1] — 2026-05-01
 
 Mixed-authorship plumbing on the reference-mode commit rebuild
@@ -969,7 +999,8 @@ Three coordinated changes to repo setup, adoption, and migration.
 - 15 new YAML acceptance spec cases in the default eval suite:
   `init_at_latest:*` ×4, `init_in_git_dir:*` ×6, `upgrade:*` ×5.
 
-[Unreleased]: https://github.com/r/morph/compare/v0.42.1...HEAD
+[Unreleased]: https://github.com/r/morph/compare/v0.42.2...HEAD
+[0.42.2]: https://github.com/r/morph/compare/v0.42.1...v0.42.2
 [0.42.1]: https://github.com/r/morph/compare/v0.42.0...v0.42.1
 [0.42.0]: https://github.com/r/morph/compare/v0.41.1...v0.42.0
 [0.41.1]: https://github.com/r/morph/compare/v0.41.0...v0.41.1
