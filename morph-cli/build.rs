@@ -152,6 +152,11 @@ fn emit_test(spec: &TestSpec) -> String {
     }
     writeln!(code, "#[test]").unwrap();
     writeln!(code, "#[allow(unused_variables)]").unwrap();
+    // Spec names sometimes embed acronyms (`HEAD`) or other
+    // mixed case fragments. The generated test name mirrors the
+    // spec name so failures stay greppable; suppress the
+    // non_snake_case lint that the mirror would otherwise trip.
+    writeln!(code, "#[allow(non_snake_case)]").unwrap();
     writeln!(code, "fn spec_{}() {{", fn_name).unwrap();
     writeln!(code, "    let dir = tempfile::tempdir().unwrap();").unwrap();
     writeln!(code, "    let path = dir.path();").unwrap();

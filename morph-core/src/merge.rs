@@ -49,17 +49,17 @@ pub(crate) fn ensure_review_node_for_retirement(
     morph_instance: Option<&str>,
 ) -> Result<Hash, MorphError> {
     if retired_metrics.is_empty() {
-        return Ok(pipeline_hash.clone());
+        return Ok(*pipeline_hash);
     }
     let mut pipeline = match store.get(pipeline_hash) {
         Ok(MorphObject::Pipeline(p)) => p,
         // Either a non-pipeline object (legacy callers occasionally
         // pass a blob hash) or a missing object — either way, leave
         // the merge alone rather than failing on an opaque hash.
-        _ => return Ok(pipeline_hash.clone()),
+        _ => return Ok(*pipeline_hash),
     };
     if pipeline.graph.nodes.iter().any(|n| n.kind == "review") {
-        return Ok(pipeline_hash.clone());
+        return Ok(*pipeline_hash);
     }
 
     let mut sorted: Vec<&str> = retired_metrics.iter().map(|s| s.as_str()).collect();
@@ -523,7 +523,7 @@ pub fn collect_introduces_cases(
     let stop_str = stop_at.map(|h| h.to_string());
     let mut branch_commits: BTreeSet<String> = BTreeSet::new();
     let mut queue: VecDeque<Hash> = VecDeque::new();
-    queue.push_back(tip.clone());
+    queue.push_back(*tip);
 
     while let Some(h) = queue.pop_front() {
         let h_str = h.to_string();

@@ -496,7 +496,7 @@ mod tests {
         let p = dir.path().join("foo.yaml");
         write(&p, "- name: my_case\n  steps:\n    - morph: [status]\n");
 
-        let cases = add_cases_from_yaml(&[p.clone()]).unwrap();
+        let cases = add_cases_from_yaml(std::slice::from_ref(&p)).unwrap();
         assert_eq!(cases.len(), 1);
         assert_eq!(cases[0].id, "foo:my_case");
         assert_eq!(cases[0].metric, "pass");
@@ -562,7 +562,7 @@ mod tests {
             metric: "pass".into(),
             fixture_source: "candidate".into(),
         };
-        let h1 = build_or_extend_suite(store.as_ref(), None, &[case_v1.clone()]).unwrap();
+        let h1 = build_or_extend_suite(store.as_ref(), None, std::slice::from_ref(&case_v1)).unwrap();
         let case_v2 = EvalCase { input: json!({"v": 2}), ..case_v1.clone() };
         let other = EvalCase { id: "x:other".into(), ..case_v1.clone() };
         let h2 = build_or_extend_suite(store.as_ref(), Some(h1), &[case_v2.clone(), other.clone()]).unwrap();

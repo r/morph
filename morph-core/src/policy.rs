@@ -589,8 +589,14 @@ mod tests {
 
     #[test]
     fn missing_required_metrics_returns_absent_names_in_order() {
-        let mut policy = RepoPolicy::default();
-        policy.required_metrics = vec!["tests_total".into(), "tests_passed".into(), "pass_rate".into()];
+        let policy = RepoPolicy {
+            required_metrics: vec![
+                "tests_total".into(),
+                "tests_passed".into(),
+                "pass_rate".into(),
+            ],
+            ..Default::default()
+        };
 
         let mut observed = BTreeMap::new();
         observed.insert("tests_total".into(), 10.0);

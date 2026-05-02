@@ -255,7 +255,6 @@ fn run_hook(event: &str, args: &[String]) -> anyhow::Result<()> {
 ///   6. attaches a `kind: "introduces_cases"` annotation when
 ///      `--new-cases` is provided.
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 fn run_reference_commit(
     store: &dyn Store,
     repo_root: &std::path::Path,
@@ -664,11 +663,6 @@ fn run_reference_commit(
 /// shape (additive only): release pipelines and downstream tooling
 /// rely on the field names below to verify the binary's identity
 /// without parsing the human-readable line.
-
-/// Build the JSON envelope returned by `morph status --json`. Stable
-/// shape: agents pin field names like `branch`, `head`, `working_tree`,
-/// `staging`, and `eval_suite`. Additive only.
-
 fn version_json() -> String {
     let value = serde_json::json!({
         "name": "morph",
