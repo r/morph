@@ -46,14 +46,29 @@ replication + auditing layer is out of scope.)
 
 ### Morph is pure VCS (v0)
 
-Morph does **not** execute pipelines or run evaluations. All LLM calls, tool execution, and test runs happen in external tools (IDEs, agents, CI). Morph's role is to:
+Morph does **not** execute pipelines, host LLMs, or run an
+agent loop. All LLM calls, tool execution, and the bulk of
+evidence collection happen in external tools (IDEs, agents,
+CI). Morph's role is to:
 
 - **Store** immutable content-addressed objects
 - **Record** execution evidence that external tools report (runs, traces, metrics)
 - **Version** pipelines with behavioral contracts (commits)
 - **Gate** merges on metric dominance
 
-Commands like `morph run record` and `morph eval record` **ingest** results; they do not run anything. The primary write path from the IDE is the **Cursor MCP server**, which reports session data into Morph. Reading and inspection happen via the CLI.
+Most ingestion commands (`morph run record`, `morph eval record`,
+`morph eval from-output`) take pre-captured results and store
+them. The one exception is `morph eval run -- <test command>`,
+which is a thin convenience wrapper: it shells out to the user's
+own test runner, parses the stdout with the appropriate runner
+adapter (`cargo` / `pytest` / `vitest` / `jest` / `go`), and
+stores the resulting Run linked to HEAD. Morph itself still
+runs nothing it didn't already version-control — it just spawns
+the user's command on their behalf.
+
+The primary write path from the IDE is the **MCP server**,
+which reports session data into Morph. Reading and inspection
+happen via the CLI.
 
 ---
 

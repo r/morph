@@ -16,6 +16,26 @@ metrics — see `.cursor/rules/behavioral-commits.mdc`.
 
 ## [Unreleased]
 
+### Documentation
+
+- **Senior-engineer review pass on docs/site.** Removed stale
+  `v0.41.0` / `v0.41.1` version anchors from `docs/SECURITY.md`
+  and `site/index.html` for the `morph forget` section — the
+  SSH-tombstone protocol upgrade and the `morph_forget` MCP
+  tool are still pending, so the gaps are now framed as
+  roadmap rather than tied to versions that have already
+  shipped. Replaced the non-existent `morph tap list` recipe
+  in `docs/SECURITY.md` with `morph run list` +
+  `morph tap inspect`. Tightened `docs/v0-spec.md § "Morph is
+  pure VCS"` so it acknowledges `morph eval run`'s thin
+  shell-out wrapper instead of asserting morph "does not
+  execute" anything. Refreshed test counts in `docs/TESTING.md`
+  and the `cargo test` line in `README.md` to match the
+  current workspace total (1187 across 5 crates). Corrected
+  `morph push <remote> <branch>` and `morph pull <remote>
+  <branch>` in `README.md` to mark `<branch>` as required
+  (matches `morph-cli/src/cli.rs`).
+
 ## [0.42.2] — 2026-05-02
 
 Make `morph init --git-init` deterministic across hosts. The reference-mode

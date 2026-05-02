@@ -1382,7 +1382,7 @@
     </p>
 
     <h3 style="font-size: 1.05rem; font-weight: 700; margin-top: 2.25rem; margin-bottom: 0.6rem; letter-spacing: -0.01em;">
-      <code>morph forget</code> &mdash; the secret-leak escape hatch (v0.41.0)
+      <code>morph forget</code> &mdash; the secret-leak escape hatch
     </h3>
     <p style="color: var(--fg-muted); font-size: 0.95rem; margin-bottom: 0.6rem;">
       A trace caught a credential or PII you didn't intend to record?
@@ -1434,12 +1434,11 @@
         does not look at trace bytes for tokens, API keys, or PII
         before recording or pushing. Use the agent-level
         guardrails your IDE provides.</li>
-      <li><strong>SSH transport for tombstones is local-filesystem
-        only in v0.41.0.</strong> <code>morph forget</code> works
-        end-to-end across filesystem morph remotes today; the
-        SSH remote-helper protocol upgrade lands in v0.41.1.
-        Until then, ssh into an SSH-served remote and run
-        <code>morph forget</code> there too.</li>
+      <li><strong>SSH transport does not yet carry tombstones.</strong>
+        <code>morph forget</code> works end-to-end across filesystem
+        morph remotes today; the SSH remote-helper protocol upgrade
+        is on the roadmap. Until then, ssh into an SSH-served
+        remote and run <code>morph forget</code> there too.</li>
     </ul>
 
     <p class="lead" style="margin-top: 2rem;">

@@ -75,9 +75,9 @@ morph tag <name>                 # tag the current commit
 morph stash save | pop | list    # save/restore staged work
 morph revert <hash>              # undo a commit
 morph remote add <name> <url>    # register a named remote (path or ssh://user@host/path)
-morph push <remote> [branch]     # push branch to a remote
+morph push <remote> <branch>     # push branch to a remote
 morph fetch <remote>             # update remote-tracking refs without merging
-morph pull <remote> [branch]     # fetch + fast-forward (or `--merge` for behavioral merge)
+morph pull <remote> <branch>     # fetch + fast-forward (or `--merge` for behavioral merge)
 morph branch --set-upstream origin/main   # configure per-branch upstream
 morph sync [branch]              # fetch + pull --merge against the configured upstream
 morph init --bare /srv/repo      # create a bare server repo (for `morph push`)
@@ -164,7 +164,7 @@ Stable JSON API and browser UI for inspecting commits (with certification/gate s
 ## Develop Morph (this repo)
 
 ```bash
-cargo test --workspace                    # ~1170 unit + YAML acceptance tests
+cargo test --workspace                    # ~1187 unit + YAML acceptance tests
 cargo test -p morph-e2e --test cucumber   # end-to-end Cucumber scenarios
 ```
 

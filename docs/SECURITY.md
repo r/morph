@@ -196,7 +196,9 @@ For a team that wants the benefits of shared traces without the
    at least as tight as access controls on your AWS account; the
    trace data is at least as sensitive.
 
-## `morph forget` (v0.41.0)
+## `morph forget`
+
+*Introduced in v0.41.0.*
 
 `morph forget <hash>` is the first-class way to permanently retire
 a `Run`, `Trace`, or prompt `Blob` from your local store and
@@ -268,24 +270,23 @@ do I do?"
   would be indistinguishable from a fabrication.
 - **Forgetting commits / blobs / trees / pipelines / suites /
   artifacts / rollups / annotations.** See above.
-- **SSH transport is local-filesystem-only for tombstones in
-  v0.41.0.** Tombstones travel through filesystem morph remotes
-  (the common bare-repo / shared-filesystem case) but the SSH
-  remote-helper protocol does not yet carry them. Until the
-  SSH transport extension lands, the recipe for SSH-served
-  remotes is "ssh into the remote and run `morph forget` there
-  too." The morph-core unit tests pin the local + apply-tombstone
-  round-trip; the SSH path will inherit it once the protocol
-  upgrade ships.
-- **MCP tool.** `morph forget` is CLI-only in v0.41.0; an
-  `morph_forget` MCP tool is queued for v0.41.1.
+- **SSH transport does not yet carry tombstones.** Tombstones
+  travel through filesystem morph remotes (the common bare-repo
+  / shared-filesystem case) but the SSH remote-helper protocol
+  does not yet ship them. Until that protocol extension lands,
+  the recipe for SSH-served remotes is "ssh into the remote
+  and run `morph forget` there too." The morph-core unit tests
+  pin the local + apply-tombstone round-trip; the SSH path will
+  inherit it once the protocol upgrade ships.
+- **MCP tool.** `morph forget` is CLI-only today; an
+  `morph_forget` MCP tool is on the roadmap.
 
 ### Recipe — "I leaked a secret"
 
 ```
 # 1. find the run/trace that holds the secret:
-morph tap list | grep <recent>
-morph tap inspect <run-hash>
+morph run list                       # newest runs first; copy a hash
+morph tap inspect <run-hash>         # see the prompts/tool calls/files in that run
 
 # 2. forget it locally and queue for the team remote:
 morph forget <run-or-trace-hash> \
@@ -306,8 +307,8 @@ morph fetch team
 
 ## Things morph does *not* yet do (everything else)
 
-The following are honest gaps as of v0.41.0. Some are queued for
-the next release line; some are roadmap for later.
+The following are honest gaps. Some are queued for the next
+release line; some are roadmap for later.
 
 - **No client-side redaction filter on `morph push`.** Today push
   is "send everything that's reachable from this commit". A
@@ -346,16 +347,16 @@ the source.
    laptop after `morph fetch`?
 5. If a teammate later leaves the project, what's your plan for
    their already-fetched copy of the trace data? (Today the
-   answer is "you can't get it back"; v0.41 makes the *future*
-   sharing answer "tombstone propagates on next fetch", but
-   already-cloned data stays cloned.)
+   honest answer is "you can't get it back"; `morph forget`
+   makes the *future* sharing answer "tombstone propagates on
+   next fetch", but already-cloned data stays cloned.)
 
 If you can answer those, you're in good shape. If you can't,
 keep `morph push` to a private remote-of-one until you can.
 
 ## If you leak a secret into a trace
 
-The recipe lives in *`morph forget` (v0.41.0)* above. In short:
+The recipe lives in *`morph forget`* above. In short:
 
 ```
 morph forget <run-or-trace-hash> --remote team --reason "leaked db password"
