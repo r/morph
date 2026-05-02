@@ -50,12 +50,12 @@
 //! and Python is just the first concrete adapter.
 
 use crate::language::{adapter_for_filename, LanguageAdapter, PythonLanguageAdapter};
-use crate::objects::{MorphObject, Trace};
+use crate::objects::MorphObject;
 use crate::store::{MorphError, ObjectType, Store};
 use crate::tap::{extract_task, TapStep, TapTask};
 use crate::Hash;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 // ---------- Schema types ----------
 
@@ -918,40 +918,33 @@ pub fn find_run_by_trace(store: &dyn Store, trace_hash: &Hash) -> Result<Option<
     Ok(None)
 }
 
-// trace-hash-only convenience overloads so callers can pass either a run
-// hash or a trace hash; the structured layer is keyed on the run.
-#[allow(dead_code)]
-fn resolve_run_hash(store: &dyn Store, hash: &Hash) -> Result<Hash, MorphError> {
-    match store.get(hash) {
-        Ok(MorphObject::Run(_)) => Ok(*hash),
-        Ok(MorphObject::Trace(_)) => find_run_by_trace(store, hash)?
-            .ok_or_else(|| MorphError::Serialization(format!("no run points to trace {}", hash))),
-        Ok(_) => Err(MorphError::Serialization(format!(
+/// Resolve a hash that the user supplied as either a `Run` hash or
+/// a `Trace` hash to the corresponding `Run` hash. The structured
+/// layer (`task_structure`, `target_context`, `final_artifact`,
+/// etc.) is keyed on runs; this is the single resolver that
+/// `morph traces` (CLI) and the `morph_get_trace_*` MCP tools
+/// share so the "did the user pass a run or a trace?" rules are
+/// expressed once.
+///
+/// - `Run` → returned unchanged.
+/// - `Trace` → walked back to the run that points at it via
+///   [`find_run_by_trace`].
+/// - Any other kind → `MorphError::Serialization` describing the
+///   mismatch so the CLI / MCP can surface a clean error.
+pub fn resolve_run_or_trace_hash(
+    store: &dyn Store,
+    hash: &Hash,
+) -> Result<Hash, MorphError> {
+    match store.get(hash)? {
+        MorphObject::Run(_) => Ok(*hash),
+        MorphObject::Trace(_) => find_run_by_trace(store, hash)?.ok_or_else(|| {
+            MorphError::Serialization(format!("no run points to trace {}", hash))
+        }),
+        _ => Err(MorphError::Serialization(format!(
             "hash {} is neither a Run nor a Trace",
             hash
         ))),
-        Err(e) => Err(e),
     }
-}
-
-/// Unused-but-exported for completeness: does a trace have structured
-/// events (tool/file kinds)?
-#[allow(dead_code)]
-pub fn trace_has_structured_events(trace: &Trace) -> bool {
-    trace.events.iter().any(|e| {
-        matches!(
-            e.kind.as_str(),
-            "tool_call" | "tool_use" | "function_call" | "tool_result"
-                | "tool_output" | "function_result" | "file_read" | "read_file"
-                | "file_edit" | "edit_file" | "write_file" | "file_write"
-        )
-    })
-}
-
-/// Access to the payload map for trace lookups via structured metadata.
-#[allow(dead_code)]
-pub(crate) fn payload_keys(map: &BTreeMap<String, serde_json::Value>) -> Vec<String> {
-    map.keys().cloned().collect()
 }
 
 // ---------- Tests ----------
@@ -961,6 +954,7 @@ mod tests {
     use super::*;
     use crate::objects::*;
     use crate::store::Store;
+    use std::collections::BTreeMap;
 
     fn setup_store() -> (tempfile::TempDir, Box<dyn Store>) {
         let dir = tempfile::tempdir().unwrap();

@@ -9,9 +9,9 @@ use clap::Parser;
 use cli::*;
 use morph_core::{
     find_repo, migrate_0_0_to_0_2, migrate_0_2_to_0_3, migrate_to_latest, open_store,
-    read_repo_version, require_store_version, resolve_revision, Hash, MorphObject, ObjectType,
-    Store, STORE_VERSION_INIT, STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_0_4,
-    SUPPORTED_REPO_VERSIONS,
+    read_repo_version, require_store_version, resolve_revision, short_hash_str, Hash,
+    MorphObject, ObjectType, Store, STORE_VERSION_INIT, STORE_VERSION_0_2, STORE_VERSION_0_3,
+    STORE_VERSION_0_4, SUPPORTED_REPO_VERSIONS,
 };
 use std::path::PathBuf;
 
@@ -64,11 +64,6 @@ fn default_clone_dest(url: &str) -> String {
     } else {
         base.to_string()
     }
-}
-
-/// Truncate a hex hash to its 8-character prefix for display.
-fn short_hash(h: &str) -> String {
-    h.chars().take(8).collect()
 }
 
 /// Lower-case ASCII slug suitable for the local-part of a synthetic
@@ -444,7 +439,7 @@ fn run_reference_commit(
                 .collect();
             eprintln!(
                 "attaching evidence from run {}: {}",
-                short_hash(&h.to_string()),
+                h.short(),
                 preview.join(", "),
             );
             // evidence_refs link both the Run and its Trace so
@@ -469,7 +464,7 @@ fn run_reference_commit(
                     .collect();
                 eprintln!(
                     "attaching evidence from run {}: {}",
-                    short_hash(&rh.to_string()),
+                    rh.short(),
                     preview.join(", "),
                 );
             }
@@ -654,7 +649,7 @@ fn run_reference_commit(
     } else {
         println!(
             "[{} (cli)] {}",
-            short_hash(&new_morph_hash.to_string()),
+            new_morph_hash.short(),
             message
         );
         println!(
@@ -1648,7 +1643,7 @@ fn main() -> anyhow::Result<()> {
             println!(
                 "  branch:  {} ({})",
                 outcome.branch,
-                short_hash(&outcome.tip.to_string())
+                outcome.tip.short()
             );
             println!("  fetched: {} branch(es)", outcome.fetched.len());
         }
@@ -2043,7 +2038,7 @@ fn main() -> anyhow::Result<()> {
                     let entries: Vec<_> = tags.iter().map(|(name, hash)| serde_json::json!({
                         "name": name,
                         "hash": hash.to_string(),
-                        "short": short_hash(&hash.to_string()),
+                        "short": hash.short(),
                     })).collect();
                     let body = serde_json::json!({ "tags": entries, "count": tags.len() });
                     println!("{}", serde_json::to_string_pretty(&body)?);
@@ -2468,7 +2463,7 @@ fn main() -> anyhow::Result<()> {
                                     .collect();
                                 eprintln!(
                                     "attaching evidence from run {}: {}",
-                                    short_hash(&run_hash.to_string()),
+                                    run_hash.short(),
                                     preview.join(", "),
                                 );
                                 observed_metrics = run.metrics.clone();
@@ -2477,13 +2472,13 @@ fn main() -> anyhow::Result<()> {
                         Ok(_) => {
                             eprintln!(
                                 "warning: --from-run {} is not a Run object; metrics not attached",
-                                short_hash(&run_hash.to_string()),
+                                run_hash.short(),
                             );
                         }
                         Err(e) => {
                             eprintln!(
                                 "warning: could not load run from --from-run {}: {}",
-                                short_hash(&run_hash.to_string()),
+                                run_hash.short(),
                                 e,
                             );
                         }
@@ -2499,7 +2494,7 @@ fn main() -> anyhow::Result<()> {
                                     .collect();
                                 eprintln!(
                                     "attaching evidence from run {}: {}",
-                                    short_hash(&run_hash.to_string()),
+                                    run_hash.short(),
                                     preview.join(", "),
                                 );
                                 observed_metrics = run.metrics.clone();
@@ -2508,7 +2503,7 @@ fn main() -> anyhow::Result<()> {
                         Ok(_) => {
                             eprintln!(
                                 "warning: LAST_RUN breadcrumb points at non-Run object {}; ignoring",
-                                short_hash(&run_hash.to_string()),
+                                run_hash.short(),
                             );
                         }
                         Err(e) => {
@@ -2660,7 +2655,7 @@ fn main() -> anyhow::Result<()> {
                         let metrics = morph_core::effective_metrics_for_commit(&store, h, &c)?;
                         entries.push(serde_json::json!({
                             "hash": h.to_string(),
-                            "short": short_hash(&h.to_string()),
+                            "short": h.short(),
                             "message": c.message,
                             "author": c.author,
                             "timestamp": c.timestamp,
@@ -2678,7 +2673,7 @@ fn main() -> anyhow::Result<()> {
             for h in &hashes {
                 if let MorphObject::Commit(c) = store.get(h)? {
                     let h_str = h.to_string();
-                    let display_hash = if full_hash { h_str.clone() } else { short_hash(&h_str) };
+                    let display_hash = if full_hash { h_str.clone() } else { h.short() };
                     let subject = c.message.lines().next().unwrap_or("");
                     if oneline {
                         println!("{}  {}", display_hash, subject);
@@ -2711,7 +2706,7 @@ fn main() -> anyhow::Result<()> {
                     morph_core::effective_metrics_for_commit(&store, &head_hash, &commit)?;
                 let body = serde_json::json!({
                     "hash": h_str,
-                    "short": short_hash(&h_str),
+                    "short": short_hash_str(&h_str),
                     "branch": branch,
                     "detached": branch.is_none(),
                     "message": commit.message,
@@ -2729,7 +2724,7 @@ fn main() -> anyhow::Result<()> {
                     None => "in detached HEAD state".to_string(),
                 };
                 let subject = commit.message.lines().next().unwrap_or("");
-                println!("HEAD {} ({})", short_hash(&h_str), where_);
+                println!("HEAD {} ({})", short_hash_str(&h_str), where_);
                 println!("    {}", subject);
                 println!("    {}  {}", commit.author, commit.timestamp);
             }
@@ -2745,7 +2740,7 @@ fn main() -> anyhow::Result<()> {
                 let mut body = serde_json::json!({
                     "input": revision,
                     "hash": h_str,
-                    "short": short_hash(&h_str),
+                    "short": short_hash_str(&h_str),
                     "type": kind,
                 });
                 if let MorphObject::Commit(c) = &obj {
@@ -2819,7 +2814,7 @@ fn main() -> anyhow::Result<()> {
                         serde_json::json!({
                             "name": name,
                             "hash": h_str,
-                            "short": short_hash(&h_str),
+                            "short": short_hash_str(&h_str),
                             "current": current.as_deref() == Some(name.as_str()),
                         })
                     }).collect();
@@ -2885,7 +2880,7 @@ fn main() -> anyhow::Result<()> {
                         let h_str = h.to_string();
                         let mut entry = serde_json::json!({
                             "hash": h_str,
-                            "short": short_hash(&h_str),
+                            "short": short_hash_str(&h_str),
                         });
                         if let Ok(MorphObject::Run(r)) = store.get(h) {
                             entry["agent_id"] = serde_json::Value::String(r.agent.id.clone());
@@ -3654,7 +3649,7 @@ fn main() -> anyhow::Result<()> {
                     serde_json::json!({
                         "name": name,
                         "hash": h_str,
-                        "short": short_hash(&h_str),
+                        "short": short_hash_str(&h_str),
                     })
                 }).collect();
                 let body = serde_json::json!({ "refs": entries, "count": refs.len() });
@@ -3853,7 +3848,7 @@ fn main() -> anyhow::Result<()> {
                     let h_str = h.to_string();
                     serde_json::json!({
                         "hash": h_str,
-                        "short": short_hash(&h_str),
+                        "short": short_hash_str(&h_str),
                         "kind": a.kind,
                         "author": a.author,
                         "target": a.target,
@@ -3863,7 +3858,7 @@ fn main() -> anyhow::Result<()> {
                 }).collect();
                 let body = serde_json::json!({
                     "target": target.to_string(),
-                    "target_short": short_hash(&target.to_string()),
+                    "target_short": target.short(),
                     "annotations": entries,
                     "count": anns.len(),
                 });
@@ -3969,17 +3964,15 @@ fn cmd_prompt_show(verbose: bool, run_ref: &str, run_upgrade: bool) -> anyhow::R
     }
 }
 
-/// Resolve a user-supplied hash to a Run hash. Accepts either a Run hash
-/// directly or a Trace hash (in which case we locate the latest Run
-/// pointing at that trace).
+/// Resolve a user-supplied hash to a Run hash. Accepts either a Run
+/// hash directly or a Trace hash (in which case we locate the
+/// latest Run pointing at that trace). Thin wrapper over
+/// `morph_core::resolve_run_or_trace_hash` that adds CLI-side
+/// hash-prefix resolution and converts errors to `anyhow`.
 fn resolve_run_hash(store: &dyn Store, hash_str: &str) -> anyhow::Result<Hash> {
     let h = resolve_obj_hash(store, hash_str)?;
-    match store.get(&h)? {
-        MorphObject::Run(_) => Ok(h),
-        MorphObject::Trace(_) => morph_core::find_run_by_trace(store, &h)?
-            .ok_or_else(|| anyhow::anyhow!("no run points to trace {}", hash_str)),
-        _ => anyhow::bail!("hash {} is neither a Run nor a Trace", hash_str),
-    }
+    morph_core::resolve_run_or_trace_hash(store, &h)
+        .map_err(|e| anyhow::anyhow!("{}", e))
 }
 
 fn handle_traces_command(verbose: bool, sub: TracesCmd) -> anyhow::Result<()> {
@@ -4061,10 +4054,10 @@ mod tests {
     }
 
     #[test]
-    fn short_hash_truncates_to_eight_chars() {
-        assert_eq!(short_hash("abcdef0123456789abcdef0123456789"), "abcdef01");
-        assert_eq!(short_hash("abc"), "abc");
-        assert_eq!(short_hash(""), "");
+    fn short_hash_str_truncates_to_eight_chars() {
+        assert_eq!(short_hash_str("abcdef0123456789abcdef0123456789"), "abcdef01");
+        assert_eq!(short_hash_str("abc"), "abc");
+        assert_eq!(short_hash_str(""), "");
     }
 
     /// PR 10: `morph version --json` is the documented machine-

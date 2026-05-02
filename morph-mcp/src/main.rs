@@ -5,7 +5,7 @@ mod params;
 
 use morph_core::{
     build_status_json, find_repo, open_store, read_repo_version, require_store_version,
-    resolve_revision, Hash, MorphObject, Store, SUPPORTED_REPO_VERSIONS,
+    resolve_revision, short_hash_str, Hash, MorphObject, Store, SUPPORTED_REPO_VERSIONS,
 };
 use params::*;
 use rmcp::{
@@ -42,10 +42,6 @@ fn resolve_path(repo_root: &std::path::Path, p: impl Into<PathBuf>) -> PathBuf {
 /// every MCP tool accepts the same shapes the CLI does.
 fn resolve_rev(store: &dyn Store, s: &str) -> Result<Hash, McpError> {
     resolve_revision(store, s).map_err(mcp_err)
-}
-
-fn short_hash(h: &str) -> String {
-    h.chars().take(8).collect()
 }
 
 fn json_text(v: serde_json::Value) -> Content {
@@ -516,7 +512,7 @@ impl MorphServer {
                     .map_err(mcp_err)?;
                 commits.push(serde_json::json!({
                     "hash": h_str,
-                    "short": short_hash(&h_str),
+                    "short": short_hash_str(&h_str),
                     "message": c.message,
                     "author": c.author,
                     "timestamp": c.timestamp,
@@ -541,7 +537,7 @@ impl MorphServer {
         let body = serde_json::json!({
             "input": params.0.hash,
             "hash": hash.to_string(),
-            "short": short_hash(&hash.to_string()),
+            "short": hash.short(),
             "type": obj.kind_str(),
             "object": obj,
         });
@@ -559,8 +555,8 @@ impl MorphServer {
             "path": e.path,
         })).collect();
         let body = serde_json::json!({
-            "from": { "ref": params.0.old_ref, "hash": old_hash.to_string(), "short": short_hash(&old_hash.to_string()) },
-            "to":   { "ref": params.0.new_ref, "hash": new_hash.to_string(), "short": short_hash(&new_hash.to_string()) },
+            "from": { "ref": params.0.old_ref, "hash": old_hash.to_string(), "short": old_hash.short() },
+            "to":   { "ref": params.0.new_ref, "hash": new_hash.to_string(), "short": new_hash.short() },
             "changes": changes,
             "count": entries.len(),
         });
@@ -569,13 +565,7 @@ impl MorphServer {
 
     fn resolve_run_hash(&self, store: &dyn Store, hash_str: &str) -> Result<Hash, McpError> {
         let h = resolve_rev(store, hash_str)?;
-        match store.get(&h).map_err(mcp_err)? {
-            morph_core::MorphObject::Run(_) => Ok(h),
-            morph_core::MorphObject::Trace(_) => morph_core::find_run_by_trace(store, &h)
-                .map_err(mcp_err)?
-                .ok_or_else(|| mcp_err(format!("no run points to trace {}", hash_str))),
-            _ => Err(mcp_err(format!("hash {} is neither a Run nor a Trace", hash_str))),
-        }
+        morph_core::resolve_run_or_trace_hash(store, &h).map_err(mcp_err)
     }
 
     #[tool(
@@ -683,7 +673,7 @@ impl MorphServer {
             .map_err(mcp_err)?;
         let body = serde_json::json!({
             "hash": h_str,
-            "short": short_hash(&h_str),
+            "short": short_hash_str(&h_str),
             "branch": branch,
             "detached": branch.is_none(),
             "message": commit.message,
@@ -705,7 +695,7 @@ impl MorphServer {
         let mut body = serde_json::json!({
             "input": params.0.revision,
             "hash": h_str,
-            "short": short_hash(&h_str),
+            "short": short_hash_str(&h_str),
             "type": kind,
         });
         if let MorphObject::Commit(c) = &obj {
@@ -725,7 +715,7 @@ impl MorphServer {
             let h_str = h.to_string();
             serde_json::json!({
                 "hash": h_str,
-                "short": short_hash(&h_str),
+                "short": short_hash_str(&h_str),
                 "kind": a.kind,
                 "author": a.author,
                 "target": a.target,
@@ -736,7 +726,7 @@ impl MorphServer {
         }).collect();
         let body = serde_json::json!({
             "target": target.to_string(),
-            "target_short": short_hash(&target.to_string()),
+            "target_short": target.short(),
             "annotations": entries,
             "count": anns.len(),
         });
@@ -751,7 +741,7 @@ impl MorphServer {
             let h_str = h.to_string();
             let mut entry = serde_json::json!({
                 "hash": h_str,
-                "short": short_hash(&h_str),
+                "short": short_hash_str(&h_str),
             });
             if let Ok(MorphObject::Run(r)) = store.get(h) {
                 entry["agent_id"] = serde_json::Value::String(r.agent.id.clone());
@@ -786,7 +776,7 @@ impl MorphServer {
                 branches.push(serde_json::json!({
                     "name": short,
                     "hash": h_str,
-                    "short": short_hash(&h_str),
+                    "short": short_hash_str(&h_str),
                     "current": current.as_deref() == Some(short),
                 }));
             }
@@ -809,7 +799,7 @@ impl MorphServer {
             serde_json::json!({
                 "name": name,
                 "hash": h_str,
-                "short": short_hash(&h_str),
+                "short": short_hash_str(&h_str),
             })
         }).collect();
         let body = serde_json::json!({ "refs": entries, "count": refs.len() });

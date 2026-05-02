@@ -60,6 +60,27 @@ impl Hash {
             .map_err(|_| crate::store::MorphError::InvalidHash("expected 32 bytes".into()))?;
         Ok(Hash(arr))
     }
+
+    /// 8-character hex prefix for human-readable display (`morph
+    /// log`, `morph identify`, MCP `short` envelope fields).
+    /// Convenience for `&hash.to_string()[..8]` without the
+    /// to_string allocation chain.
+    pub fn short(&self) -> String {
+        let mut buf = String::with_capacity(8);
+        for byte in &self.0[..4] {
+            use std::fmt::Write as _;
+            let _ = write!(buf, "{:02x}", byte);
+        }
+        buf
+    }
+}
+
+/// 8-character display prefix for an already-hex-encoded hash
+/// string. Used in the rare CLI/MCP path that has only a `&str`
+/// (e.g. parsed from JSON) and wants to avoid an extra
+/// `Hash::from_hex` round-trip.
+pub fn short_hash_str(s: &str) -> &str {
+    &s[..s.len().min(8)]
 }
 
 /// Compute SHA-256 hash of canonical JSON bytes for a Morph object (0.0/0.1 format).

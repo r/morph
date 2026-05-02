@@ -40,7 +40,7 @@ pub mod reference;
 pub mod forget;
 pub mod time;
 
-pub use hash::{canonical_json, content_hash, content_hash_git, Hash};
+pub use hash::{canonical_json, content_hash, content_hash_git, short_hash_str, Hash};
 pub use objects::{CommitContributor, EvalContract, MorphObject, Tombstone};
 pub use forget::{
     apply_tombstone, commits_referencing, forget_local, kind_is_forgettable,
@@ -100,7 +100,7 @@ pub use language::{
     adapter_for_filename, builtin_adapters,
 };
 pub use structured::{
-    recent_trace_summaries, summarize_trace,
+    recent_trace_summaries, resolve_run_or_trace_hash, summarize_trace,
     task_structure, target_context, final_artifact,
     change_semantics, verification_steps, find_run_by_trace,
     TaskPhase, TaskScope, ArtifactType,
