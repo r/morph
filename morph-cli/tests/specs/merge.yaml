@@ -63,13 +63,10 @@
       expect_exit: 1
 
 - name: merge_auto_union_suite_happy_path
-  # PR1 v0.40+: `morph merge` now drives `git merge` and mirrors
-  # the resulting commit; auto-union of distinct eval suites across
-  # branches still synthesizes the union suite, but the wrapper
-  # commit's `eval_contract.suite` ends up empty in some cases
-  # because the rebuild path uses the mirror's empty suite. Tracked
-  # for PR2 (eval-suite plumbing through reference-mode merge).
-  skip: "auto-union suite plumbing through ref-mode merge pending PR2"
+  # v0.42: `rebuild_merge_commit` propagates the auto-union eval
+  # suite computed by `prepare_merge` onto the mirror commit's
+  # `eval_contract.suite`, so the merge gate can read both parents'
+  # metrics off the merged commit.
   files:
     prog.json: '{"graph":{"nodes":[{"id":"n1","kind":"identity","ref":null,"params":{}}],"edges":[]},"prompts":[],"eval_suite":null,"provenance":null}'
     .morph/evals/ea.json: '{"cases":[],"metrics":[{"name":"acc","aggregation":"mean","threshold":0.0}]}'
@@ -104,11 +101,9 @@
       stdout_contains: "auto-union merge"
 
 - name: merge_rejects_with_explained_metric_failure
-  # PR1 v0.40+: ref-mode merge wraps `git merge` and the dominance
-  # check fires after `git` produces the merge commit. The rejection
-  # path needs adapting to roll back the git commit so the merge
-  # rejection is observable. Tracked for PR2.
-  skip: "ref-mode merge rejection path pending PR2"
+  # v0.42: dominance check fires before `git merge` runs (with the
+  # auto-union suite from `prepare_merge`), so a violating merge
+  # bails on stderr without ever creating a stranded git commit.
   files:
     prog.json: '{"graph":{"nodes":[{"id":"n1","kind":"identity","ref":null,"params":{}}],"edges":[]},"prompts":[],"eval_suite":null,"provenance":null}'
     .morph/evals/e.json: '{"cases":[],"metrics":[{"name":"acc","aggregation":"mean","threshold":0.0}]}'
@@ -232,11 +227,9 @@
       stdout_contains: "nothing to commit"
 
 - name: merge_with_retirement_succeeds
-  # PR1 v0.40+: `--retire` requires the eval suite to be propagated
-  # through the merge rebuild path, which is currently empty in
-  # reference mode (see merge_auto_union_suite_happy_path skip).
-  # Tracked for PR2.
-  skip: "metric retirement plumbing pending PR2"
+  # v0.42: `rebuild_merge_commit` honours `--retire` by trimming
+  # the union suite, synthesizing the review node attribution, and
+  # writing the rewritten suite + pipeline onto the merge commit.
   files:
     prog.json: '{"graph":{"nodes":[{"id":"n1","kind":"identity","ref":null,"params":{}}],"edges":[]},"prompts":[],"eval_suite":null,"provenance":null}'
     .morph/evals/e.json: '{"cases":[],"metrics":[{"name":"acc","aggregation":"mean","threshold":0.0},{"name":"old_metric","aggregation":"mean","threshold":0.0}]}'

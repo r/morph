@@ -7,10 +7,10 @@
 # clear the breadcrumb so a subsequent `--continue` reports no merge.
 
 - name: merge_stateful_retire_clean_three_way_synthesizes_review_node
-  # PR1 v0.40+: stateful retirement breadcrumb integration with
-  # `morph merge` is pending the eval-suite plumbing rewrite for
-  # reference mode (see merge_retire_synthesizes_review_node).
-  skip: "stateful retire pending PR2 merge rewiring"
+  # v0.42: `--retire` and `--retire-reason` are persisted into the
+  # `MERGE_REF.json` breadcrumb when `morph merge` enters the
+  # conflict path, then read back by `--continue` and applied to
+  # the rebuilt merge commit through `rebuild_merge_commit`.
   files:
     prog.json: '{"graph":{"nodes":[{"id":"n1","kind":"identity","ref":null,"params":{}}],"edges":[]},"prompts":[],"eval_suite":null,"provenance":null}'
     .morph/evals/e.json: '{"cases":[],"metrics":[{"name":"acc","aggregation":"mean","threshold":0.0},{"name":"old_metric","aggregation":"mean","threshold":0.0}]}'
@@ -49,8 +49,6 @@
         - "switching retrieval strategy"
 
 - name: merge_stateful_retire_with_textual_conflict_then_continue
-  # PR1 v0.40+: see merge_stateful_retire_clean_three_way skip.
-  skip: "stateful retire pending PR2 merge rewiring"
   files:
     prog.json: '{"graph":{"nodes":[{"id":"n1","kind":"identity","ref":null,"params":{}}],"edges":[]},"prompts":[],"eval_suite":null,"provenance":null}'
     .morph/evals/e.json: '{"cases":[],"metrics":[{"name":"acc","aggregation":"mean","threshold":0.0},{"name":"old_metric","aggregation":"mean","threshold":0.0}]}'
@@ -77,9 +75,10 @@
     - morph: [checkout, main]
     - morph: [merge, feature, --retire, old_metric, --retire-reason, "tracker swap"]
       expect_exit: 1
-      stdout_contains:
-        - "CONFLICT"
+      stderr_contains:
+        - "conflict: file.txt"
         - "morph merge --continue"
+        - "morph merge --abort"
     - morph: [status]
       stdout_contains:
         - "unmerged paths"
@@ -102,8 +101,6 @@
         - "tracker swap"
 
 - name: merge_stateful_retire_abort_clears_breadcrumb
-  # PR1 v0.40+: see merge_stateful_retire_clean_three_way skip.
-  skip: "stateful retire pending PR2 merge rewiring"
   files:
     prog.json: '{"graph":{"nodes":[{"id":"n1","kind":"identity","ref":null,"params":{}}],"edges":[]},"prompts":[],"eval_suite":null,"provenance":null}'
     .morph/evals/e.json: '{"cases":[],"metrics":[{"name":"acc","aggregation":"mean","threshold":0.0},{"name":"old_metric","aggregation":"mean","threshold":0.0}]}'
@@ -130,7 +127,7 @@
     - morph: [checkout, main]
     - morph: [merge, feature, --retire, old_metric, --retire-reason, "abandoned attempt"]
       expect_exit: 1
-      stdout_contains: "CONFLICT"
+      stderr_contains: "conflict: file.txt"
     - morph: [merge, --abort]
       stdout_contains: "Merge aborted"
     # After abort, no merge is in progress: --continue must fail

@@ -69,7 +69,10 @@ pub use agent::{
 pub use working::{find_repo, blob_from_prompt_file, blob_from_file, materialize_blob, pipeline_from_file, eval_suite_from_file, status, add_paths, StatusEntry, working_status, activity_summary, ActivitySummary, build_status_json};
 pub use commit::{create_commit, create_tree_commit, create_tree_commit_with_provenance, create_merge_commit, create_merge_commit_full, create_merge_commit_with_retirement, rollup, resolve_head, current_branch, set_head_branch, set_head_detached, checkout_tree, log_from, CommitProvenance, resolve_provenance_from_run, compute_human_edits};
 pub use metrics::{aggregate, check_thresholds, check_dominance, check_dominance_with_suite, aggregate_suite, union_suites, retire_metrics};
-pub use merge::{MergePlan, DominanceResult, DominanceViolation, prepare_merge, execute_merge};
+pub use merge::{
+    ensure_review_node_for_retirement, execute_merge, prepare_merge, DominanceResult,
+    DominanceViolation, MergePlan,
+};
 pub use objmerge::{
     merge_base, merge_commits, MergeOutcome, ObjConflict, StructuralKind, TrivialOutcome,
 };
@@ -108,8 +111,8 @@ pub use structured::{
     ChangeSemantics, VerificationSteps, VerificationAction,
 };
 pub use annotate::{
-    create_annotation, list_annotations,
-    parse_introduces_cases_arg, build_introduces_cases_annotation,
+    auto_detect_introduces_cases, build_introduces_cases_annotation, create_annotation,
+    list_annotations, parse_introduces_cases_arg,
 };
 pub use index::{read_index, write_index, clear_index, update_index, StagingIndex};
 pub use tree::{build_tree, flatten_tree, restore_tree, empty_tree_hash};
@@ -156,13 +159,14 @@ pub use reference::{
     install_post_commit_hook, install_reference_hooks, is_git_working_tree, list_stale_certifications,
     list_unmerged_paths, lookup_branch_git_sha, lookup_morph_for_git_sha, merge_ref_path,
     pending_certifications,
-    read_git_commit, read_merge_breadcrumb, reference_mode_hooks,
+    read_git_commit, read_merge_breadcrumb, rebuild_merge_commit, reference_mode_hooks,
     run_git_commit_with_morph_internal, run_git_merge_abort_with_morph_internal,
     run_git_merge_with_morph_internal, sync_to_head, sync_to_head_with_origin,
     write_merge_breadcrumb, BranchSyncOutcome, CheckoutOutcome, DriftSummary, GitCommitInfo,
-    GitMergeOutcome, HookInstallReport, PreMergeOutcome, ReferenceMergeBreadcrumb, RewriteOutcome,
-    SyncOutcome, POST_CHECKOUT_HOOK_SCRIPT, POST_COMMIT_HOOK_SCRIPT, POST_MERGE_HOOK_SCRIPT,
-    PRE_MERGE_COMMIT_HOOK_SCRIPT, POST_REWRITE_HOOK_SCRIPT,
+    GitMergeOutcome, HookInstallReport, MergeRebuildOpts, PreMergeOutcome,
+    ReferenceMergeBreadcrumb, RewriteOutcome, SyncOutcome, POST_CHECKOUT_HOOK_SCRIPT,
+    POST_COMMIT_HOOK_SCRIPT, POST_MERGE_HOOK_SCRIPT, PRE_MERGE_COMMIT_HOOK_SCRIPT,
+    POST_REWRITE_HOOK_SCRIPT,
 };
 
 pub mod gc;

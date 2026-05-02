@@ -1366,6 +1366,26 @@ pub struct ReferenceMergeBreadcrumb {
     pub other_git_sha: String,
     pub head_git_sha: String,
     pub message: String,
+    /// v0.42: user-supplied `--pipeline <hash>` carried through the
+    /// conflict path so `--continue`'s merge-commit rebuild can use
+    /// the same pipeline the user named when they started the merge.
+    /// `None` falls back to the head commit's pipeline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline: Option<String>,
+    /// v0.42: user-supplied `--eval-suite <hash>` (overrides the
+    /// auto-union suite computed by `prepare_merge`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eval_suite: Option<String>,
+    /// v0.42: metric names retired by this merge (`--retire <m>,…`).
+    /// Drives the auto-injected review node and trims the union
+    /// suite so dominance and certification both ignore the retired
+    /// metric on the rebuilt commit.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub retired_metrics: Vec<String>,
+    /// v0.42: optional `--retire-reason "..."` carried into the
+    /// review node's `params.reason`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retire_reason: Option<String>,
 }
 
 const MERGE_REF_FILE: &str = "MERGE_REF.json";
@@ -1415,6 +1435,119 @@ pub fn clear_merge_breadcrumb(morph_dir: &Path) -> Result<(), MorphError> {
         std::fs::remove_file(&path)?;
     }
     Ok(())
+}
+
+/// v0.42: user-supplied overrides for the merge-commit rebuild.
+/// Mirrors the optional flags `morph merge` exposes (`--pipeline`,
+/// `--eval-suite`, `--metrics`, `--retire`, `--retire-reason`) so a
+/// single call site (`rebuild_merge_commit`) handles both the
+/// single-shot path (`run_reference_merge`) and the stateful path
+/// (`run_reference_merge_continue`).
+#[derive(Debug, Clone, Default)]
+pub struct MergeRebuildOpts {
+    /// User-supplied `--pipeline <hash>`, if any. `None` falls back
+    /// to the head commit's pipeline (so a vanilla auto-union merge
+    /// inherits its parent's pipeline rather than reverting to the
+    /// identity pipeline that `sync_one_commit` initially planted).
+    pub user_pipeline: Option<String>,
+    /// User-supplied `--eval-suite <hash>` overriding the auto-union
+    /// suite computed by `prepare_merge`. `None` ⇒ use plan's union.
+    pub user_eval_suite: Option<String>,
+    /// User-supplied `--metrics <json>` parsed into observed_metrics
+    /// on the rewritten merge commit.
+    pub user_metrics: BTreeMap<String, f64>,
+    /// Metrics retired by this merge (`--retire m1,m2,…`). When
+    /// non-empty, the final pipeline gets a synthesised `review`
+    /// node attributing the retirement.
+    pub retired_metrics: Vec<String>,
+    /// Optional human-readable reason carried into the review
+    /// node's `params.reason`.
+    pub retire_reason: Option<String>,
+    /// Author identity recorded on the synthesised review node.
+    pub author: String,
+    /// Optional morph instance id stamped on the review node.
+    pub morph_instance: Option<String>,
+}
+
+/// v0.42: rebuild a freshly-mirrored merge commit so it carries the
+/// user's pipeline / suite / metrics / retired-metrics decisions
+/// instead of the empty placeholders `sync_one_commit` plants on
+/// every git mirror.
+///
+/// Mirrors the rewrite recipe used by `run_reference_commit` for
+/// non-merge commits (load → mutate → re-store → re-point branch
+/// ref). The original mirror commit becomes a content-addressable
+/// orphan — harmless because no ref points at it anymore; the
+/// branch tip moves to the rebuilt hash.
+///
+/// `mirror_hash` is the `Hash` returned by
+/// `sync_to_head_with_origin().new_commit`. `plan` is the
+/// [`crate::merge::MergePlan`] produced by `prepare_merge` before
+/// the git merge ran — its `union_suite`, `evidence_refs`, and
+/// `head_commit.pipeline` feed the defaults.
+pub fn rebuild_merge_commit(
+    store: &dyn Store,
+    mirror_hash: &Hash,
+    plan: &crate::merge::MergePlan,
+    opts: &MergeRebuildOpts,
+) -> Result<Hash, MorphError> {
+    // Resolve the pipeline hash. A user-supplied `--pipeline` wins;
+    // otherwise we inherit the head commit's pipeline so the auto-
+    // union merge looks the same as a hand-written merge against
+    // the head's pipeline (the typical case). When `--retire` is in
+    // play, ensure_review_node_for_retirement extends the chosen
+    // base pipeline with a synthesised review node.
+    let base_pipeline = match &opts.user_pipeline {
+        Some(s) => Hash::from_hex(s)?,
+        None => Hash::from_hex(&plan.head_commit().pipeline)?,
+    };
+    let final_pipeline = if opts.retired_metrics.is_empty() {
+        base_pipeline
+    } else {
+        crate::merge::ensure_review_node_for_retirement(
+            store,
+            &base_pipeline,
+            &opts.retired_metrics,
+            opts.retire_reason.as_deref(),
+            &opts.author,
+            opts.morph_instance.as_deref(),
+        )?
+    };
+
+    // Resolve the suite hash. User-supplied `--eval-suite` wins;
+    // otherwise we serialize the plan's union (which is already
+    // post-retirement-trimmed by `prepare_merge`).
+    let suite_hash = match &opts.user_eval_suite {
+        Some(s) => Hash::from_hex(s)?,
+        None => store.put(&MorphObject::EvalSuite(plan.union_suite.clone()))?,
+    };
+
+    // Load the mirror commit so we can preserve everything
+    // `sync_one_commit` got right (parents, tree, message,
+    // timestamp, author, git_origin_sha, morph_origin) and only
+    // override the merge-specific fields.
+    let mut commit = match store.get(mirror_hash)? {
+        MorphObject::Commit(c) => c,
+        _ => {
+            return Err(MorphError::Serialization(
+                "mirror commit is not a Commit object".into(),
+            ));
+        }
+    };
+    commit.pipeline = final_pipeline.to_string();
+    commit.eval_contract = EvalContract {
+        suite: suite_hash.to_string(),
+        observed_metrics: opts.user_metrics.clone(),
+    };
+    if commit.evidence_refs.is_none() {
+        commit.evidence_refs = plan.evidence_refs.clone();
+    }
+
+    let new_hash = store.put(&MorphObject::Commit(commit))?;
+    let branch = crate::commit::current_branch(store)?
+        .unwrap_or_else(|| crate::commit::DEFAULT_BRANCH.to_string());
+    store.ref_write(&format!("heads/{}", branch), &new_hash)?;
+    Ok(new_hash)
 }
 
 /// PR 11: list git's currently-unmerged paths. Used by

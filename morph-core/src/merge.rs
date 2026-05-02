@@ -40,7 +40,7 @@ const DEFAULT_RETIRE_REASON: &str = "metric retirement requested at merge time";
 /// return its hash. This keeps backward compatibility with pipelines
 /// whose authors already hand-wrote a review node and surfaces a
 /// machine-readable retirement record for everyone else.
-pub(crate) fn ensure_review_node_for_retirement(
+pub fn ensure_review_node_for_retirement(
     store: &dyn Store,
     pipeline_hash: &Hash,
     retired_metrics: &[String],
@@ -210,6 +210,20 @@ pub struct MergePlan {
 }
 
 impl MergePlan {
+    /// Borrow the head commit (the user's branch tip when
+    /// `prepare_merge` ran). Read-only; preserves the encapsulation
+    /// the merge engine relies on (the plan is meant to be a value
+    /// type produced once and consumed by callers that don't need
+    /// to mutate parent commits).
+    pub fn head_commit(&self) -> &Commit {
+        &self.head_commit
+    }
+
+    /// Borrow the other-side commit (the branch being merged in).
+    pub fn other_commit(&self) -> &Commit {
+        &self.other_commit
+    }
+
     /// Check whether proposed merged metrics would pass dominance against both parents.
     /// Only metrics present in the (post-retirement) union suite are checked.
     pub fn check_dominance(&self, merged: &BTreeMap<String, f64>) -> DominanceResult {

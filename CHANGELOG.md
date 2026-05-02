@@ -16,6 +16,100 @@ metrics — see `.cursor/rules/behavioral-commits.mdc`.
 
 ## [Unreleased]
 
+## [0.42.0] — 2026-05-01
+
+The reference-mode merge rebuild path now propagates the user's
+eval suite, pipeline, and metric-retirement decisions onto the
+mirrored merge commit instead of leaving them as the empty
+placeholders `sync_one_commit` originally planted. Ten previously
+`#[ignore]`'d acceptance specs unblock as a consequence — the
+merge gate has real evidence to enforce on every ref-mode merge,
+single-shot or stateful.
+
+### Added
+
+- **`morph_core::rebuild_merge_commit`** + **`MergeRebuildOpts`**.
+  After `sync_to_head_with_origin` mirrors the new merge commit,
+  `rebuild_merge_commit` re-derives the commit object using the
+  `MergePlan`'s auto-union eval suite, the user's `--pipeline` /
+  `--eval-suite` / `--metrics`, and any retired metrics, then
+  re-points the branch ref onto the rewritten hash. Same recipe
+  the non-merge `morph commit` rewrite already used; consolidating
+  it under one helper keeps the single-shot and `--continue` paths
+  aligned. The original mirror commit becomes a content-addressable
+  orphan — harmless because no ref points at it anymore.
+- **`MERGE_REF.json` carries merge context across the conflict
+  boundary.** `ReferenceMergeBreadcrumb` now records the user's
+  `--pipeline`, `--eval-suite`, `--retire`, and `--retire-reason`
+  so `morph merge --continue` reproduces the same plan a
+  single-shot merge would have used. Earlier versions dropped
+  the retire intent on conflict, so resuming a textually-conflicted
+  merge silently lost the retirement and review-node attribution.
+- **`MergePlan::head_commit()` / `other_commit()` accessors** on
+  the public merge API so callers (the new rebuild helper, future
+  inspection tooling) can read parent commit fields without the
+  plan having to re-fetch them. Internal storage stays private;
+  only borrows are exposed.
+- **`auto_detect_introduces_cases()` in `morph_core::annotate`.**
+  `morph commit` (without `--new-cases`) now diffs the
+  about-to-commit eval suite against the first-parent's suite and
+  auto-records the case-id difference as an `introduces_cases`
+  annotation. `--new-cases ""` is the explicit opt-out;
+  `--new-cases "manual:override"` keeps the manual override path.
+  Mirrors the merge gate's own case-attribution model so a commit
+  that introduces a new acceptance case is auditable without the
+  user having to type the case id twice.
+- **`morph_core::ensure_review_node_for_retirement` is now
+  public** so the new rebuild helper can synthesise the same
+  attributed review node the standalone-mode merge engine
+  produced, attribuing the retirement to the merge author.
+
+### Fixed
+
+- **`morph merge` propagates the auto-union eval suite onto the
+  merged commit.** The dominance check used to fire before
+  `git merge` ran (correct), but the rebuild used the empty
+  placeholder suite `sync_one_commit` planted, so the resulting
+  merge commit had no claim. The merge gate had nothing to
+  enforce on subsequent merges into the same branch.
+- **`morph merge --retire <metric>` writes a real review node.**
+  The single-shot and `--continue` paths both now run
+  `ensure_review_node_for_retirement` against the head pipeline
+  (or the user's `--pipeline` override) and replace the merge
+  commit's pipeline with the result. Retirement attribution and
+  reason text land in the rewritten pipeline's review-node
+  `params.reason`.
+- **`morph merge --retire` survives a textual conflict.** The
+  retire intent and reason now flow through `MERGE_REF.json` to
+  `morph merge --continue`, which applies the same rebuild a
+  single-shot merge would have applied. Earlier versions
+  silently dropped the retirement when the merge dropped into
+  the conflict path.
+- **Weak merge metrics are rejected with the parent name on
+  stderr.** Now that the rebuild propagates the union suite onto
+  parents' commits, `MergePlan::check_dominance` finds the
+  expected violations (e.g. `current: acc 0.9 → 0.87`) and
+  surfaces them on the merge-rejection error message.
+
+### Tests
+
+Ten previously `#[ignore]`'d specs now run as part of the default
+`cargo test --workspace`. All ten flip green:
+- `merge.yaml`: `merge_auto_union_suite_happy_path`,
+  `merge_rejects_with_explained_metric_failure`,
+  `merge_with_retirement_succeeds`.
+- `merge_retire_review.yaml`: `merge_retire_synthesizes_review_node`,
+  `merge_retire_default_reason_when_omitted`,
+  `merge_retire_with_existing_review_node_no_resynthesis`.
+- `merge_retire_stateful.yaml`: `merge_stateful_retire_clean_three_way_synthesizes_review_node`,
+  `merge_stateful_retire_with_textual_conflict_then_continue`,
+  `merge_stateful_retire_abort_clears_breadcrumb` (the latter two
+  also rewritten for v0.40+ stderr-shaped conflict UX).
+- `commit_auto_new_cases.yaml`: `commit_auto_detects_new_cases_added_to_default_suite`.
+
+Three `#[ignore]`'d specs remain, all in the mixed-authorship
+plumbing bucket (`mixed_authorship.yaml`), scheduled for v0.42.1.
+
 ## [0.41.1] — 2026-05-01
 
 Three reference-mode merge UX fixes triaged out of the v0.40 ignored
@@ -827,7 +921,8 @@ Three coordinated changes to repo setup, adoption, and migration.
 - 15 new YAML acceptance spec cases in the default eval suite:
   `init_at_latest:*` ×4, `init_in_git_dir:*` ×6, `upgrade:*` ×5.
 
-[Unreleased]: https://github.com/r/morph/compare/v0.41.1...HEAD
+[Unreleased]: https://github.com/r/morph/compare/v0.42.0...HEAD
+[0.42.0]: https://github.com/r/morph/compare/v0.41.1...v0.42.0
 [0.41.1]: https://github.com/r/morph/compare/v0.41.0...v0.41.1
 [0.41.0]: https://github.com/r/morph/compare/v0.40.2...v0.41.0
 [0.40.2]: https://github.com/r/morph/compare/v0.40.1...v0.40.2

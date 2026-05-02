@@ -321,7 +321,84 @@
 
     <article class="release">
       <header>
-        <span class="version">0.41.1 <span class="latest">Latest</span></span>
+        <span class="version">0.42.0 <span class="latest">Latest</span></span>
+        <span class="date">2026-05-01</span>
+      </header>
+      <p class="summary">
+        <strong>Reference-mode merge gets its evidence back.</strong>
+        The merge rebuild path now propagates the user's eval
+        suite, pipeline, and metric-retirement decisions onto the
+        mirrored merge commit instead of leaving them as the empty
+        placeholders <code>sync_one_commit</code> originally
+        planted. Ten previously skipped acceptance specs unblock as
+        a consequence &mdash; the merge gate has real evidence to
+        enforce on every ref-mode merge, single-shot or stateful.
+        Three skipped specs remain (mixed-authorship plumbing,
+        scheduled for v0.42.1).
+      </p>
+
+      <h3 class="added"><span class="marker"></span>Added</h3>
+      <ul>
+        <li><strong><code>morph_core::rebuild_merge_commit</code> +
+          <code>MergeRebuildOpts</code>.</strong> After
+          <code>sync_to_head_with_origin</code> mirrors the new
+          merge commit, the rebuild helper re-derives the commit
+          using the <code>MergePlan</code>'s auto-union eval
+          suite, the user's <code>--pipeline</code> /
+          <code>--eval-suite</code> / <code>--metrics</code>, and
+          any retired metrics, then re-points the branch ref onto
+          the rewritten hash.</li>
+        <li><strong><code>MERGE_REF.json</code> carries merge
+          context across the conflict boundary.</strong>
+          <code>ReferenceMergeBreadcrumb</code> now records the
+          user's <code>--pipeline</code>, <code>--eval-suite</code>,
+          <code>--retire</code>, and <code>--retire-reason</code>
+          so <code>morph merge --continue</code> reproduces the
+          same plan a single-shot merge would have used.</li>
+        <li><strong><code>auto_detect_introduces_cases()</code> in
+          <code>morph_core::annotate</code>.</strong>
+          <code>morph commit</code> (without
+          <code>--new-cases</code>) now diffs the about-to-commit
+          eval suite against the first-parent's suite and
+          auto-records the case-id difference as an
+          <code>introduces_cases</code> annotation.</li>
+      </ul>
+
+      <h3 class="fixed"><span class="marker"></span>Fixed</h3>
+      <ul>
+        <li><code>morph merge</code> propagates the auto-union
+          eval suite onto the merged commit; the dominance check
+          now sees the right metrics on subsequent merges.</li>
+        <li><code>morph merge --retire &lt;metric&gt;</code>
+          writes a real review node attributing the retirement
+          to the merge author and the optional
+          <code>--retire-reason "..."</code>.</li>
+        <li><code>morph merge --retire</code> survives a textual
+          conflict &mdash; the retire intent flows through
+          <code>MERGE_REF.json</code> to
+          <code>morph merge --continue</code>.</li>
+        <li>Weak merge metrics are rejected with the parent name
+          on stderr (<code>current: acc 0.9 → 0.87</code>) instead
+          of silently passing.</li>
+      </ul>
+
+      <h3 class="tests"><span class="marker"></span>Tests</h3>
+      <ul>
+        <li>Ten previously-<code>#[ignore]</code>'d specs flip
+          green: 3 in <code>merge.yaml</code>, 3 in
+          <code>merge_retire_review.yaml</code>, 3 in
+          <code>merge_retire_stateful.yaml</code> (the latter two
+          also rewritten for v0.40+ stderr-shaped conflict UX),
+          and <code>commit_auto_detects_new_cases_added_to_default_suite</code>.
+          Workspace test count: <strong>1184 / 1184 passing,
+          3 ignored</strong>. <code>version.yaml</code> updated
+          to expect <code>0.42.0</code>.</li>
+      </ul>
+    </article>
+
+    <article class="release">
+      <header>
+        <span class="version">0.41.1</span>
         <span class="date">2026-05-01</span>
       </header>
       <p class="summary">
@@ -462,141 +539,6 @@
           for the multi-repo CLI flow is queued for v0.41.1.
           <code>morph-cli/tests/specs/version.yaml</code> updated
           to expect <code>0.41.0</code>.</li>
-      </ul>
-    </article>
-
-    <article class="release">
-      <header>
-        <span class="version">0.40.2</span>
-        <span class="date">2026-05-01</span>
-      </header>
-      <p class="summary">
-        Docs-only release: the plain
-        <strong>privacy &amp; sharing story</strong>. New
-        <code>docs/SECURITY.md</code> answers the question we keep
-        getting asked &mdash; <em>"morph records everything; what
-        happens when I share it?"</em> &mdash; without hand-waving.
-        It states up front <em>what</em> a trace contains
-        (prompts, responses, file contents the agent read,
-        shell stdout/stderr, env), <em>where</em> it lives
-        (<code>.morph/</code>, never tracked by git, not
-        encrypted at rest), <em>what crosses the wire when</em>
-        (a two-channel diagram: <code>git push</code> can't carry
-        traces, <code>morph push</code> is opt-in and sends
-        everything reachable), the team-setup checklist, and the
-        gaps morph does not yet have &mdash; including no
-        <code>morph forget</code>, which is the headline feature
-        of the next release line (v0.41.0). The homepage gets a
-        compact "What gets recorded, what gets shared" section
-        between How-It-Works and Design-Principles, mirroring
-        the same two-channel framing.
-      </p>
-
-      <h3 class="added"><span class="marker"></span>Added</h3>
-      <ul>
-        <li><strong><code>docs/SECURITY.md</code>.</strong>
-          New, plain-language companion to
-          <code>docs/SESSION-TRACKING.md</code>: <em>what morph
-          records said plainly</em>, the on-disk layout (and the
-          fact that <code>.morph/</code> is never git-tracked),
-          <code>git push</code> vs <code>morph push</code>
-          drawn as a two-channel diagram, the recommended team
-          setup, the checklist before you share, the
-          known-gaps list (no <code>morph forget</code>, no
-          client-side redaction filter on push, no selective
-          fetch, no encryption at rest, no automatic secret
-          scanning), and a brittle-recipe for "if you leak a
-          secret into a trace, what do you do today?" that
-          collapses into a one-liner once <code>morph
-          forget</code> ships in v0.41.0.</li>
-        <li><strong>Homepage privacy section.</strong>
-          <code>site/index.html</code> &mdash; new "What gets
-          recorded, what gets shared" section between How-It-
-          Works and Design-Principles. Two side-by-side cards
-          (<em>git push: code only</em>; <em>morph push: opt-in,
-          separate</em>) make the two-channel model visible at
-          a glance, followed by a "things morph does not yet
-          do" list and a deep-link to the full
-          <code>SECURITY.md</code>. Adds a
-          <code>.privacy-grid</code> + <code>.privacy-card</code>
-          + <code>.privacy-list</code> style block to the page's
-          CSS.</li>
-        <li><strong><code>docs/README.md</code></strong> Guides
-          table indexes <code>SECURITY.md</code> next to
-          <code>SESSION-TRACKING.md</code>, with the
-          <em>"read before you push to a morph remote"</em> hint.</li>
-      </ul>
-
-      <h3 class="tests"><span class="marker"></span>Tests</h3>
-      <ul>
-        <li><code>morph-cli/tests/specs/version.yaml</code>
-          updated to expect <code>0.40.2</code>. Workspace test
-          count unchanged from 0.40.1: <strong>1159 / 1159
-          passing, 15 skipped</strong>.</li>
-      </ul>
-    </article>
-
-    <article class="release">
-      <header>
-        <span class="version">0.40.1</span>
-        <span class="date">2026-05-01</span>
-      </header>
-      <p class="summary">
-        Docs-only release: a clean, plainly-argued
-        <strong>session-tracking story</strong>. New
-        <code>docs/SESSION-TRACKING.md</code> opens with the
-        load-bearing claim &mdash; <em>"a diff plus a commit message
-        is not enough to review AI-authored code; the next person
-        needs the prompt"</em> &mdash; and lays out seven concrete
-        things you can only do because the prompt + trace are part
-        of the commit graph (review the transformation, replay,
-        attribution, prompt-as-spec, prompts &rarr; acceptance
-        cases, merge-aware behavioral context, cross-tool
-        portability). It then puts a six-row comparison table
-        against the alternatives we keep getting asked about
-        &mdash; Claude / Cursor / OpenCode on-disk transcripts,
-        OTEL hooks, and Langfuse / Phoenix / Helicone &mdash;
-        with the specific gap each one has: not linked to a
-        commit, not content-addressed, not merge-aware, not
-        local-first. The homepage gets the same comparison row
-        embedded inside the existing <em>Runs and Traces</em>
-        section, and a deep-link out to the full doc.
-      </p>
-
-      <h3 class="added"><span class="marker"></span>Added</h3>
-      <ul>
-        <li><strong><code>docs/SESSION-TRACKING.md</code>.</strong>
-          New, ~330-line companion to <code>docs/MORPH-AND-GIT.md</code>:
-          why a diff is not enough for AI-authored code, the seven
-          first-class things morph traces unlock, why the alternatives
-          (Claude on-disk transcripts, OTEL spans in a tracing
-          backend, Langfuse / Phoenix / Helicone) cannot deliver
-          what the morph trace contract delivers, and the
-          tool-agnostic Run + Trace contract itself. Forward-links
-          to <code>docs/SECURITY.md</code> (landing in 0.40.2) for
-          the privacy and team-sharing follow-up.</li>
-        <li><strong>Homepage comparison table.</strong>
-          <code>site/index.html</code> &mdash; the existing "Runs
-          and Traces" solution item now ends with a 6-row
-          comparison: <em>linked to a commit</em>, <em>content-
-          addressed</em>, <em>visible to teammates</em>,
-          <em>same shape across tools</em>, <em>merge-aware</em>,
-          <em>local-first</em>. Each row scores Claude/Cursor/OpenCode
-          transcripts, the Langfuse/Phoenix/OTEL world, and morph
-          honestly &mdash; <em>"yes morph is local-first; no
-          Langfuse isn't; yes Cursor's logs live on your laptop too
-          but they aren't linked to commits."</em> Links out to the
-          full doc on GitHub.</li>
-        <li><strong><code>docs/README.md</code> index entry</strong>
-          for <code>SESSION-TRACKING.md</code> in the Guides table.</li>
-      </ul>
-
-      <h3 class="tests"><span class="marker"></span>Tests</h3>
-      <ul>
-        <li><code>morph-cli/tests/specs/version.yaml</code> updated
-          to expect <code>0.40.1</code>. Workspace test count
-          unchanged from 0.40.0: <strong>1159 / 1159 passing,
-          15 skipped</strong>.</li>
       </ul>
     </article>
 

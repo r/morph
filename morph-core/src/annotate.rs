@@ -38,6 +38,54 @@ pub fn parse_introduces_cases_arg(arg: &str) -> Vec<String> {
         .collect()
 }
 
+/// v0.42: auto-detect newly-introduced acceptance case ids by
+/// diffing `new_suite_hash` against `parent_hash`'s eval suite.
+/// Returns the set difference (cases present in the new suite but
+/// not in the parent's), in sorted order. An empty list signals
+/// "nothing new" — callers should skip the annotation rather than
+/// emit `introduces_cases: []`.
+///
+/// Tolerant of three edge cases: `parent_hash = None` (root
+/// commit ⇒ every case in the new suite is introduced); the
+/// parent is not a `Commit` object (returns the new suite's case
+/// ids whole); the parent's `eval_contract.suite` is empty or
+/// unloadable (treated as "no parent suite").
+///
+/// Pairs with [`build_introduces_cases_annotation`] at the call
+/// site.
+pub fn auto_detect_introduces_cases(
+    store: &dyn Store,
+    parent_hash: Option<&Hash>,
+    new_suite_hash: &str,
+) -> Result<Vec<String>, MorphError> {
+    if new_suite_hash.is_empty() {
+        return Ok(Vec::new());
+    }
+    let new_suite = match crate::commit::load_eval_suite(store, new_suite_hash) {
+        Ok(s) => s,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let new_ids: std::collections::BTreeSet<String> =
+        new_suite.cases.iter().map(|c| c.id.clone()).collect();
+
+    let parent_ids: std::collections::BTreeSet<String> = match parent_hash {
+        Some(h) => match store.get(h) {
+            Ok(MorphObject::Commit(c)) if !c.eval_contract.suite.is_empty() => {
+                match crate::commit::load_eval_suite(store, &c.eval_contract.suite) {
+                    Ok(parent_suite) => {
+                        parent_suite.cases.iter().map(|c| c.id.clone()).collect()
+                    }
+                    Err(_) => std::collections::BTreeSet::new(),
+                }
+            }
+            _ => std::collections::BTreeSet::new(),
+        },
+        None => std::collections::BTreeSet::new(),
+    };
+
+    Ok(new_ids.difference(&parent_ids).cloned().collect())
+}
+
 /// Phase 6b: build (but don't store) an `introduces_cases` annotation
 /// for `commit`. Pair with `store.put(&...)` at the call site. Returns
 /// `None` when `cases` is empty so callers can compose without a

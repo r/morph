@@ -606,14 +606,37 @@ fn run_reference_commit(
         }
     }
 
-    if let Some(arg) = new_cases {
-        let cases = morph_core::parse_introduces_cases_arg(arg);
-        let branch = morph_core::current_branch(store)?;
-        if let Some(ann) =
-            morph_core::build_introduces_cases_annotation(&new_morph_hash, &cases, branch)
-        {
-            store.put(&ann)?;
+    // v0.42: `--new-cases` selection.
+    //   * `--new-cases "a,b"` → record exactly those ids (manual
+    //     override).
+    //   * `--new-cases ""` → explicit opt-out, skip auto-detect.
+    //   * Flag absent → diff the about-to-commit suite against the
+    //     first-parent's suite and auto-record the difference. The
+    //     diff lets the merge gate attribute new acceptance cases
+    //     to this commit without the user typing them out.
+    let auto_cases: Vec<String> = match new_cases {
+        Some(arg) => morph_core::parse_introduces_cases_arg(arg),
+        None => {
+            let parent_hash = match store.get(&new_morph_hash)? {
+                morph_core::MorphObject::Commit(c) => c
+                    .parents
+                    .first()
+                    .and_then(|p| morph_core::Hash::from_hex(p).ok()),
+                _ => None,
+            };
+            let suite = match store.get(&new_morph_hash)? {
+                morph_core::MorphObject::Commit(c) => c.eval_contract.suite.clone(),
+                _ => String::new(),
+            };
+            morph_core::auto_detect_introduces_cases(store, parent_hash.as_ref(), &suite)
+                .unwrap_or_default()
         }
+    };
+    let branch = morph_core::current_branch(store)?;
+    if let Some(ann) =
+        morph_core::build_introduces_cases_annotation(&new_morph_hash, &auto_cases, branch)
+    {
+        store.put(&ann)?;
     }
 
     // Clear the morph staging index after a successful reference-mode
@@ -765,11 +788,10 @@ fn run_reference_merge(
     eval_suite: Option<String>,
     metrics: Option<String>,
     message: Option<String>,
-    _author: Option<String>,
+    author: Option<String>,
     retire: Option<String>,
     retire_reason: Option<String>,
 ) -> anyhow::Result<()> {
-    let _ = pipeline;
     let version = read_repo_version(morph_dir)?;
     let bare_branch = branch.strip_prefix("heads/").unwrap_or(branch);
 
@@ -785,6 +807,14 @@ fn run_reference_merge(
         .as_deref()
         .map(|s| resolve_obj_hash(store, s))
         .transpose()?;
+    // Resolve the user-supplied --pipeline argument (a hash or a
+    // short prefix) once so both the rebuild and the breadcrumb
+    // record the canonical 64-char hex.
+    let user_pipeline_hash: Option<String> = pipeline
+        .as_deref()
+        .map(|s| resolve_obj_hash(store, s))
+        .transpose()?
+        .map(|h| h.to_string());
     let retired: Option<Vec<String>> = retire
         .as_deref()
         .map(|s| s.split(',').map(|m| m.trim().to_string()).collect());
@@ -794,8 +824,19 @@ fn run_reference_merge(
         suite_hash_opt.as_ref(),
         retired.as_deref(),
     )?;
-    plan.retire_reason = retire_reason;
+    plan.retire_reason = retire_reason.clone();
     warn_when_no_morph_claim(store, &plan);
+
+    // Author drives the synthesised review-node attribution (when
+    // `--retire` is in play). Resolve through morph's identity
+    // chain so review nodes carry the same identity as commit
+    // authors. Fall back to "morph-cli" only when absolutely no
+    // identity can be established — review-node attribution is
+    // user-visible and a meaningful identity is always preferred.
+    let resolved_author = morph_core::resolve_author_for_repo(morph_dir, author.as_deref())
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "morph-cli".to_string());
 
     if let Some(ref obs) = observed {
         let dominance = plan.check_dominance(obs);
@@ -847,12 +888,28 @@ fn run_reference_merge(
                 "cli",
                 Some(&version),
             )?;
-            let new_morph = sync_outcome.new_commit.ok_or_else(|| {
+            let mirrored = sync_outcome.new_commit.ok_or_else(|| {
                 anyhow::anyhow!(
                     "git merge {} did not produce a new morph commit",
                     &new_head[..new_head.len().min(12)]
                 )
             })?;
+            // v0.42: rebuild the mirror commit so it carries the
+            // user's (or auto-union'd) eval suite, pipeline, and
+            // retired-metrics decision instead of `sync_one_commit`'s
+            // empty placeholders. Without this, the merge gate has
+            // nothing to enforce and metric-retirement / review-node
+            // attribution silently disappear.
+            let opts = morph_core::MergeRebuildOpts {
+                user_pipeline: user_pipeline_hash.clone(),
+                user_eval_suite: suite_hash_opt.as_ref().map(|h| h.to_string()),
+                user_metrics: observed.clone().unwrap_or_default(),
+                retired_metrics: retired.clone().unwrap_or_default(),
+                retire_reason: plan.retire_reason.clone(),
+                author: resolved_author.clone(),
+                morph_instance: morph_core::read_instance_id(morph_dir).ok().flatten(),
+            };
+            let new_morph = morph_core::rebuild_merge_commit(store, &mirrored, &plan, &opts)?;
             if let Some(obs) = observed {
                 let cert = morph_core::certify_commit(
                     store, morph_dir, &new_morph, &obs, None, None,
@@ -886,6 +943,10 @@ fn run_reference_merge(
                 other_git_sha,
                 head_git_sha,
                 message: merge_message.clone(),
+                pipeline: user_pipeline_hash.clone(),
+                eval_suite: suite_hash_opt.as_ref().map(|h| h.to_string()),
+                retired_metrics: retired.clone().unwrap_or_default(),
+                retire_reason: plan.retire_reason.clone(),
             };
             morph_core::write_merge_breadcrumb(morph_dir, &breadcrumb)?;
             eprintln!(
@@ -920,7 +981,7 @@ fn run_reference_merge_continue(
     repo_root: &std::path::Path,
     message_override: Option<String>,
     metrics: Option<String>,
-    _author: Option<String>,
+    author: Option<String>,
 ) -> anyhow::Result<()> {
     let breadcrumb = morph_core::read_merge_breadcrumb(morph_dir)?
         .ok_or_else(|| anyhow::anyhow!(
@@ -946,6 +1007,30 @@ fn run_reference_merge_continue(
     let version = read_repo_version(morph_dir)?;
     let message = message_override.unwrap_or_else(|| breadcrumb.message.clone());
 
+    // v0.42: rebuild the merge plan up-front. Calling `prepare_merge`
+    // here (with the breadcrumb's recorded suite and retired
+    // metrics) reproduces the exact union suite + reference bar the
+    // user committed to when they started the merge, so
+    // `--continue`'s rewrite uses the same shape as the single-shot
+    // path. The plan must be computed BEFORE the git commit lands —
+    // afterwards HEAD has advanced and `prepare_merge` would see
+    // the merged commit as its own ancestor.
+    let suite_override_hash = match breadcrumb.eval_suite.as_deref() {
+        Some(s) => Some(resolve_obj_hash(store, s)?),
+        None => None,
+    };
+    let mut plan = morph_core::prepare_merge(
+        store,
+        &breadcrumb.other_branch,
+        suite_override_hash.as_ref(),
+        if breadcrumb.retired_metrics.is_empty() {
+            None
+        } else {
+            Some(&breadcrumb.retired_metrics[..])
+        },
+    )?;
+    plan.retire_reason = breadcrumb.retire_reason.clone();
+
     // Drive `git commit -m <msg>` under MORPH_INTERNAL=1. Git will
     // create the merge commit using `.git/MERGE_HEAD` (still in
     // place since the original `git merge` left it), reusing the
@@ -957,7 +1042,7 @@ fn run_reference_merge_continue(
     // Mirror the new merge commit into morph with origin = "cli".
     let outcome =
         morph_core::sync_to_head_with_origin(store, repo_root, "cli", Some(&version))?;
-    let new_morph = outcome
+    let mirrored = outcome
         .new_commit
         .ok_or_else(|| {
             anyhow::anyhow!(
@@ -965,6 +1050,29 @@ fn run_reference_merge_continue(
                 &new_git_sha[..new_git_sha.len().min(12)]
             )
         })?;
+
+    // Apply the same v0.42 rebuild the single-shot path uses so
+    // `--continue` finalizes a fully-fledged merge commit (suite,
+    // pipeline-with-review-node, observed_metrics, evidence_refs).
+    let observed_for_rebuild: std::collections::BTreeMap<String, f64> = match &metrics {
+        Some(m) => serde_json::from_str(m)
+            .map_err(|e| anyhow::anyhow!("invalid --metrics JSON: {}", e))?,
+        None => std::collections::BTreeMap::new(),
+    };
+    let resolved_author = morph_core::resolve_author_for_repo(morph_dir, author.as_deref())
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "morph-cli".to_string());
+    let opts = morph_core::MergeRebuildOpts {
+        user_pipeline: breadcrumb.pipeline.clone(),
+        user_eval_suite: breadcrumb.eval_suite.clone(),
+        user_metrics: observed_for_rebuild.clone(),
+        retired_metrics: breadcrumb.retired_metrics.clone(),
+        retire_reason: breadcrumb.retire_reason.clone(),
+        author: resolved_author,
+        morph_instance: morph_core::read_instance_id(morph_dir).ok().flatten(),
+    };
+    let new_morph = morph_core::rebuild_merge_commit(store, &mirrored, &plan, &opts)?;
 
     // Optional certification — same code path as the single-shot
     // merge in `run_reference_merge`.

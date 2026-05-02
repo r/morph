@@ -8,10 +8,10 @@
 # recorded as an `introduces_cases` annotation pointing at the new
 # commit.
 - name: commit_auto_detects_new_cases_added_to_default_suite
-  # PR1 v0.40+: ref-mode commit rewrite path doesn't yet diff the
-  # commit's eval suite against HEAD's to auto-record an
-  # `introduces_cases` annotation. Tracked for PR2.
-  skip: "auto-detect new-cases annotation pending PR2"
+  # v0.42: `morph commit` (without `--new-cases`) now diffs the
+  # about-to-commit suite against the first-parent's suite and
+  # auto-records the case-id difference as an `introduces_cases`
+  # annotation, mirroring the merge gate's case-attribution model.
   files:
     specs/alpha.yaml: |
       - name: alpha
