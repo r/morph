@@ -72,7 +72,7 @@ pub use forget::{
     RETROACTIVE_NOTE,
 };
 pub use gc::{gc, GcResult};
-pub use hash::{canonical_json, content_hash, content_hash_git, short_hash_str, Hash};
+pub use hash::{canonical_json, content_hash, content_hash_git, hex_prefix, short_hash_str, Hash};
 pub use identity::identity_pipeline;
 pub use index::{clear_index, read_index, update_index, write_index, StagingIndex};
 pub use language::{

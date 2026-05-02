@@ -4,17 +4,17 @@
 
 | Crate | Tests | Location |
 |-------|-------|----------|
-| **morph-core** | 654 unit tests across the lib's modules | `#[cfg(test)]` blocks in each source file |
-| **morph-cli** | 406 YAML-driven CLI specs + 39 unit tests + 20 dedicated integration tests (8 `remote_helper_integration`, 10 `ssh_fetch_integration`, 2 `status_merge_integration`) | YAML specs in `morph-cli/tests/specs/*.yaml`, compiled by `build.rs`; unit tests in `main.rs` + `setup.rs`; dedicated integration files under `morph-cli/tests/`. |
-| **morph-e2e** | Cucumber scenarios (16 features, 37 scenarios) | `morph-e2e/features/*.feature`, step defs in `morph-e2e/tests/cucumber.rs` |
+| **morph-core** | 659 unit tests across the lib's modules | `#[cfg(test)]` blocks in each source file |
+| **morph-cli** | 426 YAML-driven CLI specs + 39 unit tests + 20 dedicated integration tests (8 `remote_helper_integration`, 10 `ssh_fetch_integration`, 2 `status_merge_integration`) | YAML specs in `morph-cli/tests/specs/*.yaml`, compiled by `build.rs`; unit tests in `main.rs` + `setup.rs`; dedicated integration files under `morph-cli/tests/`. |
+| **morph-e2e** | Cucumber scenarios (16 features, 37 scenarios; 3 hosted-service scenarios skipped in CI) | `morph-e2e/features/*.feature`, step defs in `morph-e2e/tests/cucumber.rs` |
 | **morph-mcp** | 31 integration tests | `#[cfg(test)]` in `morph-mcp/src/main.rs` |
 | **morph-serve** | 37 unit/API tests (views, service, handlers, org policy, multi-repo) | `morph-serve/src/tests.rs` + `org_policy::tests` |
 
-Totals: **1187 Rust tests** plus the Cucumber suite (37 scenarios), all green. Reproduce the count locally with `cargo test --workspace 2>&1 | rg "^test result:" | rg "passed" | awk '{s+=$4} END {print s}'`.
+Totals: **1212 Rust tests** plus the Cucumber suite (37 scenarios, 34 passing / 3 skipped), all green. Reproduce the count locally with `cargo test --workspace 2>&1 | rg "^test result:" | rg "passed" | awk '{s+=$4} END {print s}'`.
 
 ### morph-core unit test highlights
 
-The lib's 654 unit tests cover the core object/storage/merge layers. Notable areas (non-exhaustive):
+The lib's 659 unit tests cover the core object/storage/merge layers. Notable areas (non-exhaustive):
 
 - **Object model**: hash determinism, paper-aligned commit fields (review nodes, per-node `env`, set-valued attribution, `morph_instance`, `morph_version`), legacy compatibility (`from-run` provenance, `pipeline`/`program` aliases).
 - **Storage**: `FsStore` in legacy, Git-format flat, and Git-format fan-out modes; ref read/write/delete; type-index directories; collision detection.
@@ -34,11 +34,11 @@ The lib's 654 unit tests cover the core object/storage/merge layers. Notable are
 
 ### morph-cli integration tests
 
-YAML specs in `morph-cli/tests/specs/` cover every user-facing CLI command. Categories: repository lifecycle (`init`, `status`, `add`, `gc`), prompts/pipelines (`prompt create/materialize/show`, `pipeline create/show/extract`), commits (`commit`, `log`, `--from-run` provenance), evidence (`run record`, `run list`, `run show`, `trace show`, `tap`, `traces`), branching (`branch`, `checkout`, `tag`, `stash`, `revert`, `diff`, `rollup`), merging (`merge_plan`, `merge` single-shot, `merge --continue`, `merge --abort`, `merge resolve-node`, textual conflict drop-into-continue flow), remotes (`remote`, `push_pull`, `clone`, `sync`, `branch --set-upstream`), policy (`policy`, `certify_gate`, push-gated branches), reference mode (init/sync/install-hooks/post-commit/post-merge/post-checkout/post-rewrite/pre-merge-commit), and misc (`upgrade`, `morphignore`, error paths). Three dedicated Rust integration files exercise the SSH server (`remote_helper_integration`, `ssh_fetch_integration`) and the merge state machine surfaced in `status` (`status_merge_integration`).
+YAML specs in `morph-cli/tests/specs/` cover every user-facing CLI command. Categories: repository lifecycle (`init`, `status`, `add`, `gc`), prompts/pipelines (`prompt create/materialize/show`, `pipeline create/show/extract`), commits (`commit`, `log`, `--from-run` provenance, `commit_runs_configured_test_command`), evidence (`session list/show/record/import`, `inspect summary/show/recent/task/target/artifact/semantics/verification`; v0.46+ replacements for the removed `run`/`trace`/`tap`/`traces` namespaces), branching (`branch`, `checkout`, `tag`, `stash`, `revert`, `diff`, `rollup`), merging (`merge_plan`, `merge` single-shot, `merge --continue`, `merge --abort`, `merge resolve-node`, textual conflict drop-into-continue flow), remotes (`remote`, `push_pull`, `clone`, `sync`, `branch --set-upstream`), policy (`policy`, `certify_gate`, push-gated branches), reference mode (init/sync/install-hooks/post-commit/post-merge/post-checkout/post-rewrite/pre-merge-commit), eval (`eval add` / `eval show` / `eval rebuild` flat surface, `eval gaps`, `eval run`, `eval from-output`), and misc (`upgrade`, `morphignore`, error paths, `removed_inspect_aliases` and `removed_session_eval_aliases` regression specs that pin the v0.47/v0.48 deletions). Three dedicated Rust integration files exercise the SSH server (`remote_helper_integration`, `ssh_fetch_integration`) and the merge state machine surfaced in `status` (`status_merge_integration`).
 
 ### morph-mcp integration tests
 
-All primary MCP tools have integration coverage: **init**, **record_session**, **record_eval**, **eval_from_output**, **eval_run**, **add_eval_case**, **eval_suite_from_specs**, **eval_suite_show**, **eval_gaps**, **stage**, **commit** (basic, with metrics, with `--from-run` provenance, `--new-cases` annotation, `--allow-empty-metrics` policy bypass), **branch**, **checkout**, **annotate**, **status** (with the Evidence summary block), **log**, **show**, **diff**, **merge** (behavioral dominance), the `get_trace_*` family, and **repo_store** (not-found errors, store version compatibility). Read-only inspection helpers (`record_run`, `head`, `identify`, `annotations`, `run_list`, `branch_list`, `refs`, `remote_list`, `reference_sync`) are exercised primarily via the CLI YAML specs since the wire format is identical.
+All primary MCP tools have integration coverage: **init**, **record_session**, **record_eval**, **eval_from_output**, **eval_run**, **add_eval_case**, **eval_suite_from_specs**, **eval_suite_show**, **eval_gaps**, **stage**, **commit** (basic, with metrics, with `--from-run` provenance, `--new-cases` annotation, `--allow-empty-metrics` policy bypass), **branch**, **checkout**, **annotate**, **status** (with the Evidence summary block), **log**, **show**, **diff**, **merge** (behavioral dominance), the `get_trace_*` family, and **repo_store** (not-found errors, store version compatibility). Read-only inspection helpers (`record_run`, `head`, `identify`, `annotations`, `run_list`, `branch_list`, `refs`, `remote_list`, `reference_sync`) are exercised primarily via the CLI YAML specs since the wire format is identical. Note: the MCP wire names (`morph_run_list`, `morph_record_run`, `morph_eval_suite_show`, `morph_eval_suite_from_specs`, `morph_add_eval_case`) are deliberately stable across the v0.46–v0.48 CLI rename sweep so existing IDE/MCP clients keep working without migration.
 
 ---
 

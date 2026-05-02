@@ -9,7 +9,7 @@ mod setup;
 use clap::Parser;
 use cli::*;
 use morph_core::{
-    find_repo, migrate_0_0_to_0_2, migrate_0_2_to_0_3, migrate_to_latest, open_store,
+    find_repo, hex_prefix, migrate_0_0_to_0_2, migrate_0_2_to_0_3, migrate_to_latest, open_store,
     read_repo_version, require_store_version, resolve_revision, short_hash_str, Hash, MorphObject,
     ObjectType, Store, STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_0_4, STORE_VERSION_INIT,
     SUPPORTED_REPO_VERSIONS,
@@ -567,7 +567,7 @@ fn run_hook(event: &str, args: &[String]) -> anyhow::Result<()> {
                     "Synced {} git {} (HEAD {}).",
                     outcome.created,
                     plural,
-                    &sha[..sha.len().min(8)],
+                    hex_prefix(sha, 8),
                 );
             }
         }
@@ -588,7 +588,7 @@ fn run_hook(event: &str, args: &[String]) -> anyhow::Result<()> {
                 morph_core::CheckoutOutcome::NoMatchingMorphCommit { git_sha } => {
                     println!(
                         "no morph commit mirrors git {}; run `morph reference-sync` to create one.",
-                        &git_sha[..git_sha.len().min(8)]
+                        hex_prefix(&git_sha, 8)
                     );
                 }
                 morph_core::CheckoutOutcome::FileCheckout => {}
@@ -636,7 +636,7 @@ fn run_hook(event: &str, args: &[String]) -> anyhow::Result<()> {
                     "Synced {} git {} (HEAD {}).",
                     outcome.created,
                     plural,
-                    &sha[..sha.len().min(8)],
+                    hex_prefix(sha, 8),
                 );
             }
         }
@@ -835,7 +835,7 @@ fn run_reference_commit(
     let mirrored_hash = outcome.new_commit.ok_or_else(|| {
         anyhow::anyhow!(
             "git commit {} did not produce a new morph commit (already mirrored?)",
-            &new_git_sha[..new_git_sha.len().min(12)]
+            hex_prefix(&new_git_sha, 12)
         )
     })?;
 
@@ -1193,7 +1193,7 @@ fn run_reference_commit(
         println!("{}", serde_json::to_string(&out)?);
     } else {
         println!("[{} (cli)] {}", new_morph_hash.short(), message);
-        println!("  git: {}", &new_git_sha[..new_git_sha.len().min(12)]);
+        println!("  git: {}", hex_prefix(&new_git_sha, 12));
     }
     Ok(())
 }
@@ -1210,7 +1210,10 @@ fn version_json() -> String {
         "protocol_version": morph_core::ssh_proto::MORPH_PROTOCOL_VERSION,
         "supported_repo_versions": SUPPORTED_REPO_VERSIONS,
     });
-    serde_json::to_string(&value).expect("version json serializes")
+    // Serializing a serde_json::Value built from string/number/array
+    // literals is infallible — there are no Serialize-impl errors to
+    // surface. Round-tripping is exercised by `version_json_has_stable_field_set`.
+    serde_json::to_string(&value).expect("infallible: serializing serde_json::Value")
 }
 
 /// PR 9: reference-mode `morph merge` wrapper. Symmetric with PR 5's
@@ -1323,7 +1326,7 @@ fn run_reference_merge(
         }
         morph_core::GitMergeOutcome::FastForward { new_head } => {
             morph_core::sync_to_head_with_origin(store, repo_root, "cli", Some(&version))?;
-            println!("Fast-forwarded to {}.", &new_head[..new_head.len().min(12)]);
+            println!("Fast-forwarded to {}.", hex_prefix(&new_head, 12));
         }
         morph_core::GitMergeOutcome::Merged { new_head } => {
             let sync_outcome =
@@ -1331,7 +1334,7 @@ fn run_reference_merge(
             let mirrored = sync_outcome.new_commit.ok_or_else(|| {
                 anyhow::anyhow!(
                     "git merge {} did not produce a new morph commit",
-                    &new_head[..new_head.len().min(12)]
+                    hex_prefix(&new_head, 12)
                 )
             })?;
             // v0.42: rebuild the mirror commit so it carries the
@@ -1486,7 +1489,7 @@ fn run_reference_merge_continue(
     let mirrored = outcome.new_commit.ok_or_else(|| {
         anyhow::anyhow!(
             "git merge {} did not produce a new morph commit",
-            &new_git_sha[..new_git_sha.len().min(12)]
+            hex_prefix(&new_git_sha, 12)
         )
     })?;
 
@@ -2026,7 +2029,7 @@ fn main() -> anyhow::Result<()> {
                 abs_morph.display()
             );
             if let Some(sha) = init_at.as_deref() {
-                println!("  bound to git HEAD {}", &sha[..sha.len().min(12)]);
+                println!("  bound to git HEAD {}", hex_prefix(sha, 12));
             } else {
                 println!("  bound to empty git repository (no commits yet)");
             }
@@ -2514,7 +2517,7 @@ fn main() -> anyhow::Result<()> {
                 let preview: Vec<String> = referencing
                     .iter()
                     .take(3)
-                    .map(|h| h.to_string()[..12].to_string())
+                    .map(|h| hex_prefix(&h.to_string(), 12).to_string())
                     .collect();
                 let extra = if referencing.len() > 3 {
                     format!(" (+{} more)", referencing.len() - 3)
@@ -3003,7 +3006,7 @@ fn main() -> anyhow::Result<()> {
                 let drift = morph_core::drift_summary(store.as_ref(), &repo_root)?;
                 println!("Reference mode (git ↔ morph)");
                 if let Some(sha) = drift.git_head.as_deref() {
-                    println!("  git HEAD:        {}", &sha[..sha.len().min(12)]);
+                    println!("  git HEAD:        {}", hex_prefix(sha, 12));
                 }
                 if drift.is_up_to_date() {
                     println!("  drift:           up to date");
@@ -3014,7 +3017,7 @@ fn main() -> anyhow::Result<()> {
                         if drift.unmirrored_count == 1 { "" } else { "s" },
                     );
                     if let Some(last) = drift.last_mirrored_git_sha.as_deref() {
-                        println!("  last mirrored:   {}", &last[..last.len().min(12)]);
+                        println!("  last mirrored:   {}", hex_prefix(last, 12));
                     } else {
                         println!(
                             "  last mirrored:   (none — run `morph reference-sync --backfill`)"
@@ -3472,7 +3475,7 @@ fn main() -> anyhow::Result<()> {
                 });
                 println!("{}", serde_json::to_string(&out)?);
             } else {
-                let short = &hash.to_string()[..8];
+                let short = hash.short();
                 let root_tag = if is_root { " (root-commit)" } else { "" };
                 let first_line = message.lines().next().unwrap_or("");
                 println!("[{}{} {}] {}", branch, root_tag, short, first_line);

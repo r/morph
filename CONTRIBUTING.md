@@ -14,8 +14,8 @@
 
 | Crate | Role |
 |-------|------|
-| `morph-core` | Library: object model, storage, hashing, commits, metrics, trees, tap, sync, policy |
-| `morph-cli` | CLI: `morph init`, `add`, `commit`, `log`, `tap`, `serve`, ... |
+| `morph-core` | Library: object model, storage, hashing, commits, metrics, trees, tap (renamed `inspect` at the CLI), sync, policy |
+| `morph-cli` | CLI: `morph init`, `add`, `commit`, `log`, `inspect`, `session`, `eval`, `serve`, ... |
 | `morph-mcp` | MCP server: primary write path from IDEs (Cursor, Claude Code, OpenCode) |
 | `morph-serve` | Hosted service: `morph serve` (multi-repo JSON API + browser UI) |
 | `morph-e2e` | End-to-end tests (Cucumber/Gherkin) |

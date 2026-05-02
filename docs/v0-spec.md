@@ -728,8 +728,9 @@ morph eval gaps [--json] [--fail-on-gap]       # report missing behavioral evide
 ```
 
 The flat `add` / `show` / `rebuild` spellings landed in Phase 4.1 (v0.46+).
-The older `add-case` / `suite-show` / `suite-from-specs` continue to work
-through v0.47 with a deprecation notice and are removed in v0.48.
+The older `add-case` / `suite-show` / `suite-from-specs` worked through
+v0.47 with a deprecation notice and were removed in v0.48; current
+binaries reject them as unrecognized subcommands.
 
 - `record` — Ingests a `{"metrics": {...}}` JSON file. Used when an
   external CI run already produced canonical scores. Does not run any

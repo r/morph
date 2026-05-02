@@ -16,6 +16,104 @@ metrics — see `.cursor/rules/behavioral-commits.mdc`.
 
 ## [Unreleased]
 
+## [0.48.1] — 2026-05-02
+
+Senior-engineer cleanup pass — small reliability + readability
+fixes plus a documentation/website sweep so every surface that
+mentions the v0.43–v0.48 vocabulary unification matches reality.
+No on-disk format changes; the public CLI/MCP surface is unchanged
+beyond one new exported helper.
+
+### Added
+
+- **`morph_core::hex_prefix(s, max)`** — new public helper that
+  truncates a hex hash string to its first `max` chars (or fewer
+  if shorter), bounds-safe. Centralises the "8 chars for morph
+  hashes, 12 chars for git SHAs" convention so every CLI call
+  site uses the same path. `morph_core::short_hash_str` is now a
+  thin alias around `hex_prefix(s, 8)`. Exposed via
+  `morph-core/src/lib.rs` `pub use`.
+
+### Changed
+
+- **`morph-core/src/repo.rs`**: every `<morph_dir>/config.json`
+  mutation (`drop_legacy_repo_mode`, `write_init_at_git_sha`,
+  `write_repo_submode`, `write_repo_version`, plus the init-time
+  write inside `init_morph_dir_at`) now goes through a single
+  `write_config_pretty` helper that propagates serialization
+  errors as `MorphError::Serialization`. Replaces four
+  `serde_json::to_string_pretty(...).unwrap()` calls — serde
+  cannot actually fail on a hand-built `serde_json::Value`, but
+  the unwraps were a "no panics in production paths" smell and
+  this collapses the pattern to one place.
+- **`morph-cli/src/main.rs`** and **`morph-core/src/forget.rs`**:
+  replaced 11 ad-hoc `&hash.to_string()[..N]` /
+  `&sha[..sha.len().min(N)]` slicings with `hex_prefix(s, N)`
+  (or `Hash::short()` where 8-char morph hashes were intended).
+  No behaviour change; one consistent helper for all short-hash
+  display.
+- **`morph-cli/src/setup.rs`**: clarified the
+  `expect("table inserted above")` / `expect("array inserted
+  above")` messages in `merge_aoe_config_toml` so a future
+  reader can see the unreachability invariant (the
+  `if needs_init { insert ... }` branch immediately above
+  guarantees the lookup succeeds). No behaviour change.
+- **`morph-cli/src/main.rs::version_json`**: the existing
+  `.expect("version json serializes")` now reads
+  `.expect("infallible: serializing serde_json::Value")` and
+  carries an inline comment explaining why this branch is
+  unreachable.
+
+### Documentation
+
+- **`docs/v0-spec.md`** §13: past-tensed the description of the
+  removed `eval add-case` / `eval suite-show` / `eval
+  suite-from-specs` aliases — they were removed in v0.48, not
+  "continuing through v0.47".
+- **`docs/TESTING.md`**: refreshed the test inventory to match
+  v0.48 reality (1212 Rust tests, 426 spec tests, 659 morph-core
+  unit tests, cucumber 34/37). Replaced the stale CLI evidence
+  category list (`run record/list/show`, `trace show`, `tap`,
+  `traces`) with the v0.46+ replacements (`session list/show/
+  record/import`, `inspect summary/show/recent/task/target/
+  artifact/semantics/verification`). Added a callout explaining
+  that the MCP wire names (`morph_run_list`, `morph_record_run`,
+  `morph_eval_suite_show`, `morph_eval_suite_from_specs`,
+  `morph_add_eval_case`) are deliberately stable across the
+  CLI rename so existing IDE/MCP clients keep working.
+- **`docs/THEORY.md`** §15: added a naming-note callout that
+  disambiguates the paper-level *operations* `morph run` and
+  `morph eval` from the CLI namespaces — the theory is unchanged,
+  only the surface spelling moved (the CLI verbs are now
+  `morph eval run` / `morph session record` / `morph session
+  import`).
+- **`.cursor/rules/eval-driven-development.mdc`**: the rule now
+  lists `morph eval suite-from-specs` alongside `add-case` and
+  `suite-show` in the "removed in v0.48" callout, matching the
+  README and v0-spec.
+- **`CONTRIBUTING.md`**: removed `tap` from the morph-cli
+  example command list (`morph init`, `add`, `commit`, `log`,
+  `tap`, `serve`); current commands are
+  `inspect` / `session` / `eval`. The morph-core role line now
+  notes the CLI rename so the cross-reference stays clear.
+- **`site/index.html`**: header + hero badge bumped from
+  `v0.42.2` to `v0.48.0`.
+- **`site/tutorials/getting-started.html`**: install-verification
+  callout now shows `morph 0.48.0 (built …)` instead of
+  `morph 0.42.2 (built …)`.
+- **`site/tutorials/adding-to-git-project.html`**: prerequisites
+  list now requires `morph --version` ≥ `0.48.0`; "Two niceties
+  on agent-attached commits" callout now reads "since v0.42,
+  still true in v0.48" so the version anchor doesn't drift on
+  every release.
+
+### Tests
+
+- All 1212 workspace Rust tests pass; cucumber 34/37 (3 skipped).
+- `cargo build --workspace`, `cargo clippy --workspace
+  --all-targets --all-features -- -D warnings`, and
+  `cargo fmt --all -- --check` are clean.
+
 ## [0.48.0] — 2026-05-02
 
 Vocabulary unification, part 3 (final): remove the v0.46-deprecated
@@ -1494,7 +1592,8 @@ Three coordinated changes to repo setup, adoption, and migration.
 - 15 new YAML acceptance spec cases in the default eval suite:
   `init_at_latest:*` ×4, `init_in_git_dir:*` ×6, `upgrade:*` ×5.
 
-[Unreleased]: https://github.com/r/morph/compare/v0.48.0...HEAD
+[Unreleased]: https://github.com/r/morph/compare/v0.48.1...HEAD
+[0.48.1]: https://github.com/r/morph/compare/v0.48.0...v0.48.1
 [0.48.0]: https://github.com/r/morph/compare/v0.47.0...v0.48.0
 [0.47.0]: https://github.com/r/morph/compare/v0.46.0...v0.47.0
 [0.46.0]: https://github.com/r/morph/compare/v0.45.0...v0.46.0

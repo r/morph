@@ -321,7 +321,103 @@
 
     <article class="release">
       <header>
-        <span class="version">0.48.0 <span class="latest">Latest</span></span>
+        <span class="version">0.48.1 <span class="latest">Latest</span></span>
+        <span class="date">2026-05-02</span>
+      </header>
+      <p class="summary">
+        <strong>Senior-engineer cleanup pass.</strong> Small reliability
+        and readability fixes plus a documentation/website sweep so
+        every surface that mentions the v0.43&ndash;v0.48 vocabulary
+        unification matches reality. No on-disk format changes; the
+        public CLI/MCP surface is unchanged beyond one new exported
+        helper.
+      </p>
+
+      <h3 class="added"><span class="marker"></span>Added</h3>
+      <ul>
+        <li><strong><code>morph_core::hex_prefix(s, max)</code></strong>
+          &mdash; new public helper that truncates a hex hash string
+          to its first <code>max</code> chars (or fewer if shorter),
+          bounds-safe. Centralises the &ldquo;8 chars for morph
+          hashes, 12 chars for git SHAs&rdquo; convention so every CLI
+          call site uses the same path.
+          <code>short_hash_str</code> is now a thin alias.</li>
+      </ul>
+
+      <h3 class="changed"><span class="marker"></span>Changed</h3>
+      <ul>
+        <li>Every <code>&lt;morph_dir&gt;/config.json</code> mutation
+          in <code>morph-core/src/repo.rs</code> now goes through a
+          single <code>write_config_pretty</code> helper that
+          propagates serialization errors as
+          <code>MorphError::Serialization</code>. Replaces four
+          <code>serde_json::to_string_pretty(...).unwrap()</code>
+          calls.</li>
+        <li>Replaced 11 ad-hoc
+          <code>&amp;hash.to_string()[..N]</code> /
+          <code>&amp;sha[..sha.len().min(N)]</code> slicings with
+          <code>hex_prefix(s, N)</code> across
+          <code>morph-cli/src/main.rs</code>,
+          <code>morph-cli/src/inspect.rs</code>, and
+          <code>morph-core/src/forget.rs</code>. No behaviour change.</li>
+        <li>Clarified the unreachable
+          <code>.expect(...)</code> messages in
+          <code>merge_aoe_config_toml</code> and
+          <code>version_json</code> so a future reader can see the
+          structural invariant.</li>
+      </ul>
+
+      <h3 class="changed"><span class="marker"></span>Documentation</h3>
+      <ul>
+        <li><strong><code>docs/v0-spec.md</code> &sect;13</strong> now
+          past-tenses the removed eval aliases
+          (<code>add-case</code> / <code>suite-show</code> /
+          <code>suite-from-specs</code>) instead of saying they
+          continue to work through v0.47.</li>
+        <li><strong><code>docs/TESTING.md</code></strong> refreshed:
+          1212 Rust tests, 426 spec tests, 659 morph-core unit
+          tests; CLI evidence category list updated from the removed
+          <code>run</code>/<code>trace</code>/<code>tap</code>/<code>traces</code>
+          spellings to <code>session</code> + <code>inspect</code>;
+          new callout that the MCP wire names stay stable across
+          the rename.</li>
+        <li><strong><code>docs/THEORY.md</code> &sect;15</strong>
+          gained a naming-note callout disambiguating the paper-level
+          operations <code>morph run</code> / <code>morph eval</code>
+          from the (renamed) CLI surface.</li>
+        <li><strong><code>.cursor/rules/eval-driven-development.mdc</code></strong>
+          now lists <code>morph eval suite-from-specs</code>
+          alongside <code>add-case</code> and <code>suite-show</code>
+          in the &ldquo;removed in v0.48&rdquo; callout.</li>
+        <li><strong><code>CONTRIBUTING.md</code></strong>: removed
+          <code>tap</code> from the morph-cli example command list;
+          current commands are <code>inspect</code> /
+          <code>session</code> / <code>eval</code>.</li>
+        <li><strong><code>site/index.html</code></strong> header +
+          hero badge bumped from <code>v0.42.2</code> to
+          <code>v0.48.1</code>.</li>
+        <li><strong>Both tutorials</strong>
+          (<code>site/tutorials/getting-started.html</code>,
+          <code>site/tutorials/adding-to-git-project.html</code>)
+          now show <code>morph 0.48.x (built &hellip;)</code> in
+          their install-verification copy.</li>
+      </ul>
+
+      <h3 class="tests"><span class="marker"></span>Tests</h3>
+      <ul>
+        <li>All <strong>1212 / 1212 workspace tests passing</strong>
+          (39 + 8 + 426 + 10 + 2 + 659 + 31 + 37). Cucumber 34 / 37
+          (3 skipped, 0 failed) &mdash; no change.
+          <code>cargo build</code>,
+          <code>cargo clippy --all-targets --all-features -- -D
+          warnings</code>, and
+          <code>cargo fmt -- --check</code> are clean.</li>
+      </ul>
+    </article>
+
+    <article class="release">
+      <header>
+        <span class="version">0.48.0</span>
         <span class="date">2026-05-02</span>
       </header>
       <p class="summary">
@@ -518,104 +614,6 @@
           minus 30 cases in the three deleted spec files plus 3
           new removal-proof cases). Cucumber 34 / 37 (3 skipped,
           0 failed) &mdash; no change.</li>
-      </ul>
-    </article>
-
-    <article class="release">
-      <header>
-        <span class="version">0.46.0</span>
-        <span class="date">2026-05-02</span>
-      </header>
-      <p class="summary">
-        <strong>Vocabulary unification, part 1.</strong> Fourth
-        release of the &ldquo;make morph intuitive&rdquo; effort.
-        Introduce <code>morph session</code> as the user-facing
-        namespace for what's stored internally as a Run+Trace
-        pair, and flatten the <code>morph eval</code> surface so
-        cases and suites stop leaking from the storage model into
-        the CLI. The old <code>morph run *</code>,
-        <code>morph eval add-case</code>,
-        <code>morph eval suite-show</code>, and
-        <code>morph eval suite-from-specs</code> spellings continue
-        to work in v0.46 and v0.47 with a one-line stderr
-        deprecation notice; they're removed in v0.48. No on-disk
-        format changes.
-      </p>
-
-      <h3 class="added"><span class="marker"></span>Added</h3>
-      <ul>
-        <li><strong><code>morph session</code> namespace</strong>
-          subsumes <code>morph run list</code>,
-          <code>morph run show</code>,
-          <code>morph run record-session</code>, and the
-          <code>morph inspect export</code> path under one
-          coherent noun. Subcommands: <code>list [--json]</code>,
-          <code>show &lt;hash&gt; [--with-trace] [--json]</code>,
-          <code>record [--prompt P --response R | --messages
-          JSON]</code>, <code>export [--mode ...]</code>. Spec
-          coverage: <code>session.yaml</code>.</li>
-        <li><strong>Flat <code>morph eval</code> surface</strong>
-          drops the Suite/Case noun split. New subcommands:
-          <code>eval add &lt;files&gt;</code> (was
-          <code>add-case</code>), <code>eval show
-          [--suite H] [--json]</code> (was <code>suite-show</code>),
-          <code>eval rebuild &lt;dirs&gt;</code> (was
-          <code>suite-from-specs</code>). Identical semantics and
-          identical effect on
-          <code>policy.default_eval_suite</code>. Spec coverage:
-          <code>eval_flat.yaml</code>.</li>
-        <li>New spec
-          <code>session_eval_deprecated_aliases.yaml</code> pins
-          the wording of the <code>git</code>-style stderr
-          deprecation notice on every old command.</li>
-      </ul>
-
-      <h3 class="changed"><span class="marker"></span>Changed</h3>
-      <ul>
-        <li><strong><code>morph --help</code> SESSIONS group</strong>
-          replaces the v0.45 INSPECT group, listing
-          <code>session, inspect, show, head, identify, refs,
-          annotate, annotations</code>. The deprecated
-          <code>morph run</code> namespace is hidden from
-          <code>--help</code>.</li>
-        <li><strong>Doc, site, and asset sweep.</strong> Every
-          <code>morph run record-session</code> /
-          <code>morph run list</code> /
-          <code>morph eval add-case</code> /
-          <code>morph eval suite-show</code> /
-          <code>morph eval suite-from-specs</code> mention in
-          <code>README.md</code>, <code>docs/EVAL-DRIVEN.md</code>,
-          <code>docs/v0-spec.md</code>,
-          <code>docs/SECURITY.md</code>,
-          <code>docs/SESSION-TRACKING.md</code>, the IDE setup
-          guides (<code>AOE-SETUP</code>,
-          <code>OPENCODE-SETUP</code>, <code>CURSOR-SETUP</code>),
-          the cursor / opencode rule files, the opencode plugin
-          script (<code>morph-record.ts</code>), and
-          <code>site/index.html</code> rewritten to the new
-          spellings. Freshly-installed opencode hooks now call
-          <code>morph session record</code> directly.</li>
-      </ul>
-
-      <h3 class="removed"><span class="marker"></span>Deprecated</h3>
-      <ul>
-        <li><code>morph run {list, show, record-session}</code>
-          &mdash; use the corresponding <code>morph session</code>
-          subcommand. Removed in v0.48.</li>
-        <li><code>morph eval {add-case, suite-show,
-          suite-from-specs}</code> &mdash; use
-          <code>morph eval {add, show, rebuild}</code>. Removed in
-          v0.48. Each invocation prints a one-line
-          <code>git</code>-style stderr notice
-          (<em>warning: `morph eval add-case` is deprecated; use
-          `morph eval add` instead (removed in v0.48).</em>).</li>
-      </ul>
-
-      <h3 class="tests"><span class="marker"></span>Tests</h3>
-      <ul>
-        <li>Workspace <strong>1244 / 1244 passing</strong> (1226
-          baseline + 18 new acceptance cases). Cucumber 34 / 37
-          (3 skipped, 0 failed) &mdash; no change.</li>
       </ul>
     </article>
 

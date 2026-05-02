@@ -50,9 +50,9 @@ Sanity-check the suite:
 morph eval show
 ```
 
-> The older spellings `morph eval add-case` and `morph eval suite-show` were
-> removed in v0.48; only the flat `morph eval add` / `morph eval show` /
-> `morph eval rebuild` work now.
+> The older spellings `morph eval add-case`, `morph eval suite-show`, and
+> `morph eval suite-from-specs` were removed in v0.48; only the flat
+> `morph eval add` / `morph eval show` / `morph eval rebuild` work now.
 
 ### 3. Watch the case fail
 

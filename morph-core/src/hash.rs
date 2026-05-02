@@ -81,12 +81,30 @@ impl Hash {
     }
 }
 
+/// Truncate any hex-encoded hash string to its first `max` chars
+/// (or fewer if the input is shorter). Centralised so every
+/// "show a short prefix" call site uses the same bounds-safe
+/// truncation regardless of width.
+///
+/// Width convention used across the workspace:
+/// * `8` — Morph (SHA-256) hashes; covers `morph log`, `morph
+///   identify`, MCP `short` envelopes.
+/// * `12` — git SHAs surfaced through reference-mode mirrors,
+///   merge banners, and `morph forget` previews. Matches git's own
+///   `--abbrev=12` default for merge commit messages.
+///
+/// Prefer [`Hash::short`] when you already hold a `Hash` and want
+/// the canonical 8-char prefix.
+pub fn hex_prefix(s: &str, max: usize) -> &str {
+    &s[..s.len().min(max)]
+}
+
 /// 8-character display prefix for an already-hex-encoded hash
 /// string. Used in the rare CLI/MCP path that has only a `&str`
 /// (e.g. parsed from JSON) and wants to avoid an extra
 /// `Hash::from_hex` round-trip.
 pub fn short_hash_str(s: &str) -> &str {
-    &s[..s.len().min(8)]
+    hex_prefix(s, 8)
 }
 
 /// Compute SHA-256 hash of canonical JSON bytes for a Morph object (0.0/0.1 format).

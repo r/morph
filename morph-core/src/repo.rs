@@ -56,6 +56,18 @@ const PROMPTS_DIR: &str = "prompts";
 const EVALS_DIR: &str = "evals";
 const REPO_VERSION_KEY: &str = "repo_version";
 
+/// Internal: serialize a `serde_json::Value` and write it to
+/// `path`, propagating both the (vanishingly rare) serialization
+/// error and the IO error as `MorphError`. Centralised so every
+/// `<morph_dir>/config.json` mutation goes through one path with no
+/// `unwrap()` in the production codepath.
+fn write_config_pretty(path: &Path, value: &serde_json::Value) -> Result<(), MorphError> {
+    let pretty = serde_json::to_string_pretty(value)
+        .map_err(|e| MorphError::Serialization(e.to_string()))?;
+    std::fs::write(path, pretty)?;
+    Ok(())
+}
+
 /// Internal: create the on-disk layout at `morph_dir`. Used by both
 /// the working-repo `init_repo` (which calls us with
 /// `<root>/.morph`) and the bare-repo `init_bare` (which calls us
@@ -115,9 +127,7 @@ fn init_morph_dir_at(morph_dir: &Path, bare: bool) -> Result<FsStore, MorphError
     };
     config["policy"] =
         serde_json::to_value(&policy).map_err(|e| MorphError::Serialization(e.to_string()))?;
-    let pretty = serde_json::to_string_pretty(&config)
-        .map_err(|e| MorphError::Serialization(e.to_string()))?;
-    std::fs::write(morph_dir.join(CONFIG_FILE), pretty)?;
+    write_config_pretty(&morph_dir.join(CONFIG_FILE), &config)?;
 
     // Every fresh repo (bare or working) gets a stable
     // `agent.instance_id` (PR 6 stage B). Bare repos get one too —
@@ -289,7 +299,7 @@ pub fn drop_legacy_repo_mode(morph_dir: &Path) -> Result<bool, MorphError> {
     if obj.remove(LEGACY_REPO_MODE_KEY).is_none() {
         return Ok(false);
     }
-    std::fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap())?;
+    write_config_pretty(&config_path, &config)?;
     Ok(true)
 }
 
@@ -328,7 +338,7 @@ pub fn write_init_at_git_sha(morph_dir: &Path, init_at_git_sha: &str) -> Result<
         ));
     }
     config[INIT_AT_GIT_SHA_KEY] = serde_json::Value::String(init_at_git_sha.to_string());
-    std::fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap())?;
+    write_config_pretty(&config_path, &config)?;
     Ok(())
 }
 
@@ -369,7 +379,7 @@ pub fn write_repo_submode(morph_dir: &Path, submode: RepoSubmode) -> Result<(), 
         ));
     }
     config[REPO_SUBMODE_KEY] = serde_json::Value::String(submode.as_str().into());
-    std::fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap())?;
+    write_config_pretty(&config_path, &config)?;
     Ok(())
 }
 
@@ -391,7 +401,7 @@ pub fn write_repo_version(morph_dir: &Path, version: &str) -> Result<(), MorphEr
         ));
     }
     config[REPO_VERSION_KEY] = serde_json::Value::String(version.to_string());
-    std::fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap())?;
+    write_config_pretty(&config_path, &config)?;
     Ok(())
 }
 

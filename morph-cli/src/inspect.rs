@@ -11,6 +11,7 @@
 use crate::cli::InspectCmd;
 use crate::resolve_obj_hash;
 use anyhow::Result;
+use morph_core::hex_prefix;
 use morph_core::store::{ObjectType, Store};
 use morph_core::MorphObject;
 
@@ -430,7 +431,7 @@ fn parse_export_mode(mode: &str) -> Result<morph_core::ExportMode> {
 }
 
 pub(crate) fn print_tap_task(task: &morph_core::TapTask) {
-    println!("=== Run {} ===", &task.run_hash[..12]);
+    println!("=== Run {} ===", hex_prefix(&task.run_hash, 12));
     println!(
         "  model: {}  agent: {}  events: {}  steps: {}",
         task.model, task.agent, task.event_count, task.step_count

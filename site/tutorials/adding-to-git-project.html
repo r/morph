@@ -587,7 +587,7 @@
         </p>
         <p>You'll need:</p>
         <ul>
-          <li><code>morph</code> and <code>morph-mcp</code> on your <code>PATH</code> (<a href="https://github.com/r/morph/blob/main/docs/INSTALLATION.md">install guide</a>). <code>morph --version</code> should print <code>0.42.2</code> or later.</li>
+          <li><code>morph</code> and <code>morph-mcp</code> on your <code>PATH</code> (<a href="https://github.com/r/morph/blob/main/docs/INSTALLATION.md">install guide</a>). <code>morph --version</code> should print <code>0.48.0</code> or later.</li>
           <li><strong>An existing Git project with at least one commit.</strong> If you don't have one handy, follow <a href="./getting-started.html">Tutorial 1</a> first &mdash; it walks through scaffolding a tiny project with <code>git init -b main</code> and gives you a couple of commits to backfill against here.</li>
           <li>Configured Git identity: <code>git config --global user.name</code> and <code>git config --global user.email</code> should each return something. Morph mirrors every commit through <code>git commit</code>, which refuses without an identity.</li>
           <li><strong>Python 3</strong> with <code>pytest</code> &mdash; the example commands assume the same currency-converter shape as Tutorial 1, but any test runner Morph can parse (<code>cargo</code>, <code>pytest</code>, <code>vitest</code>, <code>jest</code>, <code>go</code>) works.</li>
@@ -1196,8 +1196,8 @@
           GitHub.
         </p>
         <div class="callout">
-          <strong>Two niceties on agent-attached commits</strong> in v0.42 and
-          later, both visible on the resulting <code>morph show &lt;commit&gt;</code>:
+          <strong>Two niceties on agent-attached commits</strong> (since v0.42, still
+          true in v0.48), both visible on the resulting <code>morph show &lt;commit&gt;</code>:
           <ul style="margin-top: 0.55rem; margin-bottom: 0;">
             <li>
               <code>morph commit --from-run &lt;run&gt;</code> folds the human

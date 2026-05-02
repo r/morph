@@ -37,7 +37,7 @@
 //!   resulting "trace" would have a different hash and would be
 //!   indistinguishable from a fabrication.
 
-use crate::hash::Hash;
+use crate::hash::{hex_prefix, Hash};
 use crate::objects::{MorphObject, Tombstone};
 use crate::store::{FsStore, MorphError, ObjectType};
 use crate::time::now_rfc3339_utc;
@@ -148,7 +148,7 @@ pub fn forget_local(
         let preview: Vec<String> = referencing_commits
             .iter()
             .take(3)
-            .map(|h| h.to_string()[..12].to_string())
+            .map(|h| hex_prefix(&h.to_string(), 12).to_string())
             .collect();
         let extra = if referencing_commits.len() > 3 {
             format!(" (+{} more)", referencing_commits.len() - 3)

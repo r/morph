@@ -470,9 +470,12 @@ fn merge_aoe_config_toml(aoe_dir: &Path, bind_mount: bool) -> anyhow::Result<boo
             t.set_implicit(false);
             doc.insert(key, Item::Table(t));
         }
+        // Unreachable: either `key` was already a table, or the
+        // `if needs_init` branch above just inserted one — both
+        // arms guarantee `as_table_mut()` returns Some.
         doc.get_mut(key)
             .and_then(|i| i.as_table_mut())
-            .expect("table inserted above")
+            .expect("ensure_table_mut: table is present after insert")
     }
 
     fn ensure_array<'a>(table: &'a mut Table, key: &str) -> &'a mut Array {
@@ -490,10 +493,12 @@ fn merge_aoe_config_toml(aoe_dir: &Path, bind_mount: bool) -> anyhow::Result<boo
             }
             table.insert(key, value(arr));
         }
+        // Unreachable: either `key` was already an array, or the
+        // `if needs_init` branch above just inserted one.
         table
             .get_mut(key)
             .and_then(|i| i.as_array_mut())
-            .expect("array inserted above")
+            .expect("ensure_array: array is present after insert")
     }
 
     fn scrub<F: Fn(&str) -> bool>(arr: &mut Array, drop_if: F) {

@@ -680,6 +680,18 @@ Work can be "rolled up" by creating new commits that reference prior objects; no
 
 This section is intentionally multi-language and binary-friendly.
 
+> **Naming note (current CLI surface).** The names `morph run` and
+> `morph eval` below describe the *paper-level operations* — execute a
+> pipeline; certify it against a suite. The CLI verb that drives the
+> first one was renamed in v0.46 and the `morph run` namespace was
+> removed entirely in v0.48; in current binaries you spell it as
+> `morph eval run -- <cmd>` (recording the test execution as a Run) or
+> `morph session record` / `morph session import` (recording an agent
+> turn as a Run). The `morph eval` family below maps directly onto the
+> v0.46+ flat `morph eval add` / `morph eval show` / `morph eval rebuild`
+> / `morph eval run` / `morph eval gaps` subcommands. The theory is
+> unchanged; only the surface spelling moved.
+
 ### 15.1 Runner Abstraction
 
 Define a **Runner** as part of environment `E`. A runner provides the operational ability to execute pipeline operators, such as:
