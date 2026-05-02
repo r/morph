@@ -181,97 +181,143 @@ fn write_claude_hook_scripts(claude_dir: &Path) -> anyhow::Result<Vec<String>> {
     Ok(written)
 }
 
+// ── JSON merge helpers ───────────────────────────────────────────────
+//
+// Every IDE-integration JSON file (`.cursor/hooks.json`,
+// `.cursor/mcp.json`, `.claude/settings.json`, `opencode.json`) goes
+// through the same recipe: read-or-default, parse, mutate the root
+// object in place, write back pretty-printed. `merge_json_object`
+// keeps the read/parse/write boilerplate in one place; each call
+// site passes a closure that knows the file's specific schema.
+
+/// Read `path` as JSON (or use `default` if it doesn't exist),
+/// hand the closure a mutable view of the root object, then write
+/// the result back pretty-printed. `label` appears in the
+/// "<X> root is not an object" error so users can identify the
+/// offending file. Returns `Ok(true)` once write succeeds — every
+/// caller treats this file as "definitely updated."
+fn merge_json_object<F>(
+    path: &Path,
+    default: serde_json::Value,
+    label: &str,
+    mutate: F,
+) -> anyhow::Result<bool>
+where
+    F: FnOnce(&mut serde_json::Map<String, serde_json::Value>) -> anyhow::Result<()>,
+{
+    let mut doc: serde_json::Value = if path.exists() {
+        serde_json::from_str(&std::fs::read_to_string(path)?)?
+    } else {
+        default
+    };
+    let obj = doc
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("{} root is not an object", label))?;
+    mutate(obj)?;
+    std::fs::write(path, serde_json::to_string_pretty(&doc)?)?;
+    Ok(true)
+}
+
+/// Best-effort absolute path for `MORPH_WORKSPACE` env entries in
+/// IDE-integration JSON. Falls back to the input unchanged when
+/// canonicalization fails (typically because the dir doesn't exist
+/// yet — `setup_*` callers create it first).
+fn project_path_string(project_root: &Path) -> String {
+    project_root
+        .canonicalize()
+        .unwrap_or_else(|_| project_root.to_path_buf())
+        .to_string_lossy()
+        .to_string()
+}
+
+/// Build the `mcpServers.morph` JSON value used by Cursor and
+/// Claude Code. OpenCode uses a different shape (see
+/// `merge_opencode_json`).
+fn morph_mcp_server_value(project_path: &str) -> serde_json::Value {
+    serde_json::json!({
+        "command": "morph-mcp",
+        "args": [],
+        "env": { "MORPH_WORKSPACE": project_path }
+    })
+}
+
 fn merge_claude_settings_json(
     claude_dir: &Path,
     project_root: &Path,
 ) -> anyhow::Result<bool> {
-    let path = claude_dir.join("settings.json");
-    let mut doc: serde_json::Value = if path.exists() {
-        serde_json::from_str(&std::fs::read_to_string(&path)?)?
-    } else {
-        serde_json::json!({})
-    };
-
-    let obj = doc
-        .as_object_mut()
-        .ok_or_else(|| anyhow::anyhow!(".claude/settings.json root is not an object"))?;
-
-    // 1. mcpServers.morph
-    let project_path = project_root
-        .canonicalize()
-        .unwrap_or_else(|_| project_root.to_path_buf())
-        .to_string_lossy()
-        .to_string();
-
-    let mcp_servers = obj
-        .entry("mcpServers")
-        .or_insert(serde_json::json!({}))
-        .as_object_mut()
-        .ok_or_else(|| anyhow::anyhow!(".claude/settings.json mcpServers is not an object"))?;
-
-    mcp_servers.insert(
-        "morph".to_string(),
-        serde_json::json!({
-            "command": "morph-mcp",
-            "args": [],
-            "env": {
-                "MORPH_WORKSPACE": project_path
-            }
-        }),
-    );
-
-    // 2. hooks.UserPromptSubmit + hooks.Stop. Claude Code's hook schema
-    //    is `{event: [{matcher?, hooks: [{type, command}]}]}`. Morph
-    //    owns the entries whose command points at our two hook scripts;
-    //    other entries are left untouched.
+    let project_path = project_path_string(project_root);
     let claude_hooks: &[(&str, &str)] = &[
         ("UserPromptSubmit", ".claude/hooks/morph-record-prompt.sh"),
         ("Stop", ".claude/hooks/morph-record-stop.sh"),
     ];
 
-    let hooks_section = obj
-        .entry("hooks")
-        .or_insert(serde_json::json!({}))
-        .as_object_mut()
-        .ok_or_else(|| anyhow::anyhow!(".claude/settings.json hooks is not an object"))?;
+    merge_json_object(
+        &claude_dir.join("settings.json"),
+        serde_json::json!({}),
+        ".claude/settings.json",
+        |obj| {
+            // 1. mcpServers.morph
+            let mcp_servers = obj
+                .entry("mcpServers")
+                .or_insert(serde_json::json!({}))
+                .as_object_mut()
+                .ok_or_else(|| {
+                    anyhow::anyhow!(".claude/settings.json mcpServers is not an object")
+                })?;
+            mcp_servers
+                .insert("morph".to_string(), morph_mcp_server_value(&project_path));
 
-    for (event, command) in claude_hooks {
-        let matchers = hooks_section
-            .entry(event.to_string())
-            .or_insert(serde_json::json!([]))
-            .as_array_mut()
-            .ok_or_else(|| {
-                anyhow::anyhow!(".claude/settings.json hooks.{} is not an array", event)
-            })?;
+            // 2. hooks.UserPromptSubmit + hooks.Stop. Claude Code's hook schema
+            //    is `{event: [{matcher?, hooks: [{type, command}]}]}`. Morph
+            //    owns the entries whose command points at our two hook scripts;
+            //    other entries are left untouched.
+            let hooks_section = obj
+                .entry("hooks")
+                .or_insert(serde_json::json!({}))
+                .as_object_mut()
+                .ok_or_else(|| {
+                    anyhow::anyhow!(".claude/settings.json hooks is not an object")
+                })?;
 
-        // Drop any matcher group whose only hook is the morph entry, so
-        // re-runs don't accumulate duplicates. Groups that mix our hook
-        // with user hooks are kept and their morph-pointing entry is
-        // pruned in-place, preserving the user's hook(s).
-        matchers.retain_mut(|matcher| {
-            let Some(hooks_arr) = matcher
-                .get_mut("hooks")
-                .and_then(|h| h.as_array_mut())
-            else {
-                return true;
-            };
-            hooks_arr.retain(|h| {
-                h.get("command")
-                    .and_then(|c| c.as_str())
-                    .is_none_or(|c| c != *command)
-            });
-            !hooks_arr.is_empty()
-        });
+            for (event, command) in claude_hooks {
+                let matchers = hooks_section
+                    .entry(event.to_string())
+                    .or_insert(serde_json::json!([]))
+                    .as_array_mut()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            ".claude/settings.json hooks.{} is not an array",
+                            event
+                        )
+                    })?;
 
-        matchers.push(serde_json::json!({
-            "hooks": [
-                {"type": "command", "command": command}
-            ]
-        }));
-    }
+                // Drop any matcher group whose only hook is the morph entry,
+                // so re-runs don't accumulate duplicates. Groups that mix our
+                // hook with user hooks are kept and their morph-pointing
+                // entry is pruned in-place, preserving the user's hook(s).
+                matchers.retain_mut(|matcher| {
+                    let Some(hooks_arr) =
+                        matcher.get_mut("hooks").and_then(|h| h.as_array_mut())
+                    else {
+                        return true;
+                    };
+                    hooks_arr.retain(|h| {
+                        h.get("command")
+                            .and_then(|c| c.as_str())
+                            .is_none_or(|c| c != *command)
+                    });
+                    !hooks_arr.is_empty()
+                });
 
-    std::fs::write(&path, serde_json::to_string_pretty(&doc)?)?;
-    Ok(true)
+                matchers.push(serde_json::json!({
+                    "hooks": [
+                        {"type": "command", "command": command}
+                    ]
+                }));
+            }
+            Ok(())
+        },
+    )
 }
 
 // === Agent of Empires (`morph setup aoe`) ====================================
@@ -550,52 +596,41 @@ fn write_aoe_dockerfile(aoe_dir: &Path) -> anyhow::Result<bool> {
 // === OpenCode ===============================================================
 
 fn merge_opencode_json(project_root: &Path) -> anyhow::Result<bool> {
-    let path = project_root.join("opencode.json");
-    let mut doc: serde_json::Value = if path.exists() {
-        serde_json::from_str(&std::fs::read_to_string(&path)?)?
-    } else {
-        serde_json::json!({"$schema": "https://opencode.ai/config.json"})
-    };
+    let project_path = project_path_string(project_root);
+    merge_json_object(
+        &project_root.join("opencode.json"),
+        serde_json::json!({"$schema": "https://opencode.ai/config.json"}),
+        "opencode.json",
+        |obj| {
+            let mcp = obj
+                .entry("mcp")
+                .or_insert(serde_json::json!({}))
+                .as_object_mut()
+                .ok_or_else(|| anyhow::anyhow!("opencode.json mcp is not an object"))?;
+            mcp.insert(
+                "morph".to_string(),
+                serde_json::json!({
+                    "type": "local",
+                    "command": ["morph-mcp"],
+                    "environment": {
+                        "MORPH_WORKSPACE": project_path,
+                    }
+                }),
+            );
 
-    let project_path = project_root
-        .canonicalize()
-        .unwrap_or_else(|_| project_root.to_path_buf())
-        .to_string_lossy()
-        .to_string();
-
-    let obj = doc.as_object_mut().ok_or_else(|| anyhow::anyhow!("opencode.json root is not an object"))?;
-
-    let mcp = obj
-        .entry("mcp")
-        .or_insert(serde_json::json!({}))
-        .as_object_mut()
-        .ok_or_else(|| anyhow::anyhow!("opencode.json mcp is not an object"))?;
-
-    mcp.insert(
-        "morph".to_string(),
-        serde_json::json!({
-            "type": "local",
-            "command": ["morph-mcp"],
-            "environment": {
-                "MORPH_WORKSPACE": project_path
+            let instructions = obj
+                .entry("instructions")
+                .or_insert(serde_json::json!([]))
+                .as_array_mut()
+                .ok_or_else(|| {
+                    anyhow::anyhow!("opencode.json instructions is not an array")
+                })?;
+            if !instructions.iter().any(|v| v.as_str() == Some("AGENTS.md")) {
+                instructions.push(serde_json::json!("AGENTS.md"));
             }
-        }),
-    );
-
-    // Ensure instructions includes AGENTS.md
-    let instructions = obj
-        .entry("instructions")
-        .or_insert(serde_json::json!([]))
-        .as_array_mut()
-        .ok_or_else(|| anyhow::anyhow!("opencode.json instructions is not an array"))?;
-
-    let has_agents = instructions.iter().any(|v| v.as_str() == Some("AGENTS.md"));
-    if !has_agents {
-        instructions.push(serde_json::json!("AGENTS.md"));
-    }
-
-    std::fs::write(&path, serde_json::to_string_pretty(&doc)?)?;
-    Ok(true)
+            Ok(())
+        },
+    )
 }
 
 fn write_agents_md(project_root: &Path) -> anyhow::Result<bool> {
@@ -640,18 +675,6 @@ fn write_hook_scripts(project_root: &Path) -> anyhow::Result<Vec<String>> {
 }
 
 fn merge_hooks_json(cursor_dir: &Path) -> anyhow::Result<bool> {
-    let path = cursor_dir.join("hooks.json");
-    let mut doc: serde_json::Value = if path.exists() {
-        serde_json::from_str(&std::fs::read_to_string(&path)?)?
-    } else {
-        serde_json::json!({"version": 1, "hooks": {}})
-    };
-
-    let hooks = doc
-        .as_object_mut()
-        .and_then(|o| o.entry("hooks").or_insert(serde_json::json!({})).as_object_mut().cloned())
-        .unwrap_or_default();
-
     let morph_hooks: &[(&str, &str)] = &[
         ("beforeSubmitPrompt", ".cursor/morph-record-prompt.sh"),
         ("afterAgentResponse", ".cursor/morph-record-response.sh"),
@@ -662,93 +685,76 @@ fn merge_hooks_json(cursor_dir: &Path) -> anyhow::Result<bool> {
         ("stop", ".cursor/morph-record-checks.sh"),
     ];
 
-    // Legacy paths we no longer use (scripts now live in .cursor/ for Git-style layout).
+    // Legacy paths we no longer use (scripts now live in .cursor/
+    // for Git-style layout). Stripped on every run so users
+    // upgrading from an old install don't end up with duplicates.
     let old_commands: &[&str] = &[
         "cursor/morph-record-prompt.sh",
         "cursor/morph-record-response.sh",
         "cursor/morph-record-stop.sh",
     ];
 
-    let mut hooks_map = hooks;
-    for (event, command) in morph_hooks {
-        let arr = hooks_map
-            .entry(event.to_string())
-            .or_insert(serde_json::json!([]))
-            .as_array_mut()
-            .cloned()
-            .unwrap_or_default();
+    merge_json_object(
+        &cursor_dir.join("hooks.json"),
+        serde_json::json!({"version": 1, "hooks": {}}),
+        ".cursor/hooks.json",
+        |obj| {
+            obj.insert("version".into(), serde_json::json!(1));
+            let hooks = obj
+                .entry("hooks")
+                .or_insert(serde_json::json!({}))
+                .as_object_mut()
+                .ok_or_else(|| {
+                    anyhow::anyhow!(".cursor/hooks.json hooks is not an object")
+                })?;
 
-        // Drop any legacy cursor/ entries so we don't duplicate when upgrading.
-        let arr: Vec<_> = arr
-            .into_iter()
-            .filter(|entry| {
-                entry
-                    .get("command")
-                    .and_then(|c| c.as_str())
-                    .is_none_or(|c| !old_commands.contains(&c))
-            })
-            .collect();
-
-        let already = arr.iter().any(|entry| {
-            entry
-                .get("command")
-                .and_then(|c| c.as_str()) == Some(*command)
-        });
-        if !already {
-            let mut new_arr = arr;
-            new_arr.push(serde_json::json!({"command": command}));
-            hooks_map.insert(
-                event.to_string(),
-                serde_json::Value::Array(new_arr),
-            );
-        } else {
-            hooks_map.insert(event.to_string(), serde_json::Value::Array(arr));
-        }
-    }
-
-    doc["hooks"] = serde_json::Value::Object(hooks_map.into_iter().collect());
-    doc["version"] = serde_json::json!(1);
-    std::fs::write(&path, serde_json::to_string_pretty(&doc)?)?;
-    Ok(true)
+            for (event, command) in morph_hooks {
+                let arr = hooks
+                    .entry(event.to_string())
+                    .or_insert(serde_json::json!([]))
+                    .as_array_mut()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            ".cursor/hooks.json hooks.{} is not an array",
+                            event
+                        )
+                    })?;
+                arr.retain(|entry| {
+                    entry
+                        .get("command")
+                        .and_then(|c| c.as_str())
+                        .is_none_or(|c| !old_commands.contains(&c))
+                });
+                let already = arr.iter().any(|entry| {
+                    entry.get("command").and_then(|c| c.as_str()) == Some(*command)
+                });
+                if !already {
+                    arr.push(serde_json::json!({"command": command}));
+                }
+            }
+            Ok(())
+        },
+    )
 }
 
 fn merge_mcp_json(cursor_dir: &Path, project_root: &Path) -> anyhow::Result<bool> {
-    let path = cursor_dir.join("mcp.json");
-    let mut doc: serde_json::Value = if path.exists() {
-        serde_json::from_str(&std::fs::read_to_string(&path)?)?
-    } else {
-        serde_json::json!({"mcpServers": {}})
-    };
-
-    let servers = doc
-        .as_object_mut()
-        .and_then(|o| {
-            o.entry("mcpServers")
+    let project_path = project_path_string(project_root);
+    merge_json_object(
+        &cursor_dir.join("mcp.json"),
+        serde_json::json!({"mcpServers": {}}),
+        ".cursor/mcp.json",
+        |obj| {
+            let servers = obj
+                .entry("mcpServers")
                 .or_insert(serde_json::json!({}))
                 .as_object_mut()
-        });
-
-    if let Some(servers) = servers {
-        let project_path = project_root
-            .canonicalize()
-            .unwrap_or_else(|_| project_root.to_path_buf())
-            .to_string_lossy()
-            .to_string();
-
-        servers.insert(
-            "morph".to_string(),
-            serde_json::json!({
-                "command": "morph-mcp",
-                "args": [],
-                "env": {
-                    "MORPH_WORKSPACE": project_path
-                }
-            }),
-        );
-    }
-
-    std::fs::write(&path, serde_json::to_string_pretty(&doc)?)?;
-    Ok(true)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(".cursor/mcp.json mcpServers is not an object")
+                })?;
+            servers.insert("morph".to_string(), morph_mcp_server_value(&project_path));
+            Ok(())
+        },
+    )
 }
 
 fn write_rules(cursor_dir: &Path) -> anyhow::Result<Vec<String>> {
