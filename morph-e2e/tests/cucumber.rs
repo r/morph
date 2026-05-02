@@ -82,6 +82,24 @@ fn substitute_placeholders(cmd: &str, captures: &HashMap<String, String>) -> Str
     out
 }
 
+/// Build a `morph` command with a deterministic git identity stamped on it.
+///
+/// The cucumber harness shells out to `morph commit`, which in turn calls
+/// `git commit`. On a CI runner with no global `user.name` / `user.email`
+/// configured (e.g. fresh GitHub-Actions images), git refuses with
+/// `fatal: empty ident name (for <runner@…>) not allowed`. Stamping the
+/// four `GIT_AUTHOR_*` / `GIT_COMMITTER_*` env vars here keeps every
+/// scenario hermetic without leaning on host config — the auto-generated
+/// spec tests already do the same trick (`build.rs`).
+fn morph_cmd() -> Command {
+    let mut cmd = Command::cargo_bin("morph").expect("morph binary");
+    cmd.env("GIT_AUTHOR_NAME", "morph-test")
+        .env("GIT_AUTHOR_EMAIL", "morph-test@example.com")
+        .env("GIT_COMMITTER_NAME", "morph-test")
+        .env("GIT_COMMITTER_EMAIL", "morph-test@example.com");
+    cmd
+}
+
 #[given(expr = "a morph repo")]
 fn given_morph_repo(w: &mut MorphWorld) {
     let temp = tempfile::tempdir().expect("temp dir");
@@ -90,8 +108,7 @@ fn given_morph_repo(w: &mut MorphWorld) {
         .path()
         .canonicalize()
         .unwrap_or_else(|_| temp.path().to_path_buf());
-    Command::cargo_bin("morph")
-        .expect("morph binary")
+    morph_cmd()
         .arg("init")
         .arg("--git-init")
         .arg("--no-default-policy")
@@ -109,8 +126,7 @@ fn given_second_repo(w: &mut MorphWorld, subdir: String) {
     let root = w.temp_dir.as_ref().expect("given a morph repo first");
     let remote_path = root.path().join(&subdir);
     std::fs::create_dir_all(&remote_path).expect("create subdir");
-    Command::cargo_bin("morph")
-        .expect("morph binary")
+    morph_cmd()
         .arg("init")
         .arg("--git-init")
         .arg("--no-default-policy")
@@ -169,8 +185,7 @@ fn when_run(w: &mut MorphWorld, cmd: String) {
     let parts = split_cli_args(&cmd);
     let (bin, args) = parts.split_first().expect("non-empty command");
     let output = if *bin == "morph" {
-        Command::cargo_bin("morph")
-            .expect("morph binary")
+        morph_cmd()
             .args(args)
             .current_dir(&root)
             .output()
@@ -191,8 +206,7 @@ fn when_run_in_dir(w: &mut MorphWorld, cmd: String, subdir: String) {
     let parts = split_cli_args(&cmd);
     let (bin, args) = parts.split_first().expect("non-empty command");
     let output = if *bin == "morph" {
-        Command::cargo_bin("morph")
-            .expect("morph binary")
+        morph_cmd()
             .args(args)
             .current_dir(&dir)
             .output()
@@ -297,8 +311,7 @@ fn when_commit_with_metrics_and_cases(
         }
     }
     let metrics_json = serde_json::Value::Object(obj).to_string();
-    let output = Command::cargo_bin("morph")
-        .expect("morph binary")
+    let output = morph_cmd()
         .args([
             "commit",
             "-m",
@@ -320,8 +333,7 @@ fn when_commit_with_metrics_and_cases(
 fn when_commit_with_from_run(w: &mut MorphWorld, run_hash: String, message: String) {
     let root = w.temp_dir.as_ref().expect("given a morph repo first");
     let run_hash = substitute_placeholders(&run_hash, &w.captures);
-    let output = Command::cargo_bin("morph")
-        .expect("morph binary")
+    let output = morph_cmd()
         .args(["commit", "-m", &message, "--from-run", &run_hash, "--json"])
         .current_dir(root.path())
         .output()
@@ -336,8 +348,7 @@ fn when_run_commit_captured(w: &mut MorphWorld, message: String) {
     let prog = w.captures.get("prog_hash").expect("capture prog_hash first");
     let suite = w.captures.get("suite_hash").expect("capture suite_hash first");
     let root = w.repo_root().to_path_buf();
-    let output = Command::cargo_bin("morph")
-        .expect("morph binary")
+    let output = morph_cmd()
         .args([
             "commit",
             "-m",
@@ -361,8 +372,7 @@ fn when_run_commit_captured(w: &mut MorphWorld, message: String) {
 #[when(regex = r#"I run record-session with prompt "([^"]*)" and response "([^"]*)""#)]
 fn when_run_record_session(w: &mut MorphWorld, prompt: String, response: String) {
     let root = w.repo_root().to_path_buf();
-    let output = Command::cargo_bin("morph")
-        .expect("morph binary")
+    let output = morph_cmd()
         .args([
             "run",
             "record-session",
@@ -439,8 +449,7 @@ fn when_commit_with_metrics(w: &mut MorphWorld, msg: String, pipeline: String, s
     let pipeline = substitute_placeholders(&pipeline, &w.captures);
     let suite = substitute_placeholders(&suite, &w.captures);
     let metrics_json = format!("{{{}}}", metrics_inner);
-    let output = Command::cargo_bin("morph")
-        .expect("morph binary")
+    let output = morph_cmd()
         .args(["commit", "-m", &msg, "--pipeline", &pipeline, "--eval-suite", &suite, "--metrics", &metrics_json, "--json"])
         .current_dir(root.path())
         .output()
@@ -456,8 +465,7 @@ fn when_merge_with_metrics(w: &mut MorphWorld, branch: String, msg: String, pipe
     let pipeline = substitute_placeholders(&pipeline, &w.captures);
     let suite = substitute_placeholders(&suite, &w.captures);
     let metrics_json = format!("{{{}}}", metrics_inner);
-    let output = Command::cargo_bin("morph")
-        .expect("morph binary")
+    let output = morph_cmd()
         .args(["merge", &branch, "-m", &msg, "--pipeline", &pipeline, "--eval-suite", &suite, "--metrics", &metrics_json])
         .current_dir(root.path())
         .output()
@@ -472,8 +480,7 @@ fn when_merge_auto_suite(w: &mut MorphWorld, branch: String, msg: String, pipeli
     let root = w.temp_dir.as_ref().expect("given a morph repo first");
     let pipeline = substitute_placeholders(&pipeline, &w.captures);
     let metrics_json = format!("{{{}}}", metrics_inner);
-    let output = Command::cargo_bin("morph")
-        .expect("morph binary")
+    let output = morph_cmd()
         .args(["merge", &branch, "-m", &msg, "--pipeline", &pipeline, "--metrics", &metrics_json])
         .current_dir(root.path())
         .output()
@@ -488,8 +495,7 @@ fn when_merge_with_retire(w: &mut MorphWorld, branch: String, msg: String, pipel
     let root = w.temp_dir.as_ref().expect("given a morph repo first");
     let pipeline = substitute_placeholders(&pipeline, &w.captures);
     let metrics_json = format!("{{{}}}", metrics_inner);
-    let output = Command::cargo_bin("morph")
-        .expect("morph binary")
+    let output = morph_cmd()
         .args(["merge", &branch, "-m", &msg, "--pipeline", &pipeline, "--metrics", &metrics_json, "--retire", &retire])
         .current_dir(root.path())
         .output()
@@ -529,8 +535,7 @@ fn when_agents_run_record_session_concurrently(w: &mut MorphWorld, n: u32) {
     for i in 0..n {
         let root_clone = Arc::clone(&root);
         let handle = std::thread::spawn(move || {
-            let output = Command::cargo_bin("morph")
-                .expect("morph binary")
+            let output = morph_cmd()
                 .args([
                     "run",
                     "record-session",
