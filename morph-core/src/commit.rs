@@ -213,7 +213,7 @@ fn load_parent_tree(
 /// agent's output) appears nowhere in `contributors` — only in
 /// `commit.author`. We add them here with `role: "human-author"` so
 /// downstream tools see a complete attribution list.
-fn fold_human_author_into_contributors(
+pub fn fold_human_author_into_contributors(
     contributors: Option<Vec<CommitContributor>>,
     author: &str,
 ) -> Option<Vec<CommitContributor>> {

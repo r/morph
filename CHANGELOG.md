@@ -16,6 +16,54 @@ metrics — see `.cursor/rules/behavioral-commits.mdc`.
 
 ## [Unreleased]
 
+## [0.42.1] — 2026-05-01
+
+Mixed-authorship plumbing on the reference-mode commit rebuild
+path. The last three previously-`#[ignore]`'d acceptance specs
+unblock; the workspace now runs **1187 / 1187 with zero
+ignored** for the first time since v0.39.
+
+### Fixed
+
+- **Human author lands in `commit.contributors`.** When
+  `morph commit --from-run <hash>` is used in reference mode,
+  the rebuilt commit now folds the human author (resolved
+  through morph's identity chain) into the contributors list
+  with `role: "human-author"`, alongside the agent
+  (`role: "primary"`). Earlier ref-mode commits projected the
+  agent + run.contributors only, so a downstream tool reading
+  the structured contributors list saw only the agent and
+  concluded the human had no hand in the change.
+- **`human_edits` records `(trace claim) vs (staged blob)`
+  divergence on ref-mode commits.** The rebuild now flattens
+  the mirror commit's tree (snapshotted by `sync_one_commit`
+  from the git commit's tree) and runs
+  `morph_core::compute_human_edits` against the attached Run's
+  trace, so a path the agent claimed to write but the human
+  edited afterwards is recorded as `reason: "post-agent-edit"`,
+  and a path the human authored independently shows as
+  `reason: "no-trace-record"`. Earlier ref-mode commits
+  silently dropped this diff because the standalone-mode tree
+  walk wasn't wired to the git-tree snapshot.
+
+### Changed
+
+- **`morph_core::fold_human_author_into_contributors` is now
+  public** so the CLI's reference-mode commit path can call it
+  directly. (Previously crate-private; the standalone-mode
+  commit path was its only caller.)
+
+### Tests
+
+- `mixed_authorship.yaml`:
+  `mixed_authorship_human_author_in_contributors_when_run_attached`,
+  `mixed_authorship_variant_a_post_agent_edit_recorded`,
+  `mixed_authorship_variant_b_no_trace_record_recorded` — all
+  three un-skipped and passing on the ref-mode commit path.
+- Workspace test count: **1187 / 1187 passing, 0 ignored**.
+  Down from 13 ignored at the start of the v0.41 line; down
+  from 16 at v0.40.0.
+
 ## [0.42.0] — 2026-05-01
 
 The reference-mode merge rebuild path now propagates the user's
@@ -921,7 +969,8 @@ Three coordinated changes to repo setup, adoption, and migration.
 - 15 new YAML acceptance spec cases in the default eval suite:
   `init_at_latest:*` ×4, `init_in_git_dir:*` ×6, `upgrade:*` ×5.
 
-[Unreleased]: https://github.com/r/morph/compare/v0.42.0...HEAD
+[Unreleased]: https://github.com/r/morph/compare/v0.42.1...HEAD
+[0.42.1]: https://github.com/r/morph/compare/v0.42.0...v0.42.1
 [0.42.0]: https://github.com/r/morph/compare/v0.41.1...v0.42.0
 [0.41.1]: https://github.com/r/morph/compare/v0.41.0...v0.41.1
 [0.41.0]: https://github.com/r/morph/compare/v0.40.2...v0.41.0

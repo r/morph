@@ -67,7 +67,13 @@ pub use agent::{
     generate_instance_id, read_instance_id, ensure_instance_id, write_instance_id,
 };
 pub use working::{find_repo, blob_from_prompt_file, blob_from_file, materialize_blob, pipeline_from_file, eval_suite_from_file, status, add_paths, StatusEntry, working_status, activity_summary, ActivitySummary, build_status_json};
-pub use commit::{create_commit, create_tree_commit, create_tree_commit_with_provenance, create_merge_commit, create_merge_commit_full, create_merge_commit_with_retirement, rollup, resolve_head, current_branch, set_head_branch, set_head_detached, checkout_tree, log_from, CommitProvenance, resolve_provenance_from_run, compute_human_edits};
+pub use commit::{
+    checkout_tree, compute_human_edits, create_commit, create_merge_commit,
+    create_merge_commit_full, create_merge_commit_with_retirement, create_tree_commit,
+    create_tree_commit_with_provenance, current_branch, fold_human_author_into_contributors,
+    log_from, resolve_head, resolve_provenance_from_run, rollup, set_head_branch,
+    set_head_detached, CommitProvenance,
+};
 pub use metrics::{aggregate, check_thresholds, check_dominance, check_dominance_with_suite, aggregate_suite, union_suites, retire_metrics};
 pub use merge::{
     ensure_review_node_for_retirement, execute_merge, prepare_merge, DominanceResult,

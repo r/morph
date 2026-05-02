@@ -321,7 +321,64 @@
 
     <article class="release">
       <header>
-        <span class="version">0.42.0 <span class="latest">Latest</span></span>
+        <span class="version">0.42.1 <span class="latest">Latest</span></span>
+        <span class="date">2026-05-01</span>
+      </header>
+      <p class="summary">
+        <strong>Mixed-authorship plumbing on the ref-mode commit
+        rebuild.</strong> The last three previously-skipped
+        acceptance specs unblock: ref-mode <code>morph commit
+        --from-run</code> now folds the human author into
+        <code>commit.contributors</code> with <code>role =
+        "human-author"</code> alongside the agent's
+        <code>role = "primary"</code>, and the rebuild runs
+        <code>compute_human_edits</code> against the mirror
+        commit's flattened tree so the trace-claim-vs-staged-blob
+        diff lands in <code>human_edits</code> just like
+        standalone mode. Workspace test count: <strong>1187 /
+        1187 passing, 0 ignored</strong> (down from 13 ignored
+        at the start of the v0.41 line).
+      </p>
+
+      <h3 class="fixed"><span class="marker"></span>Fixed</h3>
+      <ul>
+        <li>Human author lands in
+          <code>commit.contributors</code> with
+          <code>role = "human-author"</code> on ref-mode
+          <code>morph commit --from-run</code>. Earlier ref-mode
+          commits showed only the agent in the structured
+          contributors list.</li>
+        <li><code>human_edits</code> records
+          <em>(trace claim) vs (staged blob)</em> divergence:
+          <code>post-agent-edit</code> when the human edits a
+          path the agent already wrote;
+          <code>no-trace-record</code> when the human authors a
+          path the trace never references. Earlier ref-mode
+          commits silently dropped this diff.</li>
+      </ul>
+
+      <h3 class="changed"><span class="marker"></span>Changed</h3>
+      <ul>
+        <li><code>morph_core::fold_human_author_into_contributors</code>
+          is now public so the CLI can call it directly. Same
+          recipe the standalone-mode commit path already used.</li>
+      </ul>
+
+      <h3 class="tests"><span class="marker"></span>Tests</h3>
+      <ul>
+        <li><code>mixed_authorship.yaml</code>:
+          <code>mixed_authorship_human_author_in_contributors_when_run_attached</code>,
+          <code>mixed_authorship_variant_a_post_agent_edit_recorded</code>,
+          <code>mixed_authorship_variant_b_no_trace_record_recorded</code>
+          &mdash; all three un-skipped and passing.
+          <code>version.yaml</code> updated to expect
+          <code>0.42.1</code>.</li>
+      </ul>
+    </article>
+
+    <article class="release">
+      <header>
+        <span class="version">0.42.0</span>
         <span class="date">2026-05-01</span>
       </header>
       <p class="summary">
@@ -455,90 +512,6 @@
           in <code>morph-cli/tests/status_merge_integration.rs</code>
           un-<code>#[ignore]</code>'d. <code>version.yaml</code>
           updated to expect <code>0.41.1</code>.</li>
-      </ul>
-    </article>
-
-    <article class="release">
-      <header>
-        <span class="version">0.41.0</span>
-        <span class="date">2026-05-01</span>
-      </header>
-      <p class="summary">
-        <strong><code>morph forget</code> lands.</strong> The
-        <em>"I leaked a secret into a trace; what do I do?"</em>
-        question now has a first-class answer: a CLI subcommand
-        that permanently retires a <code>Run</code>,
-        <code>Trace</code>, or prompt <code>Blob</code> from the
-        local store and (with <code>--remote &lt;name&gt;</code>)
-        propagates the deletion to a configured morph remote via
-        an immutable, content-addressed <code>Tombstone</code>
-        object. Teammates' next <code>morph fetch</code> applies
-        the tombstone automatically. The merge gate reads any
-        <code>evidence_ref</code> that resolves to a tombstone as
-        <em>"no claim"</em> rather than a hard error, so retroactively
-        forgetting evidence does not retroactively break commits.
-        Forget refuses commits, trees, regular blobs, pipelines,
-        eval suites, artifacts, trace rollups, and annotations
-        &mdash; those carry structural meaning the DAG depends on.
-      </p>
-
-      <h3 class="added"><span class="marker"></span>Added</h3>
-      <ul>
-        <li><strong><code>morph forget &lt;hash&gt;</code> CLI
-          subcommand.</strong> Flags:
-          <code>--reason</code>, <code>--force</code>,
-          <code>--remote</code>, <code>--dry-run</code>,
-          <code>--yes</code> (required for non-interactive
-          callers; interactive callers type <code>forget</code>
-          to confirm). Writes the tombstone, deletes the
-          original object + per-type index entries, and drops a
-          <code>.morph/forgotten/&lt;hash&gt;.txt</code> marker.</li>
-        <li><strong><code>Tombstone</code> as a first-class
-          <code>MorphObject</code>.</strong> Fields:
-          <code>original_hash</code>, <code>original_kind</code>,
-          <code>forgotten_at</code>, <code>actor</code>,
-          <code>reason</code>. Content-addressed, so
-          <code>morph show &lt;tombstone-hash&gt;</code> returns
-          who retired what, when, and why. The original bytes
-          are gone; the <em>fact</em> of the deletion is permanent.</li>
-        <li><strong>Push / fetch propagation.</strong>
-          <code>morph push</code> ships tombstones alongside
-          normal objects on local-filesystem morph remotes;
-          <code>morph fetch</code> auto-applies them on receipt.
-          SSH transport for tombstones is queued for v0.41.1.</li>
-        <li><strong><code>docs/SECURITY.md</code></strong> &mdash;
-          full <em>morph forget</em> section replaces the v0.40.2
-          gap-bullet: when to use it, how it works, what it
-          refuses, what it does <em>not</em> cover (already-fetched
-          copies, partial redaction, SSH propagation, MCP tool),
-          and a step-by-step <em>"I leaked a secret"</em> recipe.</li>
-        <li><strong>Homepage <code>morph forget</code>
-          callout.</strong> <code>site/index.html</code> privacy
-          section now leads with the secret-leak escape hatch:
-          one paragraph, a three-line CLI sample, deep-link to
-          <code>SECURITY.md</code>, and a "what forget does
-          <em>not</em> cover" footer. The "Things morph does not
-          yet do" list drops the missing-forget bullet.</li>
-      </ul>
-
-      <h3 class="tests"><span class="marker"></span>Tests</h3>
-      <ul>
-        <li>New <code>morph-core::forget</code> unit tests pin
-          the local round-trip, apply-tombstone idempotency,
-          kind refusals, and referencing-commit refusals.
-          <code>morph-cli/tests/specs/forget.yaml</code>
-          registers six CLI cases through the auto-generated
-          harness (forget a run with <code>--yes</code>,
-          <code>--dry-run</code> is read-only, non-interactive
-          without <code>--yes</code> is refused, commit-kind
-          hashes are refused, runs referenced by a commit are
-          refused without <code>--force</code>, the original is
-          no longer loadable post-forget). The cross-repo
-          push/fetch propagation case is covered by the
-          morph-core unit tests; an end-to-end Cucumber feature
-          for the multi-repo CLI flow is queued for v0.41.1.
-          <code>morph-cli/tests/specs/version.yaml</code> updated
-          to expect <code>0.41.0</code>.</li>
       </ul>
     </article>
 

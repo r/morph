@@ -545,13 +545,82 @@ fn run_reference_commit(
         }
     }
 
+    // v0.42.1: when a Run is attached, compute mixed-authorship
+    // attribution against the staged tree before the rewrite. We
+    // need the mirror commit's tree for `compute_human_edits` (it
+    // gives us per-path blob hashes the trace can be compared
+    // against) and the parent commit's tree for the
+    // `no-trace-record` carve-out (a path that already existed at
+    // the parent shouldn't be flagged as human-authored just
+    // because the agent didn't touch it). Both lookups are
+    // best-effort: a missing tree falls back to the empty case so
+    // the rewrite still produces a valid commit.
+    let human_edits: Option<Vec<morph_core::objects::HumanEdit>> = if let Some(rh) =
+        evidence_run_hash
+    {
+        let mirrored_for_edits = match store.get(&mirrored_hash)? {
+            MorphObject::Commit(c) => c,
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "mirrored commit {} is not a Commit object",
+                    mirrored_hash
+                ));
+            }
+        };
+        let staged: std::collections::BTreeMap<String, String> = mirrored_for_edits
+            .tree
+            .as_deref()
+            .and_then(|t| morph_core::Hash::from_hex(t).ok())
+            .and_then(|h| morph_core::flatten_tree(store, &h).ok())
+            .unwrap_or_default();
+        let parent_tree: Option<std::collections::BTreeMap<String, String>> = mirrored_for_edits
+            .parents
+            .first()
+            .and_then(|p| morph_core::Hash::from_hex(p).ok())
+            .and_then(|h| match store.get(&h).ok()? {
+                MorphObject::Commit(c) => c.tree,
+                _ => None,
+            })
+            .and_then(|t| morph_core::Hash::from_hex(&t).ok())
+            .and_then(|h| morph_core::flatten_tree(store, &h).ok());
+        let edits =
+            morph_core::compute_human_edits(store, &rh, &staged, parent_tree.as_ref())
+                .unwrap_or_default();
+        if edits.is_empty() {
+            None
+        } else {
+            Some(edits)
+        }
+    } else {
+        None
+    };
+
+    // v0.42.1: when a Run is attached, fold the human author into
+    // `Commit.contributors` with role = `human-author`. Without
+    // this the human who actually ran `morph commit` is recorded
+    // only in `commit.author` and never appears in the structured
+    // contributors list — so a downstream tool reading the
+    // contributors list sees only the agent and concludes the
+    // human had no hand in the change.
+    if evidence_run_hash.is_some() {
+        let author_for_attribution = resolved_author
+            .clone()
+            .or_else(|| author.map(|a| a.to_string()))
+            .unwrap_or_else(|| "morph".to_string());
+        commit_contributors = morph_core::fold_human_author_into_contributors(
+            commit_contributors,
+            &author_for_attribution,
+        );
+    }
+
     let mut new_morph_hash = mirrored_hash;
     let needs_rewrite = !observed_metrics.is_empty()
         || prog_hash.is_some()
         || suite_hash_str.is_some()
         || evidence_refs.is_some()
         || env_constraints.is_some()
-        || commit_contributors.is_some();
+        || commit_contributors.is_some()
+        || human_edits.is_some();
     if needs_rewrite {
         let mirrored = match store.get(&mirrored_hash)? {
             MorphObject::Commit(c) => c,
@@ -581,6 +650,9 @@ fn run_reference_commit(
         }
         if let Some(c) = &commit_contributors {
             new_commit.contributors = Some(c.clone());
+        }
+        if let Some(h) = &human_edits {
+            new_commit.human_edits = Some(h.clone());
         }
         let rewritten = store.put(&MorphObject::Commit(new_commit))?;
         new_morph_hash = rewritten;
