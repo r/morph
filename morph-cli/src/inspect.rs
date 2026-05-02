@@ -1,15 +1,13 @@
-//! Phase 3 (v0.45+): handlers for the `morph inspect` namespace,
-//! the consolidation of the older `morph trace`, `morph tap`, and
-//! `morph traces` commands. The factored handlers live here so:
+//! Handlers for the `morph inspect` namespace — the user-facing
+//! interface for browsing recorded sessions (Run + Trace pairs) and
+//! exporting them as evaluation cases. Introduced in Phase 3 (v0.45)
+//! as a consolidation of the older `morph trace`, `morph tap`, and
+//! `morph traces` commands; the predecessors were removed in
+//! Phase 4.2 (v0.47).
 //!
-//! 1. `Command::Inspect` in `main.rs` dispatches via [`run_inspect`].
-//! 2. The deprecated `Command::Trace` / `Command::Tap` /
-//!    `Command::Traces` arms call into the same handlers after
-//!    printing a one-line stderr deprecation notice; the old
-//!    behavior is preserved bit-for-bit so users can migrate at
-//!    their own pace.
-//!
-//! The deprecated arms ride along until v0.47.
+//! The factored handlers also back the v0.46-deprecated `morph run`
+//! aliases (which still ride along as deprecated commands, slated
+//! for removal in v0.48).
 
 use crate::cli::InspectCmd;
 use crate::resolve_obj_hash;
@@ -17,18 +15,18 @@ use anyhow::Result;
 use morph_core::store::{ObjectType, Store};
 use morph_core::MorphObject;
 
-/// Print the one-line stderr deprecation notice for an old command,
-/// pointing the user at the new spelling. Called from the
-/// deprecated `Command::Trace` / `Command::Tap` / `Command::Traces`
-/// dispatch arms in `main.rs`. Format chosen to match `git`'s
-/// own deprecation style (`warning: ...`):
+/// Print a one-line stderr deprecation notice for a v0.46-deprecated
+/// command, pointing the user at the new spelling. Called from the
+/// deprecated `Command::Run` / `EvalCmd::AddCase` / `EvalCmd::SuiteShow`
+/// / `EvalCmd::SuiteFromSpecs` arms in `main.rs`. Format chosen to
+/// match `git`'s own deprecation style (`warning: ...`):
 ///
 /// ```text
-/// warning: `morph tap summary` is deprecated; use `morph inspect summary` instead (removed in v0.47).
+/// warning: `morph eval add-case` is deprecated; use `morph eval add` instead (removed in v0.48).
 /// ```
 pub(crate) fn deprecation_notice(old: &str, new: &str) {
     eprintln!(
-        "warning: `{}` is deprecated; use `{}` instead (removed in v0.47).",
+        "warning: `{}` is deprecated; use `{}` instead (removed in v0.48).",
         old, new
     );
 }

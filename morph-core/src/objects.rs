@@ -329,6 +329,49 @@ pub struct TraceEvent {
     pub payload: BTreeMap<String, serde_json::Value>,
 }
 
+// ---------- 4.8b Vocabulary aliases (Phase 4.2 / v0.47+) ----------
+//
+// User-facing documentation, the CLI, and the MCP all talk about
+// "sessions" and "evals" rather than the storage-layer nouns Run /
+// Trace / EvalSuite / EvalCase. To keep the storage-layer types
+// stable (so existing on-disk objects keep deserializing without
+// migration) while letting newer Rust call sites match the user
+// vocabulary, we expose type aliases.
+//
+// The aliases are pure type renames: serialization, hashing, and
+// `MorphObject` discrimination all go through the underlying struct,
+// so `.morph/objects/` is byte-for-byte unchanged.
+//
+// In v0.48 we may flip the underlying struct names and keep the old
+// identifiers as aliases pointing the other way; the decision will be
+// driven by whether rustdoc / IDE jump-to-def friction is real (see
+// the Phase 4.3 plan).
+
+/// Phase 4.2 (v0.47+): user-vocabulary alias for [`Run`]. A
+/// recorded agent turn — prompt, response, optional metrics, and a
+/// pointer at the [`SessionTrace`] (alias of [`Trace`]) that holds
+/// the per-step events.
+pub type Session = Run;
+
+/// Phase 4.2 (v0.47+): user-vocabulary alias for [`Trace`]. The
+/// ordered list of [`SessionEvent`] (alias of [`TraceEvent`])
+/// records that make up one [`Session`].
+pub type SessionTrace = Trace;
+
+/// Phase 4.2 (v0.47+): user-vocabulary alias for [`TraceEvent`]. One
+/// step within a [`SessionTrace`] — a user message, an assistant
+/// reply, a tool call, a file edit, etc.
+pub type SessionEvent = TraceEvent;
+
+/// Phase 4.2 (v0.47+): user-vocabulary alias for [`EvalSuite`]. The
+/// versioned bundle of acceptance cases (and metric definitions) the
+/// merge gate evaluates against.
+pub type Eval = EvalSuite;
+
+/// Phase 4.2 (v0.47+): user-vocabulary alias for [`EvalCase`]. One
+/// acceptance case inside an [`Eval`].
+pub type EvalItem = EvalCase;
+
 // ---------- 4.9 TraceRollup ----------
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TraceRollup {

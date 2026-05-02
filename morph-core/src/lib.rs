@@ -94,7 +94,10 @@ pub use migrate::{
     migrate_0_0_to_0_2, migrate_0_2_to_0_3, migrate_0_3_to_0_4, migrate_0_4_to_0_5,
     migrate_to_latest, MigrateReport, MigrationStep,
 };
-pub use objects::{CommitContributor, EvalContract, MorphObject, Tombstone};
+pub use objects::{
+    CommitContributor, Eval, EvalContract, EvalItem, MorphObject, Session, SessionEvent,
+    SessionTrace, Tombstone,
+};
 pub use objmerge::{
     merge_base, merge_commits, MergeOutcome, ObjConflict, StructuralKind, TrivialOutcome,
 };

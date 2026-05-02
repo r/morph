@@ -56,7 +56,7 @@
         - "kind:"
         - "no objects deleted"
     # The run is still readable after a dry run.
-    - morph: [tap, inspect, "${run_hash}"]
+    - morph: [inspect, show, "${run_hash}"]
 
 - name: forget_refuses_non_interactive_without_yes
   files:
@@ -122,7 +122,7 @@
         - "now read as 'no claim'"
 
 # After a forget, the original object is gone. Both `morph show` and
-# `morph tap inspect` correctly report the absence; we don't surface
+# `morph inspect show` correctly report the absence; we don't surface
 # the tombstone reason on those paths *yet* (roadmap), but the data
 # is genuinely gone.
 - name: forget_removes_object_from_store

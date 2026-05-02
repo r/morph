@@ -718,7 +718,7 @@ pub type GixStore = FsStore;
 ///
 /// Pre-0.37.6 indexes (runs/traces/evals/prompts/annotations) write
 /// full content because at least one fallback path reads from them
-/// when the primary store lookup fails (`morph tap` falls back to
+/// when the primary store lookup fails (`morph inspect` falls back to
 /// `.morph/traces/<hash>.json` during migrations). Indexes added in
 /// 0.37.6 (blobs/trees/pipelines/commits/artifacts/trace_rollups)
 /// only need to be discoverable for `list(t)`, so they're empty
@@ -2226,7 +2226,7 @@ mod tests {
     /// copies) so a 33 GB blob-heavy store doesn't double in size when
     /// `blobs/` materializes. `runs/`, `traces/`, `evals/`,
     /// `prompts/`, `annotations/` keep full content for backward
-    /// compat (`morph tap` falls back to reading from `traces/`).
+    /// compat (`morph inspect` falls back to reading from `traces/`).
     ///
     /// We probe the `blobs/` (new) and `annotations/` (legacy
     /// full-content) indexes — the corresponding code path for the

@@ -978,7 +978,7 @@ pub fn find_run_by_trace(store: &dyn Store, trace_hash: &Hash) -> Result<Option<
 /// a `Trace` hash to the corresponding `Run` hash. The structured
 /// layer (`task_structure`, `target_context`, `final_artifact`,
 /// etc.) is keyed on runs; this is the single resolver that
-/// `morph traces` (CLI) and the `morph_get_trace_*` MCP tools
+/// `morph inspect` (CLI) and the `morph_get_trace_*` MCP tools
 /// share so the "did the user pass a run or a trace?" rules are
 /// expressed once.
 ///

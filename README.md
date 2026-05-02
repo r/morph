@@ -193,7 +193,7 @@ The IDE hooks parse the agent's full transcript (tool calls, file reads/edits, s
 - `morph inspect recent` / `morph inspect task <ref>` / `morph inspect artifact <ref>` — structured task views for replay or eval generation.
 - `morph session record --prompt "..." --response "..."` — record a session manually (v0.46+; was `morph run record-session`).
 
-The older `morph trace` / `morph tap` / `morph traces` spellings still work in v0.45 and v0.46 with a deprecation notice; they're removed in v0.47. Likewise `morph run` / `morph eval add-case` / `morph eval suite-show` / `morph eval suite-from-specs` work in v0.46 and v0.47 and are removed in v0.48; new code should use `morph session` and the flat `morph eval add` / `show` / `rebuild`.
+The older `morph trace` / `morph tap` / `morph traces` spellings were removed in v0.47 — only `morph inspect` works now. The v0.46-deprecated `morph run` / `morph eval add-case` / `morph eval suite-show` / `morph eval suite-from-specs` still work through v0.47 with a deprecation notice and are removed in v0.48; new code should use `morph session` and the flat `morph eval add` / `show` / `rebuild`.
 
 See [docs/SESSION-TRACKING.md](docs/SESSION-TRACKING.md).
 

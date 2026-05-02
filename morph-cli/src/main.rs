@@ -3770,48 +3770,6 @@ fn main() -> anyhow::Result<()> {
 
         Command::Inspect { sub } => inspect::run_inspect(verbose, sub)?,
 
-        Command::Trace { sub } => match sub {
-            TraceCmd::Show { hash } => {
-                inspect::deprecation_notice("morph trace show", "morph inspect show");
-                inspect::run_show(verbose, &hash)?;
-            }
-        },
-
-        Command::Tap { sub } => match sub {
-            TapCmd::Summary { json } => {
-                inspect::deprecation_notice("morph tap summary", "morph inspect summary");
-                inspect::run_summary(verbose, json)?;
-            }
-            TapCmd::Inspect { run_hash } => {
-                inspect::deprecation_notice("morph tap inspect", "morph inspect show");
-                inspect::run_show(verbose, &run_hash)?;
-            }
-            TapCmd::Diagnose { run_hash } => {
-                inspect::deprecation_notice("morph tap diagnose", "morph inspect diagnose");
-                inspect::run_diagnose(verbose, &run_hash)?;
-            }
-            TapCmd::Export {
-                mode,
-                output,
-                model,
-                agent,
-                min_steps,
-            } => {
-                inspect::deprecation_notice("morph tap export", "morph inspect export");
-                inspect::run_export(verbose, &mode, output.as_deref(), model, agent, min_steps)?;
-            }
-            TapCmd::TraceStats { trace_hash } => {
-                inspect::deprecation_notice("morph tap trace-stats", "morph inspect stats");
-                inspect::run_stats(verbose, &trace_hash)?;
-            }
-            TapCmd::Preview { run_hash, mode } => {
-                inspect::deprecation_notice("morph tap preview", "morph inspect preview");
-                inspect::run_preview(verbose, &run_hash, &mode)?;
-            }
-        },
-
-        Command::Traces { sub } => handle_traces_command(verbose, sub)?,
-
         Command::Eval { sub } => match sub {
             EvalCmd::Record { file } => {
                 let (repo_root, _store) = get_store(verbose)?;
@@ -4653,40 +4611,6 @@ fn cmd_prompt_show(verbose: bool, run_ref: &str, run_upgrade: bool) -> anyhow::R
 pub(crate) fn resolve_run_hash(store: &dyn Store, hash_str: &str) -> anyhow::Result<Hash> {
     let h = resolve_obj_hash(store, hash_str)?;
     morph_core::resolve_run_or_trace_hash(store, &h).map_err(|e| anyhow::anyhow!("{}", e))
-}
-
-/// Phase 3 (v0.45+): the deprecated `morph traces <subcommand>`
-/// dispatcher. Each arm prints a one-line stderr deprecation notice
-/// pointing the user at `morph inspect ...` and then forwards to the
-/// shared handler in [`crate::inspect`]. Removed in v0.47.
-fn handle_traces_command(verbose: bool, sub: TracesCmd) -> anyhow::Result<()> {
-    match sub {
-        TracesCmd::Summary { limit, json } => {
-            inspect::deprecation_notice("morph traces summary", "morph inspect recent");
-            inspect::run_recent(verbose, limit, json)?;
-        }
-        TracesCmd::TaskStructure { hash } => {
-            inspect::deprecation_notice("morph traces task-structure", "morph inspect task");
-            inspect::run_task(verbose, &hash)?;
-        }
-        TracesCmd::TargetContext { hash } => {
-            inspect::deprecation_notice("morph traces target-context", "morph inspect target");
-            inspect::run_target(verbose, &hash)?;
-        }
-        TracesCmd::FinalArtifact { hash } => {
-            inspect::deprecation_notice("morph traces final-artifact", "morph inspect artifact");
-            inspect::run_artifact(verbose, &hash)?;
-        }
-        TracesCmd::Semantics { hash } => {
-            inspect::deprecation_notice("morph traces semantics", "morph inspect semantics");
-            inspect::run_semantics(verbose, &hash)?;
-        }
-        TracesCmd::Verification { hash } => {
-            inspect::deprecation_notice("morph traces verification", "morph inspect verification");
-            inspect::run_verification(verbose, &hash)?;
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]

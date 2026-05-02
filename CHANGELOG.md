@@ -16,6 +16,86 @@ metrics — see `.cursor/rules/behavioral-commits.mdc`.
 
 ## [Unreleased]
 
+## [0.47.0] — 2026-05-02
+
+Vocabulary unification, part 2: remove the v0.45-deprecated
+`morph trace`, `morph tap`, and `morph traces` namespaces and
+introduce Rust-level type aliases (`Session`, `SessionTrace`,
+`SessionEvent`, `Eval`, `EvalItem`) so newer call sites can match
+the user vocabulary without renaming the storage-layer structs.
+Fifth release of the multi-phase "make morph intuitive" effort.
+The on-disk object format is unchanged; existing `.morph/`
+directories keep deserializing without migration. The
+v0.46-deprecated `morph run` and `morph eval add-case` /
+`suite-show` / `suite-from-specs` aliases continue to ride along
+through v0.47 — only the v0.45 ones are removed in this release.
+
+### Added
+
+- **Rust type aliases** in `morph-core/src/objects.rs` and
+  re-exported from `morph_core`:
+
+  ```rust
+  pub type Session = Run;
+  pub type SessionTrace = Trace;
+  pub type SessionEvent = TraceEvent;
+  pub type Eval = EvalSuite;
+  pub type EvalItem = EvalCase;
+  ```
+
+  Pure type renames: serialization, hashing, and `MorphObject`
+  discrimination all go through the underlying struct, so on-disk
+  bytes are unchanged. Lets newer call sites match the user
+  vocabulary; existing code keeps compiling against the storage
+  names.
+- New spec `removed_inspect_aliases.yaml` (3 cases) pins that
+  `morph trace`, `morph tap`, and `morph traces` exit with code 2
+  and an "unrecognized subcommand" error after removal — so a
+  future re-introduction is intentional, not an accident.
+
+### Removed
+
+- **`morph trace show`** — removed (was deprecated in v0.45). Use
+  `morph inspect show <hash>`.
+- **`morph tap {summary, inspect, diagnose, export, trace-stats,
+  preview}`** — removed (was deprecated in v0.45). Use the
+  corresponding `morph inspect` subcommand.
+- **`morph traces {summary, task-structure, target-context,
+  final-artifact, semantics, verification}`** — removed (was
+  deprecated in v0.45). Use the corresponding `morph inspect`
+  subcommand.
+- The companion `TraceCmd`, `TapCmd`, `TracesCmd` Clap enums and
+  the `Command::Trace` / `Command::Tap` / `Command::Traces` arms
+  are gone from `morph-cli/src/cli.rs` and `main.rs`. The
+  `handle_traces_command` dispatcher is removed.
+- Spec files `tap.yaml`, `traces.yaml`, and
+  `inspect_deprecated_aliases.yaml` deleted. The unified
+  `inspect.yaml` (16 cases) covers every subcommand.
+
+### Changed
+
+- **`morph --help` Inspect docstring** updated: no longer mentions
+  the now-removed `morph trace` / `morph tap` / `morph traces`
+  fall-back paths.
+- **Doc + site sweep** for the v0.45 removal: `README.md`,
+  `docs/v0-spec.md`, and stale internal doc-comments in
+  `morph-core/src/store.rs` and `morph-core/src/structured.rs`
+  rewritten to point at `morph inspect`. The v0-spec call-out
+  sections "Tap" and "structured trace views" now note the
+  removal target. Architectural prose ("the morph trace
+  contract", "morph traces live in the commit graph") is left
+  alone per the dual-vocabulary rule for `v0-spec.md`,
+  `THEORY.md`, and `morph-paper.tex`.
+- The `inspect::deprecation_notice` helper now points at v0.48
+  (the next removal target) so the v0.46-deprecated
+  `morph run` / `eval add-case` aliases emit the right wording.
+
+### Tests
+
+- Workspace **1217 / 1217 passing** (1244 minus 30 cases in the
+  three deleted spec files plus 3 new removal-proof cases).
+  Cucumber 34 / 37 (3 skipped, 0 failed) — no change.
+
 ## [0.46.0] — 2026-05-02
 
 Vocabulary unification, part 1: introduce `morph session` as the
@@ -1335,7 +1415,8 @@ Three coordinated changes to repo setup, adoption, and migration.
 - 15 new YAML acceptance spec cases in the default eval suite:
   `init_at_latest:*` ×4, `init_in_git_dir:*` ×6, `upgrade:*` ×5.
 
-[Unreleased]: https://github.com/r/morph/compare/v0.46.0...HEAD
+[Unreleased]: https://github.com/r/morph/compare/v0.47.0...HEAD
+[0.47.0]: https://github.com/r/morph/compare/v0.46.0...v0.47.0
 [0.46.0]: https://github.com/r/morph/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/r/morph/compare/v0.44.0...v0.45.0
 [0.44.0]: https://github.com/r/morph/compare/v0.43.0...v0.44.0

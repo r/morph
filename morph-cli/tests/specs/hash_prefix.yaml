@@ -26,14 +26,14 @@
 
 - name: trace_show_accepts_prefix
   steps:
-    - morph: [run, record-session, --prompt, "what?", --response, "answer"]
+    - morph: [session, record, --prompt, "what?", --response, "answer"]
       capture: run_hash
       assert_hash: true
-    - morph: [run, show, "${run_hash}", --json]
+    - morph: [session, show, "${run_hash}", --json]
       capture_json_field:
         var: trace_hash
         field: trace
-    - morph: [trace, show, "${trace_hash:.8}"]
+    - morph: [inspect, show, "${trace_hash:.8}"]
       stdout_contains:
         - "what?"
         - "answer"

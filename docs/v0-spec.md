@@ -923,9 +923,8 @@ morph inspect stats <trace_hash>           # detailed event-level statistics for
 morph inspect preview <run_hash> [--mode M] # labeled prompt/context/response preview
 ```
 
-(Through v0.46 the older `morph tap <subcommand>` and `morph trace
-show` spellings still work with a deprecation notice; they're
-removed in v0.47.)
+(The older `morph tap <subcommand>` and `morph trace show` spellings
+were removed in v0.47.)
 
 Tap reads traces and runs from the store, groups events into logical steps (prompt, response, tool calls, file operations), and produces structured output for evaluation frameworks. `export` supports filtering by model (`--model`), agent (`--agent`), and minimum step count (`--min-steps`), and writes to a file with `--output`.
 
@@ -940,8 +939,8 @@ morph inspect semantics <run_or_trace_hash>
 morph inspect verification <run_or_trace_hash>
 ```
 
-(Through v0.46 the older `morph traces <subcommand>` spellings still
-work with a deprecation notice; they're removed in v0.47.)
+(The older `morph traces <subcommand>` spellings were removed in
+v0.47.)
 
 Higher-level views over the same traces, for replay and eval-case construction: task classification (phase, scope, target files/symbols, goal), target file/function context, final artifact (function text / file snippet / patch summary), change semantics, and verification commands. These are also exposed as MCP tools (`morph_get_recent_trace_summaries`, `morph_get_trace_task_structure`, etc.).
 

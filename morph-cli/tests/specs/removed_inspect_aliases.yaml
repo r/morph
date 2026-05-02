@@ -1,0 +1,29 @@
+# Phase 4.2 (v0.47): the v0.45 deprecated `morph trace`, `morph tap`,
+# and `morph traces` commands are removed. Clap no longer recognizes
+# them and the user sees the standard "unrecognized subcommand"
+# error pointing at the new spelling. These specs pin that behavior
+# so a future re-introduction is intentional, not an accident.
+
+- name: morph_trace_subcommand_is_removed
+  init: false
+  steps:
+    - morph: [trace, show, "0000000000000000000000000000000000000000000000000000000000000000"]
+      expect_exit: 2
+      stderr_contains:
+        - "unrecognized subcommand"
+
+- name: morph_tap_subcommand_is_removed
+  init: false
+  steps:
+    - morph: [tap, summary]
+      expect_exit: 2
+      stderr_contains:
+        - "unrecognized subcommand"
+
+- name: morph_traces_subcommand_is_removed
+  init: false
+  steps:
+    - morph: [traces, summary]
+      expect_exit: 2
+      stderr_contains:
+        - "unrecognized subcommand"

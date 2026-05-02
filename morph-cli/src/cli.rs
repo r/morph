@@ -662,36 +662,13 @@ pub enum Command {
     },
     /// Remove unreachable objects from the store
     Gc,
-    /// Inspect runs and traces (Phase 3, v0.45+: consolidates the
-    /// older `morph trace`, `morph tap`, and `morph traces`
-    /// commands into one namespace; the old commands remain as
-    /// deprecated aliases through v0.46).
+    /// Inspect recorded sessions (Run + Trace pairs). Phase 3
+    /// (v0.45+) consolidated the older `morph trace`, `morph tap`,
+    /// and `morph traces` namespaces into this single one;
+    /// Phase 4.2 (v0.47+) removed the old commands.
     Inspect {
         #[command(subcommand)]
         sub: InspectCmd,
-    },
-    /// [DEPRECATED v0.45+] Inspect traces. Use `morph inspect show`
-    /// instead. Removed in v0.47.
-    #[command(hide = true)]
-    Trace {
-        #[command(subcommand)]
-        sub: TraceCmd,
-    },
-    /// [DEPRECATED v0.45+] Extract and analyze traces for
-    /// evaluation. Use `morph inspect <subcommand>` instead.
-    /// Removed in v0.47.
-    #[command(hide = true)]
-    Tap {
-        #[command(subcommand)]
-        sub: TapCmd,
-    },
-    /// [DEPRECATED v0.45+] Structured trace views for replay / eval
-    /// generation. Use `morph inspect <subcommand>` instead.
-    /// Removed in v0.47.
-    #[command(hide = true)]
-    Traces {
-        #[command(subcommand)]
-        sub: TracesCmd,
     },
     /// Browse repo in browser
     #[cfg(feature = "visualize")]
@@ -719,11 +696,6 @@ pub enum Command {
 }
 
 #[derive(clap::Subcommand)]
-pub enum TraceCmd {
-    Show { hash: String },
-}
-
-#[derive(clap::Subcommand)]
 pub enum MergeCmd {
     /// Pick a side for a single pipeline-node conflict surfaced by
     /// `morph merge <branch>`. `--pick` accepts `ours`, `theirs`,
@@ -739,102 +711,11 @@ pub enum MergeCmd {
     },
 }
 
-#[derive(clap::Subcommand)]
-pub enum TapCmd {
-    /// Show summary statistics for all traces in the repo
-    Summary {
-        /// Emit a JSON envelope with the summary fields.
-        #[arg(long)]
-        json: bool,
-    },
-    /// Inspect a single run/trace and show extracted steps
-    Inspect {
-        /// Run hash to inspect (or "all" for every run)
-        run_hash: String,
-    },
-    /// Diagnose recording quality for a run or all runs
-    Diagnose {
-        /// Run hash to diagnose (or "all" for every run)
-        #[arg(default_value = "all")]
-        run_hash: String,
-    },
-    /// Export traces as evaluation cases (JSON)
-    Export {
-        /// Export mode: prompt-only, with-context, agentic
-        #[arg(long, default_value = "with-context")]
-        mode: String,
-        /// Output file (default: stdout)
-        #[arg(short, long)]
-        output: Option<std::path::PathBuf>,
-        /// Filter by model name (substring match)
-        #[arg(long)]
-        model: Option<String>,
-        /// Filter by agent id (substring match)
-        #[arg(long)]
-        agent: Option<String>,
-        /// Only include runs with at least N steps
-        #[arg(long)]
-        min_steps: Option<usize>,
-    },
-    /// Show detailed statistics for a single trace
-    TraceStats {
-        /// Trace hash to inspect
-        trace_hash: String,
-    },
-    /// Preview how a run would be exported (labeled sections)
-    Preview {
-        /// Run hash to preview
-        run_hash: String,
-        /// Export mode to preview: prompt-only, with-context, agentic
-        #[arg(long, default_value = "agentic")]
-        mode: String,
-    },
-}
-
-#[derive(clap::Subcommand)]
-pub enum TracesCmd {
-    /// Browse recent traces with structured summaries (newest first)
-    Summary {
-        /// Maximum number of traces to show
-        #[arg(long, default_value = "20")]
-        limit: usize,
-        /// Output JSON instead of human-readable
-        #[arg(long)]
-        json: bool,
-    },
-    /// Show the task structure (phase, scope, target files/symbols, task_goal)
-    TaskStructure {
-        /// Run hash (or trace hash)
-        hash: String,
-    },
-    /// Show the target file/function context for replay or eval
-    TargetContext { hash: String },
-    /// Show the final artifact produced by the agent
-    FinalArtifact { hash: String },
-    /// Show change / preserved / restored semantic summaries
-    Semantics { hash: String },
-    /// Show verification commands/tests/demo steps
-    Verification { hash: String },
-}
-
-/// Phase 3 (v0.45+): the single `morph inspect` namespace that
-/// supersedes the older `morph trace`, `morph tap`, and `morph
-/// traces` commands. Subcommand names map roughly:
-///
-/// | new                            | old                          |
-/// |--------------------------------|------------------------------|
-/// | `inspect summary`              | `tap summary`                |
-/// | `inspect recent`               | `traces summary`             |
-/// | `inspect show <hash>`          | `trace show` + `tap inspect` |
-/// | `inspect diagnose [<hash>]`    | `tap diagnose`               |
-/// | `inspect export ...`           | `tap export`                 |
-/// | `inspect stats <trace_hash>`   | `tap trace-stats`            |
-/// | `inspect preview <run_hash>`   | `tap preview`                |
-/// | `inspect task <ref>`           | `traces task-structure`      |
-/// | `inspect target <ref>`         | `traces target-context`      |
-/// | `inspect artifact <ref>`       | `traces final-artifact`      |
-/// | `inspect semantics <ref>`      | `traces semantics`           |
-/// | `inspect verification <ref>`   | `traces verification`        |
+/// The single `morph inspect` namespace for browsing recorded
+/// sessions (Run + Trace pairs) and exporting them as evaluation
+/// cases. Introduced in Phase 3 (v0.45) and the only spelling since
+/// Phase 4.2 (v0.47); the predecessors `morph trace`, `morph tap`,
+/// and `morph traces` were removed in v0.47.
 #[derive(clap::Subcommand)]
 pub enum InspectCmd {
     /// Repo-wide aggregate: total runs / traces / events, event-kind
