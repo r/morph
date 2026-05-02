@@ -582,30 +582,17 @@
         <p>
           This tutorial assumes you've at least skimmed
           <a href="./getting-started.html">Tutorial 1</a> &mdash; we won't re-teach the
-          eval-run-then-commit flow, just show how it interacts with Git.
+          eval-run-then-commit flow, just show how it interacts with a real
+          Git repo, a remote, and (eventually) teammates.
         </p>
         <p>You'll need:</p>
         <ul>
-          <li><code>morph</code> and <code>morph-mcp</code> on your <code>PATH</code> (<a href="https://github.com/r/morph/blob/main/docs/INSTALLATION.md">install guide</a>).</li>
-          <li>A real Git repo &mdash; an existing one is ideal. If you don't have one handy, the steps below show how to spin up a tiny one.</li>
-          <li><strong>Python 3</strong> with <code>pytest</code>.</li>
+          <li><code>morph</code> and <code>morph-mcp</code> on your <code>PATH</code> (<a href="https://github.com/r/morph/blob/main/docs/INSTALLATION.md">install guide</a>). <code>morph --version</code> should print <code>0.42.2</code> or later.</li>
+          <li><strong>An existing Git project with at least one commit.</strong> If you don't have one handy, follow <a href="./getting-started.html">Tutorial 1</a> first &mdash; it walks through scaffolding a tiny project with <code>git init -b main</code> and gives you a couple of commits to backfill against here.</li>
+          <li>Configured Git identity: <code>git config --global user.name</code> and <code>git config --global user.email</code> should each return something. Morph mirrors every commit through <code>git commit</code>, which refuses without an identity.</li>
+          <li><strong>Python 3</strong> with <code>pytest</code> &mdash; the example commands assume the same currency-converter shape as Tutorial 1, but any test runner Morph can parse (<code>cargo</code>, <code>pytest</code>, <code>vitest</code>, <code>jest</code>, <code>go</code>) works.</li>
           <li>A GitHub remote (or any Git remote). We'll demonstrate that <code>git push</code> works unchanged.</li>
         </ul>
-        <div class="callout">
-          <strong>If you don't already have a Git repo:</strong> the snippet below
-          spins up a throwaway one with two commits and a fake remote so you can
-          follow along verbatim. If you already have your own project, skip the
-          snippet and run the rest in your project directory.
-        </div>
-<div class="cli-block"><span class="prompt">$ </span><span class="cmd">mkdir converter &amp;&amp; <span class="kw">cd</span> converter</span>
-<span class="prompt">$ </span><span class="cmd">git init <span class="flag">-b</span> main</span>
-<span class="prompt">$ </span><span class="cmd">git remote add origin git@github.com:you/converter.git</span>
-<span class="comment"># Drop a tiny converter.py + test_converter.py (same shape as Tutorial 1)…</span>
-<span class="prompt">$ </span><span class="cmd">git add converter.py     &amp;&amp; git commit <span class="flag">-m</span> <span class="str">"scaffold currency converter"</span></span>
-<span class="prompt">$ </span><span class="cmd">git add test_converter.py &amp;&amp; git commit <span class="flag">-m</span> <span class="str">"add basic conversion tests"</span></span>
-<span class="prompt">$ </span><span class="cmd">git log <span class="flag">--oneline</span></span>
-<span class="out">d12b9aa add basic conversion tests</span>
-<span class="out">a92430d scaffold currency converter</span></div>
       </section>
 
       <!-- 2 -->
@@ -690,6 +677,16 @@
           the hook recursing into itself, and the trailing <code>|| true</code> is the
           guarantee that a broken Morph never blocks a Git commit.
         </p>
+        <div class="callout">
+          <strong>If you're starting from an empty directory</strong> (no
+          <code>.git/</code> yet), <code>morph init</code> will detect that and
+          interactively prompt: <em>"morph requires a git repository here. Run
+          `git init` for you? [y/N]"</em>. Pass <code>morph init --git-init</code>
+          for the same shortcut without the prompt &mdash; convenient in CI or
+          shell scripts. Either way Morph runs <code>git init -b main</code>
+          (anchored to <code>main</code> so the rest of Morph's contract holds
+          regardless of your host's <code>init.defaultBranch</code> setting).
+        </div>
       </section>
 
       <!-- 4 -->
@@ -1099,7 +1096,7 @@
             <tr>
               <td style="padding: 0.55rem 0.8rem; border-bottom: 1px solid var(--border-soft); vertical-align: top;"><strong>Stale certifications</strong></td>
               <td style="padding: 0.55rem 0.8rem; border-bottom: 1px solid var(--border-soft); vertical-align: top;">A morph commit had a <code>kind: "certification"</code> annotation, then <code>git rebase</code>/<code>amend</code> rewrote the underlying git SHA. The certification now describes superseded code.</td>
-              <td style="padding: 0.55rem 0.8rem; border-bottom: 1px solid var(--border-soft); vertical-align: top;"><code>morph status</code>; <code>morph eval gaps</code> as <code>kind: "stale_certifications"</code> (since 0.37.3)</td>
+              <td style="padding: 0.55rem 0.8rem; border-bottom: 1px solid var(--border-soft); vertical-align: top;"><code>morph status</code>; <code>morph eval gaps</code> as <code>kind: "stale_certifications"</code></td>
             </tr>
             <tr>
               <td style="padding: 0.55rem 0.8rem; border-bottom: 1px solid var(--border-soft); vertical-align: top;"><strong>Uncertified git-hook commits</strong></td>
@@ -1183,6 +1180,31 @@
           shows the <code>git_origin_sha</code> so you can cross-reference back to
           GitHub.
         </p>
+        <div class="callout">
+          <strong>Two niceties on agent-attached commits</strong> in v0.42 and
+          later, both visible on the resulting <code>morph show &lt;commit&gt;</code>:
+          <ul style="margin-top: 0.55rem; margin-bottom: 0;">
+            <li>
+              <code>morph commit --from-run &lt;run&gt;</code> folds the human
+              author into <code>commit.contributors</code> alongside the agent.
+              You'll see <code>{ "id": "...", "role": "human-author" }</code>
+              next to <code>{ "id": "claude-opus-4", "role": "primary" }</code>
+              &mdash; downstream tooling that filters
+              <code>contributors[?role=='human-author']</code> can find every
+              commit a person had a hand in, even when the agent did most of
+              the typing.
+            </li>
+            <li>
+              <code>morph commit</code> auto-detects new acceptance cases by
+              diffing the registered eval suite against the parent's, so you
+              don't need to hand-pass <code>--new-cases foo:bar,foo:baz</code>
+              every time you add YAML cases to <code>.morph/evals/</code>.
+              The resulting <code>kind: "introduces_cases"</code> annotation
+              is what <code>morph merge</code> reads when it builds the
+              "introduced on this branch" column of its plan.
+            </li>
+          </ul>
+        </div>
       </section>
 
       <!-- 11 -->

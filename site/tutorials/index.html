@@ -263,8 +263,11 @@
     <h1>Hands-on walkthroughs of Morph</h1>
     <p>
       Three short tutorials that take you from an empty directory to a fully
-      tracked, eval-gated project — covering the parts of Morph that don't
-      exist in Git: runs, traces, behavioral commits, and merge by dominance.
+      tracked, eval-gated project &mdash; covering the parts of Morph that
+      don't exist in Git: runs, traces, behavioral commits, and merge by
+      dominance. Morph runs in <em>reference mode</em> in every tutorial:
+      Git stays the source of truth, Morph rides on top, and your team's
+      workflow is unchanged.
     </p>
   </section>
 
@@ -275,13 +278,15 @@
       <div>
         <h2>Start a new project with Morph</h2>
         <p>
-          From <code>morph init</code> through metric-bearing commits, an agent session
-          recorded as a Trace, and a clean revert — all without Git in the picture.
-          The fastest way to feel the whole loop.
+          From <code>git init -b main</code> and <code>morph init</code> through
+          metric-bearing commits, an agent session recorded as a Trace, and a
+          clean revert. Morph rides on top of a fresh git repo &mdash; minimal
+          Git ceremony, full behavioral evidence. The fastest way to feel the
+          whole loop.
         </p>
         <div class="tags">
           <span class="tag">~20 min</span>
-          <span class="tag">Morph only</span>
+          <span class="tag">Reference mode</span>
           <span class="tag">Python · pytest</span>
           <span class="tag">Intro</span>
         </div>

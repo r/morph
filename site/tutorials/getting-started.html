@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Start a new project with Morph (no Git) — Tutorial</title>
-  <meta name="description" content="A 20-minute walkthrough that takes you from an empty directory to a Morph repo with metric-bearing commits, a recorded agent session, and a clean revert — using only Morph, no Git.">
+  <title>Start a new project with Morph — Tutorial</title>
+  <meta name="description" content="A 20-minute walkthrough that takes you from an empty directory to a Morph + Git repo with metric-bearing commits, a recorded agent session, and a clean revert. Morph rides on top of a fresh git repository — minimal Git ceremony, full Morph behavioral evidence.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -520,7 +520,7 @@
       </p>
       <div class="meta">
         <span><strong>Time:</strong> ~20 min</span>
-        <span><strong>Mode:</strong> Morph only (no Git)</span>
+        <span><strong>Mode:</strong> Reference (Morph + Git)</span>
         <span><strong>Stack:</strong> Python 3 · pytest · Cursor</span>
         <span><strong>Difficulty:</strong> Intro</span>
       </div>
@@ -529,24 +529,32 @@
       <section id="prereqs">
         <h2><span class="step-num">01</span>Before you start</h2>
         <p>
-          This tutorial sets up a Morph project <em>without Git</em>. Morph is a
-          full version control system on its own — content-addressed object store,
-          branches, merges, the lot — and the cleanest way to learn it is in a
-          repo where it's the only thing tracking your code. If you'd rather add
-          Morph to a project you already manage in Git,
-          <a href="./adding-to-git-project.html">jump to Tutorial 2</a> instead.
+          Morph is a behavioral version control system that <em>rides on top of
+          Git</em>. Every <code>git commit</code> on this project will be
+          mirrored into a Morph commit automatically; on top of that Git
+          backbone, Morph layers the things Git can't represent &mdash;
+          <strong>runs</strong>, <strong>traces</strong>, and
+          <strong>behavioral commits</strong>. So the tutorial starts with a
+          one-line <code>git init</code> and never asks you to think about Git
+          again. The interesting work all happens through <code>morph</code>.
+        </p>
+        <p>
+          If you already have a Git project with history and teammates and want
+          to layer Morph on top of <em>that</em>, the right path is
+          <a href="./adding-to-git-project.html">Tutorial 2</a>.
         </p>
         <p>You'll need four things on your machine before you start:</p>
         <ul>
-          <li><code>morph</code> and <code>morph-mcp</code> on your <code>PATH</code> — see <a href="https://github.com/r/morph/blob/main/docs/INSTALLATION.md">installation</a>.</li>
+          <li><code>morph</code> and <code>morph-mcp</code> on your <code>PATH</code> &mdash; see <a href="https://github.com/r/morph/blob/main/docs/INSTALLATION.md">installation</a>.</li>
+          <li><strong>Git</strong> 2.28 or later (for <code>git init -b main</code> support) and a configured identity. <code>git config --global user.name &amp;&amp; git config --global user.email</code> should each print something. If they don't, set them with <code>git config --global user.name "Your Name"</code> and <code>git config --global user.email "you@example.com"</code> &mdash; Morph mirrors every commit through <code>git commit</code>, which refuses without an identity.</li>
           <li><strong>Python 3</strong> with <code>pytest</code> available (<code>python3 -m pip install --user pytest</code>).</li>
-          <li><strong>Cursor</strong>, <strong>Claude Code</strong>, or <strong>OpenCode</strong> — the agent step is the whole point of recording, so we treat the IDE as a real prerequisite. The screenshots and commands here use Cursor; the others differ only in <code>morph setup &lt;ide&gt;</code>.</li>
+          <li><strong>Cursor</strong>, <strong>Claude Code</strong>, or <strong>OpenCode</strong> &mdash; the agent step is the whole point of recording, so we treat the IDE as a real prerequisite. The screenshots and commands here use Cursor; the others differ only in <code>morph setup &lt;ide&gt;</code>.</li>
           <li>A free directory to scribble in. We'll use <code>~/morph-tutorial</code>.</li>
         </ul>
         <div class="callout">
           <strong>Verify your install:</strong>
-          <code>morph --version</code> should print something like <code>morph 0.37.0 (built …)</code>.
-          If it doesn't, fix that before going further — the rest of the tutorial assumes the binary is on your <code>PATH</code>.
+          <code>morph --version</code> should print something like <code>morph 0.42.2 (built …)</code>.
+          If it doesn't, fix that before going further &mdash; the rest of the tutorial assumes the binary is on your <code>PATH</code>.
         </div>
       </section>
 
@@ -558,7 +566,27 @@
           interesting enough to write tests against. A currency converter
           works: a function and three tests, one Python file each.
         </p>
-<div class="cli-block"><span class="prompt">$ </span><span class="cmd">mkdir morph-tutorial &amp;&amp; <span class="kw">cd</span> morph-tutorial</span></div>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">mkdir morph-tutorial &amp;&amp; <span class="kw">cd</span> morph-tutorial</span>
+<span class="prompt">$ </span><span class="cmd">git init <span class="flag">-b</span> main <span class="flag">-q</span></span></div>
+        <p>
+          That's the only Git command in the tutorial. <code>-b main</code>
+          pins the initial branch to <code>main</code> so it matches Morph's
+          contract regardless of your host's <code>init.defaultBranch</code>
+          setting. From here on, every Git operation will happen for you:
+          <code>morph commit</code> wraps <code>git commit</code>,
+          <code>morph add</code> wraps <code>git add</code>, and the four
+          hooks Morph installs in the next step keep the two histories in
+          lockstep.
+        </p>
+        <div class="callout">
+          <strong>If you forget the <code>git init</code>:</strong>
+          <code>morph init</code> will detect there's no <code>.git/</code>
+          and prompt <em>"morph requires a git repository here. Run
+          `git init` for you? [y/N]"</em>. Answering yes is equivalent to
+          running <code>git init -b main</code> yourself, or you can pass
+          <code>morph init --git-init</code> for the same shortcut without
+          the prompt.
+        </div>
         <p>Create <code>converter.py</code>:</p>
 <div class="cli-block"><span class="comment"># converter.py</span>
 <span class="kw">RATES</span> = {
@@ -604,9 +632,22 @@
           Now turn this directory into a Morph repo:
         </p>
 <div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph init</span>
-<span class="out-good">Initialized empty Morph repository in /Users/you/morph-tutorial/.morph/</span></div>
+<span class="out-good">Initialized empty Morph repository in /Users/you/morph-tutorial/.morph/</span>
+<span class="out">  bound to empty git repository (no commits yet)</span>
+<span class="out">  installed 4 git hook(s) at .git/hooks/ (4 present, 0 already up to date)</span>
+<span class="out">  morph state is local to this clone (.morph/ added to .git/info/exclude)</span>
+<span class="out">  teammates not using morph are unaffected — your git workflow is unchanged</span></div>
         <p>
-          The <code>.morph/</code> directory is the moral equivalent of <code>.git/</code> — a
+          Four lines worth reading carefully:
+        </p>
+        <ul>
+          <li><strong>"bound to empty git repository"</strong> &mdash; Morph noticed the <code>.git/</code> you just created and snapshotted it as the starting point. With a non-empty repo it would say <em>"bound to git HEAD &lt;sha&gt;"</em>.</li>
+          <li><strong>"installed 4 git hook(s)"</strong> &mdash; <code>post-commit</code>, <code>post-checkout</code>, <code>post-merge</code>, <code>post-rewrite</code>. Each is a tiny shell stub that calls <code>morph hook &lt;event&gt;</code> and exits zero whatever happens, so a broken Morph never blocks a Git commit.</li>
+          <li><strong>".morph/ added to .git/info/exclude"</strong> &mdash; local-only. <code>git status</code> won't see <code>.morph/</code>, even with no <code>.gitignore</code> change. Morph state never travels through Git.</li>
+          <li><strong>"teammates not using morph are unaffected"</strong> &mdash; you'll only feel this in Tutorial 2 (where there <em>are</em> teammates), but it's the same setup for both.</li>
+        </ul>
+        <p>
+          The <code>.morph/</code> directory is the moral equivalent of <code>.git/</code> &mdash; a
           content-addressed Merkle DAG of objects, plus refs, config, and (this is
           where it diverges from Git) folders for <code>runs/</code>, <code>traces/</code>, <code>prompts/</code>,
           and <code>evals/</code>. Those are the things Git can't represent.
@@ -614,27 +655,42 @@
 <div class="cli-block"><span class="prompt">$ </span><span class="cmd">ls .morph/</span>
 <span class="out">config.json    evals/    objects/    prompts/    refs/    runs/    traces/</span></div>
         <p>
-          Now look at the policy that <code>morph init</code> just installed for you. This is
-          the most opinionated thing Morph does, and it's better to meet it head-on than
-          to be surprised by it later.
+          Now look at the default policy. This is the most opinionated thing Morph
+          does, and it's better to meet it head-on than to be surprised by it
+          later:
         </p>
 <div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph policy show</span>
 <span class="out">{</span>
-<span class="out">  </span><span class="kw">"required_metrics"</span><span class="out">: [</span>
-<span class="out">    </span><span class="str">"tests_total"</span><span class="out">,</span>
-<span class="out">    </span><span class="str">"tests_passed"</span>
-<span class="out">  ],</span>
+<span class="out">  </span><span class="kw">"required_metrics"</span><span class="out">: [],</span>
 <span class="out">  </span><span class="kw">"merge_policy"</span><span class="out">: </span><span class="str">"dominance"</span><span class="out">,</span>
+<span class="out">  </span><span class="kw">"exempt_origins"</span><span class="out">: [</span><span class="str">"git-hook"</span><span class="out">],</span>
 <span class="out">  …</span>
 <span class="out">}</span></div>
         <p>
-          Translation: <em>every commit on this repo must arrive carrying
-          <code>tests_total</code> and <code>tests_passed</code> as evidence</em>, and merges will be
-          gated on dominance — the merged code has to be at least as good as both
-          parents on every declared metric. You can relax this with
-          <code>morph policy require-metrics</code> (pass no names to disable the gate
-          entirely), but the default is "you don't ship code without proof it works."
-          We're going to honor it.
+          The default <code>required_metrics</code> is empty &mdash; Morph rides on
+          top of Git, and <em>every</em> <code>git commit</code> automatically
+          mirrors into a Morph commit through the post-commit hook. If the
+          policy required metrics on every mirror, every plain
+          <code>git commit</code> would fail. The <code>exempt_origins:
+          ["git-hook"]</code> carve-out is the explicit way to say "passive
+          mirrors don't have to carry evidence; only commits I make through
+          <code>morph commit</code> do."
+        </p>
+        <p>
+          For the rest of this tutorial we want the gate. Tell Morph to require
+          test evidence on every <code>morph commit</code>:
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph policy require-metrics tests_total tests_passed</span>
+<span class="out-good">required_metrics = [tests_total, tests_passed]</span></div>
+        <p>
+          That's the project's promise to itself: <em>every commit must arrive
+          carrying <code>tests_total</code> and <code>tests_passed</code> as
+          evidence</em>, and merges will be gated on dominance &mdash; the
+          merged code has to be at least as good as both parents on every
+          declared metric. You can relax it later with
+          <code>morph policy require-metrics</code> (pass no names to disable
+          the gate entirely), but the default once you've turned it on is
+          "you don't ship code without proof it works." We're going to honor it.
         </p>
       </section>
 
@@ -649,16 +705,15 @@
 
 <span class="prompt">$ </span><span class="cmd">morph commit <span class="flag">-m</span> <span class="str">"scaffold currency converter"</span></span>
 <span class="out-bad">Error: policy requires metrics that are missing: [tests_total, tests_passed]. Pass --metrics</span>
-<span class="out-bad">with these keys, run `morph eval record`, or override with --allow-empty-metrics.</span>
-<span class="out-bad">(Configured in .morph/config.json under policy.required_metrics.)</span></div>
+<span class="out-bad">with these keys, run `morph eval record`, or override with --allow-empty-metrics.</span></div>
         <p>
-          That's the policy biting us. The error tells you exactly what to do — there
-          are three real ways out:
+          That's the policy you just turned on biting us. The error tells you
+          exactly what to do &mdash; there are three real ways out:
         </p>
         <ol>
-          <li><code>--metrics '{"tests_passed": 3, "tests_total": 3}'</code> — supply them by hand.</li>
+          <li><code>--metrics '{"tests_passed": 3, "tests_total": 3}'</code> &mdash; supply them by hand.</li>
           <li>Run the test suite under Morph (we'll do this in step 8) so the metrics flow in automatically.</li>
-          <li><code>--allow-empty-metrics</code> — the audited escape hatch. The commit still gets recorded, just without behavioral evidence.</li>
+          <li><code>--allow-empty-metrics</code> &mdash; the audited escape hatch. The commit still gets recorded, just without behavioral evidence.</li>
         </ol>
         <p>
           For a scaffold commit, <strong>option 3 is the right call</strong>: there's nothing
@@ -668,16 +723,26 @@
 <div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph commit <span class="flag">-m</span> <span class="str">"scaffold currency converter"</span> <span class="flag">--allow-empty-metrics</span></span>
 <span class="out-warn">warning: commit has no observed_metrics. Morph cannot enforce behavioral merge gating</span>
 <span class="out-warn">without evidence. Pass --metrics, run `morph eval record` / `morph eval run`, …</span>
-<span class="out-good">[main (root-commit) f7077862] scaffold currency converter</span>
-<span class="out"> 2 files committed</span>
+<span class="out-good">[f7077862 (cli)] scaffold currency converter</span>
+<span class="out">  git: a92430d4f0c9</span>
 
 <span class="prompt">$ </span><span class="cmd">morph log <span class="flag">--oneline</span></span>
 <span class="out">f7077862  scaffold currency converter</span></div>
+        <p>
+          Two things just happened in one step: <code>morph commit</code> shelled
+          out to <code>git commit</code> (that's the <code>git: a92430d4f0c9</code>
+          line &mdash; Git's hash for the same change), then mirrored the new Git
+          commit into a Morph commit (<code>f7077862</code>) tagged
+          <code>(cli)</code> to distinguish it from the passive
+          <code>(git-hook)</code> mirrors that ride along plain
+          <code>git commit</code>. <code>git log</code> and <code>morph log</code>
+          stay in lockstep from here.
+        </p>
         <div class="callout">
           <strong>About <code>morph status</code>:</strong>
           if you run <code>morph status</code> after a <code>morph add</code>, you'll still see your
           files listed under "Changes not staged for commit." That's a label
-          quirk — Morph's status compares the working tree to <code>HEAD</code>, not to the
+          quirk &mdash; Morph's status compares the working tree to <code>HEAD</code>, not to the
           staging area, so the section header is misleading. Your files <em>are</em>
           staged. The next <code>morph commit</code> will pick them up.
         </div>
@@ -739,7 +804,7 @@
       <section id="eval-run">
         <h2><span class="step-num">07</span>Capture metrics with <code>morph eval run</code></h2>
         <p>
-          Your test runner already produces the numbers Morph's policy wants —
+          Your test runner already produces the numbers Morph's policy wants &mdash;
           pass / fail counts, totals, pass rate. <code>morph eval run</code> is just a
           wrapper around any test command: it shells out, captures stdout, parses
           it (cargo, pytest, vitest, jest, and go are auto-detected), and writes a
@@ -748,7 +813,18 @@
           <code>.morph/LAST_RUN.json</code> breadcrumb that the next <code>morph commit</code>
           knows to pick up.
         </p>
-<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph eval run -- python3 -m pytest</span>
+        <p>
+          One ordering detail matters: <strong>stage first, then run the
+          eval</strong>. The breadcrumb captures the staging-index fingerprint at
+          the moment <code>morph eval run</code> finishes, and the next
+          <code>morph commit</code> only auto-attaches if that fingerprint is
+          still fresh &mdash; so any edit between the run and the commit
+          invalidates the breadcrumb.
+        </p>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph add .</span>
+<span class="out-good">1 file staged</span>
+
+<span class="prompt">$ </span><span class="cmd">morph eval run -- python3 -m pytest</span>
 <span class="out">dff09ec109d469274644f4212f71d0d9c359a429315e6d80c2c833a21f773104</span></div>
         <p>
           That hash is the new run. You can inspect it directly:
@@ -806,21 +882,19 @@
       <section id="commit-with-evidence">
         <h2><span class="step-num">08</span>Commit with evidence</h2>
         <p>
-          Now stage the docstring change and commit. <strong>You don't need
-          <code>--from-run</code> or <code>--metrics</code></strong> — Morph notices the fresh
-          <code>LAST_RUN</code> breadcrumb left by <code>morph eval run</code> and attaches
-          its metrics to the commit automatically:
+          The change is staged, the run is recorded, the breadcrumb is fresh.
+          Now commit. <strong>You don't need <code>--from-run</code> or
+          <code>--metrics</code></strong> &mdash; Morph notices the
+          <code>LAST_RUN</code> breadcrumb left by <code>morph eval run</code> and
+          attaches its metrics to the commit automatically:
         </p>
-<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph add .</span>
-<span class="out-good">1 file staged</span>
-
-<span class="prompt">$ </span><span class="cmd">morph commit <span class="flag">-m</span> <span class="str">"add a docstring to convert()"</span></span>
+<div class="cli-block"><span class="prompt">$ </span><span class="cmd">morph commit <span class="flag">-m</span> <span class="str">"add a docstring to convert()"</span></span>
 <span class="out-good">attaching evidence from run dff09ec1: pass_rate=1, tests_failed=0, tests_passed=3, tests_total=3</span>
-<span class="out-good">[main 00d89f7a] add a docstring to convert()</span>
-<span class="out"> 1 file committed</span></div>
+<span class="out-good">[00d89f7a (cli)] add a docstring to convert()</span>
+<span class="out">  git: e44e54801333</span></div>
         <p>
           That "<code>attaching evidence from run …</code>" line is the moment of payoff.
-          The commit you just made is no longer a snapshot — it's a snapshot
+          The commit you just made is no longer a snapshot &mdash; it's a snapshot
           <em>plus</em> a behavioral claim, with the run that produced it linked as
           evidence.
         </p>
@@ -834,6 +908,10 @@
 <span class="out">  "type": "commit",</span>
 <span class="out">  "tree": "19d1190e…",</span>
 <span class="out">  "message": "add a docstring to convert()",</span>
+<span class="out">  "contributors": [</span>
+<span class="out">    { "id": "you &lt;you@example.com&gt;", "role": "human-author" },</span>
+<span class="out">    { "id": "morph-eval-run",         "role": "primary"      }</span>
+<span class="out">  ],</span>
 <span class="out">  "eval_contract": {</span>
 <span class="out">    "suite": "5abb5131…",</span>
 <span class="out">    "observed_metrics": {</span>
@@ -847,14 +925,29 @@
 <span class="out">    "dff09ec1…",</span>
 <span class="out">    "9cd62067…"</span>
 <span class="out">  ],</span>
+<span class="out">  "morph_origin": </span><span class="str">"cli"</span><span class="out">,</span>
+<span class="out">  "git_origin_sha": </span><span class="str">"e44e54801333…"</span><span class="out">,</span>
 <span class="out">  …</span>
 <span class="out">}</span></div>
         <p>
-          The <code>eval_contract</code> field is the part Git can't represent.
-          <code>evidence_refs</code> point back to the runs that justify the metrics.
-          That's a behavioral commit. (The <code>suite</code> hash
-          <code>5abb5131…</code> is Morph's canonical empty-suite hash — it's the
-          stand-in until you register a real one in Tutorial 3.)
+          Three new fields, all things Git can't represent.
+          <code>eval_contract</code> carries the behavioral claim and the suite
+          it was evaluated against. <code>contributors</code> distinguishes the
+          human (<code>role: "human-author"</code>) from the
+          <code>morph-eval-run</code> agent that produced the metrics
+          (<code>role: "primary"</code>) &mdash; if you'd used <code>--from-run</code>
+          with a recorded agent session instead, the agent would land there
+          alongside you. <code>evidence_refs</code> point back to the runs that
+          justify the metrics.
+        </p>
+        <p>
+          The <code>git_origin_sha</code> matches the <code>git: e44e54801333</code>
+          line from the commit output &mdash; that's the bridge between the two
+          histories. <code>morph_origin: "cli"</code> distinguishes this from
+          passive <code>git-hook</code> mirrors that ride along plain
+          <code>git commit</code>. The <code>suite</code> hash
+          <code>5abb5131…</code> is Morph's canonical empty-suite hash &mdash; it's
+          the stand-in until you register a real one in Tutorial 3.
         </p>
       </section>
 
@@ -965,10 +1058,10 @@
 <span class="prompt">$ </span><span class="cmd">morph eval run -- python3 -m pytest</span>
 <span class="out">32eef028…</span>
 
-<span class="prompt">$ </span><span class="cmd">morph commit <span class="flag">-m</span> <span class="str">"add GBP support"</span></span>
+<span class="prompt">$ </span><span class="cmd">morph commit <span class="flag">-m</span> <span class="str">"add GBP support"</span> <span class="flag">--from-run</span> 32eef028</span>
 <span class="out-good">attaching evidence from run 32eef028: pass_rate=1, tests_failed=0, tests_passed=4, tests_total=4</span>
-<span class="out-good">[main 526f83ca] add GBP support</span>
-<span class="out"> 2 files committed</span>
+<span class="out-good">[526f83ca (cli)] add GBP support</span>
+<span class="out">  git: 18c3a0f97a2b</span>
 
 <span class="prompt">$ </span><span class="cmd">morph log <span class="flag">--oneline</span></span>
 <span class="out">526f83ca  add GBP support</span>
@@ -979,6 +1072,19 @@
           Trace attached as evidence. <code>morph log --json</code> will show you the
           metrics inline if you want to verify.
         </p>
+        <div class="callout">
+          <strong>Why <code>--from-run</code> here?</strong> The auto-attach
+          breadcrumb from §08 only fires when the staging-index fingerprint
+          hasn't moved since the run was recorded. The agent's tool calls
+          mutated files outside the standard "stage, then run" rhythm
+          (it edited <em>and</em> ran pytest from inside its turn), so
+          we record a fresh run and pass it explicitly. <code>--from-run
+          &lt;hash&gt;</code> is the always-works form &mdash; the run gets
+          attached to the commit and lands in <code>commit.contributors</code>
+          alongside you (with <code>role: "primary"</code> for the agent and
+          <code>role: "human-author"</code> for you). The auto-attach in §08
+          is just a convenience for the simple case.
+        </div>
       </section>
 
       <!-- 11 -->
@@ -999,7 +1105,8 @@
 
 <span class="prompt">$ </span><span class="cmd">morph commit <span class="flag">-m</span> <span class="str">"tweak EUR rate"</span></span>
 <span class="out-warn">attaching evidence from run 3b8f00c1: pass_rate=0.5, tests_failed=2, tests_passed=2, tests_total=4</span>
-<span class="out-good">[main 887b835d] tweak EUR rate</span></div>
+<span class="out-good">[887b835d (cli)] tweak EUR rate</span>
+<span class="out">  git: c0d4e8f1ab3c</span></div>
         <p>
           The commit succeeded — Morph's policy requires evidence, not <em>good</em>
           evidence. The bad commit is recorded with its real metrics, exactly as it
