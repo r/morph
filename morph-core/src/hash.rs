@@ -59,8 +59,8 @@ impl Hash {
     /// `map_err(|_| MorphError::InvalidHash(s.into()))` to swap out
     /// the underlying hex parser's complaint can just use `?`.
     pub fn from_hex(s: &str) -> Result<Self, crate::store::MorphError> {
-        let bytes = hex::decode(s)
-            .map_err(|_| crate::store::MorphError::InvalidHash(s.to_string()))?;
+        let bytes =
+            hex::decode(s).map_err(|_| crate::store::MorphError::InvalidHash(s.to_string()))?;
         let arr: [u8; 32] = bytes
             .try_into()
             .map_err(|_| crate::store::MorphError::InvalidHash(s.to_string()))?;
@@ -101,7 +101,9 @@ pub fn content_hash(obj: &crate::objects::MorphObject) -> Result<Hash, crate::st
 /// Compute Git-format content hash for a Morph object (0.2 format).
 /// Hash = SHA-256 of "blob " + decimal_len + "\0" + canonical_json.
 /// This matches the hash gix produces when writing a blob.
-pub fn content_hash_git(obj: &crate::objects::MorphObject) -> Result<Hash, crate::store::MorphError> {
+pub fn content_hash_git(
+    obj: &crate::objects::MorphObject,
+) -> Result<Hash, crate::store::MorphError> {
     let json = canonical_json(obj)?;
     let bytes = json.as_bytes();
     let header = format!("blob {}\0", bytes.len());
@@ -117,7 +119,9 @@ pub fn content_hash_git(obj: &crate::objects::MorphObject) -> Result<Hash, crate
 /// Serialize to canonical JSON (deterministic, for hashing). Uses compact form.
 /// All map-typed fields in MorphObject use BTreeMap, which iterates in sorted key order,
 /// so serde_json::to_string produces deterministic output directly.
-pub fn canonical_json(obj: &crate::objects::MorphObject) -> Result<String, crate::store::MorphError> {
+pub fn canonical_json(
+    obj: &crate::objects::MorphObject,
+) -> Result<String, crate::store::MorphError> {
     serde_json::to_string(obj).map_err(|e| crate::store::MorphError::Serialization(e.to_string()))
 }
 
@@ -214,7 +218,10 @@ mod tests {
         let parsed: MorphObject = serde_json::from_str(&json).unwrap();
         assert_eq!(content_hash(&run).unwrap(), content_hash(&parsed).unwrap());
         if let MorphObject::Run(r) = &parsed {
-            assert_eq!(r.agent.instance_id.as_deref(), Some("550e8400-e29b-41d4-a716-446655440000"));
+            assert_eq!(
+                r.agent.instance_id.as_deref(),
+                Some("550e8400-e29b-41d4-a716-446655440000")
+            );
         } else {
             panic!("expected Run");
         }
@@ -307,12 +314,15 @@ mod tests {
     #[test]
     fn attribution_entry_instance_id_roundtrip() {
         let mut attribution = std::collections::BTreeMap::new();
-        attribution.insert("node1".to_string(), AttributionEntry {
-            agent_id: "agent-x".into(),
-            agent_version: Some("3.0".into()),
-            instance_id: Some("inst-xyz".into()),
-            actors: None,
-        });
+        attribution.insert(
+            "node1".to_string(),
+            AttributionEntry {
+                agent_id: "agent-x".into(),
+                agent_version: Some("3.0".into()),
+                instance_id: Some("inst-xyz".into()),
+                actors: None,
+            },
+        );
         let prog = MorphObject::Pipeline(Pipeline {
             graph: PipelineGraph {
                 nodes: vec![PipelineNode {
@@ -402,23 +412,26 @@ mod tests {
     #[test]
     fn attribution_actors_set_roundtrip() {
         let mut attribution = std::collections::BTreeMap::new();
-        attribution.insert("review-node".to_string(), AttributionEntry {
-            agent_id: "agent-1".into(),
-            agent_version: None,
-            instance_id: None,
-            actors: Some(vec![
-                ActorRef {
-                    id: "agent-1".into(),
-                    actor_type: "agent".into(),
-                    env_config: None,
-                },
-                ActorRef {
-                    id: "human-1".into(),
-                    actor_type: "human".into(),
-                    env_config: None,
-                },
-            ]),
-        });
+        attribution.insert(
+            "review-node".to_string(),
+            AttributionEntry {
+                agent_id: "agent-1".into(),
+                agent_version: None,
+                instance_id: None,
+                actors: Some(vec![
+                    ActorRef {
+                        id: "agent-1".into(),
+                        actor_type: "agent".into(),
+                        env_config: None,
+                    },
+                    ActorRef {
+                        id: "human-1".into(),
+                        actor_type: "human".into(),
+                        env_config: None,
+                    },
+                ]),
+            },
+        );
         let prog = MorphObject::Pipeline(Pipeline {
             graph: PipelineGraph {
                 nodes: vec![PipelineNode {
@@ -438,8 +451,15 @@ mod tests {
         let json = canonical_json(&prog).unwrap();
         let parsed: MorphObject = serde_json::from_str(&json).unwrap();
         if let MorphObject::Pipeline(p) = &parsed {
-            let actors = p.attribution.as_ref().unwrap().get("review-node").unwrap()
-                .actors.as_ref().unwrap();
+            let actors = p
+                .attribution
+                .as_ref()
+                .unwrap()
+                .get("review-node")
+                .unwrap()
+                .actors
+                .as_ref()
+                .unwrap();
             assert_eq!(actors.len(), 2);
             assert_eq!(actors[0].id, "agent-1");
             assert_eq!(actors[1].actor_type, "human");
@@ -469,7 +489,10 @@ mod tests {
         });
         let h_legacy = content_hash(&blob).unwrap();
         let h_git = content_hash_git(&blob).unwrap();
-        assert_ne!(h_legacy, h_git, "Git format includes blob header so hashes differ");
+        assert_ne!(
+            h_legacy, h_git,
+            "Git format includes blob header so hashes differ"
+        );
     }
 
     #[test]
@@ -480,6 +503,9 @@ mod tests {
         });
         let json = canonical_json(&blob).unwrap();
         let parsed: MorphObject = serde_json::from_str(&json).unwrap();
-        assert_eq!(content_hash_git(&blob).unwrap(), content_hash_git(&parsed).unwrap());
+        assert_eq!(
+            content_hash_git(&blob).unwrap(),
+            content_hash_git(&parsed).unwrap()
+        );
     }
 }

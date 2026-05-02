@@ -149,8 +149,8 @@ pub fn write_policy(morph_dir: &Path, policy: &RepoPolicy) -> Result<(), MorphEr
         .ok_or_else(|| MorphError::Serialization("config.json is not an object".into()))?
         .insert(POLICY_KEY.to_string(), policy_value);
 
-    let pretty =
-        serde_json::to_string_pretty(&config).map_err(|e| MorphError::Serialization(e.to_string()))?;
+    let pretty = serde_json::to_string_pretty(&config)
+        .map_err(|e| MorphError::Serialization(e.to_string()))?;
     std::fs::write(&config_path, pretty)?;
     Ok(())
 }
@@ -234,15 +234,18 @@ pub fn certify_commit(
         "metrics".to_string(),
         serde_json::to_value(metrics).unwrap_or_default(),
     );
-    ann_data.insert(
-        "passed".to_string(),
-        serde_json::Value::Bool(passed),
-    );
+    ann_data.insert("passed".to_string(), serde_json::Value::Bool(passed));
     if let Some(r) = runner {
-        ann_data.insert("runner".to_string(), serde_json::Value::String(r.to_string()));
+        ann_data.insert(
+            "runner".to_string(),
+            serde_json::Value::String(r.to_string()),
+        );
     }
     if let Some(es) = eval_suite {
-        ann_data.insert("eval_suite".to_string(), serde_json::Value::String(es.to_string()));
+        ann_data.insert(
+            "eval_suite".to_string(),
+            serde_json::Value::String(es.to_string()),
+        );
     }
 
     let ann = crate::annotate::create_annotation(
@@ -352,9 +355,7 @@ fn latest_certification_metrics(
     });
     let (_, latest) = annotations.last().expect("non-empty after retain");
     if let Some(metrics_val) = latest.data.get("metrics") {
-        if let Ok(metrics) =
-            serde_json::from_value::<BTreeMap<String, f64>>(metrics_val.clone())
-        {
+        if let Ok(metrics) = serde_json::from_value::<BTreeMap<String, f64>>(metrics_val.clone()) {
             return Ok(Some(metrics));
         }
     }
@@ -426,7 +427,9 @@ pub fn gate_check(
     }
 
     if !has_passing_certification(store, commit_hash)? {
-        reasons.push("commit is not certified (no passing certification annotation found)".to_string());
+        reasons.push(
+            "commit is not certified (no passing certification annotation found)".to_string(),
+        );
     }
 
     let passed = reasons.is_empty();
@@ -438,10 +441,7 @@ pub fn gate_check(
 }
 
 /// Check whether a commit has at least one passing certification annotation.
-fn has_passing_certification(
-    store: &dyn Store,
-    commit_hash: &Hash,
-) -> Result<bool, MorphError> {
+fn has_passing_certification(store: &dyn Store, commit_hash: &Hash) -> Result<bool, MorphError> {
     let annotations = crate::annotate::list_annotations(store, commit_hash, None)?;
     for (_hash, ann) in &annotations {
         if ann.kind == "certification" {
@@ -578,13 +578,25 @@ mod tests {
         (dir, store)
     }
 
-    fn make_commit(store: &dyn Store, dir: &tempfile::TempDir, metrics: BTreeMap<String, f64>) -> Hash {
+    fn make_commit(
+        store: &dyn Store,
+        dir: &tempfile::TempDir,
+        metrics: BTreeMap<String, f64>,
+    ) -> Hash {
         let root = dir.path();
         std::fs::write(root.join("f.txt"), "data").unwrap();
         crate::add_paths(store, root, &[std::path::PathBuf::from(".")]).unwrap();
         crate::create_tree_commit(
-            store, root, None, None, metrics, "test commit".into(), None, Some("0.3"),
-        ).unwrap()
+            store,
+            root,
+            None,
+            None,
+            metrics,
+            "test commit".into(),
+            None,
+            Some("0.3"),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -601,7 +613,10 @@ mod tests {
         let mut observed = BTreeMap::new();
         observed.insert("tests_total".into(), 10.0);
         let missing = missing_required_metrics(&policy, &observed);
-        assert_eq!(missing, vec!["tests_passed".to_string(), "pass_rate".to_string()]);
+        assert_eq!(
+            missing,
+            vec!["tests_passed".to_string(), "pass_rate".to_string()]
+        );
 
         observed.insert("tests_passed".into(), 10.0);
         observed.insert("pass_rate".into(), 1.0);
@@ -803,10 +818,7 @@ mod tests {
         assert!(branch_matches_pattern("release/v1.0", "release/*"));
         assert!(branch_matches_pattern("release/v2.5.1", "release/*"));
         assert!(!branch_matches_pattern("release", "release/*"));
-        assert!(!branch_matches_pattern(
-            "release/v1/hotfix",
-            "release/*"
-        ));
+        assert!(!branch_matches_pattern("release/v1/hotfix", "release/*"));
         // Top-level star matches any branch with no slashes.
         assert!(branch_matches_pattern("main", "*"));
         assert!(branch_matches_pattern("dev", "*"));
@@ -823,20 +835,11 @@ mod tests {
 
     #[test]
     fn branch_matches_pattern_combinations() {
-        assert!(branch_matches_pattern(
-            "release/v1.0-rc1",
-            "release/v?.*"
-        ));
-        assert!(!branch_matches_pattern(
-            "release/v.0-rc1",
-            "release/v?.*"
-        ));
+        assert!(branch_matches_pattern("release/v1.0-rc1", "release/v?.*"));
+        assert!(!branch_matches_pattern("release/v.0-rc1", "release/v?.*"));
         // Multiple stars in one segment.
         assert!(branch_matches_pattern("hotfix-prod-2026", "hotfix-*-*"));
-        assert!(!branch_matches_pattern(
-            "hotfix-prod/2026",
-            "hotfix-*-*"
-        ));
+        assert!(!branch_matches_pattern("hotfix-prod/2026", "hotfix-*-*"));
     }
 
     #[test]
@@ -868,25 +871,15 @@ mod tests {
         metrics.insert("other".into(), 0.9);
         let h = make_commit(store.as_ref(), &dir, metrics);
 
-        let err = enforce_push_gate(
-            store.as_ref(),
-            &morph_dir,
-            "heads/release/v1.0",
-            &h,
-        )
-        .expect_err("release/v1.0 must be gated by `release/*`");
+        let err = enforce_push_gate(store.as_ref(), &morph_dir, "heads/release/v1.0", &h)
+            .expect_err("release/v1.0 must be gated by `release/*`");
         let msg = format!("{}", err);
         assert!(msg.contains("push gate"), "wrong message: {}", msg);
         assert!(msg.contains("release/v1.0"), "wrong branch name: {}", msg);
 
         // A branch outside the glob must not be gated.
-        enforce_push_gate(
-            store.as_ref(),
-            &morph_dir,
-            "heads/feature/login",
-            &h,
-        )
-        .expect("feature/login is outside `release/*` and must pass through");
+        enforce_push_gate(store.as_ref(), &morph_dir, "heads/feature/login", &h)
+            .expect("feature/login is outside `release/*` and must pass through");
     }
 
     #[test]
@@ -912,13 +905,8 @@ mod tests {
         // Without the glob's slash boundary this would mistakenly
         // gate the nested branch and fail the gate. Asserting that
         // it passes proves the matcher honors the boundary.
-        enforce_push_gate(
-            store.as_ref(),
-            &morph_dir,
-            "heads/release/v1/hotfix",
-            &h,
-        )
-        .expect("release/v1/hotfix should not be gated by `release/*`");
+        enforce_push_gate(store.as_ref(), &morph_dir, "heads/release/v1/hotfix", &h)
+            .expect("release/v1/hotfix should not be gated by `release/*`");
     }
 
     #[test]
@@ -937,9 +925,8 @@ mod tests {
         let morph_dir = dir.path().join(".morph");
 
         let config_path = morph_dir.join("config.json");
-        let existing: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(&config_path).unwrap()
-        ).unwrap();
+        let existing: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
         assert!(existing.get("repo_version").is_some());
 
         let policy = RepoPolicy {
@@ -948,10 +935,12 @@ mod tests {
         };
         write_policy(&morph_dir, &policy).unwrap();
 
-        let after: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(&config_path).unwrap()
-        ).unwrap();
-        assert!(after.get("repo_version").is_some(), "repo_version should be preserved");
+        let after: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+        assert!(
+            after.get("repo_version").is_some(),
+            "repo_version should be preserved"
+        );
         assert!(after.get("policy").is_some(), "policy should be present");
     }
 
@@ -1004,9 +993,19 @@ mod tests {
         let commit_hash = make_commit(store.as_ref(), &dir, BTreeMap::new());
 
         let result = certify_commit(
-            store.as_ref(), &morph_dir, &commit_hash, &metrics, Some("ci-v1"), None,
-        ).unwrap();
-        assert!(result.passed, "certification should pass: {:?}", result.failures);
+            store.as_ref(),
+            &morph_dir,
+            &commit_hash,
+            &metrics,
+            Some("ci-v1"),
+            None,
+        )
+        .unwrap();
+        assert!(
+            result.passed,
+            "certification should pass: {:?}",
+            result.failures
+        );
     }
 
     #[test]
@@ -1025,8 +1024,14 @@ mod tests {
         let commit_hash = make_commit(store.as_ref(), &dir, BTreeMap::new());
 
         let result = certify_commit(
-            store.as_ref(), &morph_dir, &commit_hash, &metrics, None, None,
-        ).unwrap();
+            store.as_ref(),
+            &morph_dir,
+            &commit_hash,
+            &metrics,
+            None,
+            None,
+        )
+        .unwrap();
         assert!(!result.passed);
         assert!(result.failures.iter().any(|f| f.contains("f1")));
     }
@@ -1052,10 +1057,19 @@ mod tests {
         let commit_hash = make_commit(store.as_ref(), &dir, BTreeMap::new());
 
         let result = certify_commit(
-            store.as_ref(), &morph_dir, &commit_hash, &metrics, None, None,
-        ).unwrap();
+            store.as_ref(),
+            &morph_dir,
+            &commit_hash,
+            &metrics,
+            None,
+            None,
+        )
+        .unwrap();
         assert!(!result.passed);
-        assert!(result.failures.iter().any(|f| f.contains("acc") && f.contains("threshold")));
+        assert!(result
+            .failures
+            .iter()
+            .any(|f| f.contains("acc") && f.contains("threshold")));
     }
 
     #[test]
@@ -1083,17 +1097,15 @@ mod tests {
 
         let mut good = BTreeMap::new();
         good.insert("latency".into(), 1.5);
-        let result = certify_commit(
-            store.as_ref(), &morph_dir, &commit_hash, &good, None, None,
-        ).unwrap();
+        let result =
+            certify_commit(store.as_ref(), &morph_dir, &commit_hash, &good, None, None).unwrap();
         assert!(result.passed);
 
         let commit_hash2 = make_commit(store.as_ref(), &dir, BTreeMap::new());
         let mut bad = BTreeMap::new();
         bad.insert("latency".into(), 3.0);
-        let result2 = certify_commit(
-            store.as_ref(), &morph_dir, &commit_hash2, &bad, None, None,
-        ).unwrap();
+        let result2 =
+            certify_commit(store.as_ref(), &morph_dir, &commit_hash2, &bad, None, None).unwrap();
         assert!(!result2.passed);
     }
 
@@ -1118,8 +1130,14 @@ mod tests {
         let commit_hash = make_commit(store.as_ref(), &dir, metrics.clone());
 
         certify_commit(
-            store.as_ref(), &morph_dir, &commit_hash, &metrics, Some("ci"), None,
-        ).unwrap();
+            store.as_ref(),
+            &morph_dir,
+            &commit_hash,
+            &metrics,
+            Some("ci"),
+            None,
+        )
+        .unwrap();
 
         let gate = gate_check(store.as_ref(), &morph_dir, &commit_hash).unwrap();
         assert!(gate.passed, "gate should pass: {:?}", gate.reasons);
@@ -1161,8 +1179,14 @@ mod tests {
         let commit_hash = make_commit(store.as_ref(), &dir, metrics.clone());
 
         certify_commit(
-            store.as_ref(), &morph_dir, &commit_hash, &metrics, Some("ci"), None,
-        ).unwrap();
+            store.as_ref(),
+            &morph_dir,
+            &commit_hash,
+            &metrics,
+            Some("ci"),
+            None,
+        )
+        .unwrap();
 
         let gate = gate_check(store.as_ref(), &morph_dir, &commit_hash).unwrap();
         assert!(!gate.passed);
@@ -1190,13 +1214,23 @@ mod tests {
         let commit_hash = make_commit(store.as_ref(), &dir, metrics.clone());
 
         certify_commit(
-            store.as_ref(), &morph_dir, &commit_hash, &metrics, Some("ci"), None,
-        ).unwrap();
+            store.as_ref(),
+            &morph_dir,
+            &commit_hash,
+            &metrics,
+            Some("ci"),
+            None,
+        )
+        .unwrap();
 
         let gate = gate_check(store.as_ref(), &morph_dir, &commit_hash).unwrap();
         assert!(!gate.passed);
         let all_reasons = gate.reasons.join("; ");
-        assert!(all_reasons.contains("threshold"), "should mention threshold: {}", all_reasons);
+        assert!(
+            all_reasons.contains("threshold"),
+            "should mention threshold: {}",
+            all_reasons
+        );
     }
 
     // ── effective_metrics (PR 1: unified certification model) ────────
@@ -1259,7 +1293,11 @@ mod tests {
         certify_commit(store.as_ref(), &morph_dir, &h, &certified, None, None).unwrap();
 
         let got = effective_metrics(store.as_ref(), &h).unwrap();
-        assert_eq!(got.get("acc"), Some(&0.95), "certification overrides inline");
+        assert_eq!(
+            got.get("acc"),
+            Some(&0.95),
+            "certification overrides inline"
+        );
         assert_eq!(
             got.get("latency"),
             Some(&200.0),
@@ -1320,9 +1358,8 @@ mod tests {
                 content: serde_json::json!("hello"),
             }))
             .unwrap();
-        let err = effective_metrics(store.as_ref(), &blob_hash).expect_err(
-            "effective_metrics on a non-commit must surface a clear error",
-        );
+        let err = effective_metrics(store.as_ref(), &blob_hash)
+            .expect_err("effective_metrics on a non-commit must surface a clear error");
         assert!(format!("{}", err).contains("not a commit"));
     }
 
@@ -1338,8 +1375,14 @@ mod tests {
         let commit_hash = make_commit(store.as_ref(), &dir, BTreeMap::new());
 
         certify_commit(
-            store.as_ref(), &morph_dir, &commit_hash, &metrics, Some("ci-runner"), None,
-        ).unwrap();
+            store.as_ref(),
+            &morph_dir,
+            &commit_hash,
+            &metrics,
+            Some("ci-runner"),
+            None,
+        )
+        .unwrap();
 
         let anns = crate::annotate::list_annotations(store.as_ref(), &commit_hash, None).unwrap();
         assert!(!anns.is_empty(), "should have at least one annotation");

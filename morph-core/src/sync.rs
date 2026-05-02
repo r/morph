@@ -62,8 +62,8 @@ pub fn write_remotes(
     } else {
         serde_json::json!({})
     };
-    config["remotes"] = serde_json::to_value(remotes)
-        .map_err(|e| MorphError::Serialization(e.to_string()))?;
+    config["remotes"] =
+        serde_json::to_value(remotes).map_err(|e| MorphError::Serialization(e.to_string()))?;
     let pretty = serde_json::to_string_pretty(&config)
         .map_err(|e| MorphError::Serialization(e.to_string()))?;
     std::fs::write(&config_path, pretty)?;
@@ -73,7 +73,12 @@ pub fn write_remotes(
 /// Add a named remote to the repo config.
 pub fn add_remote(morph_dir: &Path, name: &str, path: &str) -> Result<(), MorphError> {
     let mut remotes = read_remotes(morph_dir)?;
-    remotes.insert(name.to_string(), RemoteSpec { path: path.to_string() });
+    remotes.insert(
+        name.to_string(),
+        RemoteSpec {
+            path: path.to_string(),
+        },
+    );
     write_remotes(morph_dir, &remotes)
 }
 
@@ -100,8 +105,9 @@ pub fn read_branch_upstreams(
     let config: serde_json::Value =
         serde_json::from_str(&data).map_err(|e| MorphError::Serialization(e.to_string()))?;
     match config.get("branches") {
-        Some(b) => serde_json::from_value(b.clone())
-            .map_err(|e| MorphError::Serialization(e.to_string())),
+        Some(b) => {
+            serde_json::from_value(b.clone()).map_err(|e| MorphError::Serialization(e.to_string()))
+        }
         None => Ok(BTreeMap::new()),
     }
 }
@@ -129,8 +135,8 @@ pub fn set_branch_upstream(
         None => BTreeMap::new(),
     };
     branches.insert(branch.to_string(), upstream);
-    config["branches"] = serde_json::to_value(branches)
-        .map_err(|e| MorphError::Serialization(e.to_string()))?;
+    config["branches"] =
+        serde_json::to_value(branches).map_err(|e| MorphError::Serialization(e.to_string()))?;
     let pretty = serde_json::to_string_pretty(&config)
         .map_err(|e| MorphError::Serialization(e.to_string()))?;
     std::fs::write(&config_path, pretty)?;
@@ -378,10 +384,7 @@ pub fn fetch_remote(
 ///
 /// When the source is itself tombstone-unaware (the default
 /// `list_forgotten` returns empty), this is a cheap no-op.
-fn transfer_tombstones(
-    source: &dyn Store,
-    dest: &dyn Store,
-) -> Result<(), MorphError> {
+fn transfer_tombstones(source: &dyn Store, dest: &dyn Store) -> Result<(), MorphError> {
     for original_hash in source.list_forgotten()? {
         if dest.is_forgotten(&original_hash)? {
             continue;
@@ -406,10 +409,7 @@ fn transfer_tombstones(
         match dest.write_tombstone(&tombstone) {
             Ok(_) => {}
             Err(MorphError::Other(msg)) if msg.contains("unsupported") => {
-                eprintln!(
-                    "warning: skipping tombstone for {}: {}",
-                    original_hash, msg
-                );
+                eprintln!("warning: skipping tombstone for {}: {}", original_hash, msg);
             }
             Err(e) => return Err(e),
         }
@@ -461,11 +461,7 @@ pub fn pull_branch(
 // ── Helpers ──────────────────────────────────────────────────────────
 
 /// Transfer all objects reachable from `tip` that the destination lacks.
-fn transfer_objects(
-    source: &dyn Store,
-    dest: &dyn Store,
-    tip: &Hash,
-) -> Result<(), MorphError> {
+fn transfer_objects(source: &dyn Store, dest: &dyn Store, tip: &Hash) -> Result<(), MorphError> {
     let missing = collect_reachable_objects(source, tip, &|h| dest.has(h))?;
     for hash in &missing {
         let obj = source.get(hash)?;
@@ -817,10 +813,12 @@ mod tests {
         let (dir, store) = setup_repo();
         let hash = make_commit(store.as_ref(), dir.path(), "first");
 
-        let reachable =
-            collect_reachable_objects(store.as_ref(), &hash, &|_| Ok(false)).unwrap();
+        let reachable = collect_reachable_objects(store.as_ref(), &hash, &|_| Ok(false)).unwrap();
 
-        assert!(reachable.len() >= 3, "should include commit, tree, pipeline, suite, blob");
+        assert!(
+            reachable.len() >= 3,
+            "should include commit, tree, pipeline, suite, blob"
+        );
         assert!(reachable.contains(&hash));
     }
 
@@ -863,8 +861,8 @@ mod tests {
         // ref-write that points at an object we never received.
         let (_dir, store) = setup_repo();
         let bogus = Hash::from_hex(&"a".repeat(64)).unwrap();
-        let err = verify_closure(store.as_ref(), &bogus)
-            .expect_err("bogus tip must fail closure check");
+        let err =
+            verify_closure(store.as_ref(), &bogus).expect_err("bogus tip must fail closure check");
         assert!(matches!(err, MorphError::NotFound(_)));
     }
 
@@ -899,8 +897,8 @@ mod tests {
             let _ = dest_store.put(&suite_obj).unwrap();
         }
 
-        let err = verify_closure(dest_store.as_ref(), &tip)
-            .expect_err("missing blob should be detected");
+        let err =
+            verify_closure(dest_store.as_ref(), &tip).expect_err("missing blob should be detected");
         assert!(matches!(err, MorphError::NotFound(_)));
     }
 
@@ -926,8 +924,7 @@ mod tests {
 
         let commit = make_commit(local_store.as_ref(), local_dir.path(), "first");
 
-        let tip =
-            push_branch(local_store.as_ref(), remote_store.as_ref(), "main").unwrap();
+        let tip = push_branch(local_store.as_ref(), remote_store.as_ref(), "main").unwrap();
         assert_eq!(tip, commit);
 
         let remote_tip = remote_store.ref_read("heads/main").unwrap();
@@ -943,8 +940,7 @@ mod tests {
         make_commit(local_store.as_ref(), local_dir.path(), "local");
         make_commit(remote_store.as_ref(), remote_dir.path(), "remote");
 
-        let result =
-            push_branch(local_store.as_ref(), remote_store.as_ref(), "main");
+        let result = push_branch(local_store.as_ref(), remote_store.as_ref(), "main");
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("non-fast-forward"), "error: {}", err);
@@ -958,8 +954,7 @@ mod tests {
         let commit = make_commit(local_store.as_ref(), local_dir.path(), "first");
         push_branch(local_store.as_ref(), remote_store.as_ref(), "main").unwrap();
 
-        let tip =
-            push_branch(local_store.as_ref(), remote_store.as_ref(), "main").unwrap();
+        let tip = push_branch(local_store.as_ref(), remote_store.as_ref(), "main").unwrap();
         assert_eq!(tip, commit);
     }
 
@@ -1040,16 +1035,14 @@ mod tests {
         // i.e. it must drive enumeration through `list_branches()`.
         let (_, local_store) = setup_repo();
         let (remote_dir, remote_store) = setup_repo();
-        let commit =
-            make_commit(remote_store.as_ref(), remote_dir.path(), "remote-only");
+        let commit = make_commit(remote_store.as_ref(), remote_dir.path(), "remote-only");
 
         let opaque = OpaqueRefsStore {
             inner: remote_store,
             fake_refs: PathBuf::from("/var/empty/no-such-refs-dir-xyz"),
         };
 
-        let updated =
-            fetch_remote(local_store.as_ref(), &opaque, "origin").unwrap();
+        let updated = fetch_remote(local_store.as_ref(), &opaque, "origin").unwrap();
         assert_eq!(updated.len(), 1);
         assert_eq!(updated[0].0, "main");
         assert_eq!(updated[0].1, commit);
@@ -1066,8 +1059,7 @@ mod tests {
 
         let commit = make_commit(remote_store.as_ref(), remote_dir.path(), "remote-commit");
 
-        let updated =
-            fetch_remote(local_store.as_ref(), remote_store.as_ref(), "origin").unwrap();
+        let updated = fetch_remote(local_store.as_ref(), remote_store.as_ref(), "origin").unwrap();
         assert_eq!(updated.len(), 1);
         assert_eq!(updated[0].0, "main");
         assert_eq!(updated[0].1, commit);
@@ -1081,15 +1073,17 @@ mod tests {
         let (local_dir, local_store) = setup_repo();
         let (remote_dir, remote_store) = setup_repo();
 
-        let local_commit =
-            make_commit(local_store.as_ref(), local_dir.path(), "local");
-        let _remote_commit =
-            make_commit(remote_store.as_ref(), remote_dir.path(), "remote");
+        let local_commit = make_commit(local_store.as_ref(), local_dir.path(), "local");
+        let _remote_commit = make_commit(remote_store.as_ref(), remote_dir.path(), "remote");
 
         fetch_remote(local_store.as_ref(), remote_store.as_ref(), "origin").unwrap();
 
         let local_main = local_store.ref_read("heads/main").unwrap();
-        assert_eq!(local_main, Some(local_commit), "fetch must not overwrite local branch");
+        assert_eq!(
+            local_main,
+            Some(local_commit),
+            "fetch must not overwrite local branch"
+        );
     }
 
     #[test]
@@ -1103,12 +1097,8 @@ mod tests {
 
         let c2 = make_commit(remote_store.as_ref(), remote_dir.path(), "second");
 
-        let missing = collect_reachable_objects(
-            remote_store.as_ref(),
-            &c2,
-            &|h| local_store.has(h),
-        )
-        .unwrap();
+        let missing =
+            collect_reachable_objects(remote_store.as_ref(), &c2, &|h| local_store.has(h)).unwrap();
 
         assert!(!missing.contains(&c1));
         assert!(missing.contains(&c2));
@@ -1121,8 +1111,7 @@ mod tests {
         let (_, local_store) = setup_repo();
         let (remote_dir, remote_store) = setup_repo();
 
-        let commit =
-            make_commit(remote_store.as_ref(), remote_dir.path(), "remote-commit");
+        let commit = make_commit(remote_store.as_ref(), remote_dir.path(), "remote-commit");
 
         let tip = pull_branch(
             local_store.as_ref(),
@@ -1142,10 +1131,14 @@ mod tests {
         let (_, local_store) = setup_repo();
         let (remote_dir, remote_store) = setup_repo();
 
-        let commit =
-            make_commit(remote_store.as_ref(), remote_dir.path(), "commit");
-        pull_branch(local_store.as_ref(), remote_store.as_ref(), "origin", "main")
-            .unwrap();
+        let commit = make_commit(remote_store.as_ref(), remote_dir.path(), "commit");
+        pull_branch(
+            local_store.as_ref(),
+            remote_store.as_ref(),
+            "origin",
+            "main",
+        )
+        .unwrap();
 
         let tip = pull_branch(
             local_store.as_ref(),
@@ -1189,10 +1182,8 @@ mod tests {
         let (local_dir, local_store) = setup_repo();
         let (remote_dir, remote_store) = setup_repo();
 
-        let local_tip =
-            make_commit(local_store.as_ref(), local_dir.path(), "local");
-        let remote_tip =
-            make_commit(remote_store.as_ref(), remote_dir.path(), "remote");
+        let local_tip = make_commit(local_store.as_ref(), local_dir.path(), "local");
+        let remote_tip = make_commit(remote_store.as_ref(), remote_dir.path(), "remote");
 
         let err = pull_branch(
             local_store.as_ref(),
@@ -1223,8 +1214,7 @@ mod tests {
         let (_, local_store) = setup_repo();
         let (remote_dir, remote_store) = setup_repo();
 
-        let commit =
-            make_commit(remote_store.as_ref(), remote_dir.path(), "remote-commit");
+        let commit = make_commit(remote_store.as_ref(), remote_dir.path(), "remote-commit");
 
         let tip = pull_branch(
             local_store.as_ref(),
@@ -1234,10 +1224,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(tip, commit);
-        assert_eq!(
-            local_store.ref_read("heads/main").unwrap(),
-            Some(commit)
-        );
+        assert_eq!(local_store.ref_read("heads/main").unwrap(), Some(commit));
     }
 
     #[test]
@@ -1246,10 +1233,14 @@ mod tests {
         let (_, local_store) = setup_repo();
         let (remote_dir, remote_store) = setup_repo();
 
-        let commit =
-            make_commit(remote_store.as_ref(), remote_dir.path(), "commit");
-        pull_branch(local_store.as_ref(), remote_store.as_ref(), "origin", "main")
-            .unwrap();
+        let commit = make_commit(remote_store.as_ref(), remote_dir.path(), "commit");
+        pull_branch(
+            local_store.as_ref(),
+            remote_store.as_ref(),
+            "origin",
+            "main",
+        )
+        .unwrap();
 
         let tip = pull_branch(
             local_store.as_ref(),
@@ -1444,7 +1435,10 @@ mod tests {
         assert_eq!(local_main, tip);
 
         // remote-tracking ref also written.
-        let tracking = local_store.ref_read("remotes/origin/main").unwrap().unwrap();
+        let tracking = local_store
+            .ref_read("remotes/origin/main")
+            .unwrap()
+            .unwrap();
         assert_eq!(tracking, tip);
 
         // working tree restored.
@@ -1542,7 +1536,10 @@ mod tests {
         // Bare layout: objects/ and refs/ at the root, no .morph/ wrapper.
         assert!(dest_path.join("objects").is_dir());
         assert!(dest_path.join("refs/heads").is_dir());
-        assert!(!dest_path.join(".morph").exists(), "bare repo has no .morph/ wrapper");
+        assert!(
+            !dest_path.join(".morph").exists(),
+            "bare repo has no .morph/ wrapper"
+        );
         // No working tree.
         assert!(
             !dest_path.join("remote.txt").exists(),

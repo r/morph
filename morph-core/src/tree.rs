@@ -149,9 +149,7 @@ pub fn restore_tree_filtered(
 
 /// Compute and return the hash of an empty tree (zero entries).
 pub fn empty_tree_hash(store: &dyn Store) -> Result<Hash, MorphError> {
-    let tree = MorphObject::Tree(Tree {
-        entries: vec![],
-    });
+    let tree = MorphObject::Tree(Tree { entries: vec![] });
     store.put(&tree)
 }
 
@@ -328,7 +326,13 @@ mod tests {
         restore_tree_filtered(&store, &root_hash, &dest, Some(&matcher)).unwrap();
 
         assert!(dest.join("app.py").exists(), "app.py should be restored");
-        assert!(!dest.join(".git/config").exists(), ".git/config should NOT be restored");
-        assert!(!dest.join(".venv/bin/python").exists(), ".venv/bin/python should NOT be restored");
+        assert!(
+            !dest.join(".git/config").exists(),
+            ".git/config should NOT be restored"
+        );
+        assert!(
+            !dest.join(".venv/bin/python").exists(),
+            ".venv/bin/python should NOT be restored"
+        );
     }
 }

@@ -87,11 +87,7 @@ pub fn is_ignored(
 
 /// Check if a relative path (as stored in the index or tree) should be ignored.
 /// Also checks parent directory components, so `.git/config` is caught by the `.git/` pattern.
-pub fn is_rel_path_ignored(
-    matcher: Option<&Gitignore>,
-    relative_path: &str,
-    is_dir: bool,
-) -> bool {
+pub fn is_rel_path_ignored(matcher: Option<&Gitignore>, relative_path: &str, is_dir: bool) -> bool {
     let Some(m) = matcher else {
         return false;
     };
@@ -112,7 +108,6 @@ pub fn is_rel_path_ignored(
     }
     false
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -288,8 +283,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let matcher = load_ignore_rules(dir.path()).unwrap();
         assert!(is_rel_path_ignored(Some(&matcher), ".git/config", false));
-        assert!(is_rel_path_ignored(Some(&matcher), ".venv/bin/python", false));
-        assert!(is_rel_path_ignored(Some(&matcher), "node_modules/foo/index.js", false));
+        assert!(is_rel_path_ignored(
+            Some(&matcher),
+            ".venv/bin/python",
+            false
+        ));
+        assert!(is_rel_path_ignored(
+            Some(&matcher),
+            "node_modules/foo/index.js",
+            false
+        ));
         assert!(!is_rel_path_ignored(Some(&matcher), "src/main.rs", false));
         assert!(!is_rel_path_ignored(Some(&matcher), "README.md", false));
     }
@@ -320,8 +323,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join(".morphignore"), "*.log\n").unwrap();
         let matcher = load_ignore_rules(dir.path()).unwrap();
-        assert!(is_ignored(Some(&matcher), dir.path(), &dir.path().join("debug.log"), false));
-        assert!(!is_ignored(Some(&matcher), dir.path(), &dir.path().join("readme.md"), false));
+        assert!(is_ignored(
+            Some(&matcher),
+            dir.path(),
+            &dir.path().join("debug.log"),
+            false
+        ));
+        assert!(!is_ignored(
+            Some(&matcher),
+            dir.path(),
+            &dir.path().join("readme.md"),
+            false
+        ));
     }
 
     #[test]
@@ -329,8 +342,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join(".morphignore"), "vendor/\n").unwrap();
         let matcher = load_ignore_rules(dir.path()).unwrap();
-        assert!(is_ignored(Some(&matcher), dir.path(), &dir.path().join("vendor"), true));
-        assert!(!is_ignored(Some(&matcher), dir.path(), &dir.path().join("vendor"), false));
+        assert!(is_ignored(
+            Some(&matcher),
+            dir.path(),
+            &dir.path().join("vendor"),
+            true
+        ));
+        assert!(!is_ignored(
+            Some(&matcher),
+            dir.path(),
+            &dir.path().join("vendor"),
+            false
+        ));
     }
 
     #[test]
@@ -338,8 +361,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join(".morphignore"), "*.log\n!important.log\n").unwrap();
         let matcher = load_ignore_rules(dir.path()).unwrap();
-        assert!(is_ignored(Some(&matcher), dir.path(), &dir.path().join("debug.log"), false));
-        assert!(!is_ignored(Some(&matcher), dir.path(), &dir.path().join("important.log"), false));
+        assert!(is_ignored(
+            Some(&matcher),
+            dir.path(),
+            &dir.path().join("debug.log"),
+            false
+        ));
+        assert!(!is_ignored(
+            Some(&matcher),
+            dir.path(),
+            &dir.path().join("important.log"),
+            false
+        ));
     }
 
     #[test]
@@ -347,8 +380,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join(".morphignore"), "logs/*.log\n").unwrap();
         let matcher = load_ignore_rules(dir.path()).unwrap();
-        assert!(is_ignored(Some(&matcher), dir.path(), &dir.path().join("logs/app.log"), false));
-        assert!(!is_ignored(Some(&matcher), dir.path(), &dir.path().join("app.log"), false));
+        assert!(is_ignored(
+            Some(&matcher),
+            dir.path(),
+            &dir.path().join("logs/app.log"),
+            false
+        ));
+        assert!(!is_ignored(
+            Some(&matcher),
+            dir.path(),
+            &dir.path().join("app.log"),
+            false
+        ));
     }
 
     #[test]
@@ -365,9 +408,29 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join(".morphignore"), "*.log\n*.tmp\nvendor/\n").unwrap();
         let matcher = load_ignore_rules(dir.path()).unwrap();
-        assert!(is_ignored(Some(&matcher), dir.path(), &dir.path().join("a.log"), false));
-        assert!(is_ignored(Some(&matcher), dir.path(), &dir.path().join("b.tmp"), false));
-        assert!(is_ignored(Some(&matcher), dir.path(), &dir.path().join("vendor"), true));
-        assert!(!is_ignored(Some(&matcher), dir.path(), &dir.path().join("src/main.rs"), false));
+        assert!(is_ignored(
+            Some(&matcher),
+            dir.path(),
+            &dir.path().join("a.log"),
+            false
+        ));
+        assert!(is_ignored(
+            Some(&matcher),
+            dir.path(),
+            &dir.path().join("b.tmp"),
+            false
+        ));
+        assert!(is_ignored(
+            Some(&matcher),
+            dir.path(),
+            &dir.path().join("vendor"),
+            true
+        ));
+        assert!(!is_ignored(
+            Some(&matcher),
+            dir.path(),
+            &dir.path().join("src/main.rs"),
+            false
+        ));
     }
 }

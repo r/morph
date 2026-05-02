@@ -26,9 +26,8 @@ fn strip_ansi(input: &str) -> String {
     // The crate guarantees byte-equivalent output for valid UTF-8 input,
     // but we belt-and-suspenders the conversion to avoid panicking on
     // exotic test fixtures.
-    String::from_utf8(bytes).unwrap_or_else(|e| {
-        String::from_utf8_lossy(&e.into_bytes()).into_owned()
-    })
+    String::from_utf8(bytes)
+        .unwrap_or_else(|e| String::from_utf8_lossy(&e.into_bytes()).into_owned())
 }
 
 fn pass_rate(passed: u64, total: u64) -> Option<f64> {
@@ -319,11 +318,7 @@ pub fn parse_go_test(stdout: &str) -> BTreeMap<String, f64> {
 /// This is the single dispatch point shared by `morph eval from-output`,
 /// `morph eval run`, and the matching MCP tools, so adding a new runner
 /// only requires one edit.
-pub fn parse_with_runner(
-    runner: &str,
-    output: &str,
-    hint: Option<&str>,
-) -> BTreeMap<String, f64> {
+pub fn parse_with_runner(runner: &str, output: &str, hint: Option<&str>) -> BTreeMap<String, f64> {
     match runner.to_lowercase().as_str() {
         "cargo" => parse_cargo_test(output),
         "pytest" => parse_pytest(output),
@@ -366,7 +361,10 @@ pub fn parse_auto(stdout: &str, hint: Option<&str>) -> BTreeMap<String, f64> {
     }) {
         return parse_pytest(stdout);
     }
-    if cleaned.lines().any(|l| l.trim().starts_with("Tests") && l.contains("passed")) {
+    if cleaned
+        .lines()
+        .any(|l| l.trim().starts_with("Tests") && l.contains("passed"))
+    {
         if cleaned.lines().any(|l| l.trim().starts_with("Tests:")) {
             return parse_jest(stdout);
         }
@@ -606,7 +604,10 @@ mod tests {
         assert_eq!(parse_with_runner("CARGO", cargo, None)["tests_passed"], 2.0);
 
         let pytest = "===== 4 passed in 0.10s =====\n";
-        assert_eq!(parse_with_runner("pytest", pytest, None)["tests_passed"], 4.0);
+        assert_eq!(
+            parse_with_runner("pytest", pytest, None)["tests_passed"],
+            4.0
+        );
     }
 
     #[test]

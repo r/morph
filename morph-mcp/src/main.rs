@@ -9,13 +9,8 @@ use morph_core::{
 };
 use params::*;
 use rmcp::{
-    handler::server::tool::ToolRouter,
-    handler::server::wrapper::Parameters,
-    model::*,
-    tool, tool_handler, tool_router,
-    transport::stdio,
-    ErrorData as McpError,
-    ServerHandler, ServiceExt,
+    handler::server::tool::ToolRouter, handler::server::wrapper::Parameters, model::*, tool,
+    tool_handler, tool_router, transport::stdio, ErrorData as McpError, ServerHandler, ServiceExt,
 };
 use std::path::PathBuf;
 
@@ -24,7 +19,11 @@ fn default_workspace_from_env_and_args(args: &[String]) -> Option<PathBuf> {
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("CURSOR_WORKSPACE_FOLDER").map(PathBuf::from))
         .or_else(|| std::env::var_os("WORKSPACE_FOLDER").map(PathBuf::from))
-        .or_else(|| args.get(1).filter(|a| !a.starts_with('-')).map(PathBuf::from))
+        .or_else(|| {
+            args.get(1)
+                .filter(|a| !a.starts_with('-'))
+                .map(PathBuf::from)
+        })
 }
 
 fn mcp_err(e: impl ToString) -> McpError {
@@ -33,7 +32,11 @@ fn mcp_err(e: impl ToString) -> McpError {
 
 fn resolve_path(repo_root: &std::path::Path, p: impl Into<PathBuf>) -> PathBuf {
     let pb: PathBuf = p.into();
-    if pb.is_absolute() { pb } else { repo_root.join(pb) }
+    if pb.is_absolute() {
+        pb
+    } else {
+        repo_root.join(pb)
+    }
 }
 
 /// Resolve a user-supplied identifier to a stored object hash.
@@ -48,7 +51,6 @@ fn json_text(v: serde_json::Value) -> Content {
     Content::text(serde_json::to_string_pretty(&v).unwrap_or_default())
 }
 
-
 #[derive(Clone)]
 pub struct MorphServer {
     tool_router: ToolRouter<Self>,
@@ -58,11 +60,18 @@ pub struct MorphServer {
 #[tool_router]
 impl MorphServer {
     fn new(default_workspace: Option<PathBuf>) -> Self {
-        Self { tool_router: Self::tool_router(), default_workspace }
+        Self {
+            tool_router: Self::tool_router(),
+            default_workspace,
+        }
     }
 
-    fn repo_store(&self, workspace_path: Option<&str>) -> Result<(PathBuf, Box<dyn Store>), String> {
-        let start = workspace_path.map(PathBuf::from)
+    fn repo_store(
+        &self,
+        workspace_path: Option<&str>,
+    ) -> Result<(PathBuf, Box<dyn Store>), String> {
+        let start = workspace_path
+            .map(PathBuf::from)
             .or_else(|| self.default_workspace.clone())
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
         let repo_root = find_repo(&start).ok_or_else(|| {
@@ -79,30 +88,58 @@ impl MorphServer {
         Ok((repo_root, store))
     }
 
-    #[tool(description = "Initialize a Morph repository in the given path (default: current directory)")]
+    #[tool(
+        description = "Initialize a Morph repository in the given path (default: current directory)"
+    )]
     async fn morph_init(&self, params: Parameters<InitParams>) -> Result<CallToolResult, McpError> {
         let path = PathBuf::from(params.0.path.as_deref().unwrap_or("."));
         morph_core::init_repo(&path).map_err(mcp_err)?;
-        Ok(CallToolResult::success(vec![Content::text(format!("Initialized Morph repository in {}", path.display()))]))
+        Ok(CallToolResult::success(vec![Content::text(format!(
+            "Initialized Morph repository in {}",
+            path.display()
+        ))]))
     }
 
-    #[tool(description = "Record a Run object from JSON (execution receipt). Optional: trace_path, artifact_paths as JSON array. Returns the run hash on the first line.")]
-    async fn morph_record_run(&self, params: Parameters<RecordRunParams>) -> Result<CallToolResult, McpError> {
-        let (repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+    #[tool(
+        description = "Record a Run object from JSON (execution receipt). Optional: trace_path, artifact_paths as JSON array. Returns the run hash on the first line."
+    )]
+    async fn morph_record_run(
+        &self,
+        params: Parameters<RecordRunParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let (repo_root, store) = self
+            .repo_store(params.0.workspace_path.as_deref())
+            .map_err(mcp_err)?;
         let run_path = resolve_path(&repo_root, &params.0.run_file);
         let trace_path = params.0.trace_file.map(|p| resolve_path(&repo_root, p));
-        let artifact_paths: Vec<PathBuf> = params.0.artifact_files.unwrap_or_default()
-            .into_iter().map(|p| resolve_path(&repo_root, p)).collect();
+        let artifact_paths: Vec<PathBuf> = params
+            .0
+            .artifact_files
+            .unwrap_or_default()
+            .into_iter()
+            .map(|p| resolve_path(&repo_root, p))
+            .collect();
         let refs: Vec<&std::path::Path> = artifact_paths.iter().map(PathBuf::as_path).collect();
-        let hash = morph_core::record_run(&store, &run_path, trace_path.as_deref(), &refs).map_err(mcp_err)?;
-        Ok(CallToolResult::success(vec![Content::text(hash.to_string())]))
+        let hash = morph_core::record_run(&store, &run_path, trace_path.as_deref(), &refs)
+            .map_err(mcp_err)?;
+        Ok(CallToolResult::success(vec![Content::text(
+            hash.to_string(),
+        )]))
     }
 
-    #[tool(description = "Internal — used by the Morph recording plugin. Do NOT call this tool yourself; session recording is automatic. If called manually the result is not useful to the user.")]
-    async fn morph_record_session(&self, params: Parameters<RecordSessionParams>) -> Result<CallToolResult, McpError> {
-        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+    #[tool(
+        description = "Internal — used by the Morph recording plugin. Do NOT call this tool yourself; session recording is automatic. If called manually the result is not useful to the user."
+    )]
+    async fn morph_record_session(
+        &self,
+        params: Parameters<RecordSessionParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let (_repo_root, store) = self
+            .repo_store(params.0.workspace_path.as_deref())
+            .map_err(mcp_err)?;
         if let Some(ref msgs) = params.0.messages {
-            let conversation: Vec<morph_core::ConversationMessage> = msgs.iter()
+            let conversation: Vec<morph_core::ConversationMessage> = msgs
+                .iter()
                 .map(|m| morph_core::ConversationMessage {
                     role: m.role.clone(),
                     content: m.content.clone(),
@@ -111,37 +148,55 @@ impl MorphServer {
                 })
                 .collect();
             morph_core::record_conversation(
-                &store, &conversation,
-                params.0.model_name.as_deref(), params.0.agent_id.as_deref(),
-            ).map_err(mcp_err)?;
+                &store,
+                &conversation,
+                params.0.model_name.as_deref(),
+                params.0.agent_id.as_deref(),
+            )
+            .map_err(mcp_err)?;
         } else {
             morph_core::record_session(
                 &store,
                 params.0.prompt.as_deref().unwrap_or(""),
                 params.0.response.as_deref().unwrap_or(""),
-                params.0.model_name.as_deref(), params.0.agent_id.as_deref(),
-            ).map_err(mcp_err)?;
+                params.0.model_name.as_deref(),
+                params.0.agent_id.as_deref(),
+            )
+            .map_err(mcp_err)?;
         }
-        Ok(CallToolResult::success(vec![Content::text("Session recorded.")]))
+        Ok(CallToolResult::success(vec![Content::text(
+            "Session recorded.",
+        )]))
     }
 
     #[tool(description = "Record evaluation metrics from a JSON file with a 'metrics' key")]
-    async fn morph_record_eval(&self, params: Parameters<RecordEvalParams>) -> Result<CallToolResult, McpError> {
-        let (repo_root, _store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+    async fn morph_record_eval(
+        &self,
+        params: Parameters<RecordEvalParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let (repo_root, _store) = self
+            .repo_store(params.0.workspace_path.as_deref())
+            .map_err(mcp_err)?;
         let path = resolve_path(&repo_root, &params.0.file);
         let metrics = morph_core::record_eval_metrics(&path).map_err(mcp_err)?;
-        Ok(CallToolResult::success(vec![Content::text(serde_json::to_string_pretty(&metrics).unwrap_or_default())]))
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&metrics).unwrap_or_default(),
+        )]))
     }
 
     /// Phase 3b: parse already-captured test runner stdout into a
     /// metrics map. Pair this with `morph_commit` to attach
     /// behavioral evidence to the commit you're about to make.
-    #[tool(description = "Parse a captured test-runner stdout string into Morph's canonical metric map. Required: stdout (string), runner (cargo|pytest|vitest|jest|go|auto). Optional: record (bool, also writes a Run linked to HEAD); workspace_path. When record=true, returns the run hash; otherwise returns the metric map JSON.")]
+    #[tool(
+        description = "Parse a captured test-runner stdout string into Morph's canonical metric map. Required: stdout (string), runner (cargo|pytest|vitest|jest|go|auto). Optional: record (bool, also writes a Run linked to HEAD); workspace_path. When record=true, returns the run hash; otherwise returns the metric map JSON."
+    )]
     async fn morph_eval_from_output(
         &self,
         params: Parameters<EvalFromOutputParams>,
     ) -> Result<CallToolResult, McpError> {
-        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+        let (_repo_root, store) = self
+            .repo_store(params.0.workspace_path.as_deref())
+            .map_err(mcp_err)?;
         let runner = params.0.runner.as_deref().unwrap_or("auto").to_string();
         let stdout = params.0.stdout;
         let metrics = morph_core::parse_with_runner(&runner, &stdout, params.0.command.as_deref());
@@ -153,8 +208,11 @@ impl MorphServer {
                 params.0.command.as_deref(),
                 Some(&stdout),
                 None,
-            ).map_err(mcp_err)?;
-            Ok(CallToolResult::success(vec![Content::text(hash.to_string())]))
+            )
+            .map_err(mcp_err)?;
+            Ok(CallToolResult::success(vec![Content::text(
+                hash.to_string(),
+            )]))
         } else {
             Ok(CallToolResult::success(vec![Content::text(
                 serde_json::to_string_pretty(&metrics).unwrap_or_default(),
@@ -166,12 +224,16 @@ impl MorphServer {
     /// a metrics-bearing Run linked to HEAD. Designed for headless
     /// agents that can shell out — the returned hash composes with
     /// `morph_commit { from_run: <hash> }`.
-    #[tool(description = "Execute a test command, capture stdout, parse metrics, and write a Run object linked to HEAD. Required: command (array of argv strings). Optional: runner (cargo|pytest|vitest|jest|go|auto), cwd (path relative to repo root), workspace_path. Returns the run hash for use with `morph_commit { from_run }`.")]
+    #[tool(
+        description = "Execute a test command, capture stdout, parse metrics, and write a Run object linked to HEAD. Required: command (array of argv strings). Optional: runner (cargo|pytest|vitest|jest|go|auto), cwd (path relative to repo root), workspace_path. Returns the run hash for use with `morph_commit { from_run }`."
+    )]
     async fn morph_eval_run(
         &self,
         params: Parameters<EvalRunParams>,
     ) -> Result<CallToolResult, McpError> {
-        let (repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+        let (repo_root, store) = self
+            .repo_store(params.0.workspace_path.as_deref())
+            .map_err(mcp_err)?;
         let runner = params.0.runner.as_deref().unwrap_or("auto").to_string();
         if params.0.command.is_empty() {
             return Err(mcp_err("`command` array cannot be empty"));
@@ -183,7 +245,8 @@ impl MorphServer {
             &params.0.command,
             &runner,
             cwd_path,
-        ).map_err(mcp_err)?;
+        )
+        .map_err(mcp_err)?;
         let mut out = outcome.run_hash.to_string();
         if outcome.metrics.is_empty() {
             out.push_str(&format!(
@@ -198,23 +261,32 @@ impl MorphServer {
 
     /// Phase 4b: append acceptance cases from YAML/cucumber files
     /// to the repo's eval suite. Returns the new suite hash.
-    #[tool(description = "Append acceptance cases from YAML/cucumber files to an EvalSuite. Required: paths (array of file or directory paths). Optional: suite (existing suite hash to extend; defaults to policy.default_eval_suite), no_default (build a fresh suite), no_set_default (don't update policy). Returns the new suite hash.")]
+    #[tool(
+        description = "Append acceptance cases from YAML/cucumber files to an EvalSuite. Required: paths (array of file or directory paths). Optional: suite (existing suite hash to extend; defaults to policy.default_eval_suite), no_default (build a fresh suite), no_set_default (don't update policy). Returns the new suite hash."
+    )]
     async fn morph_add_eval_case(
         &self,
         params: Parameters<AddEvalCaseParams>,
     ) -> Result<CallToolResult, McpError> {
-        let (repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+        let (repo_root, store) = self
+            .repo_store(params.0.workspace_path.as_deref())
+            .map_err(mcp_err)?;
         if params.0.paths.is_empty() {
             return Err(mcp_err("`paths` cannot be empty"));
         }
-        let resolved: Vec<PathBuf> = params.0.paths.iter().map(|p| {
-            let pp = std::path::Path::new(p);
-            if pp.is_absolute() {
-                pp.to_path_buf()
-            } else {
-                repo_root.join(pp)
-            }
-        }).collect();
+        let resolved: Vec<PathBuf> = params
+            .0
+            .paths
+            .iter()
+            .map(|p| {
+                let pp = std::path::Path::new(p);
+                if pp.is_absolute() {
+                    pp.to_path_buf()
+                } else {
+                    repo_root.join(pp)
+                }
+            })
+            .collect();
         let cases = morph_core::add_cases_from_paths(&resolved).map_err(mcp_err)?;
         if cases.is_empty() {
             return Err(mcp_err(format!(
@@ -234,7 +306,8 @@ impl MorphServer {
                 None => None,
             }
         };
-        let new_hash = morph_core::build_or_extend_suite(store.as_ref(), prev, &cases).map_err(mcp_err)?;
+        let new_hash =
+            morph_core::build_or_extend_suite(store.as_ref(), prev, &cases).map_err(mcp_err)?;
         if !params.0.no_set_default.unwrap_or(false) {
             let mut updated = policy.clone();
             updated.default_eval_suite = Some(new_hash.to_string());
@@ -244,30 +317,43 @@ impl MorphServer {
             "{}\nadded {} case(s); default_eval_suite={}",
             new_hash,
             cases.len(),
-            if params.0.no_set_default.unwrap_or(false) { "unchanged" } else { "updated" }
+            if params.0.no_set_default.unwrap_or(false) {
+                "unchanged"
+            } else {
+                "updated"
+            }
         );
         Ok(CallToolResult::success(vec![Content::text(body)]))
     }
 
     /// Phase 4b: bulk-ingest a directory of specs/features into a
     /// fresh suite, replacing the default.
-    #[tool(description = "Bulk-build a fresh EvalSuite from YAML/cucumber files and (by default) make it the policy's default. Required: paths. Optional: no_set_default. Returns the suite hash.")]
+    #[tool(
+        description = "Bulk-build a fresh EvalSuite from YAML/cucumber files and (by default) make it the policy's default. Required: paths. Optional: no_set_default. Returns the suite hash."
+    )]
     async fn morph_eval_suite_from_specs(
         &self,
         params: Parameters<EvalSuiteFromSpecsParams>,
     ) -> Result<CallToolResult, McpError> {
-        let (repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+        let (repo_root, store) = self
+            .repo_store(params.0.workspace_path.as_deref())
+            .map_err(mcp_err)?;
         if params.0.paths.is_empty() {
             return Err(mcp_err("`paths` cannot be empty"));
         }
-        let resolved: Vec<PathBuf> = params.0.paths.iter().map(|p| {
-            let pp = std::path::Path::new(p);
-            if pp.is_absolute() {
-                pp.to_path_buf()
-            } else {
-                repo_root.join(pp)
-            }
-        }).collect();
+        let resolved: Vec<PathBuf> = params
+            .0
+            .paths
+            .iter()
+            .map(|p| {
+                let pp = std::path::Path::new(p);
+                if pp.is_absolute() {
+                    pp.to_path_buf()
+                } else {
+                    repo_root.join(pp)
+                }
+            })
+            .collect();
         let cases = morph_core::add_cases_from_paths(&resolved).map_err(mcp_err)?;
         if cases.is_empty() {
             return Err(mcp_err(format!(
@@ -275,7 +361,8 @@ impl MorphServer {
                 params.0.paths.join(", ")
             )));
         }
-        let new_hash = morph_core::build_or_extend_suite(store.as_ref(), None, &cases).map_err(mcp_err)?;
+        let new_hash =
+            morph_core::build_or_extend_suite(store.as_ref(), None, &cases).map_err(mcp_err)?;
         let morph_dir = repo_root.join(".morph");
         if !params.0.no_set_default.unwrap_or(false) {
             let mut policy = morph_core::read_policy(&morph_dir).map_err(mcp_err)?;
@@ -291,12 +378,16 @@ impl MorphServer {
 
     /// Phase 4b: print the contents of a suite (default or by hash)
     /// as JSON for downstream tooling.
-    #[tool(description = "Show the contents of an EvalSuite as JSON. Optional: suite (hash; defaults to policy.default_eval_suite).")]
+    #[tool(
+        description = "Show the contents of an EvalSuite as JSON. Optional: suite (hash; defaults to policy.default_eval_suite)."
+    )]
     async fn morph_eval_suite_show(
         &self,
         params: Parameters<EvalSuiteShowParams>,
     ) -> Result<CallToolResult, McpError> {
-        let (repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+        let (repo_root, store) = self
+            .repo_store(params.0.workspace_path.as_deref())
+            .map_err(mcp_err)?;
         let morph_dir = repo_root.join(".morph");
         let policy = morph_core::read_policy(&morph_dir).map_err(mcp_err)?;
         let target = match params.0.suite.as_deref() {
@@ -327,22 +418,51 @@ impl MorphServer {
         )]))
     }
 
-    #[tool(description = "Stage paths into the object store (paths: array of paths, default [\".\"])")]
-    async fn morph_stage(&self, params: Parameters<StageParams>) -> Result<CallToolResult, McpError> {
-        let (repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
-        let paths: Vec<PathBuf> = params.0.paths.unwrap_or_else(|| vec![".".into()])
-            .into_iter().map(PathBuf::from).collect();
+    #[tool(
+        description = "Stage paths into the object store (paths: array of paths, default [\".\"])"
+    )]
+    async fn morph_stage(
+        &self,
+        params: Parameters<StageParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let (repo_root, store) = self
+            .repo_store(params.0.workspace_path.as_deref())
+            .map_err(mcp_err)?;
+        let paths: Vec<PathBuf> = params
+            .0
+            .paths
+            .unwrap_or_else(|| vec![".".into()])
+            .into_iter()
+            .map(PathBuf::from)
+            .collect();
         let hashes = morph_core::add_paths(&store, &repo_root, &paths).map_err(mcp_err)?;
-        let out = hashes.iter().map(|h| h.to_string()).collect::<Vec<_>>().join("\n");
+        let out = hashes
+            .iter()
+            .map(|h| h.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
         Ok(CallToolResult::success(vec![Content::text(out)]))
     }
 
-    #[tool(description = "Create a commit. Required: message. Optional: pipeline (hash), eval_suite (hash), metrics (JSON object), author, from_run (run hash for evidence-backed provenance), allow_empty_metrics (bypass policy), new_cases (comma-separated acceptance-case ids).")]
-    async fn morph_commit(&self, params: Parameters<CommitParams>) -> Result<CallToolResult, McpError> {
-        let (repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+    #[tool(
+        description = "Create a commit. Required: message. Optional: pipeline (hash), eval_suite (hash), metrics (JSON object), author, from_run (run hash for evidence-backed provenance), allow_empty_metrics (bypass policy), new_cases (comma-separated acceptance-case ids)."
+    )]
+    async fn morph_commit(
+        &self,
+        params: Parameters<CommitParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let (repo_root, store) = self
+            .repo_store(params.0.workspace_path.as_deref())
+            .map_err(mcp_err)?;
         let morph_dir = repo_root.join(".morph");
         let version = read_repo_version(&morph_dir).map_err(mcp_err)?;
-        let prog_hash = params.0.pipeline.as_deref().map(Hash::from_hex).transpose().map_err(mcp_err)?;
+        let prog_hash = params
+            .0
+            .pipeline
+            .as_deref()
+            .map(Hash::from_hex)
+            .transpose()
+            .map_err(mcp_err)?;
         let policy = morph_core::read_policy(&morph_dir).map_err(mcp_err)?;
         let suite_hash: Option<Hash> = match params.0.eval_suite.as_deref() {
             Some(s) => Some(Hash::from_hex(s).map_err(mcp_err)?),
@@ -365,14 +485,25 @@ impl MorphServer {
             }
         }
         let provenance = match params.0.from_run {
-            Some(ref h) => Some(morph_core::resolve_provenance_from_run(&store, &resolve_rev(store.as_ref(), h)?).map_err(mcp_err)?),
+            Some(ref h) => Some(
+                morph_core::resolve_provenance_from_run(&store, &resolve_rev(store.as_ref(), h)?)
+                    .map_err(mcp_err)?,
+            ),
             None => None,
         };
         let metrics_were_empty = metrics.is_empty();
         let hash = morph_core::create_tree_commit_with_provenance(
-            &store, &repo_root, prog_hash.as_ref(), suite_hash.as_ref(),
-            metrics, params.0.message, params.0.author, Some(&version), provenance.as_ref(),
-        ).map_err(mcp_err)?;
+            &store,
+            &repo_root,
+            prog_hash.as_ref(),
+            suite_hash.as_ref(),
+            metrics,
+            params.0.message,
+            params.0.author,
+            Some(&version),
+            provenance.as_ref(),
+        )
+        .map_err(mcp_err)?;
 
         if let Some(cases_arg) = params.0.new_cases.as_deref() {
             let cases = morph_core::parse_introduces_cases_arg(cases_arg);
@@ -392,41 +523,92 @@ impl MorphServer {
         Ok(CallToolResult::success(vec![Content::text(out)]))
     }
 
-    #[tool(description = "Attach an annotation to an object. `target_hash` accepts full hashes, prefixes, `HEAD`, branch names, or tag names. Returns the annotation hash on the first line. Required: target_hash, kind, data (JSON object). Optional: target_sub, author.")]
-    async fn morph_annotate(&self, params: Parameters<AnnotateParams>) -> Result<CallToolResult, McpError> {
-        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+    #[tool(
+        description = "Attach an annotation to an object. `target_hash` accepts full hashes, prefixes, `HEAD`, branch names, or tag names. Returns the annotation hash on the first line. Required: target_hash, kind, data (JSON object). Optional: target_sub, author."
+    )]
+    async fn morph_annotate(
+        &self,
+        params: Parameters<AnnotateParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let (_repo_root, store) = self
+            .repo_store(params.0.workspace_path.as_deref())
+            .map_err(mcp_err)?;
         let target = resolve_rev(store.as_ref(), &params.0.target_hash)?;
-        let ann = morph_core::create_annotation(&target, params.0.target_sub, params.0.kind.clone(), params.0.data.unwrap_or_default(), params.0.author);
+        let ann = morph_core::create_annotation(
+            &target,
+            params.0.target_sub,
+            params.0.kind.clone(),
+            params.0.data.unwrap_or_default(),
+            params.0.author,
+        );
         let hash = store.put(&ann).map_err(mcp_err)?;
-        Ok(CallToolResult::success(vec![Content::text(hash.to_string())]))
+        Ok(CallToolResult::success(vec![Content::text(
+            hash.to_string(),
+        )]))
     }
 
     #[tool(description = "Create a new branch at current HEAD")]
-    async fn morph_branch(&self, params: Parameters<BranchParams>) -> Result<CallToolResult, McpError> {
-        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
-        let head = morph_core::resolve_head(&store).map_err(mcp_err)?
+    async fn morph_branch(
+        &self,
+        params: Parameters<BranchParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let (_repo_root, store) = self
+            .repo_store(params.0.workspace_path.as_deref())
+            .map_err(mcp_err)?;
+        let head = morph_core::resolve_head(&store)
+            .map_err(mcp_err)?
             .ok_or_else(|| mcp_err("no commit yet"))?;
-        store.ref_write(&format!("heads/{}", params.0.name), &head).map_err(mcp_err)?;
-        Ok(CallToolResult::success(vec![Content::text(format!("Created branch {}", params.0.name))]))
+        store
+            .ref_write(&format!("heads/{}", params.0.name), &head)
+            .map_err(mcp_err)?;
+        Ok(CallToolResult::success(vec![Content::text(format!(
+            "Created branch {}",
+            params.0.name
+        ))]))
     }
 
-    #[tool(description = "Switch HEAD to a branch, tag, prefix, or detached commit. Accepts any revision the CLI accepts.")]
-    async fn morph_checkout(&self, params: Parameters<CheckoutParams>) -> Result<CallToolResult, McpError> {
-        let (repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+    #[tool(
+        description = "Switch HEAD to a branch, tag, prefix, or detached commit. Accepts any revision the CLI accepts."
+    )]
+    async fn morph_checkout(
+        &self,
+        params: Parameters<CheckoutParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let (repo_root, store) = self
+            .repo_store(params.0.workspace_path.as_deref())
+            .map_err(mcp_err)?;
         let ref_name = &params.0.ref_name;
-        let (hash, tree_restored) = morph_core::checkout_tree(&store, &repo_root, ref_name).map_err(mcp_err)?;
+        let (hash, tree_restored) =
+            morph_core::checkout_tree(&store, &repo_root, ref_name).map_err(mcp_err)?;
         let msg = if ref_name.len() == 64 && ref_name.chars().all(|c| c.is_ascii_hexdigit()) {
             format!("Detached HEAD at {}", hash)
         } else {
-            format!("Switched to branch {}", ref_name.trim_start_matches("heads/"))
+            format!(
+                "Switched to branch {}",
+                ref_name.trim_start_matches("heads/")
+            )
         };
-        let tree_msg = if tree_restored { " (working tree restored)" } else { " (no file tree in commit)" };
-        Ok(CallToolResult::success(vec![Content::text(format!("{}{}", msg, tree_msg))]))
+        let tree_msg = if tree_restored {
+            " (working tree restored)"
+        } else {
+            " (no file tree in commit)"
+        };
+        Ok(CallToolResult::success(vec![Content::text(format!(
+            "{}{}",
+            msg, tree_msg
+        ))]))
     }
 
-    #[tool(description = "Repository state as a structured JSON envelope: `{repo, branch, detached, head: {hash, short, message, author, timestamp, metrics}, working_tree: {clean, added, modified, deleted}, staging, activity, eval_suite, required_metrics, merge}`. Designed for agents to reason about what's changed and what evidence is missing.")]
-    async fn morph_status(&self, params: Parameters<WorkspaceOnlyParams>) -> Result<CallToolResult, McpError> {
-        let (repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+    #[tool(
+        description = "Repository state as a structured JSON envelope: `{repo, branch, detached, head: {hash, short, message, author, timestamp, metrics}, working_tree: {clean, added, modified, deleted}, staging, activity, eval_suite, required_metrics, merge}`. Designed for agents to reason about what's changed and what evidence is missing."
+    )]
+    async fn morph_status(
+        &self,
+        params: Parameters<WorkspaceOnlyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let (repo_root, store) = self
+            .repo_store(params.0.workspace_path.as_deref())
+            .map_err(mcp_err)?;
         let body = build_status_json(&repo_root, store.as_ref()).map_err(mcp_err)?;
         Ok(CallToolResult::success(vec![json_text(body)]))
     }
@@ -436,7 +618,9 @@ impl MorphServer {
     /// only mode (v0.40+); unit tests that don't sit alongside a
     /// `.git/` simply get a "no git working tree" error from the
     /// underlying sync code.
-    #[tool(description = "Mirror git history into Morph commits. Single-commit by default (HEAD only); pass `backfill: true` to walk every git commit between `init_at_git_sha` and HEAD that hasn't been mirrored yet. Returns `{mode, backfill, synced, git_sha, new_commit, already_synced}` JSON.")]
+    #[tool(
+        description = "Mirror git history into Morph commits. Single-commit by default (HEAD only); pass `backfill: true` to walk every git commit between `init_at_git_sha` and HEAD that hasn't been mirrored yet. Returns `{mode, backfill, synced, git_sha, new_commit, already_synced}` JSON."
+    )]
     async fn morph_reference_sync(
         &self,
         params: Parameters<ReferenceSyncParams>,
@@ -463,8 +647,8 @@ impl MorphServer {
                 "init_at_git_sha": init_sha,
             })
         } else {
-            let outcome = morph_core::sync_to_head(store.as_ref(), &repo_root, version)
-                .map_err(mcp_err)?;
+            let outcome =
+                morph_core::sync_to_head(store.as_ref(), &repo_root, version).map_err(mcp_err)?;
             serde_json::json!({
                 "mode": "reference",
                 "backfill": false,
@@ -481,15 +665,20 @@ impl MorphServer {
     /// agents and stop-hooks. Returns a JSON array; an empty array
     /// means the working state is fully covered by behavioral
     /// evidence as far as Morph can tell.
-    #[tool(description = "Return a structured list of behavioral-evidence gaps for the current repo: empty HEAD metrics, empty default eval suite, or a dirty working tree without a metric-bearing run since the last commit. Output is `{\"gaps\": [{kind, hint}]}` JSON. Cheap enough to call before every commit.")]
+    #[tool(
+        description = "Return a structured list of behavioral-evidence gaps for the current repo: empty HEAD metrics, empty default eval suite, or a dirty working tree without a metric-bearing run since the last commit. Output is `{\"gaps\": [{kind, hint}]}` JSON. Cheap enough to call before every commit."
+    )]
     async fn morph_eval_gaps(
         &self,
         params: Parameters<WorkspaceOnlyParams>,
     ) -> Result<CallToolResult, McpError> {
-        let (repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+        let (repo_root, store) = self
+            .repo_store(params.0.workspace_path.as_deref())
+            .map_err(mcp_err)?;
         let morph_dir = repo_root.join(".morph");
         let changes = morph_core::working_status(&store, &repo_root).map_err(mcp_err)?;
-        let gaps = morph_core::compute_eval_gaps(&morph_dir, store.as_ref(), changes.len() as u64).map_err(mcp_err)?;
+        let gaps = morph_core::compute_eval_gaps(&morph_dir, store.as_ref(), changes.len() as u64)
+            .map_err(mcp_err)?;
         let body = serde_json::json!({
             "gaps": gaps,
             "count": gaps.len(),
@@ -499,9 +688,13 @@ impl MorphServer {
         )]))
     }
 
-    #[tool(description = "Show commit history from HEAD or a named ref. Returns a JSON envelope `{commits: [{hash, short, message, author, timestamp, parents, metrics}]}` newest first.")]
+    #[tool(
+        description = "Show commit history from HEAD or a named ref. Returns a JSON envelope `{commits: [{hash, short, message, author, timestamp, parents, metrics}]}` newest first."
+    )]
     async fn morph_log(&self, params: Parameters<LogParams>) -> Result<CallToolResult, McpError> {
-        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+        let (_repo_root, store) = self
+            .repo_store(params.0.workspace_path.as_deref())
+            .map_err(mcp_err)?;
         let ref_name = params.0.ref_name.as_deref().unwrap_or("HEAD");
         let hashes = morph_core::log_from(&store, ref_name).map_err(mcp_err)?;
         let mut commits = Vec::with_capacity(hashes.len());
@@ -529,9 +722,13 @@ impl MorphServer {
         Ok(CallToolResult::success(vec![json_text(body)]))
     }
 
-    #[tool(description = "Show a stored Morph object as pretty JSON. Accepts full hashes, prefixes (>=4 hex), `HEAD`, branch names, or tag names.")]
+    #[tool(
+        description = "Show a stored Morph object as pretty JSON. Accepts full hashes, prefixes (>=4 hex), `HEAD`, branch names, or tag names."
+    )]
     async fn morph_show(&self, params: Parameters<ShowParams>) -> Result<CallToolResult, McpError> {
-        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+        let (_repo_root, store) = self
+            .repo_store(params.0.workspace_path.as_deref())
+            .map_err(mcp_err)?;
         let hash = resolve_rev(store.as_ref(), &params.0.hash)?;
         let obj = store.get(&hash).map_err(mcp_err)?;
         let body = serde_json::json!({
@@ -544,16 +741,25 @@ impl MorphServer {
         Ok(CallToolResult::success(vec![json_text(body)]))
     }
 
-    #[tool(description = "Diff two commits (or refs). Accepts full hashes, prefixes, `HEAD`, branch names, or tag names. Returns a JSON envelope with `from`, `to`, and `changes: [{status, path}]`.")]
+    #[tool(
+        description = "Diff two commits (or refs). Accepts full hashes, prefixes, `HEAD`, branch names, or tag names. Returns a JSON envelope with `from`, `to`, and `changes: [{status, path}]`."
+    )]
     async fn morph_diff(&self, params: Parameters<DiffParams>) -> Result<CallToolResult, McpError> {
-        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+        let (_repo_root, store) = self
+            .repo_store(params.0.workspace_path.as_deref())
+            .map_err(mcp_err)?;
         let old_hash = resolve_rev(store.as_ref(), &params.0.old_ref)?;
         let new_hash = resolve_rev(store.as_ref(), &params.0.new_ref)?;
         let entries = morph_core::diff_commits(&store, &old_hash, &new_hash).map_err(mcp_err)?;
-        let changes: Vec<_> = entries.iter().map(|e| serde_json::json!({
-            "status": e.status.to_string(),
-            "path": e.path,
-        })).collect();
+        let changes: Vec<_> = entries
+            .iter()
+            .map(|e| {
+                serde_json::json!({
+                    "status": e.status.to_string(),
+                    "path": e.path,
+                })
+            })
+            .collect();
         let body = serde_json::json!({
             "from": { "ref": params.0.old_ref, "hash": old_hash.to_string(), "short": old_hash.short() },
             "to":   { "ref": params.0.new_ref, "hash": new_hash.to_string(), "short": new_hash.short() },
@@ -575,9 +781,12 @@ impl MorphServer {
         &self,
         params: Parameters<RecentTracesParams>,
     ) -> Result<CallToolResult, McpError> {
-        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+        let (_repo_root, store) = self
+            .repo_store(params.0.workspace_path.as_deref())
+            .map_err(mcp_err)?;
         let limit = params.0.limit.unwrap_or(10);
-        let summaries = morph_core::recent_trace_summaries(store.as_ref(), limit).map_err(mcp_err)?;
+        let summaries =
+            morph_core::recent_trace_summaries(store.as_ref(), limit).map_err(mcp_err)?;
         let json = serde_json::to_string(&summaries).map_err(mcp_err)?;
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
@@ -589,7 +798,9 @@ impl MorphServer {
         &self,
         params: Parameters<TraceHashParams>,
     ) -> Result<CallToolResult, McpError> {
-        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+        let (_repo_root, store) = self
+            .repo_store(params.0.workspace_path.as_deref())
+            .map_err(mcp_err)?;
         let run_hash = self.resolve_run_hash(store.as_ref(), &params.0.hash)?;
         let out = morph_core::task_structure(store.as_ref(), &run_hash).map_err(mcp_err)?;
         let json = serde_json::to_string(&out).map_err(mcp_err)?;
@@ -603,7 +814,9 @@ impl MorphServer {
         &self,
         params: Parameters<TraceHashParams>,
     ) -> Result<CallToolResult, McpError> {
-        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+        let (_repo_root, store) = self
+            .repo_store(params.0.workspace_path.as_deref())
+            .map_err(mcp_err)?;
         let run_hash = self.resolve_run_hash(store.as_ref(), &params.0.hash)?;
         let out = morph_core::target_context(store.as_ref(), &run_hash).map_err(mcp_err)?;
         let json = serde_json::to_string(&out).map_err(mcp_err)?;
@@ -617,7 +830,9 @@ impl MorphServer {
         &self,
         params: Parameters<TraceHashParams>,
     ) -> Result<CallToolResult, McpError> {
-        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+        let (_repo_root, store) = self
+            .repo_store(params.0.workspace_path.as_deref())
+            .map_err(mcp_err)?;
         let run_hash = self.resolve_run_hash(store.as_ref(), &params.0.hash)?;
         let out = morph_core::final_artifact(store.as_ref(), &run_hash).map_err(mcp_err)?;
         let json = serde_json::to_string(&out).map_err(mcp_err)?;
@@ -631,7 +846,9 @@ impl MorphServer {
         &self,
         params: Parameters<TraceHashParams>,
     ) -> Result<CallToolResult, McpError> {
-        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+        let (_repo_root, store) = self
+            .repo_store(params.0.workspace_path.as_deref())
+            .map_err(mcp_err)?;
         let run_hash = self.resolve_run_hash(store.as_ref(), &params.0.hash)?;
         let out = morph_core::change_semantics(store.as_ref(), &run_hash).map_err(mcp_err)?;
         let json = serde_json::to_string(&out).map_err(mcp_err)?;
@@ -645,7 +862,9 @@ impl MorphServer {
         &self,
         params: Parameters<TraceHashParams>,
     ) -> Result<CallToolResult, McpError> {
-        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+        let (_repo_root, store) = self
+            .repo_store(params.0.workspace_path.as_deref())
+            .map_err(mcp_err)?;
         let run_hash = self.resolve_run_hash(store.as_ref(), &params.0.hash)?;
         let out = morph_core::verification_steps(store.as_ref(), &run_hash).map_err(mcp_err)?;
         let json = serde_json::to_string(&out).map_err(mcp_err)?;
@@ -658,10 +877,18 @@ impl MorphServer {
     /// All of these return JSON envelopes so agents don't have to
     /// scrape text.
 
-    #[tool(description = "Return structured info about the current HEAD: `{hash, short, branch, detached, message, author, timestamp, parents, metrics}`. Errors when no commits exist yet.")]
-    async fn morph_head(&self, params: Parameters<WorkspaceOnlyParams>) -> Result<CallToolResult, McpError> {
-        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
-        let head = morph_core::resolve_head(&store).map_err(mcp_err)?
+    #[tool(
+        description = "Return structured info about the current HEAD: `{hash, short, branch, detached, message, author, timestamp, parents, metrics}`. Errors when no commits exist yet."
+    )]
+    async fn morph_head(
+        &self,
+        params: Parameters<WorkspaceOnlyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let (_repo_root, store) = self
+            .repo_store(params.0.workspace_path.as_deref())
+            .map_err(mcp_err)?;
+        let head = morph_core::resolve_head(&store)
+            .map_err(mcp_err)?
             .ok_or_else(|| mcp_err("no commit yet on this branch"))?;
         let branch = morph_core::current_branch(&store).map_err(mcp_err)?;
         let commit = match store.get(&head).map_err(mcp_err)? {
@@ -685,9 +912,16 @@ impl MorphServer {
         Ok(CallToolResult::success(vec![json_text(body)]))
     }
 
-    #[tool(description = "Resolve any revision (full hash, prefix, `HEAD`, branch name, tag name) to its full hash and object type. Returns `{input, hash, short, type, message?, author?, timestamp?}`. Use this when you have a name and need a stable hash for downstream tools.")]
-    async fn morph_identify(&self, params: Parameters<IdentifyParams>) -> Result<CallToolResult, McpError> {
-        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+    #[tool(
+        description = "Resolve any revision (full hash, prefix, `HEAD`, branch name, tag name) to its full hash and object type. Returns `{input, hash, short, type, message?, author?, timestamp?}`. Use this when you have a name and need a stable hash for downstream tools."
+    )]
+    async fn morph_identify(
+        &self,
+        params: Parameters<IdentifyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let (_repo_root, store) = self
+            .repo_store(params.0.workspace_path.as_deref())
+            .map_err(mcp_err)?;
         let resolved = resolve_rev(store.as_ref(), &params.0.revision)?;
         let obj = store.get(&resolved).map_err(mcp_err)?;
         let kind = obj.kind_str();
@@ -706,24 +940,35 @@ impl MorphServer {
         Ok(CallToolResult::success(vec![json_text(body)]))
     }
 
-    #[tool(description = "List every annotation attached to a target object. Accepts any revision the CLI accepts. Returns `{target, annotations: [{hash, short, kind, author, target_sub, data}], count}`.")]
-    async fn morph_annotations(&self, params: Parameters<AnnotationsParams>) -> Result<CallToolResult, McpError> {
-        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+    #[tool(
+        description = "List every annotation attached to a target object. Accepts any revision the CLI accepts. Returns `{target, annotations: [{hash, short, kind, author, target_sub, data}], count}`."
+    )]
+    async fn morph_annotations(
+        &self,
+        params: Parameters<AnnotationsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let (_repo_root, store) = self
+            .repo_store(params.0.workspace_path.as_deref())
+            .map_err(mcp_err)?;
         let target = resolve_rev(store.as_ref(), &params.0.target_hash)?;
-        let anns = morph_core::list_annotations(&store, &target, params.0.target_sub.as_deref()).map_err(mcp_err)?;
-        let entries: Vec<_> = anns.iter().map(|(h, a)| {
-            let h_str = h.to_string();
-            serde_json::json!({
-                "hash": h_str,
-                "short": short_hash_str(&h_str),
-                "kind": a.kind,
-                "author": a.author,
-                "target": a.target,
-                "target_sub": a.target_sub,
-                "timestamp": a.timestamp,
-                "data": a.data,
+        let anns = morph_core::list_annotations(&store, &target, params.0.target_sub.as_deref())
+            .map_err(mcp_err)?;
+        let entries: Vec<_> = anns
+            .iter()
+            .map(|(h, a)| {
+                let h_str = h.to_string();
+                serde_json::json!({
+                    "hash": h_str,
+                    "short": short_hash_str(&h_str),
+                    "kind": a.kind,
+                    "author": a.author,
+                    "target": a.target,
+                    "target_sub": a.target_sub,
+                    "timestamp": a.timestamp,
+                    "data": a.data,
+                })
             })
-        }).collect();
+            .collect();
         let body = serde_json::json!({
             "target": target.to_string(),
             "target_short": target.short(),
@@ -733,40 +978,58 @@ impl MorphServer {
         Ok(CallToolResult::success(vec![json_text(body)]))
     }
 
-    #[tool(description = "List runs in the store, newest first. Returns `{runs: [{hash, short, agent_id, agent_version, model, pipeline, commit?, has_metrics, metrics?}], count}`. Pair with `morph_show {hash}` to drill into one.")]
-    async fn morph_run_list(&self, params: Parameters<WorkspaceOnlyParams>) -> Result<CallToolResult, McpError> {
-        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+    #[tool(
+        description = "List runs in the store, newest first. Returns `{runs: [{hash, short, agent_id, agent_version, model, pipeline, commit?, has_metrics, metrics?}], count}`. Pair with `morph_show {hash}` to drill into one."
+    )]
+    async fn morph_run_list(
+        &self,
+        params: Parameters<WorkspaceOnlyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let (_repo_root, store) = self
+            .repo_store(params.0.workspace_path.as_deref())
+            .map_err(mcp_err)?;
         let runs = store.list(morph_core::ObjectType::Run).map_err(mcp_err)?;
-        let entries: Vec<_> = runs.iter().rev().map(|h| {
-            let h_str = h.to_string();
-            let mut entry = serde_json::json!({
-                "hash": h_str,
-                "short": short_hash_str(&h_str),
-            });
-            if let Ok(MorphObject::Run(r)) = store.get(h) {
-                entry["agent_id"] = serde_json::Value::String(r.agent.id.clone());
-                entry["agent_version"] = serde_json::Value::String(r.agent.version.clone());
-                entry["model"] = serde_json::Value::String(r.environment.model.clone());
-                entry["pipeline"] = serde_json::Value::String(r.pipeline.clone());
-                if let Some(c) = &r.commit {
-                    entry["commit"] = serde_json::Value::String(c.clone());
-                }
-                entry["has_metrics"] = serde_json::Value::Bool(!r.metrics.is_empty());
-                if !r.metrics.is_empty() {
-                    if let Ok(m) = serde_json::to_value(&r.metrics) {
-                        entry["metrics"] = m;
+        let entries: Vec<_> = runs
+            .iter()
+            .rev()
+            .map(|h| {
+                let h_str = h.to_string();
+                let mut entry = serde_json::json!({
+                    "hash": h_str,
+                    "short": short_hash_str(&h_str),
+                });
+                if let Ok(MorphObject::Run(r)) = store.get(h) {
+                    entry["agent_id"] = serde_json::Value::String(r.agent.id.clone());
+                    entry["agent_version"] = serde_json::Value::String(r.agent.version.clone());
+                    entry["model"] = serde_json::Value::String(r.environment.model.clone());
+                    entry["pipeline"] = serde_json::Value::String(r.pipeline.clone());
+                    if let Some(c) = &r.commit {
+                        entry["commit"] = serde_json::Value::String(c.clone());
+                    }
+                    entry["has_metrics"] = serde_json::Value::Bool(!r.metrics.is_empty());
+                    if !r.metrics.is_empty() {
+                        if let Ok(m) = serde_json::to_value(&r.metrics) {
+                            entry["metrics"] = m;
+                        }
                     }
                 }
-            }
-            entry
-        }).collect();
+                entry
+            })
+            .collect();
         let body = serde_json::json!({ "runs": entries, "count": runs.len() });
         Ok(CallToolResult::success(vec![json_text(body)]))
     }
 
-    #[tool(description = "List branches with their tip hashes. Returns `{current, detached, branches: [{name, hash, short, current}], count}`.")]
-    async fn morph_branch_list(&self, params: Parameters<WorkspaceOnlyParams>) -> Result<CallToolResult, McpError> {
-        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+    #[tool(
+        description = "List branches with their tip hashes. Returns `{current, detached, branches: [{name, hash, short, current}], count}`."
+    )]
+    async fn morph_branch_list(
+        &self,
+        params: Parameters<WorkspaceOnlyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let (_repo_root, store) = self
+            .repo_store(params.0.workspace_path.as_deref())
+            .map_err(mcp_err)?;
         let current = morph_core::current_branch(&store).map_err(mcp_err)?;
         let refs = morph_core::list_refs(store.as_ref()).map_err(mcp_err)?;
         let mut branches = Vec::new();
@@ -790,47 +1053,97 @@ impl MorphServer {
         Ok(CallToolResult::success(vec![json_text(body)]))
     }
 
-    #[tool(description = "List every ref (branches, tags, HEAD) with its hash. Returns `{refs: [{name, hash, short}], count}`.")]
-    async fn morph_refs(&self, params: Parameters<WorkspaceOnlyParams>) -> Result<CallToolResult, McpError> {
-        let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+    #[tool(
+        description = "List every ref (branches, tags, HEAD) with its hash. Returns `{refs: [{name, hash, short}], count}`."
+    )]
+    async fn morph_refs(
+        &self,
+        params: Parameters<WorkspaceOnlyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let (_repo_root, store) = self
+            .repo_store(params.0.workspace_path.as_deref())
+            .map_err(mcp_err)?;
         let refs = morph_core::list_refs(store.as_ref()).map_err(mcp_err)?;
-        let entries: Vec<_> = refs.iter().map(|(name, hash)| {
-            let h_str = hash.to_string();
-            serde_json::json!({
-                "name": name,
-                "hash": h_str,
-                "short": short_hash_str(&h_str),
+        let entries: Vec<_> = refs
+            .iter()
+            .map(|(name, hash)| {
+                let h_str = hash.to_string();
+                serde_json::json!({
+                    "name": name,
+                    "hash": h_str,
+                    "short": short_hash_str(&h_str),
+                })
             })
-        }).collect();
+            .collect();
         let body = serde_json::json!({ "refs": entries, "count": refs.len() });
         Ok(CallToolResult::success(vec![json_text(body)]))
     }
 
     #[tool(description = "List configured remotes. Returns `{remotes: [{name, path}], count}`.")]
-    async fn morph_remote_list(&self, params: Parameters<WorkspaceOnlyParams>) -> Result<CallToolResult, McpError> {
-        let (repo_root, _store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+    async fn morph_remote_list(
+        &self,
+        params: Parameters<WorkspaceOnlyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let (repo_root, _store) = self
+            .repo_store(params.0.workspace_path.as_deref())
+            .map_err(mcp_err)?;
         let remotes = morph_core::read_remotes(&repo_root.join(".morph")).map_err(mcp_err)?;
-        let entries: Vec<_> = remotes.iter().map(|(name, spec)| serde_json::json!({
-            "name": name,
-            "path": spec.path,
-        })).collect();
+        let entries: Vec<_> = remotes
+            .iter()
+            .map(|(name, spec)| {
+                serde_json::json!({
+                    "name": name,
+                    "path": spec.path,
+                })
+            })
+            .collect();
         let body = serde_json::json!({ "remotes": entries, "count": remotes.len() });
         Ok(CallToolResult::success(vec![json_text(body)]))
     }
 
-    #[tool(description = "Merge a branch into the current branch (requires behavioral dominance). When `retire` is set, an attributed `review` node is auto-injected into the merged pipeline; supply `retire_reason` to record why.")]
-    async fn morph_merge(&self, params: Parameters<MergeParams>) -> Result<CallToolResult, McpError> {
-        let (repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
+    #[tool(
+        description = "Merge a branch into the current branch (requires behavioral dominance). When `retire` is set, an attributed `review` node is auto-injected into the merged pipeline; supply `retire_reason` to record why."
+    )]
+    async fn morph_merge(
+        &self,
+        params: Parameters<MergeParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let (repo_root, store) = self
+            .repo_store(params.0.workspace_path.as_deref())
+            .map_err(mcp_err)?;
         let pipeline = Hash::from_hex(&params.0.pipeline).map_err(mcp_err)?;
-        let suite = params.0.eval_suite.as_deref().map(Hash::from_hex).transpose().map_err(mcp_err)?;
-        let retired: Option<Vec<String>> = params.0.retire.as_deref()
+        let suite = params
+            .0
+            .eval_suite
+            .as_deref()
+            .map(Hash::from_hex)
+            .transpose()
+            .map_err(mcp_err)?;
+        let retired: Option<Vec<String>> = params
+            .0
+            .retire
+            .as_deref()
             .map(|s| s.split(',').map(|r| r.trim().to_string()).collect());
         let morph_dir = repo_root.join(".morph");
         let version = morph_core::read_repo_version(&morph_dir).map_err(mcp_err)?;
-        let mut plan = morph_core::prepare_merge(&store, &params.0.branch, suite.as_ref(), retired.as_deref()).map_err(mcp_err)?;
+        let mut plan =
+            morph_core::prepare_merge(&store, &params.0.branch, suite.as_ref(), retired.as_deref())
+                .map_err(mcp_err)?;
         plan.retire_reason = params.0.retire_reason.clone();
-        let hash = morph_core::execute_merge(&store, &plan, &pipeline, params.0.metrics, params.0.message, params.0.author, Some(&repo_root), Some(&version)).map_err(mcp_err)?;
-        Ok(CallToolResult::success(vec![Content::text(hash.to_string())]))
+        let hash = morph_core::execute_merge(
+            &store,
+            &plan,
+            &pipeline,
+            params.0.metrics,
+            params.0.message,
+            params.0.author,
+            Some(&repo_root),
+            Some(&version),
+        )
+        .map_err(mcp_err)?;
+        Ok(CallToolResult::success(vec![Content::text(
+            hash.to_string(),
+        )]))
     }
 }
 
@@ -865,11 +1178,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         return Ok(());
     }
     if args.iter().any(|a| a == "--version" || a == "-V") {
-        eprintln!("morph-mcp {} (built {})", env!("CARGO_PKG_VERSION"), env!("MORPH_BUILD_DATE"));
+        eprintln!(
+            "morph-mcp {} (built {})",
+            env!("CARGO_PKG_VERSION"),
+            env!("MORPH_BUILD_DATE")
+        );
         return Ok(());
     }
     let default_workspace = default_workspace_from_env_and_args(&args);
-    let service = MorphServer::new(default_workspace).serve(stdio()).await
+    let service = MorphServer::new(default_workspace)
+        .serve(stdio())
+        .await
         .inspect_err(|e| eprintln!("morph-mcp error: {}", e))?;
     service.waiting().await?;
     Ok(())
@@ -907,8 +1226,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let server = MorphServer::new(None);
         let result = server
-            .morph_init(Parameters(InitParams { path: Some(dir.path().to_str().unwrap().into()) }))
-            .await.unwrap();
+            .morph_init(Parameters(InitParams {
+                path: Some(dir.path().to_str().unwrap().into()),
+            }))
+            .await
+            .unwrap();
         assert!(dir.path().join(".morph").is_dir());
         assert!(extract_text(&result).contains("Initialized"));
     }
@@ -917,7 +1239,9 @@ mod tests {
     async fn init_already_initialized_fails() {
         let (dir, server) = setup_repo();
         let result = server
-            .morph_init(Parameters(InitParams { path: Some(dir.path().to_str().unwrap().into()) }))
+            .morph_init(Parameters(InitParams {
+                path: Some(dir.path().to_str().unwrap().into()),
+            }))
             .await;
         assert!(result.is_err());
     }
@@ -928,10 +1252,20 @@ mod tests {
         let ws = dir.path().to_str().unwrap().to_string();
         let result = server
             .morph_record_session(Parameters(RecordSessionParams {
-                prompt: Some("What is 2+2?".into()), response: Some("4".into()), messages: None,
-                workspace_path: Some(ws.clone()), model_name: Some("test-model".into()), agent_id: Some("test-agent".into()),
-            })).await.unwrap();
-        assert!(extract_text(&result).contains("recorded"), "should return confirmation: {}", extract_text(&result));
+                prompt: Some("What is 2+2?".into()),
+                response: Some("4".into()),
+                messages: None,
+                workspace_path: Some(ws.clone()),
+                model_name: Some("test-model".into()),
+                agent_id: Some("test-agent".into()),
+            }))
+            .await
+            .unwrap();
+        assert!(
+            extract_text(&result).contains("recorded"),
+            "should return confirmation: {}",
+            extract_text(&result)
+        );
         let store = morph_core::open_store(&std::path::Path::new(&ws).join(".morph")).unwrap();
         let runs = store.list(morph_core::ObjectType::Run).unwrap();
         assert_eq!(runs.len(), 1, "should have stored exactly one run");
@@ -943,16 +1277,46 @@ mod tests {
         let ws = dir.path().to_str().unwrap().to_string();
         let result = server
             .morph_record_session(Parameters(RecordSessionParams {
-                prompt: None, response: None,
+                prompt: None,
+                response: None,
                 messages: Some(vec![
-                    params::MessageParam { role: "user".into(), content: "Build a server".into(), metadata: None, timestamp: None },
-                    params::MessageParam { role: "assistant".into(), content: "Creating files".into(), metadata: None, timestamp: None },
-                    params::MessageParam { role: "tool_call".into(), content: "write_file(app.py)".into(), metadata: None, timestamp: None },
-                    params::MessageParam { role: "tool_result".into(), content: "done".into(), metadata: None, timestamp: None },
-                    params::MessageParam { role: "assistant".into(), content: "Server is ready!".into(), metadata: None, timestamp: None },
+                    params::MessageParam {
+                        role: "user".into(),
+                        content: "Build a server".into(),
+                        metadata: None,
+                        timestamp: None,
+                    },
+                    params::MessageParam {
+                        role: "assistant".into(),
+                        content: "Creating files".into(),
+                        metadata: None,
+                        timestamp: None,
+                    },
+                    params::MessageParam {
+                        role: "tool_call".into(),
+                        content: "write_file(app.py)".into(),
+                        metadata: None,
+                        timestamp: None,
+                    },
+                    params::MessageParam {
+                        role: "tool_result".into(),
+                        content: "done".into(),
+                        metadata: None,
+                        timestamp: None,
+                    },
+                    params::MessageParam {
+                        role: "assistant".into(),
+                        content: "Server is ready!".into(),
+                        metadata: None,
+                        timestamp: None,
+                    },
                 ]),
-                workspace_path: Some(ws.clone()), model_name: Some("qwen-3.5".into()), agent_id: Some("opencode".into()),
-            })).await.unwrap();
+                workspace_path: Some(ws.clone()),
+                model_name: Some("qwen-3.5".into()),
+                agent_id: Some("opencode".into()),
+            }))
+            .await
+            .unwrap();
         assert!(extract_text(&result).contains("recorded"));
         let store = morph_core::open_store(&std::path::Path::new(&ws).join(".morph")).unwrap();
         let runs = store.list(morph_core::ObjectType::Run).unwrap();
@@ -964,8 +1328,12 @@ mod tests {
                 assert_eq!(trace.events.len(), 5, "trace should have 5 events");
                 assert_eq!(trace.events[0].kind, "user");
                 assert_eq!(trace.events[2].kind, "tool_call");
-            } else { panic!("expected Trace"); }
-        } else { panic!("expected Run"); }
+            } else {
+                panic!("expected Trace");
+            }
+        } else {
+            panic!("expected Run");
+        }
     }
 
     #[tokio::test]
@@ -974,17 +1342,28 @@ mod tests {
         let ws = dir.path().to_str().unwrap().to_string();
         std::fs::write(dir.path().join("hello.txt"), "hello world").unwrap();
         let stage_result = server
-            .morph_stage(Parameters(StageParams { workspace_path: Some(ws.clone()), paths: Some(vec!["hello.txt".into()]) }))
-            .await.unwrap();
+            .morph_stage(Parameters(StageParams {
+                workspace_path: Some(ws.clone()),
+                paths: Some(vec!["hello.txt".into()]),
+            }))
+            .await
+            .unwrap();
         assert_eq!(extract_text(&stage_result).trim().len(), 64);
         let commit_result = server
             .morph_commit(Parameters(CommitParams {
                 message: "first commit".into(),
-                workspace_path: Some(ws), author: Some("test-author".into()),
+                workspace_path: Some(ws),
+                author: Some("test-author".into()),
                 allow_empty_metrics: Some(true),
                 ..Default::default()
-            })).await.unwrap();
-        let first_line = extract_text(&commit_result).lines().next().unwrap_or("").to_string();
+            }))
+            .await
+            .unwrap();
+        let first_line = extract_text(&commit_result)
+            .lines()
+            .next()
+            .unwrap_or("")
+            .to_string();
         assert_eq!(first_line.len(), 64);
     }
 
@@ -993,11 +1372,37 @@ mod tests {
         let (dir, server) = setup_repo();
         let ws = dir.path().to_str().unwrap().to_string();
         std::fs::write(dir.path().join("f.txt"), "content").unwrap();
-        server.morph_stage(Parameters(StageParams { workspace_path: Some(ws.clone()), paths: Some(vec![".".into()]) })).await.unwrap();
-        server.morph_commit(Parameters(CommitParams { message: "initial".into(), workspace_path: Some(ws.clone()), allow_empty_metrics: Some(true), ..Default::default() })).await.unwrap();
-        let branch_result = server.morph_branch(Parameters(BranchParams { name: "feature".into(), workspace_path: Some(ws.clone()) })).await.unwrap();
+        server
+            .morph_stage(Parameters(StageParams {
+                workspace_path: Some(ws.clone()),
+                paths: Some(vec![".".into()]),
+            }))
+            .await
+            .unwrap();
+        server
+            .morph_commit(Parameters(CommitParams {
+                message: "initial".into(),
+                workspace_path: Some(ws.clone()),
+                allow_empty_metrics: Some(true),
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
+        let branch_result = server
+            .morph_branch(Parameters(BranchParams {
+                name: "feature".into(),
+                workspace_path: Some(ws.clone()),
+            }))
+            .await
+            .unwrap();
         assert!(extract_text(&branch_result).contains("Created branch feature"));
-        let checkout_result = server.morph_checkout(Parameters(CheckoutParams { ref_name: "feature".into(), workspace_path: Some(ws) })).await.unwrap();
+        let checkout_result = server
+            .morph_checkout(Parameters(CheckoutParams {
+                ref_name: "feature".into(),
+                workspace_path: Some(ws),
+            }))
+            .await
+            .unwrap();
         assert!(extract_text(&checkout_result).contains("Switched to branch feature"));
     }
 
@@ -1005,7 +1410,12 @@ mod tests {
     async fn branch_without_commit_fails() {
         let (_dir, server) = setup_repo();
         let ws = _dir.path().to_str().unwrap().to_string();
-        let result = server.morph_branch(Parameters(BranchParams { name: "feature".into(), workspace_path: Some(ws) })).await;
+        let result = server
+            .morph_branch(Parameters(BranchParams {
+                name: "feature".into(),
+                workspace_path: Some(ws),
+            }))
+            .await;
         assert!(result.is_err());
     }
 
@@ -1015,18 +1425,36 @@ mod tests {
         let ws = dir.path().to_str().unwrap().to_string();
         server
             .morph_record_session(Parameters(RecordSessionParams {
-                prompt: Some("test".into()), response: Some("response".into()), messages: None,
-                workspace_path: Some(ws.clone()), model_name: None, agent_id: None,
-            })).await.unwrap();
+                prompt: Some("test".into()),
+                response: Some("response".into()),
+                messages: None,
+                workspace_path: Some(ws.clone()),
+                model_name: None,
+                agent_id: None,
+            }))
+            .await
+            .unwrap();
         let store = morph_core::open_store(&dir.path().join(".morph")).unwrap();
-        let run_hash = store.list(morph_core::ObjectType::Run).unwrap().into_iter().next().unwrap().to_string();
+        let run_hash = store
+            .list(morph_core::ObjectType::Run)
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap()
+            .to_string();
         let mut data = std::collections::BTreeMap::new();
         data.insert("note".to_string(), serde_json::json!("good session"));
         let ann_result = server
             .morph_annotate(Parameters(AnnotateParams {
-                target_hash: run_hash, kind: "review".into(), data: Some(data),
-                target_sub: None, workspace_path: Some(ws), author: Some("reviewer".into()),
-            })).await.unwrap();
+                target_hash: run_hash,
+                kind: "review".into(),
+                data: Some(data),
+                target_sub: None,
+                workspace_path: Some(ws),
+                author: Some("reviewer".into()),
+            }))
+            .await
+            .unwrap();
         assert_eq!(extract_text(&ann_result).len(), 64);
     }
 
@@ -1034,8 +1462,18 @@ mod tests {
     async fn record_eval_from_file() {
         let (dir, server) = setup_repo();
         let ws = dir.path().to_str().unwrap().to_string();
-        std::fs::write(dir.path().join("metrics.json"), r#"{"metrics": {"acc": 0.95}}"#).unwrap();
-        let result = server.morph_record_eval(Parameters(RecordEvalParams { file: "metrics.json".into(), workspace_path: Some(ws) })).await.unwrap();
+        std::fs::write(
+            dir.path().join("metrics.json"),
+            r#"{"metrics": {"acc": 0.95}}"#,
+        )
+        .unwrap();
+        let result = server
+            .morph_record_eval(Parameters(RecordEvalParams {
+                file: "metrics.json".into(),
+                workspace_path: Some(ws),
+            }))
+            .await
+            .unwrap();
         assert!(extract_text(&result).contains("0.95"));
     }
 
@@ -1044,15 +1482,26 @@ mod tests {
         let (dir, server) = setup_repo();
         let ws = dir.path().to_str().unwrap().to_string();
         std::fs::write(dir.path().join("code.py"), "print('hello')").unwrap();
-        server.morph_stage(Parameters(StageParams { workspace_path: Some(ws.clone()), paths: Some(vec![".".into()]) })).await.unwrap();
+        server
+            .morph_stage(Parameters(StageParams {
+                workspace_path: Some(ws.clone()),
+                paths: Some(vec![".".into()]),
+            }))
+            .await
+            .unwrap();
         let mut metrics = std::collections::BTreeMap::new();
         metrics.insert("tests_passed".to_string(), 42.0);
         metrics.insert("coverage".to_string(), 0.85);
-        let result = server.morph_commit(Parameters(CommitParams {
-            message: "commit with metrics".into(),
-            workspace_path: Some(ws), metrics: Some(metrics), author: Some("agent".into()),
-            ..Default::default()
-        })).await.unwrap();
+        let result = server
+            .morph_commit(Parameters(CommitParams {
+                message: "commit with metrics".into(),
+                workspace_path: Some(ws),
+                metrics: Some(metrics),
+                author: Some("agent".into()),
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
         assert_eq!(extract_text(&result).len(), 64);
     }
 
@@ -1063,19 +1512,45 @@ mod tests {
         std::fs::write(dir.path().join("code.txt"), "fn main() {}").unwrap();
         server
             .morph_record_session(Parameters(RecordSessionParams {
-                prompt: Some("Build it".into()), response: Some("Built".into()), messages: None,
-                workspace_path: Some(ws.clone()), model_name: Some("gpt-4".into()), agent_id: Some("cursor-agent".into()),
-            })).await.unwrap();
+                prompt: Some("Build it".into()),
+                response: Some("Built".into()),
+                messages: None,
+                workspace_path: Some(ws.clone()),
+                model_name: Some("gpt-4".into()),
+                agent_id: Some("cursor-agent".into()),
+            }))
+            .await
+            .unwrap();
         let store = morph_core::open_store(&dir.path().join(".morph")).unwrap();
-        let run_hash = store.list(morph_core::ObjectType::Run).unwrap().into_iter().next().unwrap().to_string();
-        server.morph_stage(Parameters(StageParams { workspace_path: Some(ws.clone()), paths: Some(vec![".".into()]) })).await.unwrap();
-        let commit_result = server.morph_commit(Parameters(CommitParams {
-            message: "evidence-backed commit".into(),
-            workspace_path: Some(ws), from_run: Some(run_hash),
-            allow_empty_metrics: Some(true),
-            ..Default::default()
-        })).await.unwrap();
-        let first_line = extract_text(&commit_result).lines().next().unwrap_or("").to_string();
+        let run_hash = store
+            .list(morph_core::ObjectType::Run)
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap()
+            .to_string();
+        server
+            .morph_stage(Parameters(StageParams {
+                workspace_path: Some(ws.clone()),
+                paths: Some(vec![".".into()]),
+            }))
+            .await
+            .unwrap();
+        let commit_result = server
+            .morph_commit(Parameters(CommitParams {
+                message: "evidence-backed commit".into(),
+                workspace_path: Some(ws),
+                from_run: Some(run_hash),
+                allow_empty_metrics: Some(true),
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
+        let first_line = extract_text(&commit_result)
+            .lines()
+            .next()
+            .unwrap_or("")
+            .to_string();
         assert_eq!(first_line.len(), 64);
     }
 
@@ -1103,7 +1578,11 @@ mod tests {
 
         let server = MorphServer::new(Some(dir.path().to_path_buf()));
         let result = server.repo_store(None);
-        assert!(result.is_ok(), "MCP should accept store version 0.5; got: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "MCP should accept store version 0.5; got: {:?}",
+            result.err()
+        );
     }
 
     #[tokio::test]
@@ -1135,7 +1614,13 @@ mod tests {
         let ws = dir.path().to_str().unwrap().to_string();
         std::fs::write(dir.path().join("a.txt"), "aaa").unwrap();
         std::fs::write(dir.path().join("b.txt"), "bbb").unwrap();
-        let result = server.morph_stage(Parameters(StageParams { workspace_path: Some(ws), paths: None })).await.unwrap();
+        let result = server
+            .morph_stage(Parameters(StageParams {
+                workspace_path: Some(ws),
+                paths: None,
+            }))
+            .await
+            .unwrap();
         let lines: Vec<&str> = extract_text(&result).trim().lines().collect();
         assert!(lines.len() >= 2);
     }
@@ -1145,7 +1630,12 @@ mod tests {
         let (dir, server) = setup_repo();
         let ws = dir.path().to_str().unwrap().to_string();
         std::fs::write(dir.path().join("code.py"), "print('hi')").unwrap();
-        let result = server.morph_status(Parameters(WorkspaceOnlyParams { workspace_path: Some(ws) })).await.unwrap();
+        let result = server
+            .morph_status(Parameters(WorkspaceOnlyParams {
+                workspace_path: Some(ws),
+            }))
+            .await
+            .unwrap();
         assert!(extract_text(&result).contains("code.py"));
     }
 
@@ -1157,11 +1647,7 @@ mod tests {
         // Build a 1-case suite so the evidence summary has a real
         // case count to report.
         std::fs::create_dir_all(dir.path().join("specs")).unwrap();
-        std::fs::write(
-            dir.path().join("specs/login.yaml"),
-            "- name: login_alpha\n",
-        )
-        .unwrap();
+        std::fs::write(dir.path().join("specs/login.yaml"), "- name: login_alpha\n").unwrap();
         server
             .morph_add_eval_case(Parameters(AddEvalCaseParams {
                 paths: vec!["specs/login.yaml".into()],
@@ -1218,7 +1704,10 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(text).expect("status returns JSON");
 
         assert_eq!(v["branch"], "main", "status JSON branch: {v}");
-        assert_eq!(v["head"]["metrics"]["tests_passed"], 5.0, "head metrics: {v}");
+        assert_eq!(
+            v["head"]["metrics"]["tests_passed"], 5.0,
+            "head metrics: {v}"
+        );
         assert_eq!(v["eval_suite"]["case_count"], 1, "suite case count: {v}");
         assert!(
             v["activity"]["runs"].as_u64().unwrap_or(0) >= 1,
@@ -1231,9 +1720,29 @@ mod tests {
         let (dir, server) = setup_repo();
         let ws = dir.path().to_str().unwrap().to_string();
         std::fs::write(dir.path().join("f.txt"), "data").unwrap();
-        server.morph_stage(Parameters(StageParams { workspace_path: Some(ws.clone()), paths: Some(vec![".".into()]) })).await.unwrap();
-        server.morph_commit(Parameters(CommitParams { message: "test-commit-msg".into(), workspace_path: Some(ws.clone()), allow_empty_metrics: Some(true), ..Default::default() })).await.unwrap();
-        let result = server.morph_log(Parameters(LogParams { ref_name: None, workspace_path: Some(ws) })).await.unwrap();
+        server
+            .morph_stage(Parameters(StageParams {
+                workspace_path: Some(ws.clone()),
+                paths: Some(vec![".".into()]),
+            }))
+            .await
+            .unwrap();
+        server
+            .morph_commit(Parameters(CommitParams {
+                message: "test-commit-msg".into(),
+                workspace_path: Some(ws.clone()),
+                allow_empty_metrics: Some(true),
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
+        let result = server
+            .morph_log(Parameters(LogParams {
+                ref_name: None,
+                workspace_path: Some(ws),
+            }))
+            .await
+            .unwrap();
         assert!(extract_text(&result).contains("test-commit-msg"));
     }
 
@@ -1242,10 +1751,34 @@ mod tests {
         let (dir, server) = setup_repo();
         let ws = dir.path().to_str().unwrap().to_string();
         std::fs::write(dir.path().join("x.txt"), "hello").unwrap();
-        server.morph_stage(Parameters(StageParams { workspace_path: Some(ws.clone()), paths: Some(vec![".".into()]) })).await.unwrap();
-        let commit_result = server.morph_commit(Parameters(CommitParams { message: "initial".into(), workspace_path: Some(ws.clone()), allow_empty_metrics: Some(true), ..Default::default() })).await.unwrap();
-        let commit_hash = extract_text(&commit_result).lines().next().unwrap_or("").to_string();
-        let result = server.morph_show(Parameters(ShowParams { hash: commit_hash, workspace_path: Some(ws) })).await.unwrap();
+        server
+            .morph_stage(Parameters(StageParams {
+                workspace_path: Some(ws.clone()),
+                paths: Some(vec![".".into()]),
+            }))
+            .await
+            .unwrap();
+        let commit_result = server
+            .morph_commit(Parameters(CommitParams {
+                message: "initial".into(),
+                workspace_path: Some(ws.clone()),
+                allow_empty_metrics: Some(true),
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
+        let commit_hash = extract_text(&commit_result)
+            .lines()
+            .next()
+            .unwrap_or("")
+            .to_string();
+        let result = server
+            .morph_show(Parameters(ShowParams {
+                hash: commit_hash,
+                workspace_path: Some(ws),
+            }))
+            .await
+            .unwrap();
         assert!(extract_text(&result).contains("commit"));
         assert!(extract_text(&result).contains("initial"));
     }
@@ -1253,15 +1786,18 @@ mod tests {
     fn build_pocket_tasks_fix_trace(store: &dyn Store) -> Hash {
         use morph_core::objects::*;
         let mut events = Vec::new();
-        let mut add_event = |seq: u64, kind: &str, payload: std::collections::BTreeMap<String, serde_json::Value>| {
-            events.push(TraceEvent {
-                id: format!("evt_{}", seq),
-                seq,
-                ts: format!("2026-04-17T12:00:{:02}+00:00", seq),
-                kind: kind.into(),
-                payload,
-            });
-        };
+        let mut add_event =
+            |seq: u64,
+             kind: &str,
+             payload: std::collections::BTreeMap<String, serde_json::Value>| {
+                events.push(TraceEvent {
+                    id: format!("evt_{}", seq),
+                    seq,
+                    ts: format!("2026-04-17T12:00:{:02}+00:00", seq),
+                    kind: kind.into(),
+                    payload,
+                });
+            };
         let mut p0 = std::collections::BTreeMap::new();
         p0.insert("text".into(), serde_json::json!("Fix the bug in `list_tasks` in `pocket_tasks/main.py` — it should not skip the first task."));
         add_event(0, "user", p0);
@@ -1320,7 +1856,12 @@ mod tests {
             output_artifacts: vec![],
             metrics: std::collections::BTreeMap::new(),
             trace: trace_hash.to_string(),
-            agent: AgentInfo { id: "cursor".into(), version: "1.0".into(), policy: None, instance_id: None },
+            agent: AgentInfo {
+                id: "cursor".into(),
+                version: "1.0".into(),
+                policy: None,
+                instance_id: None,
+            },
             contributors: None,
             morph_version: None,
         });
@@ -1339,16 +1880,24 @@ mod tests {
             .morph_get_recent_trace_summaries(Parameters(RecentTracesParams {
                 limit: Some(5),
                 workspace_path: Some(ws.clone()),
-            })).await.unwrap();
+            }))
+            .await
+            .unwrap();
         let text = extract_text(&summaries);
         assert!(text.contains("list_tasks"), "summaries: {}", text);
-        assert!(text.contains("fix_bug"), "summaries should include task_phase fix_bug: {}", text);
+        assert!(
+            text.contains("fix_bug"),
+            "summaries should include task_phase fix_bug: {}",
+            text
+        );
 
         let structure = server
             .morph_get_trace_task_structure(Parameters(TraceHashParams {
                 hash: run_hex.clone(),
                 workspace_path: Some(ws.clone()),
-            })).await.unwrap();
+            }))
+            .await
+            .unwrap();
         let structure_text = extract_text(&structure);
         assert!(structure_text.contains("\"task_phase\":\"fix_bug\""));
         assert!(structure_text.contains("\"task_scope\":\"single_function\""));
@@ -1358,16 +1907,24 @@ mod tests {
             .morph_get_trace_target_context(Parameters(TraceHashParams {
                 hash: run_hex.clone(),
                 workspace_path: Some(ws.clone()),
-            })).await.unwrap();
+            }))
+            .await
+            .unwrap();
         let context_text = extract_text(&context);
-        assert!(context_text.contains("def list_tasks(db):"), "got {}", context_text);
+        assert!(
+            context_text.contains("def list_tasks(db):"),
+            "got {}",
+            context_text
+        );
         assert!(context_text.contains("\"language\":\"python\""));
 
         let artifact = server
             .morph_get_trace_final_artifact(Parameters(TraceHashParams {
                 hash: run_hex.clone(),
                 workspace_path: Some(ws.clone()),
-            })).await.unwrap();
+            }))
+            .await
+            .unwrap();
         let artifact_text = extract_text(&artifact);
         assert!(artifact_text.contains("\"artifact_type\":\"function_only\""));
         assert!(artifact_text.contains("final_function_text"));
@@ -1376,16 +1933,24 @@ mod tests {
             .morph_get_trace_change_semantics(Parameters(TraceHashParams {
                 hash: run_hex.clone(),
                 workspace_path: Some(ws.clone()),
-            })).await.unwrap();
+            }))
+            .await
+            .unwrap();
         assert!(extract_text(&semantics).contains("changed_construct_summary"));
 
         let verify = server
             .morph_get_trace_verification_steps(Parameters(TraceHashParams {
                 hash: run_hex,
                 workspace_path: Some(ws),
-            })).await.unwrap();
+            }))
+            .await
+            .unwrap();
         let verify_text = extract_text(&verify);
-        assert!(verify_text.contains("pytest pocket_tasks/"), "got {}", verify_text);
+        assert!(
+            verify_text.contains("pytest pocket_tasks/"),
+            "got {}",
+            verify_text
+        );
     }
 
     #[tokio::test]
@@ -1449,10 +2014,16 @@ mod tests {
             .await
             .unwrap();
         let run_hash = extract_text(&result).trim().to_string();
-        assert_eq!(run_hash.len(), 64, "expected 64-char run hash, got {run_hash:?}");
+        assert_eq!(
+            run_hash.len(),
+            64,
+            "expected 64-char run hash, got {run_hash:?}"
+        );
 
         let store = morph_core::open_store(&dir.path().join(".morph")).unwrap();
-        let obj = store.get(&morph_core::Hash::from_hex(&run_hash).unwrap()).unwrap();
+        let obj = store
+            .get(&morph_core::Hash::from_hex(&run_hash).unwrap())
+            .unwrap();
         match obj {
             morph_core::MorphObject::Run(r) => {
                 assert_eq!(r.commit.as_deref(), Some(head.as_str()));
@@ -1498,11 +2069,20 @@ mod tests {
             .unwrap();
         let body = extract_text(&result);
         let run_hash = body.lines().next().unwrap_or("").to_string();
-        assert_eq!(run_hash.len(), 64, "expected 64-char run hash, got {body:?}");
-        assert!(!body.contains("warning: no metrics"), "should have parsed metrics: {body}");
+        assert_eq!(
+            run_hash.len(),
+            64,
+            "expected 64-char run hash, got {body:?}"
+        );
+        assert!(
+            !body.contains("warning: no metrics"),
+            "should have parsed metrics: {body}"
+        );
 
         let store = morph_core::open_store(&dir.path().join(".morph")).unwrap();
-        let obj = store.get(&morph_core::Hash::from_hex(&run_hash).unwrap()).unwrap();
+        let obj = store
+            .get(&morph_core::Hash::from_hex(&run_hash).unwrap())
+            .unwrap();
         match obj {
             morph_core::MorphObject::Run(r) => {
                 assert_eq!(r.metrics.get("tests_passed").copied(), Some(7.0));
@@ -1534,11 +2114,18 @@ mod tests {
             .unwrap();
         let body = extract_text(&result);
         let suite_hash = body.lines().next().unwrap_or("").to_string();
-        assert_eq!(suite_hash.len(), 64, "expected 64-char suite hash, got: {body}");
+        assert_eq!(
+            suite_hash.len(),
+            64,
+            "expected 64-char suite hash, got: {body}"
+        );
 
         // Default eval suite is now wired to the new hash.
         let policy = morph_core::read_policy(&dir.path().join(".morph")).unwrap();
-        assert_eq!(policy.default_eval_suite.as_deref(), Some(suite_hash.as_str()));
+        assert_eq!(
+            policy.default_eval_suite.as_deref(),
+            Some(suite_hash.as_str())
+        );
     }
 
     #[tokio::test]
@@ -1616,7 +2203,10 @@ mod tests {
         .to_string();
         let second = second_body.lines().next().unwrap_or("").to_string();
         assert_eq!(second.len(), 64);
-        assert_ne!(first, second, "rebuild with fewer cases must change the hash");
+        assert_ne!(
+            first, second,
+            "rebuild with fewer cases must change the hash"
+        );
 
         let show = extract_text(
             &server
@@ -1696,7 +2286,11 @@ mod tests {
             .await
             .unwrap();
         let v: serde_json::Value = serde_json::from_str(extract_text(&result)).unwrap();
-        assert_eq!(v["count"], serde_json::json!(0), "expected zero gaps after evidence is registered, got: {v:?}");
+        assert_eq!(
+            v["count"],
+            serde_json::json!(0),
+            "expected zero gaps after evidence is registered, got: {v:?}"
+        );
     }
 
     #[tokio::test]
@@ -1704,12 +2298,59 @@ mod tests {
         let (dir, server) = setup_repo();
         let ws = dir.path().to_str().unwrap().to_string();
         std::fs::write(dir.path().join("a.txt"), "v1").unwrap();
-        server.morph_stage(Parameters(StageParams { workspace_path: Some(ws.clone()), paths: Some(vec![".".into()]) })).await.unwrap();
-        let c1 = extract_text(&server.morph_commit(Parameters(CommitParams { message: "first".into(), workspace_path: Some(ws.clone()), allow_empty_metrics: Some(true), ..Default::default() })).await.unwrap()).lines().next().unwrap_or("").to_string();
+        server
+            .morph_stage(Parameters(StageParams {
+                workspace_path: Some(ws.clone()),
+                paths: Some(vec![".".into()]),
+            }))
+            .await
+            .unwrap();
+        let c1 = extract_text(
+            &server
+                .morph_commit(Parameters(CommitParams {
+                    message: "first".into(),
+                    workspace_path: Some(ws.clone()),
+                    allow_empty_metrics: Some(true),
+                    ..Default::default()
+                }))
+                .await
+                .unwrap(),
+        )
+        .lines()
+        .next()
+        .unwrap_or("")
+        .to_string();
         std::fs::write(dir.path().join("b.txt"), "new file").unwrap();
-        server.morph_stage(Parameters(StageParams { workspace_path: Some(ws.clone()), paths: Some(vec!["b.txt".into()]) })).await.unwrap();
-        let c2 = extract_text(&server.morph_commit(Parameters(CommitParams { message: "second".into(), workspace_path: Some(ws.clone()), allow_empty_metrics: Some(true), ..Default::default() })).await.unwrap()).lines().next().unwrap_or("").to_string();
-        let result = server.morph_diff(Parameters(DiffParams { old_ref: c1, new_ref: c2, workspace_path: Some(ws) })).await.unwrap();
+        server
+            .morph_stage(Parameters(StageParams {
+                workspace_path: Some(ws.clone()),
+                paths: Some(vec!["b.txt".into()]),
+            }))
+            .await
+            .unwrap();
+        let c2 = extract_text(
+            &server
+                .morph_commit(Parameters(CommitParams {
+                    message: "second".into(),
+                    workspace_path: Some(ws.clone()),
+                    allow_empty_metrics: Some(true),
+                    ..Default::default()
+                }))
+                .await
+                .unwrap(),
+        )
+        .lines()
+        .next()
+        .unwrap_or("")
+        .to_string();
+        let result = server
+            .morph_diff(Parameters(DiffParams {
+                old_ref: c1,
+                new_ref: c2,
+                workspace_path: Some(ws),
+            }))
+            .await
+            .unwrap();
         assert!(extract_text(&result).contains("A"));
         assert!(extract_text(&result).contains("b.txt"));
     }
@@ -1896,8 +2537,7 @@ mod tests {
             .get("retired_metrics")
             .and_then(|v| v.as_array())
             .expect("review node should carry params.retired_metrics");
-        let retired_names: Vec<&str> =
-            retired_param.iter().filter_map(|v| v.as_str()).collect();
+        let retired_names: Vec<&str> = retired_param.iter().filter_map(|v| v.as_str()).collect();
         assert_eq!(retired_names, vec!["old_metric"]);
 
         let attribution = merged_pipeline
@@ -1971,7 +2611,10 @@ mod tests {
         .unwrap();
 
         // morph_head: documented to return at least hash, branch, message.
-        let head = server.morph_head(Parameters(workspace_only())).await.unwrap();
+        let head = server
+            .morph_head(Parameters(workspace_only()))
+            .await
+            .unwrap();
         let head_v: serde_json::Value =
             serde_json::from_str(extract_text(&head)).expect("morph_head returns JSON");
         assert_eq!(head_v["hash"], commit_hash);

@@ -49,7 +49,10 @@ impl std::fmt::Display for StructuralKind {
 #[derive(Clone, Debug)]
 pub enum ObjConflict {
     /// Suite or pipeline level — must be resolved before tree merge.
-    Structural { kind: StructuralKind, message: String },
+    Structural {
+        kind: StructuralKind,
+        message: String,
+    },
     /// File-level text or binary conflict in the working tree.
     Textual {
         path: PathBuf,
@@ -58,7 +61,9 @@ pub enum ObjConflict {
         theirs: Option<Hash>,
     },
     /// Merged metrics fail dominance against one or both parents.
-    Behavioral { violations: Vec<crate::merge::DominanceViolation> },
+    Behavioral {
+        violations: Vec<crate::merge::DominanceViolation>,
+    },
 }
 
 /// Coarse classification of how two commits relate.
@@ -122,7 +127,11 @@ impl std::fmt::Display for ObjConflict {
                 write!(f, "textual conflict in {}", path.display())
             }
             ObjConflict::Behavioral { violations } => {
-                write!(f, "behavioral conflict: {} dominance violation(s)", violations.len())
+                write!(
+                    f,
+                    "behavioral conflict: {} dominance violation(s)",
+                    violations.len()
+                )
             }
         }
     }
@@ -334,11 +343,17 @@ fn resolve_pipeline_merge(
     ))
 }
 
-fn load_pipeline_by_hex(store: &dyn Store, hex: &str) -> Result<crate::objects::Pipeline, MorphError> {
+fn load_pipeline_by_hex(
+    store: &dyn Store,
+    hex: &str,
+) -> Result<crate::objects::Pipeline, MorphError> {
     let hash = Hash::from_hex(hex)?;
     match store.get(&hash)? {
         MorphObject::Pipeline(p) => Ok(p),
-        _ => Err(MorphError::Serialization(format!("expected Pipeline at {}", hash))),
+        _ => Err(MorphError::Serialization(format!(
+            "expected Pipeline at {}",
+            hash
+        ))),
     }
 }
 
@@ -381,7 +396,10 @@ fn reconcile_suites(
                 head_suite
             } else {
                 crate::metrics::retire_metrics(&head_suite, &to_retire).map_err(|e| {
-                    structural(StructuralKind::SuiteIncompatible, format!("retire (head): {}", e))
+                    structural(
+                        StructuralKind::SuiteIncompatible,
+                        format!("retire (head): {}", e),
+                    )
                 })?
             }
         }
@@ -399,7 +417,10 @@ fn reconcile_suites(
                 other_suite
             } else {
                 crate::metrics::retire_metrics(&other_suite, &to_retire).map_err(|e| {
-                    structural(StructuralKind::SuiteIncompatible, format!("retire (other): {}", e))
+                    structural(
+                        StructuralKind::SuiteIncompatible,
+                        format!("retire (other): {}", e),
+                    )
                 })?
             }
         }
@@ -415,10 +436,16 @@ fn structural(kind: StructuralKind, message: String) -> ObjConflict {
     ObjConflict::Structural { kind, message }
 }
 
-fn load_commit(store: &dyn Store, commit_hash: &Hash) -> Result<crate::objects::Commit, MorphError> {
+fn load_commit(
+    store: &dyn Store,
+    commit_hash: &Hash,
+) -> Result<crate::objects::Commit, MorphError> {
     match store.get(commit_hash)? {
         MorphObject::Commit(c) => Ok(c),
-        _ => Err(MorphError::Serialization(format!("not a commit: {}", commit_hash))),
+        _ => Err(MorphError::Serialization(format!(
+            "not a commit: {}",
+            commit_hash
+        ))),
     }
 }
 
@@ -431,7 +458,12 @@ fn load_suite_for_commit(
 ) -> Result<Option<crate::objects::EvalSuite>, MorphError> {
     let commit = match store.get(commit_hash)? {
         MorphObject::Commit(c) => c,
-        _ => return Err(MorphError::Serialization(format!("not a commit: {}", commit_hash))),
+        _ => {
+            return Err(MorphError::Serialization(format!(
+                "not a commit: {}",
+                commit_hash
+            )))
+        }
     };
     let suite_hex = commit.eval_contract.suite;
     if suite_hex.chars().all(|c| c == '0') {
@@ -547,7 +579,10 @@ mod tests {
     fn put_suite(store: &dyn Store, metrics: Vec<crate::objects::EvalMetric>) -> Hash {
         use crate::objects::{EvalSuite, MorphObject};
         store
-            .put(&MorphObject::EvalSuite(EvalSuite { cases: vec![], metrics }))
+            .put(&MorphObject::EvalSuite(EvalSuite {
+                cases: vec![],
+                metrics,
+            }))
             .unwrap()
     }
 
@@ -661,8 +696,11 @@ mod tests {
         let ma = raw_commit(store.as_ref(), &[a, b], "ma");
         let mb = raw_commit(store.as_ref(), &[b, a], "mb");
         let base = merge_base(store.as_ref(), &ma, &mb).unwrap();
-        assert!(base == Some(a) || base == Some(b),
-            "merge_base must pick one of the two valid LCAs, got {:?}", base);
+        assert!(
+            base == Some(a) || base == Some(b),
+            "merge_base must pick one of the two valid LCAs, got {:?}",
+            base
+        );
     }
 
     // ── ObjConflict / display ────────────────────────────────────────
@@ -728,7 +766,11 @@ mod tests {
 
         let outcome = merge_commits(store.as_ref(), &a, &b, None).unwrap();
         assert_eq!(outcome.trivial, TrivialOutcome::Diverged);
-        assert!(outcome.conflicts.is_empty(), "got conflicts: {:?}", outcome.conflicts);
+        assert!(
+            outcome.conflicts.is_empty(),
+            "got conflicts: {:?}",
+            outcome.conflicts
+        );
         let suite = outcome.union_suite.expect("union_suite must be populated");
         let names: Vec<_> = suite.metrics.iter().map(|m| m.name.as_str()).collect();
         assert!(names.contains(&"acc"));
@@ -745,7 +787,10 @@ mod tests {
         let b = raw_commit_full(store.as_ref(), &[r], "b", Some(&s_b), None, None);
 
         let outcome = merge_commits(store.as_ref(), &a, &b, None).unwrap();
-        assert!(outcome.union_suite.is_none(), "union_suite must be None on conflict");
+        assert!(
+            outcome.union_suite.is_none(),
+            "union_suite must be None on conflict"
+        );
         let kinds: Vec<_> = outcome
             .conflicts
             .iter()
@@ -767,14 +812,8 @@ mod tests {
         // (consistent). With `retire = ["old"]`, the conflict must vanish
         // and `union_suite` must contain only `acc`.
         let (_dir, store) = setup_repo();
-        let s_a = put_suite(
-            store.as_ref(),
-            vec![metric("acc", 0.8), metric("old", 0.5)],
-        );
-        let s_b = put_suite(
-            store.as_ref(),
-            vec![metric("acc", 0.8), metric("old", 0.9)],
-        );
+        let s_a = put_suite(store.as_ref(), vec![metric("acc", 0.8), metric("old", 0.5)]);
+        let s_b = put_suite(store.as_ref(), vec![metric("acc", 0.8), metric("old", 0.9)]);
         let r = raw_commit_full(store.as_ref(), &[], "r", Some(&s_a), None, None);
         let a = raw_commit_full(store.as_ref(), &[r], "a", Some(&s_a), None, None);
         let b = raw_commit_full(store.as_ref(), &[r], "b", Some(&s_b), None, None);
@@ -837,7 +876,15 @@ mod tests {
         let pipeline_conflicts: Vec<_> = outcome
             .conflicts
             .iter()
-            .filter(|c| matches!(c, ObjConflict::Structural { kind: StructuralKind::PipelineDivergent, .. }))
+            .filter(|c| {
+                matches!(
+                    c,
+                    ObjConflict::Structural {
+                        kind: StructuralKind::PipelineDivergent,
+                        ..
+                    }
+                )
+            })
             .collect();
         assert!(
             pipeline_conflicts.is_empty(),
@@ -883,7 +930,15 @@ mod tests {
         let pipeline_conflicts: Vec<_> = outcome
             .conflicts
             .iter()
-            .filter(|c| matches!(c, ObjConflict::Structural { kind: StructuralKind::PipelineDivergent, .. }))
+            .filter(|c| {
+                matches!(
+                    c,
+                    ObjConflict::Structural {
+                        kind: StructuralKind::PipelineDivergent,
+                        ..
+                    }
+                )
+            })
             .collect();
         assert_eq!(
             pipeline_conflicts.len(),
@@ -896,9 +951,15 @@ mod tests {
             ObjConflict::Structural { message, .. } => message,
             _ => unreachable!(),
         };
-        assert!(msg.contains("'a'") || msg.contains("\"a\"") || msg.contains(": a "),
-            "expected message to mention node 'a', got: {}", msg);
-        assert!(outcome.union_pipeline.is_none(), "union_pipeline must be None on conflict");
+        assert!(
+            msg.contains("'a'") || msg.contains("\"a\"") || msg.contains(": a "),
+            "expected message to mention node 'a', got: {}",
+            msg
+        );
+        assert!(
+            outcome.union_pipeline.is_none(),
+            "union_pipeline must be None on conflict"
+        );
     }
 
     // ── merge_commits: pipeline / tree stage stubs ───────────────────
@@ -1024,16 +1085,29 @@ mod tests {
 
         let r = raw_commit_full(store.as_ref(), &[], "r", Some(&s), None, Some(&base_tree));
         let a = raw_commit_full(store.as_ref(), &[r], "a", Some(&s), None, Some(&ours_tree));
-        let b = raw_commit_full(store.as_ref(), &[r], "b", Some(&s), None, Some(&theirs_tree));
+        let b = raw_commit_full(
+            store.as_ref(),
+            &[r],
+            "b",
+            Some(&s),
+            None,
+            Some(&theirs_tree),
+        );
 
         let outcome = merge_commits(store.as_ref(), &a, &b, None).unwrap();
         assert!(
-            !outcome.conflicts.iter().any(|c| matches!(c, ObjConflict::Structural { .. })),
+            !outcome
+                .conflicts
+                .iter()
+                .any(|c| matches!(c, ObjConflict::Structural { .. })),
             "no structural conflicts expected, got: {:?}",
             outcome.conflicts
         );
         assert!(
-            !outcome.conflicts.iter().any(|c| matches!(c, ObjConflict::Textual { .. })),
+            !outcome
+                .conflicts
+                .iter()
+                .any(|c| matches!(c, ObjConflict::Textual { .. })),
             "no textual conflicts expected, got: {:?}",
             outcome.conflicts
         );
@@ -1069,7 +1143,14 @@ mod tests {
 
         let r = raw_commit_full(store.as_ref(), &[], "r", Some(&s), None, Some(&base_tree));
         let a = raw_commit_full(store.as_ref(), &[r], "a", Some(&s), None, Some(&ours_tree));
-        let b = raw_commit_full(store.as_ref(), &[r], "b", Some(&s), None, Some(&theirs_tree));
+        let b = raw_commit_full(
+            store.as_ref(),
+            &[r],
+            "b",
+            Some(&s),
+            None,
+            Some(&theirs_tree),
+        );
 
         let outcome = merge_commits(store.as_ref(), &a, &b, None).unwrap();
         let textual_count = outcome
@@ -1088,14 +1169,20 @@ mod tests {
             .working_writes
             .iter()
             .find_map(|op| match op {
-                crate::treemerge::WorkdirOp::Write { path, bytes } if path.to_string_lossy() == "a.txt" => {
+                crate::treemerge::WorkdirOp::Write { path, bytes }
+                    if path.to_string_lossy() == "a.txt" =>
+                {
                     Some(bytes.as_slice())
                 }
                 _ => None,
             })
             .expect("conflict must plan a working write for a.txt");
         let s = String::from_utf8_lossy(bytes);
-        assert!(s.contains("<<<<<<<"), "expected conflict markers, got:\n{}", s);
+        assert!(
+            s.contains("<<<<<<<"),
+            "expected conflict markers, got:\n{}",
+            s
+        );
     }
 
     #[test]
@@ -1110,14 +1197,23 @@ mod tests {
 
         let r = raw_commit_full(store.as_ref(), &[], "r", Some(&s), None, Some(&base_tree));
         let a = raw_commit_full(store.as_ref(), &[r], "a", Some(&s), None, Some(&ours_tree));
-        let b = raw_commit_full(store.as_ref(), &[r], "b", Some(&s), None, Some(&theirs_tree));
+        let b = raw_commit_full(
+            store.as_ref(),
+            &[r],
+            "b",
+            Some(&s),
+            None,
+            Some(&theirs_tree),
+        );
 
         let outcome = merge_commits(store.as_ref(), &a, &b, None).unwrap();
-        let modify_delete = outcome.conflicts.iter().any(|c| matches!(
-            c,
-            ObjConflict::Structural { kind: StructuralKind::TreeDivergent, message }
-                if message.contains("modify/delete: a.txt")
-        ));
+        let modify_delete = outcome.conflicts.iter().any(|c| {
+            matches!(
+                c,
+                ObjConflict::Structural { kind: StructuralKind::TreeDivergent, message }
+                    if message.contains("modify/delete: a.txt")
+            )
+        });
         assert!(
             modify_delete,
             "expected TreeDivergent modify/delete conflict, got: {:?}",

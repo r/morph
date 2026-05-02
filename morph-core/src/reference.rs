@@ -158,9 +158,8 @@ pub fn reference_mode_hooks(
 pub fn ensure_morph_in_git_info_exclude(repo_root: &Path) -> Result<bool, MorphError> {
     let info_dir = repo_root.join(".git").join("info");
     if !info_dir.exists() {
-        std::fs::create_dir_all(&info_dir).map_err(|e| {
-            MorphError::Other(format!("create .git/info: {}", e))
-        })?;
+        std::fs::create_dir_all(&info_dir)
+            .map_err(|e| MorphError::Other(format!("create .git/info: {}", e)))?;
     }
     let exclude_path = info_dir.join("exclude");
     let existing = if exclude_path.exists() {
@@ -179,10 +178,10 @@ pub fn ensure_morph_in_git_info_exclude(repo_root: &Path) -> Result<bool, MorphE
         new_content.push('\n');
     }
     if existing.is_empty() {
-        new_content
-            .push_str("# Local-only excludes managed by morph (Stowaway mode):\n");
-        new_content
-            .push_str("# teammates' clones never see this file, so their git workflow is unaffected.\n");
+        new_content.push_str("# Local-only excludes managed by morph (Stowaway mode):\n");
+        new_content.push_str(
+            "# teammates' clones never see this file, so their git workflow is unaffected.\n",
+        );
     }
     new_content.push_str(target);
     new_content.push('\n');
@@ -221,7 +220,9 @@ pub fn git_head_sha(repo_root: &Path) -> Result<Option<String>, MorphError> {
             stderr.trim()
         )));
     }
-    Ok(Some(String::from_utf8_lossy(&out.stdout).trim().to_string()))
+    Ok(Some(
+        String::from_utf8_lossy(&out.stdout).trim().to_string(),
+    ))
 }
 
 /// Read a single git commit's subject + body and author identity in
@@ -822,14 +823,8 @@ pub fn sync_to_head_with_origin(
     // with a 1-element chain and behave exactly like the pre-fix
     // single-commit path.
     let chain = collect_unmirrored_first_parent_ancestry(repo_root, &git_sha, &cache)?;
-    let (last_hash, created) = sync_range(
-        store,
-        repo_root,
-        &chain,
-        origin,
-        morph_version,
-        &mut cache,
-    )?;
+    let (last_hash, created) =
+        sync_range(store, repo_root, &chain, origin, morph_version, &mut cache)?;
     let final_hash = last_hash.ok_or_else(|| {
         MorphError::Other(
             "sync_to_head: HEAD unmirrored but ancestry walk produced no commits".into(),
@@ -975,11 +970,8 @@ pub fn run_git_merge_with_morph_internal(
                 .arg("ls-files")
                 .arg("--unmerged")
                 .output()
-                .map_err(|e| {
-                    MorphError::Other(format!("failed to spawn git ls-files: {}", e))
-                })?;
-            let mut paths: std::collections::BTreeSet<String> =
-                std::collections::BTreeSet::new();
+                .map_err(|e| MorphError::Other(format!("failed to spawn git ls-files: {}", e)))?;
+            let mut paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
             for line in String::from_utf8_lossy(&unmerged.stdout).lines() {
                 if let Some(path) = line.split('\t').nth(1) {
                     paths.insert(path.to_string());
@@ -1011,9 +1003,8 @@ pub fn run_git_merge_with_morph_internal(
     if pre_head == post_head {
         return Ok(GitMergeOutcome::AlreadyUpToDate);
     }
-    let post = post_head.ok_or_else(|| {
-        MorphError::Other("git HEAD missing after successful merge".into())
-    })?;
+    let post = post_head
+        .ok_or_else(|| MorphError::Other("git HEAD missing after successful merge".into()))?;
 
     // A merge commit has >= 2 parents; a fast-forward leaves HEAD at
     // a single-parent commit (whatever `feature` already was). git's
@@ -1294,10 +1285,7 @@ fn check_pre_merge_dominance(
 /// we capture the *other* branch's git SHA in the breadcrumb so
 /// `--continue` can re-resolve the morph mirror after the merge
 /// commit lands. Returns `Ok(None)` for a missing branch.
-pub fn lookup_branch_git_sha(
-    repo_root: &Path,
-    branch: &str,
-) -> Result<Option<String>, MorphError> {
+pub fn lookup_branch_git_sha(repo_root: &Path, branch: &str) -> Result<Option<String>, MorphError> {
     let out = Command::new("git")
         .arg("rev-parse")
         .arg("--verify")
@@ -1322,10 +1310,7 @@ pub fn lookup_branch_git_sha(
 /// case `handle_pre_merge_commit` skips `ensure_branch_synced` and
 /// relies on the existing cache, which still resolves the morph
 /// mirror if the tip is reachable from any branch.
-fn git_branch_name_for_sha(
-    repo_root: &Path,
-    sha: &str,
-) -> Result<Option<String>, MorphError> {
+fn git_branch_name_for_sha(repo_root: &Path, sha: &str) -> Result<Option<String>, MorphError> {
     let out = Command::new("git")
         .arg("for-each-ref")
         .arg("--format=%(refname:short) %(objectname)")
@@ -1583,9 +1568,7 @@ pub fn list_unmerged_paths(repo_root: &Path) -> Result<Vec<String>, MorphError> 
 /// way. Tolerant of "no merge in progress" (returns `Ok(false)`) so
 /// the caller can clear breadcrumbs even when git's side is already
 /// clean.
-pub fn run_git_merge_abort_with_morph_internal(
-    repo_root: &Path,
-) -> Result<bool, MorphError> {
+pub fn run_git_merge_abort_with_morph_internal(repo_root: &Path) -> Result<bool, MorphError> {
     let merge_head_path = repo_root.join(".git").join("MERGE_HEAD");
     if !merge_head_path.exists() {
         return Ok(false);
@@ -1884,8 +1867,14 @@ pub fn backfill_from_init(
     }
 
     let mut cache = build_git_to_morph_cache(store)?;
-    let (last_hash, created) =
-        sync_range(store, repo_root, &range, "git-hook", morph_version, &mut cache)?;
+    let (last_hash, created) = sync_range(
+        store,
+        repo_root,
+        &range,
+        "git-hook",
+        morph_version,
+        &mut cache,
+    )?;
     // Branch ref advances to whichever morph commit corresponds to
     // git HEAD (the last entry of the range). When everything was
     // already mirrored, `sync_range` still returns the trailing
@@ -2179,7 +2168,14 @@ pub fn handle_post_rewrite(
         let new_morph = if let Some(h) = cache.get(new_sha) {
             *h
         } else {
-            sync_one_commit(store, repo_root, new_sha, "git-hook", morph_version, &mut cache)?
+            sync_one_commit(
+                store,
+                repo_root,
+                new_sha,
+                "git-hook",
+                morph_version,
+                &mut cache,
+            )?
         };
 
         if let Some(old_morph) = cache.get(old_sha).copied() {
@@ -2201,8 +2197,13 @@ pub fn handle_post_rewrite(
                     "new_git_sha".into(),
                     serde_json::Value::String(new_sha.to_string()),
                 );
-                let annotation =
-                    crate::annotate::create_annotation(&old_morph, None, "rewritten".into(), data, None);
+                let annotation = crate::annotate::create_annotation(
+                    &old_morph,
+                    None,
+                    "rewritten".into(),
+                    data,
+                    None,
+                );
                 store.put(&annotation)?;
                 outcome.annotated += 1;
             }
@@ -2230,10 +2231,7 @@ pub fn handle_post_rewrite(
 /// Walks the parent chain from HEAD and stops at the first commit
 /// without `morph_origin == "git-hook"` so older Morph-authored
 /// commits don't count.
-pub fn pending_certifications(
-    store: &dyn Store,
-    head: &Hash,
-) -> Result<Vec<Hash>, MorphError> {
+pub fn pending_certifications(store: &dyn Store, head: &Hash) -> Result<Vec<Hash>, MorphError> {
     let mut pending = Vec::new();
     let mut cursor = Some(*head);
     while let Some(h) = cursor {
@@ -2250,10 +2248,7 @@ pub fn pending_certifications(
         if effective.is_empty() {
             pending.push(h);
         }
-        cursor = c
-            .parents
-            .first()
-            .and_then(|p| Hash::from_hex(p).ok());
+        cursor = c.parents.first().and_then(|p| Hash::from_hex(p).ok());
     }
     Ok(pending)
 }
@@ -2301,7 +2296,10 @@ mod tests {
     fn git_head_sha_resolves_after_commit() {
         let dir = tempfile::tempdir().unwrap();
         run_git(dir.path(), &["init", "-q", "-b", "main"]);
-        run_git(dir.path(), &["commit", "--allow-empty", "-q", "-m", "first"]);
+        run_git(
+            dir.path(),
+            &["commit", "--allow-empty", "-q", "-m", "first"],
+        );
         let sha = git_head_sha(dir.path()).unwrap().expect("sha");
         assert_eq!(sha.len(), 40);
     }
@@ -2334,7 +2332,10 @@ mod tests {
     fn sync_to_head_idempotent() {
         let dir = tempfile::tempdir().unwrap();
         run_git(dir.path(), &["init", "-q", "-b", "main"]);
-        run_git(dir.path(), &["commit", "--allow-empty", "-q", "-m", "first"]);
+        run_git(
+            dir.path(),
+            &["commit", "--allow-empty", "-q", "-m", "first"],
+        );
         let store: Box<dyn Store> = Box::new(crate::init_repo(dir.path()).unwrap());
         let first = sync_to_head(store.as_ref(), dir.path(), None).unwrap();
         assert!(!first.already_synced);
@@ -2347,10 +2348,16 @@ mod tests {
     fn sync_to_head_appends_for_new_git_commits() {
         let dir = tempfile::tempdir().unwrap();
         run_git(dir.path(), &["init", "-q", "-b", "main"]);
-        run_git(dir.path(), &["commit", "--allow-empty", "-q", "-m", "first"]);
+        run_git(
+            dir.path(),
+            &["commit", "--allow-empty", "-q", "-m", "first"],
+        );
         let store: Box<dyn Store> = Box::new(crate::init_repo(dir.path()).unwrap());
         let first = sync_to_head(store.as_ref(), dir.path(), None).unwrap();
-        run_git(dir.path(), &["commit", "--allow-empty", "-q", "-m", "second"]);
+        run_git(
+            dir.path(),
+            &["commit", "--allow-empty", "-q", "-m", "second"],
+        );
         let second = sync_to_head(store.as_ref(), dir.path(), None).unwrap();
         assert!(!second.already_synced);
         let new = second.new_commit.unwrap();
@@ -2398,15 +2405,9 @@ mod tests {
         let mut metrics = BTreeMap::new();
         metrics.insert("pass_rate".to_string(), 1.0);
         let morph_dir = dir.path().join(".morph");
-        let _ = crate::policy::certify_commit(
-            store.as_ref(),
-            &morph_dir,
-            &first,
-            &metrics,
-            None,
-            None,
-        )
-        .unwrap();
+        let _ =
+            crate::policy::certify_commit(store.as_ref(), &morph_dir, &first, &metrics, None, None)
+                .unwrap();
         let pending = pending_certifications(store.as_ref(), &first).unwrap();
         assert!(pending.is_empty(), "certified commit should not be pending");
     }
@@ -2547,10 +2548,7 @@ mod tests {
                 _ => panic!("non-commit in chain"),
             };
             messages.push(c.message.trim().to_string());
-            cursor = c
-                .parents
-                .first()
-                .and_then(|p| Hash::from_hex(p).ok());
+            cursor = c.parents.first().and_then(|p| Hash::from_hex(p).ok());
         }
         assert_eq!(
             messages,
@@ -2571,7 +2569,9 @@ mod tests {
             let mut h = outcome.new_commit;
             for _ in 0..5 {
                 h = match store.get(&h.unwrap()).unwrap() {
-                    MorphObject::Commit(c) => c.parents.first().and_then(|p| Hash::from_hex(p).ok()),
+                    MorphObject::Commit(c) => {
+                        c.parents.first().and_then(|p| Hash::from_hex(p).ok())
+                    }
                     _ => panic!(),
                 };
             }
@@ -2640,8 +2640,7 @@ mod tests {
         let drift = drift_summary(store.as_ref(), dir.path()).unwrap();
         assert_eq!(drift.unmirrored_count, 0);
         assert_eq!(
-            drift.last_mirrored_git_sha,
-            drift.git_head,
+            drift.last_mirrored_git_sha, drift.git_head,
             "last-mirrored == HEAD when everything is mirrored"
         );
     }
@@ -2682,8 +2681,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         run_git(dir.path(), &["init", "-q", "-b", "main"]);
         let _ = std::fs::remove_dir_all(dir.path().join(".git").join("hooks"));
-        let report =
-            install_reference_hooks(dir.path(), crate::repo::RepoSubmode::Solo).unwrap();
+        let report = install_reference_hooks(dir.path(), crate::repo::RepoSubmode::Solo).unwrap();
         assert_eq!(report.installed.len(), 5);
         assert!(report.removed.is_empty());
         let pre_merge =
@@ -2764,7 +2762,10 @@ mod tests {
     fn handle_post_checkout_advances_morph_branch_to_match_git() {
         let dir = tempfile::tempdir().unwrap();
         run_git(dir.path(), &["init", "-q", "-b", "main"]);
-        run_git(dir.path(), &["commit", "--allow-empty", "-q", "-m", "main 1"]);
+        run_git(
+            dir.path(),
+            &["commit", "--allow-empty", "-q", "-m", "main 1"],
+        );
         let store: Box<dyn Store> = Box::new(crate::init_repo(dir.path()).unwrap());
         sync_to_head(store.as_ref(), dir.path(), None).unwrap();
 
@@ -2782,7 +2783,9 @@ mod tests {
             other => panic!("expected SwitchedBranch, got {:?}", other),
         }
         assert_eq!(
-            crate::commit::current_branch(store.as_ref()).unwrap().as_deref(),
+            crate::commit::current_branch(store.as_ref())
+                .unwrap()
+                .as_deref(),
             Some("feature")
         );
     }
@@ -2791,7 +2794,10 @@ mod tests {
     fn handle_post_checkout_returns_detached_head_outcome() {
         let dir = tempfile::tempdir().unwrap();
         run_git(dir.path(), &["init", "-q", "-b", "main"]);
-        run_git(dir.path(), &["commit", "--allow-empty", "-q", "-m", "first"]);
+        run_git(
+            dir.path(),
+            &["commit", "--allow-empty", "-q", "-m", "first"],
+        );
         let store: Box<dyn Store> = Box::new(crate::init_repo(dir.path()).unwrap());
         sync_to_head(store.as_ref(), dir.path(), None).unwrap();
         let head = git_head_sha(dir.path()).unwrap().unwrap();
@@ -2804,7 +2810,10 @@ mod tests {
     fn handle_post_checkout_skips_file_checkouts() {
         let dir = tempfile::tempdir().unwrap();
         run_git(dir.path(), &["init", "-q", "-b", "main"]);
-        run_git(dir.path(), &["commit", "--allow-empty", "-q", "-m", "first"]);
+        run_git(
+            dir.path(),
+            &["commit", "--allow-empty", "-q", "-m", "first"],
+        );
         let store: Box<dyn Store> = Box::new(crate::init_repo(dir.path()).unwrap());
         let outcome = handle_post_checkout(store.as_ref(), dir.path(), "", "", "0").unwrap();
         assert_eq!(outcome, CheckoutOutcome::FileCheckout);
@@ -2818,10 +2827,19 @@ mod tests {
         let store: Box<dyn Store> = Box::new(crate::init_repo(dir.path()).unwrap());
         sync_to_head(store.as_ref(), dir.path(), None).unwrap();
         let old_git = git_head_sha(dir.path()).unwrap().unwrap();
-        let old_morph = crate::commit::resolve_head(store.as_ref()).unwrap().unwrap();
+        let old_morph = crate::commit::resolve_head(store.as_ref())
+            .unwrap()
+            .unwrap();
         run_git(
             dir.path(),
-            &["commit", "--amend", "-q", "--allow-empty", "-m", "v1 (amended)"],
+            &[
+                "commit",
+                "--amend",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "v1 (amended)",
+            ],
         );
         let new_git = git_head_sha(dir.path()).unwrap().unwrap();
         let stdin = format!("{} {}\n", old_git, new_git);
@@ -2846,7 +2864,11 @@ mod tests {
         let store: Box<dyn Store> = Box::new(crate::init_repo(dir.path()).unwrap());
         // Don't sync first — old SHA has no morph mirror, so the
         // post-rewrite handler must not panic.
-        let stdin = format!("{} {}\n", "a".repeat(40), git_head_sha(dir.path()).unwrap().unwrap());
+        let stdin = format!(
+            "{} {}\n",
+            "a".repeat(40),
+            git_head_sha(dir.path()).unwrap().unwrap()
+        );
         let outcome =
             handle_post_rewrite(store.as_ref(), dir.path(), "rebase", &stdin, None).unwrap();
         assert_eq!(outcome.annotated, 0);

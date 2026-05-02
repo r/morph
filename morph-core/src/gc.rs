@@ -134,9 +134,16 @@ mod tests {
         std::fs::write(root.join(format!("{}.txt", msg.replace(' ', "_"))), msg).unwrap();
         crate::add_paths(store, root, &[PathBuf::from(".")]).unwrap();
         crate::create_tree_commit(
-            store, root, None, None,
-            BTreeMap::new(), msg.to_string(), None, Some("0.3"),
-        ).unwrap()
+            store,
+            root,
+            None,
+            None,
+            BTreeMap::new(),
+            msg.to_string(),
+            None,
+            Some("0.3"),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -156,7 +163,10 @@ mod tests {
 
         let result = gc(&store, &morph_dir).unwrap();
         assert!(result.objects_removed >= 1);
-        assert!(!store.has(&orphan_hash).unwrap(), "orphan should be deleted");
+        assert!(
+            !store.has(&orphan_hash).unwrap(),
+            "orphan should be deleted"
+        );
     }
 
     #[test]
@@ -195,7 +205,12 @@ mod tests {
             output_artifacts: vec![],
             metrics: BTreeMap::new(),
             trace: "0".repeat(64),
-            agent: AgentInfo { id: "a".into(), version: "1".into(), policy: None, instance_id: None },
+            agent: AgentInfo {
+                id: "a".into(),
+                version: "1".into(),
+                policy: None,
+                instance_id: None,
+            },
             contributors: None,
             morph_version: None,
         });
@@ -205,6 +220,9 @@ mod tests {
         assert!(run_index.exists(), "type index entry should exist");
 
         gc(&store, &morph_dir).unwrap();
-        assert!(!run_index.exists(), "orphan type index entry should be cleaned");
+        assert!(
+            !run_index.exists(),
+            "orphan type index entry should be cleaned"
+        );
     }
 }

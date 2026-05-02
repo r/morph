@@ -19,10 +19,7 @@ use std::collections::BTreeMap;
 ///
 /// Stores the Pipeline and all supporting objects (prompt blob) in the store.
 /// Returns the Pipeline hash.
-pub fn extract_pipeline_from_run(
-    store: &dyn Store,
-    run_hash: &Hash,
-) -> Result<Hash, MorphError> {
+pub fn extract_pipeline_from_run(store: &dyn Store, run_hash: &Hash) -> Result<Hash, MorphError> {
     let obj = store.get(run_hash)?;
     let run = match obj {
         MorphObject::Run(r) => r,
@@ -34,8 +31,7 @@ pub fn extract_pipeline_from_run(
         }
     };
 
-    let trace_hash =
-        Hash::from_hex(&run.trace)?;
+    let trace_hash = Hash::from_hex(&run.trace)?;
     let trace = match store.get(&trace_hash)? {
         MorphObject::Trace(t) => t,
         _ => {
@@ -46,13 +42,18 @@ pub fn extract_pipeline_from_run(
         }
     };
 
-    let prompt_event = trace.events.iter()
+    let prompt_event = trace
+        .events
+        .iter()
         .find(|e| e.kind == "prompt" || e.kind == "user")
-        .ok_or_else(|| MorphError::Serialization(
-            "unsupported trace shape: no prompt/user event found".into()
-        ))?;
+        .ok_or_else(|| {
+            MorphError::Serialization("unsupported trace shape: no prompt/user event found".into())
+        })?;
 
-    let response_event = trace.events.iter().rev()
+    let response_event = trace
+        .events
+        .iter()
+        .rev()
         .find(|e| e.kind == "response" || e.kind == "assistant")
         .unwrap_or(prompt_event);
 
@@ -203,9 +204,14 @@ mod tests {
     }
 
     fn store_session_run(store: &dyn Store) -> (Hash, Hash) {
-        let run_hash =
-            crate::record::record_session(store, "Explain recursion", "Recursion is...", Some("gpt-4o"), Some("agent-1"))
-                .unwrap();
+        let run_hash = crate::record::record_session(
+            store,
+            "Explain recursion",
+            "Recursion is...",
+            Some("gpt-4o"),
+            Some("agent-1"),
+        )
+        .unwrap();
         let run = match store.get(&run_hash).unwrap() {
             MorphObject::Run(r) => r,
             _ => panic!("expected run"),
@@ -217,9 +223,15 @@ mod tests {
     fn store_session_run_with_reviewer(store: &dyn Store) -> (Hash, Hash) {
         let now = crate::time::now_rfc3339_utc();
         let mut prompt_payload = BTreeMap::new();
-        prompt_payload.insert("text".into(), serde_json::Value::String("Build feature X".into()));
+        prompt_payload.insert(
+            "text".into(),
+            serde_json::Value::String("Build feature X".into()),
+        );
         let mut response_payload = BTreeMap::new();
-        response_payload.insert("text".into(), serde_json::Value::String("Feature X built".into()));
+        response_payload.insert(
+            "text".into(),
+            serde_json::Value::String("Feature X built".into()),
+        );
 
         let trace = MorphObject::Trace(Trace {
             events: vec![
@@ -314,9 +326,18 @@ mod tests {
             _ => panic!("expected pipeline"),
         };
 
-        let prov = pipeline.provenance.as_ref().expect("provenance should be present");
-        assert_eq!(prov.derived_from_run.as_deref(), Some(run_hash.to_string().as_str()));
-        assert_eq!(prov.derived_from_trace.as_deref(), Some(trace_hash.to_string().as_str()));
+        let prov = pipeline
+            .provenance
+            .as_ref()
+            .expect("provenance should be present");
+        assert_eq!(
+            prov.derived_from_run.as_deref(),
+            Some(run_hash.to_string().as_str())
+        );
+        assert_eq!(
+            prov.derived_from_trace.as_deref(),
+            Some(trace_hash.to_string().as_str())
+        );
         assert_eq!(prov.derived_from_event.as_deref(), Some("evt_1"));
         assert_eq!(prov.method, "extracted");
     }
@@ -332,8 +353,14 @@ mod tests {
             _ => panic!("expected pipeline"),
         };
 
-        let gen_env = pipeline.graph.nodes[0].env.as_ref().expect("generate should have env");
-        assert_eq!(gen_env.get("model").and_then(|v| v.as_str()), Some("gpt-4o"));
+        let gen_env = pipeline.graph.nodes[0]
+            .env
+            .as_ref()
+            .expect("generate should have env");
+        assert_eq!(
+            gen_env.get("model").and_then(|v| v.as_str()),
+            Some("gpt-4o")
+        );
     }
 
     #[test]
@@ -347,12 +374,21 @@ mod tests {
             _ => panic!("expected pipeline"),
         };
 
-        assert!(!pipeline.prompts.is_empty(), "prompts array should not be empty");
+        assert!(
+            !pipeline.prompts.is_empty(),
+            "prompts array should not be empty"
+        );
         let prompt_ref = &pipeline.prompts[0];
         assert_eq!(prompt_ref.len(), 64, "prompt ref should be a hash");
 
-        let gen_ref = pipeline.graph.nodes[0].ref_.as_ref().expect("generate should have ref");
-        assert_eq!(gen_ref, prompt_ref, "generate node ref should match prompts[0]");
+        let gen_ref = pipeline.graph.nodes[0]
+            .ref_
+            .as_ref()
+            .expect("generate should have ref");
+        assert_eq!(
+            gen_ref, prompt_ref,
+            "generate node ref should match prompts[0]"
+        );
 
         let blob_hash = Hash::from_hex(prompt_ref).unwrap();
         let blob_obj = store.get(&blob_hash).unwrap();
@@ -370,7 +406,10 @@ mod tests {
             _ => panic!("expected pipeline"),
         };
 
-        let attr = pipeline.attribution.as_ref().expect("attribution should be present");
+        let attr = pipeline
+            .attribution
+            .as_ref()
+            .expect("attribution should be present");
         let gen_attr = attr.get("generate").expect("generate attribution");
         assert_eq!(gen_attr.agent_id, "agent-1");
         let actors = gen_attr.actors.as_ref().expect("actors should be present");

@@ -63,12 +63,7 @@ fn make_commit_with_metrics(
 
 async fn get_json(app: axum::Router, uri: &str) -> (StatusCode, serde_json::Value) {
     let resp = app
-        .oneshot(
-            Request::builder()
-                .uri(uri)
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
         .await
         .unwrap();
     let status = resp.status();
@@ -257,8 +252,7 @@ async fn test_pipeline_detail() {
     let run_hash =
         morph_core::record_session(store.as_ref(), "test", "answer", Some("gpt"), Some("ag"))
             .unwrap();
-    let pipeline_hash =
-        morph_core::extract_pipeline_from_run(store.as_ref(), &run_hash).unwrap();
+    let pipeline_hash = morph_core::extract_pipeline_from_run(store.as_ref(), &run_hash).unwrap();
 
     let app = build_router(&make_config(&dir));
     let uri = format!("/api/repos/default/pipelines/{}", pipeline_hash);
@@ -374,15 +368,8 @@ async fn test_behavioral_status_certified() {
     let mut m = BTreeMap::new();
     m.insert("acc".into(), 0.9);
     let hash = make_commit_with_metrics(store.as_ref(), &dir, m.clone(), "cert test");
-    morph_core::policy::certify_commit(
-        store.as_ref(),
-        &morph_dir,
-        &hash,
-        &m,
-        Some("ci"),
-        None,
-    )
-    .unwrap();
+    morph_core::policy::certify_commit(store.as_ref(), &morph_dir, &hash, &m, Some("ci"), None)
+        .unwrap();
 
     let app = build_router(&make_config(&dir));
     let uri = format!("/api/repos/default/commits/{}", hash);
@@ -453,21 +440,36 @@ async fn test_compat_graph() {
 #[tokio::test]
 async fn test_compat_graph_with_runs() {
     let (dir, store) = setup_repo();
-    morph_core::record_session(store.as_ref(), "prompt", "response", Some("gpt"), Some("agent"))
-        .unwrap();
+    morph_core::record_session(
+        store.as_ref(),
+        "prompt",
+        "response",
+        Some("gpt"),
+        Some("agent"),
+    )
+    .unwrap();
 
     let app = build_router(&make_config(&dir));
     let (status, json) = get_json(app, "/api/graph").await;
     assert_eq!(status, StatusCode::OK);
     let nodes = json["nodes"].as_array().unwrap();
     let edges = json["edges"].as_array().unwrap();
-    assert!(nodes.len() >= 3, "should have run, trace, and pipeline nodes");
-    assert!(edges.len() >= 2, "should have run->trace and run->pipeline edges");
+    assert!(
+        nodes.len() >= 3,
+        "should have run, trace, and pipeline nodes"
+    );
+    assert!(
+        edges.len() >= 2,
+        "should have run->trace and run->pipeline edges"
+    );
 
     let types: Vec<&str> = nodes.iter().map(|n| n["type"].as_str().unwrap()).collect();
     assert!(types.contains(&"run"), "should contain a run node");
     assert!(types.contains(&"trace"), "should contain a trace node");
-    assert!(types.contains(&"pipeline"), "should contain a pipeline node");
+    assert!(
+        types.contains(&"pipeline"),
+        "should contain a pipeline node"
+    );
 
     let node_ids: std::collections::HashSet<&str> =
         nodes.iter().map(|n| n["id"].as_str().unwrap()).collect();
@@ -506,7 +508,12 @@ async fn test_graph_page_has_layout_fixes() {
     let (dir, _store) = setup_repo();
     let app = build_router(&make_config(&dir));
     let resp = app
-        .oneshot(Request::builder().uri("/graph").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/graph")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
@@ -661,14 +668,12 @@ fn service_commit_detail_with_evidence() {
 fn service_run_trace_pipeline_views() {
     let (dir, store) = setup_repo();
     let run_hash =
-        morph_core::record_session(store.as_ref(), "q", "a", Some("model"), Some("agent"))
-            .unwrap();
+        morph_core::record_session(store.as_ref(), "q", "a", Some("model"), Some("agent")).unwrap();
     let run_obj = match store.get(&run_hash).unwrap() {
         MorphObject::Run(r) => r,
         _ => panic!("expected run"),
     };
-    let pipeline_hash =
-        morph_core::extract_pipeline_from_run(store.as_ref(), &run_hash).unwrap();
+    let pipeline_hash = morph_core::extract_pipeline_from_run(store.as_ref(), &run_hash).unwrap();
 
     let ctx = crate::service::RepoContext {
         name: "test".into(),

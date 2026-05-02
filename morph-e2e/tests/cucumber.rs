@@ -115,7 +115,8 @@ fn given_morph_repo(w: &mut MorphWorld) {
         .arg(&canon)
         .assert()
         .success();
-    w.captures.insert("repo_path".to_string(), canon.to_string_lossy().to_string());
+    w.captures
+        .insert("repo_path".to_string(), canon.to_string_lossy().to_string());
     w.temp_dir = Some(temp);
     // Store canonicalized path for assertions
     w.canon_path = Some(canon);
@@ -133,7 +134,8 @@ fn given_second_repo(w: &mut MorphWorld, subdir: String) {
         .arg(&remote_path)
         .assert()
         .success();
-    w.captures.insert(subdir, remote_path.to_string_lossy().to_string());
+    w.captures
+        .insert(subdir, remote_path.to_string_lossy().to_string());
 }
 
 #[given(regex = r#"a file "([^"]+)" with content "([^"]*)""#)]
@@ -251,8 +253,15 @@ fn when_create_json_metrics_file(w: &mut MorphWorld, path: String, kv_pairs: Str
     std::fs::write(&full, json).expect("write JSON file");
 }
 
-#[when(regex = r#"I create a policy file "([^"]+)" with required "([^"]*)" and thresholds "([^"]*)""#)]
-fn when_create_policy_file(w: &mut MorphWorld, path: String, required: String, thresholds_str: String) {
+#[when(
+    regex = r#"I create a policy file "([^"]+)" with required "([^"]*)" and thresholds "([^"]*)""#
+)]
+fn when_create_policy_file(
+    w: &mut MorphWorld,
+    path: String,
+    required: String,
+    thresholds_str: String,
+) {
     let root = w.temp_dir.as_ref().expect("given a morph repo first");
     let required_metrics: Vec<String> = if required.is_empty() {
         vec![]
@@ -345,8 +354,14 @@ fn when_commit_with_from_run(w: &mut MorphWorld, run_hash: String, message: Stri
 
 #[when(regex = r#"I run commit with message "([^"]*)" using captured pipeline and eval suite"#)]
 fn when_run_commit_captured(w: &mut MorphWorld, message: String) {
-    let prog = w.captures.get("prog_hash").expect("capture prog_hash first");
-    let suite = w.captures.get("suite_hash").expect("capture suite_hash first");
+    let prog = w
+        .captures
+        .get("prog_hash")
+        .expect("capture prog_hash first");
+    let suite = w
+        .captures
+        .get("suite_hash")
+        .expect("capture suite_hash first");
     let root = w.repo_root().to_path_buf();
     let output = morph_cmd()
         .args([
@@ -405,7 +420,11 @@ fn then_path_is_dir(w: &mut MorphWorld, path: String) {
     let root = w.repo_root();
     let full = root.join(&path);
     assert!(full.exists(), "path should exist: {}", full.display());
-    assert!(full.is_dir(), "path should be a directory: {}", full.display());
+    assert!(
+        full.is_dir(),
+        "path should be a directory: {}",
+        full.display()
+    );
 }
 
 #[then(regex = r#"the path "([^"]+)" is present"#)]
@@ -443,14 +462,33 @@ fn last_command_succeeded(w: &mut MorphWorld) {
     );
 }
 
-#[when(regex = r#"I commit with message "([^"]*)" pipeline "([^"]*)" suite "([^"]*)" and metrics \{([^\}]*)\}"#)]
-fn when_commit_with_metrics(w: &mut MorphWorld, msg: String, pipeline: String, suite: String, metrics_inner: String) {
+#[when(
+    regex = r#"I commit with message "([^"]*)" pipeline "([^"]*)" suite "([^"]*)" and metrics \{([^\}]*)\}"#
+)]
+fn when_commit_with_metrics(
+    w: &mut MorphWorld,
+    msg: String,
+    pipeline: String,
+    suite: String,
+    metrics_inner: String,
+) {
     let root = w.temp_dir.as_ref().expect("given a morph repo first");
     let pipeline = substitute_placeholders(&pipeline, &w.captures);
     let suite = substitute_placeholders(&suite, &w.captures);
     let metrics_json = format!("{{{}}}", metrics_inner);
     let output = morph_cmd()
-        .args(["commit", "-m", &msg, "--pipeline", &pipeline, "--eval-suite", &suite, "--metrics", &metrics_json, "--json"])
+        .args([
+            "commit",
+            "-m",
+            &msg,
+            "--pipeline",
+            &pipeline,
+            "--eval-suite",
+            &suite,
+            "--metrics",
+            &metrics_json,
+            "--json",
+        ])
         .current_dir(root.path())
         .output()
         .expect("run morph");
@@ -459,14 +497,34 @@ fn when_commit_with_metrics(w: &mut MorphWorld, msg: String, pipeline: String, s
     w.last_exit = output.status.code();
 }
 
-#[when(regex = r#"I merge "([^"]*)" with message "([^"]*)" pipeline "([^"]*)" suite "([^"]*)" and metrics \{([^\}]*)\}"#)]
-fn when_merge_with_metrics(w: &mut MorphWorld, branch: String, msg: String, pipeline: String, suite: String, metrics_inner: String) {
+#[when(
+    regex = r#"I merge "([^"]*)" with message "([^"]*)" pipeline "([^"]*)" suite "([^"]*)" and metrics \{([^\}]*)\}"#
+)]
+fn when_merge_with_metrics(
+    w: &mut MorphWorld,
+    branch: String,
+    msg: String,
+    pipeline: String,
+    suite: String,
+    metrics_inner: String,
+) {
     let root = w.temp_dir.as_ref().expect("given a morph repo first");
     let pipeline = substitute_placeholders(&pipeline, &w.captures);
     let suite = substitute_placeholders(&suite, &w.captures);
     let metrics_json = format!("{{{}}}", metrics_inner);
     let output = morph_cmd()
-        .args(["merge", &branch, "-m", &msg, "--pipeline", &pipeline, "--eval-suite", &suite, "--metrics", &metrics_json])
+        .args([
+            "merge",
+            &branch,
+            "-m",
+            &msg,
+            "--pipeline",
+            &pipeline,
+            "--eval-suite",
+            &suite,
+            "--metrics",
+            &metrics_json,
+        ])
         .current_dir(root.path())
         .output()
         .expect("run morph");
@@ -475,13 +533,30 @@ fn when_merge_with_metrics(w: &mut MorphWorld, branch: String, msg: String, pipe
     w.last_exit = output.status.code();
 }
 
-#[when(regex = r#"I merge "([^"]*)" with message "([^"]*)" pipeline "([^"]*)" and metrics \{([^\}]*)\}"#)]
-fn when_merge_auto_suite(w: &mut MorphWorld, branch: String, msg: String, pipeline: String, metrics_inner: String) {
+#[when(
+    regex = r#"I merge "([^"]*)" with message "([^"]*)" pipeline "([^"]*)" and metrics \{([^\}]*)\}"#
+)]
+fn when_merge_auto_suite(
+    w: &mut MorphWorld,
+    branch: String,
+    msg: String,
+    pipeline: String,
+    metrics_inner: String,
+) {
     let root = w.temp_dir.as_ref().expect("given a morph repo first");
     let pipeline = substitute_placeholders(&pipeline, &w.captures);
     let metrics_json = format!("{{{}}}", metrics_inner);
     let output = morph_cmd()
-        .args(["merge", &branch, "-m", &msg, "--pipeline", &pipeline, "--metrics", &metrics_json])
+        .args([
+            "merge",
+            &branch,
+            "-m",
+            &msg,
+            "--pipeline",
+            &pipeline,
+            "--metrics",
+            &metrics_json,
+        ])
         .current_dir(root.path())
         .output()
         .expect("run morph");
@@ -490,13 +565,33 @@ fn when_merge_auto_suite(w: &mut MorphWorld, branch: String, msg: String, pipeli
     w.last_exit = output.status.code();
 }
 
-#[when(regex = r#"I merge "([^"]*)" with message "([^"]*)" pipeline "([^"]*)" metrics \{([^\}]*)\} and retire "([^"]*)""#)]
-fn when_merge_with_retire(w: &mut MorphWorld, branch: String, msg: String, pipeline: String, metrics_inner: String, retire: String) {
+#[when(
+    regex = r#"I merge "([^"]*)" with message "([^"]*)" pipeline "([^"]*)" metrics \{([^\}]*)\} and retire "([^"]*)""#
+)]
+fn when_merge_with_retire(
+    w: &mut MorphWorld,
+    branch: String,
+    msg: String,
+    pipeline: String,
+    metrics_inner: String,
+    retire: String,
+) {
     let root = w.temp_dir.as_ref().expect("given a morph repo first");
     let pipeline = substitute_placeholders(&pipeline, &w.captures);
     let metrics_json = format!("{{{}}}", metrics_inner);
     let output = morph_cmd()
-        .args(["merge", &branch, "-m", &msg, "--pipeline", &pipeline, "--metrics", &metrics_json, "--retire", &retire])
+        .args([
+            "merge",
+            &branch,
+            "-m",
+            &msg,
+            "--pipeline",
+            &pipeline,
+            "--metrics",
+            &metrics_json,
+            "--retire",
+            &retire,
+        ])
         .current_dir(root.path())
         .output()
         .expect("run morph");
@@ -578,11 +673,9 @@ fn then_repo_has_n_run_records(w: &mut MorphWorld, n: u32) {
         })
         .unwrap_or(0);
     assert_eq!(
-        count as u32,
-        n,
+        count as u32, n,
         "expected {} run records in .morph/runs, found {}",
-        n,
-        count
+        n, count
     );
 }
 
@@ -686,17 +779,24 @@ fn when_start_server(w: &mut MorphWorld, port: u16) {
     let root = w.temp_dir.as_ref().expect("given a morph repo first");
     // Kill any leftover process on this port from a previous test run
     let _ = std::process::Command::new("sh")
-        .args(["-c", &format!("lsof -ti tcp:{} | xargs kill -9 2>/dev/null", port)])
+        .args([
+            "-c",
+            &format!("lsof -ti tcp:{} | xargs kill -9 2>/dev/null", port),
+        ])
         .output();
     std::thread::sleep(std::time::Duration::from_millis(200));
 
     // Background server: we track it by PID and stop it later via `kill`,
     // so we deliberately drop the Child handle here.
     #[allow(clippy::zombie_processes)]
-    let child = std::process::Command::new(
-        assert_cmd::cargo::cargo_bin("morph"),
-    )
-        .args(["serve", "--port", &port.to_string(), "--interface", "127.0.0.1"])
+    let child = std::process::Command::new(assert_cmd::cargo::cargo_bin("morph"))
+        .args([
+            "serve",
+            "--port",
+            &port.to_string(),
+            "--interface",
+            "127.0.0.1",
+        ])
         .current_dir(root.path())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -717,7 +817,10 @@ fn when_start_server(w: &mut MorphWorld, port: u16) {
             }
         }
     }
-    panic!("morph serve did not become ready on port {} within 9 seconds", port);
+    panic!(
+        "morph serve did not become ready on port {} within 9 seconds",
+        port
+    );
 }
 
 #[when(regex = r#"I query the server at "([^"]+)""#)]
@@ -754,9 +857,12 @@ fn then_json_field_equals(w: &mut MorphWorld, field_path: String, expected: Stri
         ),
     };
     assert_eq!(
-        val_str, expected,
+        val_str,
+        expected,
         "JSON field '{}': expected '{}', got '{}'\nfull body: {}",
-        field_path, expected, val_str,
+        field_path,
+        expected,
+        val_str,
         serde_json::to_string_pretty(body).unwrap_or_default()
     );
 }

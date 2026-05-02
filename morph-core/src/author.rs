@@ -80,14 +80,20 @@ pub fn read_identity_config(
         return Ok((None, None));
     }
     let data = std::fs::read_to_string(&config_path)?;
-    let config: serde_json::Value = serde_json::from_str(&data)
-        .map_err(|e| MorphError::Serialization(e.to_string()))?;
+    let config: serde_json::Value =
+        serde_json::from_str(&data).map_err(|e| MorphError::Serialization(e.to_string()))?;
     let user = match config.get("user") {
         Some(u) => u,
         None => return Ok((None, None)),
     };
-    let name = user.get("name").and_then(|v| v.as_str()).map(str::to_string);
-    let email = user.get("email").and_then(|v| v.as_str()).map(str::to_string);
+    let name = user
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let email = user
+        .get("email")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
     Ok((name, email))
 }
 
@@ -173,7 +179,13 @@ mod tests {
 
     #[test]
     fn env_overrides_config_and_default() {
-        let s = resolve_author(None, Some("Bob"), Some("b@e.com"), Some("Cfg"), Some("c@e.com"));
+        let s = resolve_author(
+            None,
+            Some("Bob"),
+            Some("b@e.com"),
+            Some("Cfg"),
+            Some("c@e.com"),
+        );
         assert_eq!(s, "Bob <b@e.com>");
     }
 

@@ -219,19 +219,72 @@ pub struct VerificationSteps {
 
 fn classify_task_phase(prompt: &str, response: &str) -> TaskPhase {
     let p = prompt.to_ascii_lowercase();
-    if contains_any(&p, &["fix ", "bug", "broken", "regress", "crash", "not working", "doesn't work", "incorrect", "wrong ", "error"]) {
+    if contains_any(
+        &p,
+        &[
+            "fix ",
+            "bug",
+            "broken",
+            "regress",
+            "crash",
+            "not working",
+            "doesn't work",
+            "incorrect",
+            "wrong ",
+            "error",
+        ],
+    ) {
         return TaskPhase::FixBug;
     }
-    if contains_any(&p, &["implement", "create ", "add ", "build ", "new ", "write ", "scaffold", "generate"]) {
+    if contains_any(
+        &p,
+        &[
+            "implement",
+            "create ",
+            "add ",
+            "build ",
+            "new ",
+            "write ",
+            "scaffold",
+            "generate",
+        ],
+    ) {
         return TaskPhase::CreateCode;
     }
-    if contains_any(&p, &["refactor", "rename", "rewrite", "modify", "update ", "change ", "extend ", "replace"]) {
+    if contains_any(
+        &p,
+        &[
+            "refactor", "rename", "rewrite", "modify", "update ", "change ", "extend ", "replace",
+        ],
+    ) {
         return TaskPhase::ModifyCode;
     }
-    if contains_any(&p, &["why is", "why does", "explain", "describe", "what does", "how does", "walk me through", "diagnose"]) {
+    if contains_any(
+        &p,
+        &[
+            "why is",
+            "why does",
+            "explain",
+            "describe",
+            "what does",
+            "how does",
+            "walk me through",
+            "diagnose",
+        ],
+    ) {
         return TaskPhase::Diagnose;
     }
-    if contains_any(&p, &["run test", "run the tests", "verify", "check ", "make sure", "sanity check"]) {
+    if contains_any(
+        &p,
+        &[
+            "run test",
+            "run the tests",
+            "verify",
+            "check ",
+            "make sure",
+            "sanity check",
+        ],
+    ) {
         return TaskPhase::Verify;
     }
 
@@ -265,7 +318,9 @@ fn extract_file_paths_from_text(text: &str) -> Vec<String> {
     }
 
     // Bare token matches with known extensions.
-    for token in text.split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | '(' | ')' | '\'' | '"')) {
+    for token in
+        text.split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | '(' | ')' | '\'' | '"'))
+    {
         let t = token.trim_matches(|c: char| matches!(c, '.' | ':' | '!' | '?'));
         if looks_like_path(t) && !seen.contains(t) {
             seen.insert(t.to_string());
@@ -277,9 +332,9 @@ fn extract_file_paths_from_text(text: &str) -> Vec<String> {
 
 fn looks_like_path(s: &str) -> bool {
     const EXTS: &[&str] = &[
-        ".py", ".pyi", ".rs", ".js", ".ts", ".tsx", ".jsx", ".go", ".java",
-        ".kt", ".rb", ".c", ".cc", ".cpp", ".h", ".hpp", ".cs", ".swift",
-        ".php", ".sh", ".toml", ".yaml", ".yml", ".json", ".md",
+        ".py", ".pyi", ".rs", ".js", ".ts", ".tsx", ".jsx", ".go", ".java", ".kt", ".rb", ".c",
+        ".cc", ".cpp", ".h", ".hpp", ".cs", ".swift", ".php", ".sh", ".toml", ".yaml", ".yml",
+        ".json", ".md",
     ];
     if s.is_empty() || s.contains(' ') || s.len() > 200 {
         return false;
@@ -441,7 +496,11 @@ fn extract_verification_actions(task: &TapTask) -> Vec<VerificationAction> {
                         o.clone()
                     }
                 });
-                let exit = if tc.error.is_some() { Some("error".into()) } else { None };
+                let exit = if tc.error.is_some() {
+                    Some("error".into())
+                } else {
+                    None
+                };
                 out.push(VerificationAction {
                     action: cmd,
                     kind: "command".into(),
@@ -603,7 +662,9 @@ fn extract_final_artifact(task: &TapTask) -> FinalArtifact {
             }
             // Also try slicing from file_edit content using target_symbol.
             if final_function_text.is_none() {
-                if let (Some(path), Some(symbol)) = (related_file.as_deref(), related_symbol.as_deref()) {
+                if let (Some(path), Some(symbol)) =
+                    (related_file.as_deref(), related_symbol.as_deref())
+                {
                     if let Some(src) = find_file_content(task, path) {
                         if let Some(adapter) = adapter_for_filename(path) {
                             final_function_text = adapter.slice_symbol(&src, symbol);
@@ -686,11 +747,7 @@ fn extract_change_semantics(task: &TapTask) -> ChangeSemantics {
         .map(|s| s.prompt.as_str())
         .collect::<Vec<_>>()
         .join(" ");
-    let response = task
-        .steps
-        .last()
-        .map(|s| s.response.as_str())
-        .unwrap_or("");
+    let response = task.steps.last().map(|s| s.response.as_str()).unwrap_or("");
 
     let changed = if let Some(chunk) = find_after(&prompt, "change") {
         format!("Change: {}", first_sentence(chunk))
@@ -750,11 +807,7 @@ fn find_after_ci<'a>(text: &'a str, needle: &str) -> Option<&'a str> {
 pub fn summarize_trace(store: &dyn Store, run_hash: &Hash) -> Result<TraceSummary, MorphError> {
     let task = extract_task(store, run_hash)?;
     let structure = derive_task_structure(&task);
-    let prompt = task
-        .steps
-        .first()
-        .map(|s| s.prompt.as_str())
-        .unwrap_or("");
+    let prompt = task.steps.first().map(|s| s.prompt.as_str()).unwrap_or("");
     let preview = preview_text(prompt, 160);
     Ok(TraceSummary {
         trace_id: task.trace_hash.clone(),
@@ -873,7 +926,10 @@ pub fn change_semantics(store: &dyn Store, run_hash: &Hash) -> Result<ChangeSema
 }
 
 /// Verification actions for a run (commands, tool executions, mentions).
-pub fn verification_steps(store: &dyn Store, run_hash: &Hash) -> Result<VerificationSteps, MorphError> {
+pub fn verification_steps(
+    store: &dyn Store,
+    run_hash: &Hash,
+) -> Result<VerificationSteps, MorphError> {
     let task = extract_task(store, run_hash)?;
     let actions = extract_verification_actions(&task);
     Ok(VerificationSteps {
@@ -931,15 +987,11 @@ pub fn find_run_by_trace(store: &dyn Store, trace_hash: &Hash) -> Result<Option<
 ///   [`find_run_by_trace`].
 /// - Any other kind → `MorphError::Serialization` describing the
 ///   mismatch so the CLI / MCP can surface a clean error.
-pub fn resolve_run_or_trace_hash(
-    store: &dyn Store,
-    hash: &Hash,
-) -> Result<Hash, MorphError> {
+pub fn resolve_run_or_trace_hash(store: &dyn Store, hash: &Hash) -> Result<Hash, MorphError> {
     match store.get(hash)? {
         MorphObject::Run(_) => Ok(*hash),
-        MorphObject::Trace(_) => find_run_by_trace(store, hash)?.ok_or_else(|| {
-            MorphError::Serialization(format!("no run points to trace {}", hash))
-        }),
+        MorphObject::Trace(_) => find_run_by_trace(store, hash)?
+            .ok_or_else(|| MorphError::Serialization(format!("no run points to trace {}", hash))),
         _ => Err(MorphError::Serialization(format!(
             "hash {} is neither a Run nor a Trace",
             hash
@@ -1071,9 +1123,23 @@ def add_task(db, title):
 
     fn pocket_tasks_bug_events() -> Vec<TraceEvent> {
         vec![
-            event(0, "user", text_payload("Update `list_tasks` in `pocket_tasks/main.py` to skip the first task")),
-            event(1, "assistant", text_payload("I'll update `list_tasks` to skip the first row.")),
-            event(2, "file_edit", file_payload("pocket_tasks/main.py", POCKET_TASKS_BUGGY)),
+            event(
+                0,
+                "user",
+                text_payload(
+                    "Update `list_tasks` in `pocket_tasks/main.py` to skip the first task",
+                ),
+            ),
+            event(
+                1,
+                "assistant",
+                text_payload("I'll update `list_tasks` to skip the first row."),
+            ),
+            event(
+                2,
+                "file_edit",
+                file_payload("pocket_tasks/main.py", POCKET_TASKS_BUGGY),
+            ),
         ]
     }
 
@@ -1160,7 +1226,10 @@ def add_task(db, title):
     fn task_scope_single_function() {
         let files = vec!["a.py".to_string()];
         let syms = vec!["list_tasks".to_string()];
-        assert_eq!(classify_task_scope(&files, &syms), TaskScope::SingleFunction);
+        assert_eq!(
+            classify_task_scope(&files, &syms),
+            TaskScope::SingleFunction
+        );
     }
 
     #[test]
@@ -1193,7 +1262,10 @@ def add_task(db, title):
             "expected list_tasks in {:?}",
             structure.target_symbols
         );
-        assert_eq!(structure.target_files, vec!["pocket_tasks/main.py".to_string()]);
+        assert_eq!(
+            structure.target_files,
+            vec!["pocket_tasks/main.py".to_string()]
+        );
         assert_eq!(structure.task_phase, TaskPhase::FixBug);
         assert_eq!(structure.task_scope, TaskScope::SingleFunction);
         assert_eq!(structure.final_artifact_type, ArtifactType::FunctionOnly);
@@ -1223,7 +1295,10 @@ def add_task(db, title):
         let text = artifact.final_function_text.expect("function text");
         assert!(text.contains("def list_tasks(db):"));
         assert_eq!(artifact.related_symbol.as_deref(), Some("list_tasks"));
-        assert_eq!(artifact.related_file.as_deref(), Some("pocket_tasks/main.py"));
+        assert_eq!(
+            artifact.related_file.as_deref(),
+            Some("pocket_tasks/main.py")
+        );
     }
 
     #[test]
@@ -1235,7 +1310,10 @@ def add_task(db, title):
         let artifact = final_artifact(store.as_ref(), &run_hash).unwrap();
         // Multiple functions in the block → full_file, not function_only.
         assert_eq!(artifact.artifact_type, ArtifactType::FullFile);
-        assert!(artifact.final_file_snippet.expect("snippet").contains("def list_tasks"));
+        assert!(artifact
+            .final_file_snippet
+            .expect("snippet")
+            .contains("def list_tasks"));
     }
 
     #[test]
@@ -1244,7 +1322,9 @@ def add_task(db, title):
         let run_hash = store_run(store.as_ref(), pocket_tasks_fix_events(), "gpt-4");
         let v = verification_steps(store.as_ref(), &run_hash).unwrap();
         assert!(
-            v.verification_actions.iter().any(|a| a.action.starts_with("pytest")),
+            v.verification_actions
+                .iter()
+                .any(|a| a.action.starts_with("pytest")),
             "got {:?}",
             v.verification_actions
         );
@@ -1261,8 +1341,13 @@ def add_task(db, title):
         let run_hash = store_run(store.as_ref(), pocket_tasks_fix_events(), "gpt-4");
         let sem = change_semantics(store.as_ref(), &run_hash).unwrap();
         assert!(
-            sem.changed_construct_summary.to_ascii_lowercase().contains("fix")
-                || sem.changed_construct_summary.to_ascii_lowercase().contains("list_tasks"),
+            sem.changed_construct_summary
+                .to_ascii_lowercase()
+                .contains("fix")
+                || sem
+                    .changed_construct_summary
+                    .to_ascii_lowercase()
+                    .contains("list_tasks"),
             "got: {}",
             sem.changed_construct_summary
         );
@@ -1272,12 +1357,36 @@ def add_task(db, title):
     fn recent_trace_summaries_ordered_newest_first() {
         let (_dir, store) = setup_store();
         let old = vec![
-            TraceEvent { id: "a".into(), seq: 0, ts: "2020-01-01T00:00:00Z".into(), kind: "user".into(), payload: text_payload("old one") },
-            TraceEvent { id: "b".into(), seq: 1, ts: "2020-01-01T00:00:01Z".into(), kind: "assistant".into(), payload: text_payload("old response") },
+            TraceEvent {
+                id: "a".into(),
+                seq: 0,
+                ts: "2020-01-01T00:00:00Z".into(),
+                kind: "user".into(),
+                payload: text_payload("old one"),
+            },
+            TraceEvent {
+                id: "b".into(),
+                seq: 1,
+                ts: "2020-01-01T00:00:01Z".into(),
+                kind: "assistant".into(),
+                payload: text_payload("old response"),
+            },
         ];
         let new = vec![
-            TraceEvent { id: "a".into(), seq: 0, ts: "2026-04-17T12:00:00Z".into(), kind: "user".into(), payload: text_payload("Fix the list_tasks bug") },
-            TraceEvent { id: "b".into(), seq: 1, ts: "2026-04-17T12:00:01Z".into(), kind: "assistant".into(), payload: text_payload("done") },
+            TraceEvent {
+                id: "a".into(),
+                seq: 0,
+                ts: "2026-04-17T12:00:00Z".into(),
+                kind: "user".into(),
+                payload: text_payload("Fix the list_tasks bug"),
+            },
+            TraceEvent {
+                id: "b".into(),
+                seq: 1,
+                ts: "2026-04-17T12:00:01Z".into(),
+                kind: "assistant".into(),
+                payload: text_payload("done"),
+            },
         ];
         store_run(store.as_ref(), old, "gpt-4");
         store_run(store.as_ref(), new, "gpt-4");
@@ -1336,7 +1445,10 @@ def add_task(db, title):
         let summary = summarize_trace(store.as_ref(), &run_hash).unwrap();
         assert_eq!(summary.task_phase, TaskPhase::FixBug);
         assert_eq!(summary.task_scope, TaskScope::SingleFunction);
-        assert!(summary.target_files.iter().any(|f| f == "pocket_tasks/main.py"));
+        assert!(summary
+            .target_files
+            .iter()
+            .any(|f| f == "pocket_tasks/main.py"));
         assert!(summary.target_symbols.iter().any(|s| s == "list_tasks"));
         assert!(summary.prompt_preview.contains("Fix the bug"));
     }
@@ -1345,7 +1457,10 @@ def add_task(db, title):
     fn non_run_hash_errors_cleanly() {
         let (_dir, store) = setup_store();
         // A blob is not a run.
-        let blob = MorphObject::Blob(Blob { kind: "x".into(), content: serde_json::json!({}) });
+        let blob = MorphObject::Blob(Blob {
+            kind: "x".into(),
+            content: serde_json::json!({}),
+        });
         let hash = store.put(&blob).unwrap();
         assert!(task_structure(store.as_ref(), &hash).is_err());
     }

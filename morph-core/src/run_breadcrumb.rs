@@ -68,8 +68,8 @@ pub fn fingerprint_index(idx: &StagingIndex) -> String {
 pub fn write_last_run(morph_dir: &Path, last: &LastRun) -> Result<(), MorphError> {
     let path = morph_dir.join(LAST_RUN_FILE);
     let tmp = morph_dir.join(format!("{LAST_RUN_FILE}.tmp"));
-    let json = serde_json::to_string_pretty(last)
-        .map_err(|e| MorphError::Serialization(e.to_string()))?;
+    let json =
+        serde_json::to_string_pretty(last).map_err(|e| MorphError::Serialization(e.to_string()))?;
     std::fs::write(&tmp, json)?;
     std::fs::rename(&tmp, &path)?;
     Ok(())
@@ -85,8 +85,8 @@ pub fn read_last_run(morph_dir: &Path) -> Result<Option<LastRun>, MorphError> {
         return Ok(None);
     }
     let data = std::fs::read_to_string(&path)?;
-    let last: LastRun = serde_json::from_str(&data)
-        .map_err(|e| MorphError::Serialization(e.to_string()))?;
+    let last: LastRun =
+        serde_json::from_str(&data).map_err(|e| MorphError::Serialization(e.to_string()))?;
     Ok(Some(last))
 }
 
@@ -191,7 +191,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let last = fixture(&"a".repeat(64), Some(&"b".repeat(64)), "fp");
         write_last_run(dir.path(), &last).unwrap();
-        let loaded = read_last_run(dir.path()).unwrap().expect("breadcrumb present");
+        let loaded = read_last_run(dir.path())
+            .unwrap()
+            .expect("breadcrumb present");
         assert_eq!(loaded, last);
     }
 

@@ -87,10 +87,7 @@ pub fn forgettable_kind_label(obj: &MorphObject) -> Option<&'static str> {
 /// surface the impact before the deletion lands. Linear in the
 /// number of commits — cheap on small repos, acceptable on
 /// large ones because forget is a rare operation.
-pub fn commits_referencing(
-    store: &FsStore,
-    target: &Hash,
-) -> Result<Vec<Hash>, MorphError> {
+pub fn commits_referencing(store: &FsStore, target: &Hash) -> Result<Vec<Hash>, MorphError> {
     use crate::store::Store;
     let mut out = Vec::new();
     let target_hex = target.to_string();
@@ -195,10 +192,7 @@ pub fn forget_local(
 /// Receivers don't validate `kind_is_forgettable` — the originating
 /// repo already enforced that, and refusing replay would mean an
 /// infinite re-forget loop on every fetch.
-pub fn apply_tombstone(
-    store: &FsStore,
-    tombstone: &Tombstone,
-) -> Result<bool, MorphError> {
+pub fn apply_tombstone(store: &FsStore, tombstone: &Tombstone) -> Result<bool, MorphError> {
     let original_hash = Hash::from_hex(&tombstone.original_hash)?;
 
     if store.is_forgotten(&original_hash)? {
@@ -265,18 +259,15 @@ mod tests {
         let run_hash = store.put(&dummy_run()).unwrap();
         assert!(store.has(&run_hash).unwrap());
 
-        let report = forget_local(
-            &store,
-            &run_hash,
-            "raffi@example.com",
-            Some("test"),
-            false,
-        )
-        .expect("forget should succeed");
+        let report = forget_local(&store, &run_hash, "raffi@example.com", Some("test"), false)
+            .expect("forget should succeed");
 
         assert_eq!(report.original_kind, "run");
         assert!(!store.has(&run_hash).unwrap(), "object should be gone");
-        assert!(store.is_forgotten(&run_hash).unwrap(), "marker should exist");
+        assert!(
+            store.is_forgotten(&run_hash).unwrap(),
+            "marker should exist"
+        );
 
         let tombstone = store
             .read_tombstone(&run_hash)

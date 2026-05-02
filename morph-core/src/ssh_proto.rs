@@ -165,13 +165,21 @@ pub fn from_morph_error(e: &MorphError) -> ErrResponse {
         MorphError::AlreadyExists(_) => r.error_kind = ErrorKind::AlreadyExists,
         MorphError::Io(_) => r.error_kind = ErrorKind::Io,
         MorphError::Serialization(_) => r.error_kind = ErrorKind::Serialization,
-        MorphError::Diverged { branch, local_tip, remote_tip } => {
+        MorphError::Diverged {
+            branch,
+            local_tip,
+            remote_tip,
+        } => {
             r.error_kind = ErrorKind::Diverged;
             r.branch = Some(branch.clone());
             r.local_tip = Some(local_tip.clone());
             r.remote_tip = Some(remote_tip.clone());
         }
-        MorphError::IncompatibleRemote { remote, local, reason } => {
+        MorphError::IncompatibleRemote {
+            remote,
+            local,
+            reason,
+        } => {
             r.error_kind = ErrorKind::IncompatibleRemote;
             r.remote_version = Some(remote.clone());
             r.local_version = Some(local.clone());
@@ -192,9 +200,7 @@ pub fn to_morph_error(r: &ErrResponse) -> MorphError {
         ErrorKind::AlreadyExists => MorphError::AlreadyExists(r.error.clone()),
         ErrorKind::Io => MorphError::Serialization(format!("remote io: {}", r.error)),
         ErrorKind::Serialization => MorphError::Serialization(r.error.clone()),
-        ErrorKind::UnknownOp => {
-            MorphError::Serialization(format!("remote: {}", r.error))
-        }
+        ErrorKind::UnknownOp => MorphError::Serialization(format!("remote: {}", r.error)),
         ErrorKind::Diverged => MorphError::Diverged {
             branch: r.branch.clone().unwrap_or_default(),
             local_tip: r.local_tip.clone().unwrap_or_default(),
@@ -229,7 +235,10 @@ pub fn hello_ok(version: &str, protocol: u32, repo_version: &str) -> OkResponse 
 pub fn list_refs_ok(refs: Vec<(String, Hash)>, kind: ListRefsKind) -> OkResponse {
     let entries: Vec<RefEntry> = refs
         .into_iter()
-        .map(|(name, h)| RefEntry { name, hash: h.to_string() })
+        .map(|(name, h)| RefEntry {
+            name,
+            hash: h.to_string(),
+        })
         .collect();
     let mut ok = default_ok();
     match kind {
@@ -313,14 +322,22 @@ mod tests {
         let cases = vec![
             Request::Hello,
             Request::ListBranches,
-            Request::ListRefs { prefix: "heads".into() },
-            Request::RefRead { name: "heads/main".into() },
+            Request::ListRefs {
+                prefix: "heads".into(),
+            },
+            Request::RefRead {
+                name: "heads/main".into(),
+            },
             Request::RefWrite {
                 name: "heads/main".into(),
                 hash: "0".repeat(64),
             },
-            Request::Has { hash: "0".repeat(64) },
-            Request::Get { hash: "0".repeat(64) },
+            Request::Has {
+                hash: "0".repeat(64),
+            },
+            Request::Get {
+                hash: "0".repeat(64),
+            },
         ];
         for r in cases {
             let s = serde_json::to_string(&r).unwrap();
@@ -347,7 +364,11 @@ mod tests {
         let parsed: ErrResponse = serde_json::from_str(&s).unwrap();
         let restored = to_morph_error(&parsed);
         match restored {
-            MorphError::Diverged { branch, local_tip, remote_tip } => {
+            MorphError::Diverged {
+                branch,
+                local_tip,
+                remote_tip,
+            } => {
                 assert_eq!(branch, "main");
                 assert_eq!(local_tip, "a".repeat(64));
                 assert_eq!(remote_tip, "b".repeat(64));
@@ -410,7 +431,11 @@ mod tests {
         let parsed: ErrResponse = serde_json::from_str(&s).unwrap();
         let restored = to_morph_error(&parsed);
         match restored {
-            MorphError::IncompatibleRemote { remote, local, reason } => {
+            MorphError::IncompatibleRemote {
+                remote,
+                local,
+                reason,
+            } => {
                 assert_eq!(remote, "2");
                 assert_eq!(local, "1");
                 assert_eq!(reason, "protocol_version");

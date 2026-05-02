@@ -172,11 +172,7 @@ fn emit_test(spec: &TestSpec) -> String {
         // — fresh specs that exercise the default policy use
         // `init: false` and run `morph init` themselves.
         writeln!(code, "    {{").unwrap();
-        writeln!(
-            code,
-            "        let mut cmd = cargo_bin_cmd!(\"morph\");"
-        )
-        .unwrap();
+        writeln!(code, "        let mut cmd = cargo_bin_cmd!(\"morph\");").unwrap();
         writeln!(
             code,
             "        cmd.arg(\"init\").arg(\"--git-init\").arg(\"--no-default-policy\").arg(path).assert().success();"
@@ -361,7 +357,10 @@ fn emit_step(code: &mut String, step: &Step, idx: usize) {
         return;
     }
 
-    let raw_args = step.morph.as_ref().expect("step must have morph, compute_hash, write_file, delete_file, or shell");
+    let raw_args = step
+        .morph
+        .as_ref()
+        .expect("step must have morph, compute_hash, write_file, delete_file, or shell");
     // Inject `--no-default-policy` into any in-spec `morph init` so
     // existing fixtures from before Phase 2a continue to start with a
     // permissive policy. Specs that *want* the default policy can opt
@@ -386,15 +385,16 @@ fn emit_step(code: &mut String, step: &Step, idx: usize) {
 
     // Build the command
     writeln!(code, "    let {} = {{", var).unwrap();
-    writeln!(
-        code,
-        "        let mut cmd = cargo_bin_cmd!(\"morph\");"
-    )
-    .unwrap();
+    writeln!(code, "        let mut cmd = cargo_bin_cmd!(\"morph\");").unwrap();
     if let Some(ref dir) = step.cwd {
         if dir.contains("${") {
             let fmt_str = escape_braces_for_format(dir);
-            writeln!(code, "        cmd.current_dir(path.join(format!({:?})));", fmt_str).unwrap();
+            writeln!(
+                code,
+                "        cmd.current_dir(path.join(format!({:?})));",
+                fmt_str
+            )
+            .unwrap();
         } else {
             writeln!(code, "        cmd.current_dir(path.join({:?}));", dir).unwrap();
         }
@@ -650,7 +650,7 @@ fn escape_braces_for_format(s: &str) -> String {
         if chars[i] == '$' && i + 1 < chars.len() && chars[i + 1] == '{' {
             // ${var_name} -> {var_name}
             result.push('{');
-            i += 2; // skip ${ 
+            i += 2; // skip ${
             while i < chars.len() && chars[i] != '}' {
                 result.push(chars[i]);
                 i += 1;
@@ -708,8 +708,8 @@ fn main() {
 
     for entry in spec_files {
         let yaml = fs::read_to_string(&entry).expect("cannot read spec file");
-        let specs: Vec<TestSpec> =
-            serde_yaml::from_str(&yaml).unwrap_or_else(|e| panic!("bad YAML in {}: {}", entry.display(), e));
+        let specs: Vec<TestSpec> = serde_yaml::from_str(&yaml)
+            .unwrap_or_else(|e| panic!("bad YAML in {}: {}", entry.display(), e));
 
         for spec in &specs {
             all_code.push_str(&emit_test(spec));
@@ -730,18 +730,43 @@ fn epoch_to_iso(secs: u64) -> String {
     let mut y: u64 = 1970;
     let mut rem = days;
     loop {
-        let ylen = if y.is_multiple_of(4) && (!y.is_multiple_of(100) || y.is_multiple_of(400)) { 366 } else { 365 };
-        if rem < ylen { break; }
+        let ylen = if y.is_multiple_of(4) && (!y.is_multiple_of(100) || y.is_multiple_of(400)) {
+            366
+        } else {
+            365
+        };
+        if rem < ylen {
+            break;
+        }
         rem -= ylen;
         y += 1;
     }
     let leap = y.is_multiple_of(4) && (!y.is_multiple_of(100) || y.is_multiple_of(400));
-    let mdays = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mdays = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut mo = 0u64;
     for md in mdays {
-        if rem < md { break; }
+        if rem < md {
+            break;
+        }
         rem -= md;
         mo += 1;
     }
-    format!("{y:04}-{:02}-{:02}T{hh:02}:{mm:02}:{ss:02}Z", mo + 1, rem + 1)
+    format!(
+        "{y:04}-{:02}-{:02}T{hh:02}:{mm:02}:{ss:02}Z",
+        mo + 1,
+        rem + 1
+    )
 }

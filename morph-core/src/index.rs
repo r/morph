@@ -68,8 +68,8 @@ pub fn read_index(morph_dir: &Path) -> Result<StagingIndex, MorphError> {
 /// Write the staging index to `.morph/index.json`.
 pub fn write_index(morph_dir: &Path, index: &StagingIndex) -> Result<(), MorphError> {
     let path = morph_dir.join(INDEX_FILE);
-    let json =
-        serde_json::to_string_pretty(index).map_err(|e| MorphError::Serialization(e.to_string()))?;
+    let json = serde_json::to_string_pretty(index)
+        .map_err(|e| MorphError::Serialization(e.to_string()))?;
     std::fs::write(&path, json)?;
     Ok(())
 }
@@ -218,10 +218,7 @@ mod tests {
         // `unmerged_entries`. New binary must load it cleanly.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(INDEX_FILE);
-        let legacy = format!(
-            "{{\"entries\":{{\"a.txt\":\"{}\"}}}}\n",
-            "a".repeat(64)
-        );
+        let legacy = format!("{{\"entries\":{{\"a.txt\":\"{}\"}}}}\n", "a".repeat(64));
         std::fs::write(&path, legacy).unwrap();
         let index = read_index(dir.path()).unwrap();
         assert_eq!(index.entries.len(), 1);
@@ -257,10 +254,16 @@ mod tests {
         mark_unmerged(dir.path(), "a.txt", entry.clone()).unwrap();
 
         let index = read_index(dir.path()).unwrap();
-        assert!(!index.entries.contains_key("a.txt"), "normal entry must be cleared");
+        assert!(
+            !index.entries.contains_key("a.txt"),
+            "normal entry must be cleared"
+        );
         assert_eq!(index.unmerged_entries["a.txt"], entry);
         assert!(has_unmerged(dir.path()).unwrap());
-        assert_eq!(unmerged_paths(dir.path()).unwrap(), vec!["a.txt".to_string()]);
+        assert_eq!(
+            unmerged_paths(dir.path()).unwrap(),
+            vec!["a.txt".to_string()]
+        );
     }
 
     #[test]

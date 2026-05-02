@@ -51,10 +51,7 @@ pub enum WorkdirOp {
 /// `repo_root`. Each path in the op is interpreted relative to
 /// `repo_root` and parent directories are created as needed for writes.
 /// Deletes silently no-op when the file is already absent.
-pub fn apply_workdir_ops(
-    repo_root: &std::path::Path,
-    ops: &[WorkdirOp],
-) -> Result<(), MorphError> {
+pub fn apply_workdir_ops(repo_root: &std::path::Path, ops: &[WorkdirOp]) -> Result<(), MorphError> {
     for op in ops {
         match op {
             WorkdirOp::Write { path, bytes } => {
@@ -120,19 +117,27 @@ pub fn merge_trees(
             (None, None, None) => unreachable!(),
 
             (Some(_), None, None) => {
-                writes.push(WorkdirOp::Delete { path: PathBuf::from(path) });
+                writes.push(WorkdirOp::Delete {
+                    path: PathBuf::from(path),
+                });
             }
             (None, Some(h), None) | (None, None, Some(h)) => {
                 let bytes = read_blob_bytes(store, h)?;
                 merged.insert(path.clone(), h.clone());
-                writes.push(WorkdirOp::Write { path: PathBuf::from(path), bytes });
+                writes.push(WorkdirOp::Write {
+                    path: PathBuf::from(path),
+                    bytes,
+                });
             }
 
             (None, Some(o_h), Some(t_h)) => {
                 if o_h == t_h {
                     let bytes = read_blob_bytes(store, o_h)?;
                     merged.insert(path.clone(), o_h.clone());
-                    writes.push(WorkdirOp::Write { path: PathBuf::from(path), bytes });
+                    writes.push(WorkdirOp::Write {
+                        path: PathBuf::from(path),
+                        bytes,
+                    });
                 } else {
                     let o_bytes = read_blob_bytes(store, o_h)?;
                     let t_bytes = read_blob_bytes(store, t_h)?;
@@ -140,9 +145,14 @@ pub fn merge_trees(
                         TextMergeResult::Clean(bytes) => {
                             let new_h = put_blob_bytes(store, &bytes)?;
                             merged.insert(path.clone(), new_h.to_string());
-                            writes.push(WorkdirOp::Write { path: PathBuf::from(path), bytes });
+                            writes.push(WorkdirOp::Write {
+                                path: PathBuf::from(path),
+                                bytes,
+                            });
                         }
-                        TextMergeResult::Conflict { content_with_markers } => {
+                        TextMergeResult::Conflict {
+                            content_with_markers,
+                        } => {
                             conflicts.push(ObjConflict::Textual {
                                 path: PathBuf::from(path),
                                 base: None,
@@ -160,7 +170,9 @@ pub fn merge_trees(
 
             (Some(b_h), Some(o_h), None) => {
                 if b_h == o_h {
-                    writes.push(WorkdirOp::Delete { path: PathBuf::from(path) });
+                    writes.push(WorkdirOp::Delete {
+                        path: PathBuf::from(path),
+                    });
                 } else {
                     conflicts.push(ObjConflict::Structural {
                         kind: StructuralKind::TreeDivergent,
@@ -168,12 +180,17 @@ pub fn merge_trees(
                     });
                     let bytes = read_blob_bytes(store, o_h)?;
                     merged.insert(path.clone(), o_h.clone());
-                    writes.push(WorkdirOp::Write { path: PathBuf::from(path), bytes });
+                    writes.push(WorkdirOp::Write {
+                        path: PathBuf::from(path),
+                        bytes,
+                    });
                 }
             }
             (Some(b_h), None, Some(t_h)) => {
                 if b_h == t_h {
-                    writes.push(WorkdirOp::Delete { path: PathBuf::from(path) });
+                    writes.push(WorkdirOp::Delete {
+                        path: PathBuf::from(path),
+                    });
                 } else {
                     conflicts.push(ObjConflict::Structural {
                         kind: StructuralKind::TreeDivergent,
@@ -181,7 +198,10 @@ pub fn merge_trees(
                     });
                     let bytes = read_blob_bytes(store, t_h)?;
                     merged.insert(path.clone(), t_h.clone());
-                    writes.push(WorkdirOp::Write { path: PathBuf::from(path), bytes });
+                    writes.push(WorkdirOp::Write {
+                        path: PathBuf::from(path),
+                        bytes,
+                    });
                 }
             }
 
@@ -191,7 +211,10 @@ pub fn merge_trees(
                 } else if b_h == o_h {
                     let bytes = read_blob_bytes(store, t_h)?;
                     merged.insert(path.clone(), t_h.clone());
-                    writes.push(WorkdirOp::Write { path: PathBuf::from(path), bytes });
+                    writes.push(WorkdirOp::Write {
+                        path: PathBuf::from(path),
+                        bytes,
+                    });
                 } else if b_h == t_h {
                     merged.insert(path.clone(), o_h.clone());
                 } else {
@@ -202,9 +225,14 @@ pub fn merge_trees(
                         TextMergeResult::Clean(bytes) => {
                             let new_h = put_blob_bytes(store, &bytes)?;
                             merged.insert(path.clone(), new_h.to_string());
-                            writes.push(WorkdirOp::Write { path: PathBuf::from(path), bytes });
+                            writes.push(WorkdirOp::Write {
+                                path: PathBuf::from(path),
+                                bytes,
+                            });
                         }
-                        TextMergeResult::Conflict { content_with_markers } => {
+                        TextMergeResult::Conflict {
+                            content_with_markers,
+                        } => {
                             conflicts.push(ObjConflict::Textual {
                                 path: PathBuf::from(path),
                                 base: Some(Hash::from_hex(b_h)?),
@@ -228,7 +256,11 @@ pub fn merge_trees(
     // produced). build_tree handles the empty case.
     let merged_tree = Some(build_tree(store, &merged)?);
 
-    Ok(TreeMergeOutcome { merged_tree, conflicts, working_writes: writes })
+    Ok(TreeMergeOutcome {
+        merged_tree,
+        conflicts,
+        working_writes: writes,
+    })
 }
 
 fn read_blob_bytes(store: &dyn Store, hash_hex: &str) -> Result<Vec<u8>, MorphError> {
@@ -290,7 +322,9 @@ mod tests {
     }
 
     fn put_text_blob(store: &dyn Store, content: &str) -> String {
-        put_blob_bytes(store, content.as_bytes()).unwrap().to_string()
+        put_blob_bytes(store, content.as_bytes())
+            .unwrap()
+            .to_string()
     }
 
     /// Build a tree from a flat path→content map, storing each blob and
@@ -319,7 +353,9 @@ mod tests {
 
     fn find_write<'a>(ops: &'a [WorkdirOp], path: &str) -> Option<&'a [u8]> {
         ops.iter().find_map(|op| match op {
-            WorkdirOp::Write { path: p, bytes } if p == &PathBuf::from(path) => Some(bytes.as_slice()),
+            WorkdirOp::Write { path: p, bytes } if p == &PathBuf::from(path) => {
+                Some(bytes.as_slice())
+            }
             _ => None,
         })
     }
@@ -341,7 +377,11 @@ mod tests {
         assert!(
             outcome.working_writes.is_empty(),
             "no changes should produce no working writes; got {:?}",
-            outcome.working_writes.iter().map(write_op_path).collect::<Vec<_>>()
+            outcome
+                .working_writes
+                .iter()
+                .map(write_op_path)
+                .collect::<Vec<_>>()
         );
     }
 
@@ -355,7 +395,10 @@ mod tests {
         let theirs = base;
         let outcome = merge_trees(&store, Some(&base), &ours, &theirs).unwrap();
         assert!(outcome.conflicts.is_empty(), "{:?}", outcome.conflicts);
-        assert_eq!(find_write(&outcome.working_writes, "a.txt"), Some(b"hello\n".as_slice()));
+        assert_eq!(
+            find_write(&outcome.working_writes, "a.txt"),
+            Some(b"hello\n".as_slice())
+        );
         let flat = flatten_tree(&store, outcome.merged_tree.as_ref().unwrap()).unwrap();
         assert!(flat.contains_key("a.txt"));
     }
@@ -367,7 +410,10 @@ mod tests {
         let t = put_tree(&store, &[("a.txt", "hello\n")]);
         let outcome = merge_trees(&store, Some(&base), &t, &t).unwrap();
         assert!(outcome.conflicts.is_empty(), "{:?}", outcome.conflicts);
-        assert_eq!(find_write(&outcome.working_writes, "a.txt"), Some(b"hello\n".as_slice()));
+        assert_eq!(
+            find_write(&outcome.working_writes, "a.txt"),
+            Some(b"hello\n".as_slice())
+        );
     }
 
     #[test]
@@ -409,13 +455,21 @@ mod tests {
         let theirs = put_tree(&store, &[("a.txt", "THEIRS_ONLY\n")]);
         let outcome = merge_trees(&store, Some(&base), &ours, &theirs).unwrap();
         assert!(
-            outcome.conflicts.iter().any(|c| matches!(c, ObjConflict::Textual { .. })),
+            outcome
+                .conflicts
+                .iter()
+                .any(|c| matches!(c, ObjConflict::Textual { .. })),
             "expected Textual conflict, got {:?}",
             outcome.conflicts
         );
-        let bytes = find_write(&outcome.working_writes, "a.txt").expect("conflict should plan a write");
+        let bytes =
+            find_write(&outcome.working_writes, "a.txt").expect("conflict should plan a write");
         let s = String::from_utf8_lossy(bytes);
-        assert!(s.contains("<<<<<<<"), "expected conflict markers in working write, got:\n{}", s);
+        assert!(
+            s.contains("<<<<<<<"),
+            "expected conflict markers in working write, got:\n{}",
+            s
+        );
     }
 
     // ── modify ────────────────────────────────────────────────────────

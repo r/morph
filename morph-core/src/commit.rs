@@ -1,6 +1,8 @@
 //! Commit creation, HEAD resolution, and ref helpers.
 
-use crate::objects::{Blob, Commit, CommitContributor, EvalContract, EvalSuite, HumanEdit, MorphObject};
+use crate::objects::{
+    Blob, Commit, CommitContributor, EvalContract, EvalSuite, HumanEdit, MorphObject,
+};
 use crate::store::{MorphError, Store};
 use crate::time::now_rfc3339_utc;
 use crate::Hash;
@@ -30,27 +32,45 @@ pub fn resolve_provenance_from_run(
     let obj = store.get(run_hash)?;
     let run = match obj {
         MorphObject::Run(r) => r,
-        _ => return Err(MorphError::Serialization(format!(
-            "object {} is not a Run", run_hash
-        ))),
+        _ => {
+            return Err(MorphError::Serialization(format!(
+                "object {} is not a Run",
+                run_hash
+            )))
+        }
     };
 
     let trace_hash = Hash::from_hex(&run.trace)?;
     match store.get(&trace_hash)? {
         MorphObject::Trace(_) => {}
-        _ => return Err(MorphError::Serialization(format!(
-            "object {} (referenced by run.trace) is not a Trace", run.trace
-        ))),
+        _ => {
+            return Err(MorphError::Serialization(format!(
+                "object {} (referenced by run.trace) is not a Trace",
+                run.trace
+            )))
+        }
     }
 
     let mut evidence_refs = vec![run_hash.to_string(), trace_hash.to_string()];
     evidence_refs.dedup();
 
     let mut env_constraints = BTreeMap::new();
-    env_constraints.insert("model".into(), serde_json::Value::String(run.environment.model.clone()));
-    env_constraints.insert("version".into(), serde_json::Value::String(run.environment.version.clone()));
-    env_constraints.insert("parameters".into(), serde_json::to_value(&run.environment.parameters).unwrap_or_default());
-    env_constraints.insert("toolchain".into(), serde_json::to_value(&run.environment.toolchain).unwrap_or_default());
+    env_constraints.insert(
+        "model".into(),
+        serde_json::Value::String(run.environment.model.clone()),
+    );
+    env_constraints.insert(
+        "version".into(),
+        serde_json::Value::String(run.environment.version.clone()),
+    );
+    env_constraints.insert(
+        "parameters".into(),
+        serde_json::to_value(&run.environment.parameters).unwrap_or_default(),
+    );
+    env_constraints.insert(
+        "toolchain".into(),
+        serde_json::to_value(&run.environment.toolchain).unwrap_or_default(),
+    );
 
     let mut seen = std::collections::BTreeSet::new();
     let mut contributors = Vec::new();
@@ -135,7 +155,10 @@ pub fn compute_human_edits(
     // a file is whatever the agent wrote most recently.
     let mut agent_edits: BTreeMap<String, String> = BTreeMap::new();
     for ev in &trace.events {
-        if !matches!(ev.kind.as_str(), "file_edit" | "edit_file" | "write_file" | "file_write") {
+        if !matches!(
+            ev.kind.as_str(),
+            "file_edit" | "edit_file" | "write_file" | "file_write"
+        ) {
             continue;
         }
         let path = match ev.payload.get("path").and_then(|v| v.as_str()) {
@@ -327,8 +350,15 @@ pub fn create_tree_commit(
     morph_version: Option<&str>,
 ) -> Result<Hash, MorphError> {
     create_tree_commit_with_provenance(
-        store, repo_root, pipeline_hash, eval_suite_hash,
-        observed_metrics, message, author, morph_version, None,
+        store,
+        repo_root,
+        pipeline_hash,
+        eval_suite_hash,
+        observed_metrics,
+        message,
+        author,
+        morph_version,
+        None,
     )
 }
 
@@ -347,12 +377,16 @@ pub fn create_tree_commit_with_provenance(
 ) -> Result<Hash, MorphError> {
     let morph_dir = repo_root.join(".morph");
     let index = crate::index::read_index(&morph_dir)?;
-    let canonical_root = repo_root.canonicalize().unwrap_or_else(|_| repo_root.to_path_buf());
+    let canonical_root = repo_root
+        .canonicalize()
+        .unwrap_or_else(|_| repo_root.to_path_buf());
     let ignore_rules = crate::morphignore::load_ignore_rules(&canonical_root);
     let filtered: std::collections::BTreeMap<String, String> = index
         .entries
         .into_iter()
-        .filter(|(rel, _)| !crate::morphignore::is_rel_path_ignored(ignore_rules.as_ref(), rel, false))
+        .filter(|(rel, _)| {
+            !crate::morphignore::is_rel_path_ignored(ignore_rules.as_ref(), rel, false)
+        })
         .collect();
     let tree_hash = crate::tree::build_tree(store, &filtered)?;
 
@@ -403,7 +437,11 @@ pub fn create_tree_commit_with_provenance(
             let run_hash = Hash::from_hex(&refs[0])?;
             let parent_tree = load_parent_tree(store, parent_list.first().map(|s| s.as_str()))?;
             let edits = compute_human_edits(store, &run_hash, &filtered, parent_tree.as_ref())?;
-            if edits.is_empty() { None } else { Some(edits) }
+            if edits.is_empty() {
+                None
+            } else {
+                Some(edits)
+            }
         }
         _ => None,
     };
@@ -456,39 +494,41 @@ pub fn checkout_tree(
     repo_root: &Path,
     ref_name: &str,
 ) -> Result<(Hash, bool), MorphError> {
-    let old_tree_hash_str = resolve_head(store)?
-        .and_then(|h| {
-            if let Ok(MorphObject::Commit(c)) = store.get(&h) {
-                c.tree.clone()
-            } else {
-                None
-            }
-        });
-
-    let (hash, is_branch) = if ref_name.len() == 64 && ref_name.chars().all(|c| c.is_ascii_hexdigit()) {
-        let h = Hash::from_hex(ref_name)?;
-        set_head_detached(store, &h)?;
-        (h, false)
-    } else {
-        let ref_path = if ref_name.starts_with("heads/") {
-            ref_name.to_string()
+    let old_tree_hash_str = resolve_head(store)?.and_then(|h| {
+        if let Ok(MorphObject::Commit(c)) = store.get(&h) {
+            c.tree.clone()
         } else {
-            format!("heads/{}", ref_name)
+            None
+        }
+    });
+
+    let (hash, is_branch) =
+        if ref_name.len() == 64 && ref_name.chars().all(|c| c.is_ascii_hexdigit()) {
+            let h = Hash::from_hex(ref_name)?;
+            set_head_detached(store, &h)?;
+            (h, false)
+        } else {
+            let ref_path = if ref_name.starts_with("heads/") {
+                ref_name.to_string()
+            } else {
+                format!("heads/{}", ref_name)
+            };
+            let h = store
+                .ref_read(&ref_path)?
+                .ok_or_else(|| MorphError::NotFound(ref_name.into()))?;
+            let branch_name = ref_name.trim_start_matches("heads/");
+            set_head_branch(store, branch_name)?;
+            (h, true)
         };
-        let h = store
-            .ref_read(&ref_path)?
-            .ok_or_else(|| MorphError::NotFound(ref_name.into()))?;
-        let branch_name = ref_name.trim_start_matches("heads/");
-        set_head_branch(store, branch_name)?;
-        (h, true)
-    };
 
     let commit = match store.get(&hash)? {
         MorphObject::Commit(c) => c,
         _ => return Err(MorphError::Serialization("not a commit".into())),
     };
 
-    let canonical_root = repo_root.canonicalize().unwrap_or_else(|_| repo_root.to_path_buf());
+    let canonical_root = repo_root
+        .canonicalize()
+        .unwrap_or_else(|_| repo_root.to_path_buf());
     let ignore_rules = crate::morphignore::load_ignore_rules(&canonical_root);
 
     let tree_restored = if let Some(tree_hash_str) = &commit.tree {
@@ -499,7 +539,11 @@ pub fn checkout_tree(
                 if let Ok(old_files) = crate::tree::flatten_tree(store, &old_hash) {
                     let new_files = crate::tree::flatten_tree(store, &tree_hash)?;
                     for path in old_files.keys() {
-                        if crate::morphignore::is_rel_path_ignored(ignore_rules.as_ref(), path, false) {
+                        if crate::morphignore::is_rel_path_ignored(
+                            ignore_rules.as_ref(),
+                            path,
+                            false,
+                        ) {
                             continue;
                         }
                         if !new_files.contains_key(path) {
@@ -542,7 +586,17 @@ pub fn create_merge_commit(
     message: String,
     author: Option<String>,
 ) -> Result<Hash, MorphError> {
-    create_merge_commit_full(store, other_branch, merged_pipeline_hash, merged_observed_metrics, Some(eval_suite_hash), message, author, None, None)
+    create_merge_commit_full(
+        store,
+        other_branch,
+        merged_pipeline_hash,
+        merged_observed_metrics,
+        Some(eval_suite_hash),
+        message,
+        author,
+        None,
+        None,
+    )
 }
 
 /// Full merge commit with optional tree, auto-computed union suite, and metric retirement.
@@ -559,7 +613,18 @@ pub fn create_merge_commit_full(
     repo_root: Option<&Path>,
     morph_version: Option<&str>,
 ) -> Result<Hash, MorphError> {
-    create_merge_commit_with_retirement(store, other_branch, merged_pipeline_hash, merged_observed_metrics, eval_suite_hash, message, author, repo_root, morph_version, None)
+    create_merge_commit_with_retirement(
+        store,
+        other_branch,
+        merged_pipeline_hash,
+        merged_observed_metrics,
+        eval_suite_hash,
+        message,
+        author,
+        repo_root,
+        morph_version,
+        None,
+    )
 }
 
 /// Merge commit with full metric retirement support (paper §5.3).
@@ -576,13 +641,16 @@ pub fn create_merge_commit_with_retirement(
     morph_version: Option<&str>,
     retired_metrics: Option<&[String]>,
 ) -> Result<Hash, MorphError> {
-    let head_hash = resolve_head(store)?.ok_or_else(|| MorphError::Serialization("no HEAD commit".into()))?;
+    let head_hash =
+        resolve_head(store)?.ok_or_else(|| MorphError::Serialization("no HEAD commit".into()))?;
     let other_ref = if other_branch.starts_with("heads/") {
         other_branch.to_string()
     } else {
         format!("heads/{}", other_branch)
     };
-    let other_hash = store.ref_read(&other_ref)?.ok_or_else(|| MorphError::NotFound(other_branch.into()))?;
+    let other_hash = store
+        .ref_read(&other_ref)?
+        .ok_or_else(|| MorphError::NotFound(other_branch.into()))?;
 
     let head_commit = match store.get(&head_hash)? {
         MorphObject::Commit(c) => c,
@@ -590,16 +658,30 @@ pub fn create_merge_commit_with_retirement(
     };
     let other_commit = match store.get(&other_hash)? {
         MorphObject::Commit(c) => c,
-        _ => return Err(MorphError::Serialization("other ref is not a commit".into())),
+        _ => {
+            return Err(MorphError::Serialization(
+                "other ref is not a commit".into(),
+            ))
+        }
     };
 
     let suite_hash_str = match eval_suite_hash {
         Some(h) => {
-            if !crate::check_dominance(&merged_observed_metrics, &head_commit.eval_contract.observed_metrics) {
-                return Err(MorphError::Serialization("merge rejected: merged metrics do not dominate current branch".into()));
+            if !crate::check_dominance(
+                &merged_observed_metrics,
+                &head_commit.eval_contract.observed_metrics,
+            ) {
+                return Err(MorphError::Serialization(
+                    "merge rejected: merged metrics do not dominate current branch".into(),
+                ));
             }
-            if !crate::check_dominance(&merged_observed_metrics, &other_commit.eval_contract.observed_metrics) {
-                return Err(MorphError::Serialization("merge rejected: merged metrics do not dominate other branch".into()));
+            if !crate::check_dominance(
+                &merged_observed_metrics,
+                &other_commit.eval_contract.observed_metrics,
+            ) {
+                return Err(MorphError::Serialization(
+                    "merge rejected: merged metrics do not dominate other branch".into(),
+                ));
             }
             h.to_string()
         }
@@ -620,14 +702,18 @@ pub fn create_merge_commit_with_retirement(
                 &head_commit.eval_contract.observed_metrics,
                 &union,
             ) {
-                return Err(MorphError::Serialization("merge rejected: merged metrics do not dominate current branch".into()));
+                return Err(MorphError::Serialization(
+                    "merge rejected: merged metrics do not dominate current branch".into(),
+                ));
             }
             if !crate::metrics::check_dominance_with_suite(
                 &merged_observed_metrics,
                 &other_commit.eval_contract.observed_metrics,
                 &union,
             ) {
-                return Err(MorphError::Serialization("merge rejected: merged metrics do not dominate other branch".into()));
+                return Err(MorphError::Serialization(
+                    "merge rejected: merged metrics do not dominate other branch".into(),
+                ));
             }
 
             let union_obj = MorphObject::EvalSuite(union);
@@ -672,8 +758,11 @@ pub fn create_merge_commit_with_retirement(
         env_constraints: None,
         evidence_refs: None,
         morph_version: morph_version.map(String::from),
-        morph_instance: repo_root
-            .and_then(|r| crate::agent::read_instance_id(&r.join(".morph")).ok().flatten()),
+        morph_instance: repo_root.and_then(|r| {
+            crate::agent::read_instance_id(&r.join(".morph"))
+                .ok()
+                .flatten()
+        }),
         morph_origin: None,
         git_origin_sha: None,
         human_edits: None,
@@ -694,7 +783,10 @@ pub fn merge_contributors(head: &Commit, other: &Commit) -> Option<Vec<CommitCon
     for commit in [head, other] {
         if !seen.contains(&commit.author) {
             seen.insert(commit.author.clone());
-            out.push(CommitContributor { id: commit.author.clone(), role: None });
+            out.push(CommitContributor {
+                id: commit.author.clone(),
+                role: None,
+            });
         }
         if let Some(contribs) = &commit.contributors {
             for c in contribs {
@@ -706,14 +798,21 @@ pub fn merge_contributors(head: &Commit, other: &Commit) -> Option<Vec<CommitCon
         }
     }
 
-    if out.is_empty() { None } else { Some(out) }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
 }
 
 pub fn load_eval_suite(store: &dyn Store, suite_hash_str: &str) -> Result<EvalSuite, MorphError> {
     let h = Hash::from_hex(suite_hash_str)?;
     match store.get(&h)? {
         MorphObject::EvalSuite(s) => Ok(s),
-        _ => Ok(EvalSuite { cases: vec![], metrics: vec![] }),
+        _ => Ok(EvalSuite {
+            cases: vec![],
+            metrics: vec![],
+        }),
     }
 }
 
@@ -725,11 +824,11 @@ pub fn rollup(
     tip_ref: &str,
     message: Option<String>,
 ) -> Result<Hash, MorphError> {
-    let base_hash = resolve_ref(store, base_ref)?
-        .ok_or_else(|| MorphError::NotFound(base_ref.into()))?;
+    let base_hash =
+        resolve_ref(store, base_ref)?.ok_or_else(|| MorphError::NotFound(base_ref.into()))?;
 
-    let tip_hash = resolve_ref(store, tip_ref)?
-        .ok_or_else(|| MorphError::NotFound(tip_ref.into()))?;
+    let tip_hash =
+        resolve_ref(store, tip_ref)?.ok_or_else(|| MorphError::NotFound(tip_ref.into()))?;
 
     let tip_commit = match store.get(&tip_hash)? {
         MorphObject::Commit(c) => c,
@@ -802,9 +901,9 @@ pub fn log_from(store: &dyn Store, start_ref: &str) -> Result<Vec<Hash>, MorphEr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::FsStore;
     use crate::objects::Blob;
     use crate::objects::MorphObject;
+    use crate::store::FsStore;
 
     #[test]
     fn create_commit_updates_ref() {
@@ -814,9 +913,15 @@ mod tests {
         std::fs::create_dir_all(store.refs_dir()).unwrap();
         store.ref_write_raw("HEAD", "ref: heads/main").unwrap();
 
-        let pipeline = MorphObject::Blob(Blob { kind: "x".into(), content: serde_json::json!({}) });
+        let pipeline = MorphObject::Blob(Blob {
+            kind: "x".into(),
+            content: serde_json::json!({}),
+        });
         let pipeline_hash = store.put(&pipeline).unwrap();
-        let suite = MorphObject::Blob(Blob { kind: "eval".into(), content: serde_json::json!({}) });
+        let suite = MorphObject::Blob(Blob {
+            kind: "eval".into(),
+            content: serde_json::json!({}),
+        });
         let suite_hash = store.put(&suite).unwrap();
 
         let mut metrics = BTreeMap::new();
@@ -828,7 +933,8 @@ mod tests {
             metrics,
             "first".into(),
             None,
-        ).unwrap();
+        )
+        .unwrap();
         assert!(store.has(&hash).unwrap());
         let head = resolve_head(&store).unwrap();
         assert_eq!(head, Some(hash));
@@ -844,19 +950,41 @@ mod tests {
         std::fs::create_dir_all(store.refs_dir()).unwrap();
         store.ref_write_raw("HEAD", "ref: heads/main").unwrap();
 
-        let pipeline = MorphObject::Blob(Blob { kind: "p".into(), content: serde_json::json!({}) });
+        let pipeline = MorphObject::Blob(Blob {
+            kind: "p".into(),
+            content: serde_json::json!({}),
+        });
         let pipeline_hash = store.put(&pipeline).unwrap();
-        let suite = MorphObject::Blob(Blob { kind: "e".into(), content: serde_json::json!({}) });
+        let suite = MorphObject::Blob(Blob {
+            kind: "e".into(),
+            content: serde_json::json!({}),
+        });
         let suite_hash = store.put(&suite).unwrap();
 
         let mut m1 = BTreeMap::new();
         m1.insert("acc".to_string(), 0.9);
-        let c1 = create_commit(&store, &pipeline_hash, &suite_hash, m1.clone(), "main".into(), None).unwrap();
+        let c1 = create_commit(
+            &store,
+            &pipeline_hash,
+            &suite_hash,
+            m1.clone(),
+            "main".into(),
+            None,
+        )
+        .unwrap();
 
         store.ref_write("heads/feature", &c1).unwrap();
         let mut m2 = BTreeMap::new();
         m2.insert("acc".to_string(), 0.85);
-        let c2 = create_commit(&store, &pipeline_hash, &suite_hash, m2, "feature".into(), None).unwrap();
+        let c2 = create_commit(
+            &store,
+            &pipeline_hash,
+            &suite_hash,
+            m2,
+            "feature".into(),
+            None,
+        )
+        .unwrap();
         store.ref_write("heads/feature", &c2).unwrap();
         store.ref_write("heads/main", &c1).unwrap();
         store.ref_write_raw("HEAD", "ref: heads/main").unwrap();
@@ -884,7 +1012,8 @@ mod tests {
             &suite_hash,
             "merge".into(),
             None,
-        ).unwrap();
+        )
+        .unwrap();
         let merge_commit = match store.get(&merge_hash).unwrap() {
             MorphObject::Commit(c) => c,
             _ => panic!(),
@@ -925,7 +1054,10 @@ mod tests {
 
         let tree_hash = Hash::from_hex(commit.tree.as_ref().unwrap()).unwrap();
         let flat = crate::tree::flatten_tree(store.as_ref(), &tree_hash).unwrap();
-        assert!(flat.contains_key("file.txt"), "tree should contain file.txt");
+        assert!(
+            flat.contains_key("file.txt"),
+            "tree should contain file.txt"
+        );
     }
 
     #[test]
@@ -976,7 +1108,10 @@ mod tests {
         crate::add_paths(&store, root, &[std::path::PathBuf::from(".")]).unwrap();
 
         let index_before = crate::index::read_index(&morph_dir).unwrap();
-        assert!(!index_before.is_empty(), "index should have entries before commit");
+        assert!(
+            !index_before.is_empty(),
+            "index should have entries before commit"
+        );
 
         create_tree_commit(
             store.as_ref(),
@@ -991,7 +1126,10 @@ mod tests {
         .unwrap();
 
         let index_after = crate::index::read_index(&morph_dir).unwrap();
-        assert!(index_after.is_empty(), "index should be cleared after commit");
+        assert!(
+            index_after.is_empty(),
+            "index should be cleared after commit"
+        );
     }
 
     // ── merge with auto union suite and tree ─────────────────────────
@@ -1004,7 +1142,10 @@ mod tests {
         let morph_dir = root.join(".morph");
         let store = crate::open_store(&morph_dir).unwrap();
 
-        let pipeline = MorphObject::Blob(Blob { kind: "p".into(), content: serde_json::json!({}) });
+        let pipeline = MorphObject::Blob(Blob {
+            kind: "p".into(),
+            content: serde_json::json!({}),
+        });
         let pipeline_hash = store.put(&pipeline).unwrap();
 
         let suite_a = MorphObject::EvalSuite(crate::objects::EvalSuite {
@@ -1023,7 +1164,17 @@ mod tests {
         crate::add_paths(&store, root, &[std::path::PathBuf::from(".")]).unwrap();
         let mut m1 = BTreeMap::new();
         m1.insert("acc".to_string(), 0.9);
-        create_tree_commit(store.as_ref(), root, Some(&pipeline_hash), Some(&suite_a_hash), m1, "c1".into(), None, Some("0.3")).unwrap();
+        create_tree_commit(
+            store.as_ref(),
+            root,
+            Some(&pipeline_hash),
+            Some(&suite_a_hash),
+            m1,
+            "c1".into(),
+            None,
+            Some("0.3"),
+        )
+        .unwrap();
 
         let c1 = resolve_head(store.as_ref()).unwrap().unwrap();
         store.ref_write("heads/feature", &c1).unwrap();
@@ -1032,9 +1183,24 @@ mod tests {
         crate::add_paths(&store, root, &[std::path::PathBuf::from(".")]).unwrap();
         let mut m2 = BTreeMap::new();
         m2.insert("f1".to_string(), 0.85);
-        create_tree_commit(store.as_ref(), root, Some(&pipeline_hash), Some(&suite_b_hash), m2, "c2".into(), None, Some("0.3")).unwrap();
+        create_tree_commit(
+            store.as_ref(),
+            root,
+            Some(&pipeline_hash),
+            Some(&suite_b_hash),
+            m2,
+            "c2".into(),
+            None,
+            Some("0.3"),
+        )
+        .unwrap();
 
-        store.ref_write("heads/feature", &resolve_head(store.as_ref()).unwrap().unwrap()).unwrap();
+        store
+            .ref_write(
+                "heads/feature",
+                &resolve_head(store.as_ref()).unwrap().unwrap(),
+            )
+            .unwrap();
         store.ref_write("heads/main", &c1).unwrap();
         store.ref_write_raw("HEAD", "ref: heads/main").unwrap();
 
@@ -1055,7 +1221,8 @@ mod tests {
             None,
             Some(root),
             Some("0.3"),
-        ).unwrap();
+        )
+        .unwrap();
 
         let merge_commit = match store.get(&merge_hash).unwrap() {
             MorphObject::Commit(c) => c,
@@ -1064,12 +1231,18 @@ mod tests {
         assert_eq!(merge_commit.parents.len(), 2);
         assert!(merge_commit.tree.is_some(), "merge commit should have tree");
 
-        let suite_obj = store.get(&Hash::from_hex(&merge_commit.eval_contract.suite).unwrap()).unwrap();
+        let suite_obj = store
+            .get(&Hash::from_hex(&merge_commit.eval_contract.suite).unwrap())
+            .unwrap();
         let suite = match suite_obj {
             MorphObject::EvalSuite(s) => s,
             _ => panic!("expected eval suite"),
         };
-        assert_eq!(suite.metrics.len(), 2, "union suite should have both metrics");
+        assert_eq!(
+            suite.metrics.len(),
+            2,
+            "union suite should have both metrics"
+        );
     }
 
     #[test]
@@ -1080,7 +1253,10 @@ mod tests {
         let morph_dir = root.join(".morph");
         let store = crate::open_store(&morph_dir).unwrap();
 
-        let pipeline = MorphObject::Blob(Blob { kind: "p".into(), content: serde_json::json!({}) });
+        let pipeline = MorphObject::Blob(Blob {
+            kind: "p".into(),
+            content: serde_json::json!({}),
+        });
         let pipeline_hash = store.put(&pipeline).unwrap();
 
         let suite = MorphObject::EvalSuite(crate::objects::EvalSuite {
@@ -1093,7 +1269,17 @@ mod tests {
         crate::add_paths(&store, root, &[std::path::PathBuf::from(".")]).unwrap();
         let mut m1 = BTreeMap::new();
         m1.insert("acc".to_string(), 0.9);
-        create_tree_commit(store.as_ref(), root, Some(&pipeline_hash), Some(&suite_hash), m1, "c1".into(), None, None).unwrap();
+        create_tree_commit(
+            store.as_ref(),
+            root,
+            Some(&pipeline_hash),
+            Some(&suite_hash),
+            m1,
+            "c1".into(),
+            None,
+            None,
+        )
+        .unwrap();
 
         let c1 = resolve_head(store.as_ref()).unwrap().unwrap();
         store.ref_write("heads/feature", &c1).unwrap();
@@ -1102,9 +1288,24 @@ mod tests {
         crate::add_paths(&store, root, &[std::path::PathBuf::from(".")]).unwrap();
         let mut m2 = BTreeMap::new();
         m2.insert("acc".to_string(), 0.85);
-        create_tree_commit(store.as_ref(), root, Some(&pipeline_hash), Some(&suite_hash), m2, "c2".into(), None, None).unwrap();
+        create_tree_commit(
+            store.as_ref(),
+            root,
+            Some(&pipeline_hash),
+            Some(&suite_hash),
+            m2,
+            "c2".into(),
+            None,
+            None,
+        )
+        .unwrap();
 
-        store.ref_write("heads/feature", &resolve_head(store.as_ref()).unwrap().unwrap()).unwrap();
+        store
+            .ref_write(
+                "heads/feature",
+                &resolve_head(store.as_ref()).unwrap().unwrap(),
+            )
+            .unwrap();
         store.ref_write("heads/main", &c1).unwrap();
         store.ref_write_raw("HEAD", "ref: heads/main").unwrap();
 
@@ -1122,7 +1323,10 @@ mod tests {
             None,
             None,
         );
-        assert!(result.is_err(), "should reject merge when not dominating HEAD's acc=0.9");
+        assert!(
+            result.is_err(),
+            "should reject merge when not dominating HEAD's acc=0.9"
+        );
     }
 
     // ── rollup preserves tree ────────────────────────────────────────
@@ -1137,13 +1341,33 @@ mod tests {
 
         std::fs::write(root.join("a.txt"), "aaa").unwrap();
         crate::add_paths(&store, root, &[std::path::PathBuf::from(".")]).unwrap();
-        let c1 = create_tree_commit(store.as_ref(), root, None, None, BTreeMap::new(), "c1".into(), None, Some("0.3")).unwrap();
+        let c1 = create_tree_commit(
+            store.as_ref(),
+            root,
+            None,
+            None,
+            BTreeMap::new(),
+            "c1".into(),
+            None,
+            Some("0.3"),
+        )
+        .unwrap();
 
         store.ref_write("heads/base", &c1).unwrap();
 
         std::fs::write(root.join("b.txt"), "bbb").unwrap();
         crate::add_paths(&store, root, &[std::path::PathBuf::from(".")]).unwrap();
-        let c2 = create_tree_commit(store.as_ref(), root, None, None, BTreeMap::new(), "c2".into(), None, Some("0.3")).unwrap();
+        let c2 = create_tree_commit(
+            store.as_ref(),
+            root,
+            None,
+            None,
+            BTreeMap::new(),
+            "c2".into(),
+            None,
+            Some("0.3"),
+        )
+        .unwrap();
 
         let tip_commit = match store.get(&c2).unwrap() {
             MorphObject::Commit(c) => c,
@@ -1156,8 +1380,15 @@ mod tests {
             MorphObject::Commit(c) => c,
             _ => panic!(),
         };
-        assert_eq!(rollup_commit.tree, tip_commit.tree, "rollup should preserve tip's tree");
-        assert_eq!(rollup_commit.morph_version.as_deref(), Some("0.3"), "rollup should preserve morph_version");
+        assert_eq!(
+            rollup_commit.tree, tip_commit.tree,
+            "rollup should preserve tip's tree"
+        );
+        assert_eq!(
+            rollup_commit.morph_version.as_deref(),
+            Some("0.3"),
+            "rollup should preserve morph_version"
+        );
     }
 
     // ── checkout_tree error paths ────────────────────────────────────
@@ -1186,7 +1417,17 @@ mod tests {
 
         std::fs::write(root.join("x.txt"), "x").unwrap();
         crate::add_paths(&store, root, &[std::path::PathBuf::from(".")]).unwrap();
-        let c1 = create_tree_commit(store.as_ref(), root, None, None, BTreeMap::new(), "c1".into(), None, Some("0.3")).unwrap();
+        let c1 = create_tree_commit(
+            store.as_ref(),
+            root,
+            None,
+            None,
+            BTreeMap::new(),
+            "c1".into(),
+            None,
+            Some("0.3"),
+        )
+        .unwrap();
 
         let (hash, tree_restored) = checkout_tree(store.as_ref(), root, &c1.to_string()).unwrap();
         assert_eq!(hash, c1);
@@ -1219,7 +1460,10 @@ mod tests {
         let store = crate::open_store(&morph_dir).unwrap();
 
         let log = log_from(store.as_ref(), "nosuchbranch").unwrap();
-        assert!(log.is_empty(), "non-existent branch should return empty log");
+        assert!(
+            log.is_empty(),
+            "non-existent branch should return empty log"
+        );
     }
 
     // ── create_tree_commit with empty index ──────────────────────────
@@ -1233,14 +1477,25 @@ mod tests {
         let store = crate::open_store(&morph_dir).unwrap();
 
         let hash = create_tree_commit(
-            store.as_ref(), root, None, None, BTreeMap::new(), "empty".into(), None, Some("0.3"),
-        ).unwrap();
+            store.as_ref(),
+            root,
+            None,
+            None,
+            BTreeMap::new(),
+            "empty".into(),
+            None,
+            Some("0.3"),
+        )
+        .unwrap();
 
         let commit = match store.get(&hash).unwrap() {
             MorphObject::Commit(c) => c,
             _ => panic!("expected commit"),
         };
-        assert!(commit.tree.is_some(), "should still have a tree (empty tree)");
+        assert!(
+            commit.tree.is_some(),
+            "should still have a tree (empty tree)"
+        );
     }
 
     // ── rollup edge case: base == tip ────────────────────────────────
@@ -1255,9 +1510,25 @@ mod tests {
 
         std::fs::write(root.join("a.txt"), "aaa").unwrap();
         crate::add_paths(&store, root, &[std::path::PathBuf::from(".")]).unwrap();
-        let c1 = create_tree_commit(store.as_ref(), root, None, None, BTreeMap::new(), "only".into(), None, Some("0.3")).unwrap();
+        let c1 = create_tree_commit(
+            store.as_ref(),
+            root,
+            None,
+            None,
+            BTreeMap::new(),
+            "only".into(),
+            None,
+            Some("0.3"),
+        )
+        .unwrap();
 
-        let rollup_hash = rollup(store.as_ref(), &c1.to_string(), &c1.to_string(), Some("self-rollup".into())).unwrap();
+        let rollup_hash = rollup(
+            store.as_ref(),
+            &c1.to_string(),
+            &c1.to_string(),
+            Some("self-rollup".into()),
+        )
+        .unwrap();
 
         let rollup_commit = match store.get(&rollup_hash).unwrap() {
             MorphObject::Commit(c) => c,
@@ -1320,15 +1591,13 @@ mod tests {
                 policy: None,
                 instance_id: None,
             },
-            contributors: Some(vec![
-                ContributorInfo {
-                    id: "agent-2".into(),
-                    version: "2.0".into(),
-                    policy: None,
-                    instance_id: None,
-                    role: Some("review".into()),
-                },
-            ]),
+            contributors: Some(vec![ContributorInfo {
+                id: "agent-2".into(),
+                version: "2.0".into(),
+                policy: None,
+                instance_id: None,
+                role: Some("review".into()),
+            }]),
             morph_version: None,
         });
         let run_hash = store.put(&run).unwrap();
@@ -1343,17 +1612,33 @@ mod tests {
         crate::add_paths(&store, root, &[std::path::PathBuf::from(".")]).unwrap();
 
         let hash = create_tree_commit(
-            store.as_ref(), root, None, None, BTreeMap::new(),
-            "plain".into(), None, Some("0.3"),
-        ).unwrap();
+            store.as_ref(),
+            root,
+            None,
+            None,
+            BTreeMap::new(),
+            "plain".into(),
+            None,
+            Some("0.3"),
+        )
+        .unwrap();
 
         let commit = match store.get(&hash).unwrap() {
             MorphObject::Commit(c) => c,
             _ => panic!("expected commit"),
         };
-        assert!(commit.evidence_refs.is_none(), "evidence_refs should be absent");
-        assert!(commit.env_constraints.is_none(), "env_constraints should be absent");
-        assert!(commit.contributors.is_none(), "contributors should be absent");
+        assert!(
+            commit.evidence_refs.is_none(),
+            "evidence_refs should be absent"
+        );
+        assert!(
+            commit.env_constraints.is_none(),
+            "env_constraints should be absent"
+        );
+        assert!(
+            commit.contributors.is_none(),
+            "contributors should be absent"
+        );
     }
 
     #[test]
@@ -1367,15 +1652,26 @@ mod tests {
 
         let provenance = resolve_provenance_from_run(store.as_ref(), &run_hash).unwrap();
         let hash = create_tree_commit_with_provenance(
-            store.as_ref(), root, None, None, BTreeMap::new(),
-            "with-run".into(), None, Some("0.3"), Some(&provenance),
-        ).unwrap();
+            store.as_ref(),
+            root,
+            None,
+            None,
+            BTreeMap::new(),
+            "with-run".into(),
+            None,
+            Some("0.3"),
+            Some(&provenance),
+        )
+        .unwrap();
 
         let commit = match store.get(&hash).unwrap() {
             MorphObject::Commit(c) => c,
             _ => panic!("expected commit"),
         };
-        let refs = commit.evidence_refs.as_ref().expect("evidence_refs should be present");
+        let refs = commit
+            .evidence_refs
+            .as_ref()
+            .expect("evidence_refs should be present");
         assert_eq!(refs.len(), 2);
         assert_eq!(refs[0], run_hash.to_string());
         assert_eq!(refs[1], trace_hash.to_string());
@@ -1392,17 +1688,31 @@ mod tests {
 
         let provenance = resolve_provenance_from_run(store.as_ref(), &run_hash).unwrap();
         let hash = create_tree_commit_with_provenance(
-            store.as_ref(), root, None, None, BTreeMap::new(),
-            "env".into(), None, Some("0.3"), Some(&provenance),
-        ).unwrap();
+            store.as_ref(),
+            root,
+            None,
+            None,
+            BTreeMap::new(),
+            "env".into(),
+            None,
+            Some("0.3"),
+            Some(&provenance),
+        )
+        .unwrap();
 
         let commit = match store.get(&hash).unwrap() {
             MorphObject::Commit(c) => c,
             _ => panic!("expected commit"),
         };
-        let env = commit.env_constraints.as_ref().expect("env_constraints should be present");
+        let env = commit
+            .env_constraints
+            .as_ref()
+            .expect("env_constraints should be present");
         assert_eq!(env.get("model").and_then(|v| v.as_str()), Some("gpt-4o"));
-        assert_eq!(env.get("version").and_then(|v| v.as_str()), Some("2025-01-01"));
+        assert_eq!(
+            env.get("version").and_then(|v| v.as_str()),
+            Some("2025-01-01")
+        );
         assert!(env.contains_key("parameters"));
         assert!(env.contains_key("toolchain"));
     }
@@ -1418,15 +1728,26 @@ mod tests {
 
         let provenance = resolve_provenance_from_run(store.as_ref(), &run_hash).unwrap();
         let hash = create_tree_commit_with_provenance(
-            store.as_ref(), root, None, None, BTreeMap::new(),
-            "contribs".into(), None, Some("0.3"), Some(&provenance),
-        ).unwrap();
+            store.as_ref(),
+            root,
+            None,
+            None,
+            BTreeMap::new(),
+            "contribs".into(),
+            None,
+            Some("0.3"),
+            Some(&provenance),
+        )
+        .unwrap();
 
         let commit = match store.get(&hash).unwrap() {
             MorphObject::Commit(c) => c,
             _ => panic!("expected commit"),
         };
-        let contribs = commit.contributors.as_ref().expect("contributors should be present");
+        let contribs = commit
+            .contributors
+            .as_ref()
+            .expect("contributors should be present");
         // Human author is folded in first (role=human-author), then
         // the agent (role=primary) and any extra Run.contributors.
         assert_eq!(contribs.len(), 3);
@@ -1449,12 +1770,19 @@ mod tests {
     #[test]
     fn resolve_provenance_fails_on_non_run_object() {
         let (_, store) = setup_repo();
-        let blob = MorphObject::Blob(Blob { kind: "x".into(), content: serde_json::json!({}) });
+        let blob = MorphObject::Blob(Blob {
+            kind: "x".into(),
+            content: serde_json::json!({}),
+        });
         let blob_hash = store.put(&blob).unwrap();
         let result = resolve_provenance_from_run(store.as_ref(), &blob_hash);
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("not a Run"), "error should mention 'not a Run': {}", err_msg);
+        assert!(
+            err_msg.contains("not a Run"),
+            "error should mention 'not a Run': {}",
+            err_msg
+        );
     }
 
     #[test]
@@ -1478,7 +1806,12 @@ mod tests {
             output_artifacts: vec![],
             metrics: BTreeMap::new(),
             trace: "b".repeat(64),
-            agent: AgentInfo { id: "a".into(), version: "1".into(), policy: None, instance_id: None },
+            agent: AgentInfo {
+                id: "a".into(),
+                version: "1".into(),
+                policy: None,
+                instance_id: None,
+            },
             contributors: None,
             morph_version: None,
         });

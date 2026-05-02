@@ -54,7 +54,10 @@ pub fn compute_eval_gaps(
     let policy = crate::policy::read_policy(morph_dir)?;
     let suite_empty = match policy.default_eval_suite.as_deref() {
         None => true,
-        Some(suite_hex) => match Hash::from_hex(suite_hex).ok().and_then(|h| store.get(&h).ok()) {
+        Some(suite_hex) => match Hash::from_hex(suite_hex)
+            .ok()
+            .and_then(|h| store.get(&h).ok())
+        {
             Some(MorphObject::EvalSuite(s)) => s.cases.is_empty(),
             _ => true,
         },
@@ -239,11 +242,10 @@ pub fn diff_suite_case_ids(
     Ok(diff)
 }
 
-fn load_case_ids(
-    store: &dyn Store,
-    suite: Option<&Hash>,
-) -> Result<Vec<String>, MorphError> {
-    let Some(h) = suite else { return Ok(vec![]); };
+fn load_case_ids(store: &dyn Store, suite: Option<&Hash>) -> Result<Vec<String>, MorphError> {
+    let Some(h) = suite else {
+        return Ok(vec![]);
+    };
     match store.get(h) {
         Ok(MorphObject::EvalSuite(s)) => Ok(s.cases.into_iter().map(|c| c.id).collect()),
         // Non-suite or missing → treat as empty so callers don't
@@ -263,9 +265,15 @@ pub fn build_or_extend_suite(
     let mut suite = match prev {
         Some(h) => match store.get(&h)? {
             MorphObject::EvalSuite(s) => s,
-            _ => EvalSuite { cases: vec![], metrics: vec![] },
+            _ => EvalSuite {
+                cases: vec![],
+                metrics: vec![],
+            },
         },
-        None => EvalSuite { cases: vec![], metrics: vec![] },
+        None => EvalSuite {
+            cases: vec![],
+            metrics: vec![],
+        },
     };
     for c in new_cases {
         if let Some(idx) = suite.cases.iter().position(|existing| existing.id == c.id) {
@@ -292,9 +300,7 @@ fn collect_inputs(
                     format!("read_dir {}: {}", p.display(), e),
                 ))
             })?
-            .filter_map(|e: std::io::Result<std::fs::DirEntry>| {
-                e.ok().map(|d| d.path())
-            })
+            .filter_map(|e: std::io::Result<std::fs::DirEntry>| e.ok().map(|d| d.path()))
             .collect();
         entries.sort();
         for entry in entries {
@@ -360,13 +366,16 @@ fn case_from_yaml_doc(path: &Path, idx: usize, doc: &Value) -> Option<EvalCase> 
 
 fn case_id(path: &Path, name: &str) -> String {
     // Stable, human-readable id: filename stem + ":" + sanitized name.
-    let stem = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("spec");
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("spec");
     let safe: String = name
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     format!("{stem}:{safe}")
 }
@@ -532,7 +541,10 @@ mod tests {
             first.input["tags"].as_array().unwrap()[0].as_str().unwrap(),
             "smoke",
         );
-        assert!(first.expected["background"].as_str().unwrap().contains("Given a setup"));
+        assert!(first.expected["background"]
+            .as_str()
+            .unwrap()
+            .contains("Given a setup"));
         let second = &cases[1];
         assert_eq!(second.id, "foo:second");
         assert!(second.input["tags"].as_array().unwrap().is_empty());
@@ -542,7 +554,10 @@ mod tests {
     fn add_cases_from_paths_walks_directory() {
         let dir = tempfile::tempdir().unwrap();
         write(&dir.path().join("a.yaml"), "- name: alpha\n");
-        write(&dir.path().join("b.feature"), "Feature: x\n  Scenario: beta\n    Then ok\n");
+        write(
+            &dir.path().join("b.feature"),
+            "Feature: x\n  Scenario: beta\n    Then ok\n",
+        );
         write(&dir.path().join("c.txt"), "ignored\n"); // unsupported ext
 
         let cases = add_cases_from_paths(&[dir.path().to_path_buf()]).unwrap();
@@ -562,19 +577,34 @@ mod tests {
             metric: "pass".into(),
             fixture_source: "candidate".into(),
         };
-        let h1 = build_or_extend_suite(store.as_ref(), None, std::slice::from_ref(&case_v1)).unwrap();
-        let case_v2 = EvalCase { input: json!({"v": 2}), ..case_v1.clone() };
-        let other = EvalCase { id: "x:other".into(), ..case_v1.clone() };
-        let h2 = build_or_extend_suite(store.as_ref(), Some(h1), &[case_v2.clone(), other.clone()]).unwrap();
+        let h1 =
+            build_or_extend_suite(store.as_ref(), None, std::slice::from_ref(&case_v1)).unwrap();
+        let case_v2 = EvalCase {
+            input: json!({"v": 2}),
+            ..case_v1.clone()
+        };
+        let other = EvalCase {
+            id: "x:other".into(),
+            ..case_v1.clone()
+        };
+        let h2 = build_or_extend_suite(store.as_ref(), Some(h1), &[case_v2.clone(), other.clone()])
+            .unwrap();
 
         let suite = match store.get(&h2).unwrap() {
             MorphObject::EvalSuite(s) => s,
             _ => panic!("expected EvalSuite"),
         };
         assert_eq!(suite.cases.len(), 2);
-        let by_id: std::collections::HashMap<_, _> =
-            suite.cases.iter().map(|c| (c.id.clone(), c.clone())).collect();
-        assert_eq!(by_id["x:case"].input["v"], json!(2), "v1 should be replaced by v2");
+        let by_id: std::collections::HashMap<_, _> = suite
+            .cases
+            .iter()
+            .map(|c| (c.id.clone(), c.clone()))
+            .collect();
+        assert_eq!(
+            by_id["x:case"].input["v"],
+            json!(2),
+            "v1 should be replaced by v2"
+        );
         assert!(by_id.contains_key("x:other"));
     }
 
@@ -588,10 +618,18 @@ mod tests {
             metric: "pass".into(),
             fixture_source: "candidate".into(),
         };
-        let case_b = EvalCase { id: "b".into(), ..case_a.clone() };
-        let case_c = EvalCase { id: "c".into(), ..case_a.clone() };
-        let old = build_or_extend_suite(store.as_ref(), None, &[case_a.clone(), case_b.clone()]).unwrap();
-        let new = build_or_extend_suite(store.as_ref(), Some(old), std::slice::from_ref(&case_c)).unwrap();
+        let case_b = EvalCase {
+            id: "b".into(),
+            ..case_a.clone()
+        };
+        let case_c = EvalCase {
+            id: "c".into(),
+            ..case_a.clone()
+        };
+        let old =
+            build_or_extend_suite(store.as_ref(), None, &[case_a.clone(), case_b.clone()]).unwrap();
+        let new = build_or_extend_suite(store.as_ref(), Some(old), std::slice::from_ref(&case_c))
+            .unwrap();
         let diff = diff_suite_case_ids(store.as_ref(), Some(&new), Some(&old)).unwrap();
         assert_eq!(diff, vec!["c".to_string()]);
     }
@@ -606,7 +644,10 @@ mod tests {
             metric: "pass".into(),
             fixture_source: "candidate".into(),
         };
-        let case_b = EvalCase { id: "b".into(), ..case_a.clone() };
+        let case_b = EvalCase {
+            id: "b".into(),
+            ..case_a.clone()
+        };
         let new = build_or_extend_suite(store.as_ref(), None, &[case_a, case_b]).unwrap();
         let diff = diff_suite_case_ids(store.as_ref(), Some(&new), None).unwrap();
         assert_eq!(diff, vec!["a".to_string(), "b".to_string()]);
@@ -672,7 +713,11 @@ mod tests {
 
     fn gap_kinds(gaps: &[Value]) -> Vec<String> {
         gaps.iter()
-            .filter_map(|v| v.get("kind").and_then(|k| k.as_str()).map(|s| s.to_string()))
+            .filter_map(|v| {
+                v.get("kind")
+                    .and_then(|k| k.as_str())
+                    .map(|s| s.to_string())
+            })
             .collect()
     }
 
@@ -772,13 +817,8 @@ mod tests {
         let mut rewritten_data = std::collections::BTreeMap::new();
         rewritten_data.insert("successor".into(), json!(commit_hash.to_string()));
         rewritten_data.insert("git_command".into(), json!("amend"));
-        let rewritten = crate::create_annotation(
-            &commit_hash,
-            None,
-            "rewritten".into(),
-            rewritten_data,
-            None,
-        );
+        let rewritten =
+            crate::create_annotation(&commit_hash, None, "rewritten".into(), rewritten_data, None);
         store.put(&rewritten).unwrap();
 
         let gaps = compute_eval_gaps(&morph_dir(&dir), store.as_ref(), 0).unwrap();

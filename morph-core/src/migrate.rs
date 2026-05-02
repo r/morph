@@ -11,8 +11,8 @@
 
 use crate::objects::*;
 use crate::repo::{
-    STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_0_4, STORE_VERSION_0_5,
-    STORE_VERSION_INIT, STORE_VERSION_LATEST,
+    STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_0_4, STORE_VERSION_0_5, STORE_VERSION_INIT,
+    STORE_VERSION_LATEST,
 };
 use crate::store::{FsStore, MorphError, Store};
 use crate::Hash;
@@ -177,12 +177,11 @@ pub fn migrate_0_0_to_0_2(morph_dir: &Path) -> Result<(), MorphError> {
             let name = entry.file_name().to_string_lossy().into_owned();
             let path = refs_heads.join(&name);
             let content = std::fs::read_to_string(&path)?.trim().to_string();
-            if content.len() == 64
-                && Hash::from_hex(&content).is_ok() {
-                    if let Some(&new_h) = map.get(&content) {
-                        git_store.ref_write(&format!("heads/{}", name), &new_h)?;
-                    }
+            if content.len() == 64 && Hash::from_hex(&content).is_ok() {
+                if let Some(&new_h) = map.get(&content) {
+                    git_store.ref_write(&format!("heads/{}", name), &new_h)?;
                 }
+            }
         }
     }
 
@@ -204,8 +203,7 @@ pub fn migrate_0_3_to_0_4(morph_dir: &Path) -> Result<(), MorphError> {
         let entries: Vec<_> = std::fs::read_dir(&objects_dir)?
             .filter_map(|e| e.ok())
             .filter(|e| {
-                e.path().extension().and_then(|x| x.to_str()) == Some("json")
-                    && e.path().is_file()
+                e.path().extension().and_then(|x| x.to_str()) == Some("json") && e.path().is_file()
             })
             .collect();
 
@@ -259,7 +257,8 @@ fn set_repo_version(morph_dir: &Path, version: &str) -> Result<(), MorphError> {
     };
     std::fs::write(
         config_path,
-        serde_json::to_string_pretty(&config).map_err(|e| MorphError::Serialization(e.to_string()))?,
+        serde_json::to_string_pretty(&config)
+            .map_err(|e| MorphError::Serialization(e.to_string()))?,
     )?;
     Ok(())
 }
@@ -285,10 +284,15 @@ fn dependency_order() -> [u8; 7] {
 }
 
 fn subst(map: &HashMap<String, Hash>, old: &str) -> String {
-    map.get(old).map(|h| h.to_string()).unwrap_or_else(|| old.to_string())
+    map.get(old)
+        .map(|h| h.to_string())
+        .unwrap_or_else(|| old.to_string())
 }
 
-fn rewrite_object(obj: &MorphObject, map: &HashMap<String, Hash>) -> Result<MorphObject, MorphError> {
+fn rewrite_object(
+    obj: &MorphObject,
+    map: &HashMap<String, Hash>,
+) -> Result<MorphObject, MorphError> {
     Ok(match obj {
         MorphObject::Blob(b) => MorphObject::Blob(b.clone()),
         MorphObject::EvalSuite(e) => MorphObject::EvalSuite(e.clone()),
@@ -344,7 +348,10 @@ fn rewrite_object(obj: &MorphObject, map: &HashMap<String, Hash>) -> Result<Morp
                 observed_metrics: c.eval_contract.observed_metrics.clone(),
             },
             env_constraints: c.env_constraints.clone(),
-            evidence_refs: c.evidence_refs.as_ref().map(|refs| refs.iter().map(|s| subst(map, s)).collect()),
+            evidence_refs: c
+                .evidence_refs
+                .as_ref()
+                .map(|refs| refs.iter().map(|s| subst(map, s)).collect()),
             morph_version: c.morph_version.clone(),
             morph_instance: c.morph_instance.clone(),
             morph_origin: c.morph_origin.clone(),
@@ -377,7 +384,10 @@ fn rewrite_object(obj: &MorphObject, map: &HashMap<String, Hash>) -> Result<Morp
             let mut data = a.data.clone();
             if a.kind == "link" {
                 if let Some(serde_json::Value::String(t)) = data.get("target") {
-                    data.insert("target".to_string(), serde_json::Value::String(subst(map, t)));
+                    data.insert(
+                        "target".to_string(),
+                        serde_json::Value::String(subst(map, t)),
+                    );
                 }
             }
             MorphObject::Annotation(Annotation {
@@ -457,13 +467,13 @@ mod tests {
         let morph_dir = dir.path().join(".morph");
         migrate_0_0_to_0_2(&morph_dir).unwrap();
 
-        assert_eq!(
-            crate::repo::read_repo_version(&morph_dir).unwrap(),
-            "0.2"
-        );
+        assert_eq!(crate::repo::read_repo_version(&morph_dir).unwrap(), "0.2");
         let git_store = FsStore::new_git(&morph_dir);
         let head_raw = git_store.ref_read_raw("HEAD").unwrap();
-        assert!(head_raw.as_deref().map(|s| s.contains("heads/main")).unwrap_or(false));
+        assert!(head_raw
+            .as_deref()
+            .map(|s| s.contains("heads/main"))
+            .unwrap_or(false));
         let head_hash = crate::commit::resolve_head(&git_store).unwrap();
         assert!(head_hash.is_some());
         let head = head_hash.unwrap();
@@ -512,10 +522,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let morph_dir = dir.path().join(".morph");
         std::fs::create_dir_all(&morph_dir).unwrap();
-        std::fs::write(
-            morph_dir.join("config.json"),
-            r#"{"repo_version":"0.0"}"#,
-        ).unwrap();
+        std::fs::write(morph_dir.join("config.json"), r#"{"repo_version":"0.0"}"#).unwrap();
 
         migrate_0_0_to_0_2(&morph_dir).unwrap();
     }
@@ -535,16 +542,28 @@ mod tests {
         let hash = store.put(&blob).unwrap();
         let hex = hash.to_string();
         let flat_path = morph_dir.join("objects").join(format!("{}.json", hex));
-        assert!(flat_path.exists(), "flat object should exist before migration");
+        assert!(
+            flat_path.exists(),
+            "flat object should exist before migration"
+        );
 
         migrate_0_3_to_0_4(&morph_dir).unwrap();
 
         assert_eq!(crate::repo::read_repo_version(&morph_dir).unwrap(), "0.4");
-        assert!(!flat_path.exists(), "flat object should be gone after migration");
+        assert!(
+            !flat_path.exists(),
+            "flat object should be gone after migration"
+        );
 
         let (prefix, rest) = hex.split_at(2);
-        let fanout_path = morph_dir.join("objects").join(prefix).join(format!("{}.json", rest));
-        assert!(fanout_path.exists(), "fan-out object should exist after migration");
+        let fanout_path = morph_dir
+            .join("objects")
+            .join(prefix)
+            .join(format!("{}.json", rest));
+        assert!(
+            fanout_path.exists(),
+            "fan-out object should exist after migration"
+        );
 
         let fanout_store = FsStore::new_git_fanout(&morph_dir);
         let got = fanout_store.get(&hash).unwrap();
@@ -566,7 +585,10 @@ mod tests {
         migrate_0_3_to_0_4(&morph_dir).unwrap();
         assert!(gitignore.exists(), ".gitignore should be created");
         let content = std::fs::read_to_string(&gitignore).unwrap();
-        assert!(content.contains("objects"), ".gitignore should ignore objects/");
+        assert!(
+            content.contains("objects"),
+            ".gitignore should ignore objects/"
+        );
     }
 
     #[test]

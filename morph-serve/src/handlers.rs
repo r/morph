@@ -61,21 +61,27 @@ impl From<morph_core::MorphError> for ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
         let (status, code, msg) = match &self {
-            ApiError::Store(morph_core::MorphError::NotFound(h)) => {
-                (StatusCode::NOT_FOUND, "not_found", format!("object not found: {}", h))
-            }
-            ApiError::Store(e) => {
-                (StatusCode::INTERNAL_SERVER_ERROR, "store_error", e.to_string())
-            }
-            ApiError::RepoNotFound(name) => {
-                (StatusCode::NOT_FOUND, "repo_not_found", format!("repo not found: {}", name))
-            }
-            ApiError::BadHash => {
-                (StatusCode::BAD_REQUEST, "bad_hash", "invalid object hash".to_string())
-            }
-            ApiError::Internal(msg) => {
-                (StatusCode::INTERNAL_SERVER_ERROR, "internal", msg.clone())
-            }
+            ApiError::Store(morph_core::MorphError::NotFound(h)) => (
+                StatusCode::NOT_FOUND,
+                "not_found",
+                format!("object not found: {}", h),
+            ),
+            ApiError::Store(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                e.to_string(),
+            ),
+            ApiError::RepoNotFound(name) => (
+                StatusCode::NOT_FOUND,
+                "repo_not_found",
+                format!("repo not found: {}", name),
+            ),
+            ApiError::BadHash => (
+                StatusCode::BAD_REQUEST,
+                "bad_hash",
+                "invalid object hash".to_string(),
+            ),
+            ApiError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, "internal", msg.clone()),
         };
         let body = ErrorResponse {
             error: msg,
@@ -249,8 +255,7 @@ pub async fn api_org_policy_set(
     Json(new_policy): Json<OrgPolicy>,
 ) -> Result<Json<OrgPolicyView>, ApiError> {
     if let Some(ref path) = state.org_policy_path {
-        org_policy::save_org_policy(path, &new_policy)
-            .map_err(ApiError::Internal)?;
+        org_policy::save_org_policy(path, &new_policy).map_err(ApiError::Internal)?;
     }
     let view = OrgPolicyView {
         required_metrics: new_policy.required_metrics.clone(),

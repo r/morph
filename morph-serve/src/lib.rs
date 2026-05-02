@@ -97,10 +97,7 @@ pub fn build_router(config: &ServiceConfig) -> Router {
             get(handlers::api_annotations),
         )
         .route("/api/repos/{repo}/policy", get(handlers::api_policy))
-        .route(
-            "/api/repos/{repo}/gate/{hash}",
-            get(handlers::api_gate),
-        )
+        .route("/api/repos/{repo}/gate/{hash}", get(handlers::api_gate))
         // Org-level policy
         .route(
             "/api/org/policy",
@@ -132,13 +129,9 @@ pub fn run_blocking(
 }
 
 /// Full service entry point with multi-repo and org policy support.
-pub fn run_service(
-    config: ServiceConfig,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub fn run_service(config: ServiceConfig) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::from_default_env().add_directive("morph_serve=info".parse()?),
-        )
+        .with_env_filter(EnvFilter::from_default_env().add_directive("morph_serve=info".parse()?))
         .try_init()
         .ok();
 

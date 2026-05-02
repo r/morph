@@ -115,13 +115,12 @@ pub fn start_merge(
         .ok_or_else(|| MorphError::Serialization("no HEAD commit".into()))?;
     // Accept already-qualified refs (`heads/...`, `remotes/.../...`)
     // verbatim; otherwise treat as a local branch name.
-    let other_ref = if opts.other_branch.starts_with("heads/")
-        || opts.other_branch.starts_with("remotes/")
-    {
-        opts.other_branch.to_string()
-    } else {
-        format!("heads/{}", opts.other_branch)
-    };
+    let other_ref =
+        if opts.other_branch.starts_with("heads/") || opts.other_branch.starts_with("remotes/") {
+            opts.other_branch.to_string()
+        } else {
+            format!("heads/{}", opts.other_branch)
+        };
     let other = store
         .ref_read(&other_ref)?
         .ok_or_else(|| MorphError::NotFound(opts.other_branch.into()))?;
@@ -202,10 +201,7 @@ pub fn start_merge(
     // outcomes (AlreadyMerged / AlreadyAhead / FastForward) write
     // nothing — the CLI handles those without going through
     // continue_merge.
-    let write_state = matches!(
-        outcome.trivial,
-        crate::objmerge::TrivialOutcome::Diverged
-    );
+    let write_state = matches!(outcome.trivial, crate::objmerge::TrivialOutcome::Diverged);
     if write_state {
         let morph_dir = repo_root.join(".morph");
         crate::merge_state::write_merge_head(&morph_dir, &other)?;
@@ -333,12 +329,7 @@ pub fn abort_merge(store: &dyn Store, repo_root: &Path) -> Result<(), MorphError
             .canonicalize()
             .unwrap_or_else(|_| repo_root.to_path_buf());
         let ignore_rules = crate::morphignore::load_ignore_rules(&canonical_root);
-        crate::tree::restore_tree_filtered(
-            store,
-            &tree_hash,
-            repo_root,
-            ignore_rules.as_ref(),
-        )?;
+        crate::tree::restore_tree_filtered(store, &tree_hash, repo_root, ignore_rules.as_ref())?;
     }
 
     // Drop unmerged entries and any staged conflict residue so the
@@ -400,8 +391,7 @@ pub fn merge_progress_summary(
         // Outside a real git checkout (some unit-test fixtures share
         // `.morph/` without a sibling `.git/`), fall back to an empty
         // list rather than failing status.
-        let unmerged_paths =
-            crate::reference::list_unmerged_paths(repo_root).unwrap_or_default();
+        let unmerged_paths = crate::reference::list_unmerged_paths(repo_root).unwrap_or_default();
         let on_branch = crate::commit::current_branch(store)?;
         return Ok(Some(MergeProgress {
             merge_head: bc.other_git_sha,
@@ -416,8 +406,7 @@ pub fn merge_progress_summary(
         Some(h) => h,
         None => return Ok(None),
     };
-    let orig_head = crate::merge_state::read_orig_head(&morph_dir)?
-        .map(|h| h.to_string());
+    let orig_head = crate::merge_state::read_orig_head(&morph_dir)?.map(|h| h.to_string());
     let unmerged_paths = crate::index::unmerged_paths(&morph_dir)?;
 
     // Pipeline-node conflicts: recompute from HEAD vs MERGE_HEAD so we
@@ -446,8 +435,7 @@ pub fn merge_progress_summary(
             head_p.as_ref().unwrap_or(&empty),
             other_p.as_ref().unwrap_or(&empty),
         );
-        pipeline_node_conflicts =
-            outcome.conflicts.iter().map(|c| c.id.clone()).collect();
+        pipeline_node_conflicts = outcome.conflicts.iter().map(|c| c.id.clone()).collect();
     }
 
     let on_branch = crate::commit::current_branch(store)?;
@@ -492,7 +480,10 @@ pub fn resolve_node(
         None => None,
     };
     let empty_pipeline = crate::objects::Pipeline {
-        graph: crate::objects::PipelineGraph { nodes: vec![], edges: vec![] },
+        graph: crate::objects::PipelineGraph {
+            nodes: vec![],
+            edges: vec![],
+        },
         prompts: vec![],
         eval_suite: None,
         attribution: None,
@@ -509,10 +500,7 @@ pub fn resolve_node(
         .iter()
         .find(|c| c.id == node_id)
         .ok_or_else(|| {
-            MorphError::NotFound(format!(
-                "no pipeline-node conflict for id `{}`",
-                node_id
-            ))
+            MorphError::NotFound(format!("no pipeline-node conflict for id `{}`", node_id))
         })?;
 
     let chosen = match pick {
@@ -583,7 +571,11 @@ pub fn continue_merge(
     };
     let other_commit = match store.get(&other)? {
         MorphObject::Commit(c) => c,
-        _ => return Err(MorphError::Serialization("MERGE_HEAD is not a commit".into())),
+        _ => {
+            return Err(MorphError::Serialization(
+                "MERGE_HEAD is not a commit".into(),
+            ))
+        }
     };
 
     let idx = crate::index::read_index(&morph_dir)?;
@@ -622,10 +614,8 @@ pub fn continue_merge(
         .iter()
         .map(|m| (m.name.clone(), m.direction.clone()))
         .collect();
-    let head_obs =
-        crate::policy::effective_metrics_for_commit(store, &head, &head_commit)?;
-    let other_obs =
-        crate::policy::effective_metrics_for_commit(store, &other, &other_commit)?;
+    let head_obs = crate::policy::effective_metrics_for_commit(store, &head, &head_commit)?;
+    let other_obs = crate::policy::effective_metrics_for_commit(store, &other, &other_commit)?;
     for k in head_obs.keys().chain(other_obs.keys()) {
         if merged_metrics.contains_key(k) {
             continue;
@@ -638,7 +628,11 @@ pub fn continue_merge(
             .unwrap_or("maximize");
         let v = match (h, o) {
             (Some(a), Some(b)) => {
-                if dir == "minimize" { a.min(b) } else { a.max(b) }
+                if dir == "minimize" {
+                    a.min(b)
+                } else {
+                    a.max(b)
+                }
             }
             (Some(a), None) => a,
             (None, Some(b)) => b,
@@ -667,13 +661,9 @@ pub fn continue_merge(
 
     let message = match opts.message {
         Some(m) => m,
-        None => crate::merge_state::read_merge_msg(&morph_dir)?
-            .unwrap_or_else(|| "Merge".into()),
+        None => crate::merge_state::read_merge_msg(&morph_dir)?.unwrap_or_else(|| "Merge".into()),
     };
-    let author = crate::author::resolve_author_for_repo(
-        &morph_dir,
-        opts.author.as_deref(),
-    )?;
+    let author = crate::author::resolve_author_for_repo(&morph_dir, opts.author.as_deref())?;
     let timestamp = now_rfc3339_utc();
     let contributors = crate::commit::merge_contributors(&head_commit, &other_commit);
 
@@ -728,8 +718,7 @@ pub fn continue_merge(
     });
     let merge_hash = store.put(&merge_commit)?;
 
-    let branch = crate::commit::current_branch(store)?
-        .unwrap_or_else(|| "main".to_string());
+    let branch = crate::commit::current_branch(store)?.unwrap_or_else(|| "main".to_string());
     store.ref_write(&format!("heads/{}", branch), &merge_hash)?;
 
     crate::merge_state::clear_merge_state(&morph_dir)?;
@@ -769,8 +758,8 @@ fn head_pipeline(
 mod tests {
     use super::*;
     use crate::commit::{create_tree_commit, current_branch, resolve_head, set_head_branch};
-    use crate::objects::{Blob, EvalMetric, EvalSuite};
     use crate::objects::MorphObject;
+    use crate::objects::{Blob, EvalMetric, EvalSuite};
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
 
@@ -872,12 +861,8 @@ mod tests {
         store.ref_write("heads/feature", &c1).unwrap();
         set_head_branch(store.as_ref(), "main").unwrap();
 
-        let out = start_merge(
-            store.as_ref(),
-            dir.path(),
-            StartMergeOpts::new("feature"),
-        )
-        .expect("start_merge should succeed for already-up-to-date case");
+        let out = start_merge(store.as_ref(), dir.path(), StartMergeOpts::new("feature"))
+            .expect("start_merge should succeed for already-up-to-date case");
 
         assert!(
             matches!(
@@ -916,12 +901,8 @@ mod tests {
         set_head_branch(store.as_ref(), "main").unwrap();
         let _ = c2;
 
-        let out = start_merge(
-            store.as_ref(),
-            dir.path(),
-            StartMergeOpts::new("feature"),
-        )
-        .expect("start_merge should succeed for fast-forwardable case");
+        let out = start_merge(store.as_ref(), dir.path(), StartMergeOpts::new("feature"))
+            .expect("start_merge should succeed for fast-forwardable case");
 
         assert!(
             matches!(out.trivial, crate::objmerge::TrivialOutcome::FastForward),
@@ -949,10 +930,7 @@ mod tests {
     ///
     /// Returns (base_hash, main_tip, feature_tip). HEAD is left on
     /// `main` with the working tree reflecting `main_tip`.
-    fn divergent_branches_clean(
-        store: &dyn Store,
-        root: &Path,
-    ) -> (Hash, Hash, Hash) {
+    fn divergent_branches_clean(store: &dyn Store, root: &Path) -> (Hash, Hash, Hash) {
         let prog = MorphObject::Blob(Blob {
             kind: "p".into(),
             content: serde_json::json!({}),
@@ -1033,15 +1011,10 @@ mod tests {
         // truth: the CLI always runs `start_merge` then
         // `continue_merge` in sequence for the clean case.
         let (dir, store) = setup_repo();
-        let (base, main_tip, feature_tip) =
-            divergent_branches_clean(store.as_ref(), dir.path());
+        let (base, main_tip, feature_tip) = divergent_branches_clean(store.as_ref(), dir.path());
 
-        let out = start_merge(
-            store.as_ref(),
-            dir.path(),
-            StartMergeOpts::new("feature"),
-        )
-        .expect("start_merge should succeed for clean three-way");
+        let out = start_merge(store.as_ref(), dir.path(), StartMergeOpts::new("feature"))
+            .expect("start_merge should succeed for clean three-way");
 
         assert!(
             matches!(out.trivial, crate::objmerge::TrivialOutcome::Diverged),
@@ -1083,10 +1056,7 @@ mod tests {
     /// same file at overlapping line ranges so the text 3-way merge
     /// produces a conflict. Returns (base, main_tip, feature_tip), HEAD
     /// on main.
-    fn divergent_branches_text_conflict(
-        store: &dyn Store,
-        root: &Path,
-    ) -> (Hash, Hash, Hash) {
+    fn divergent_branches_text_conflict(store: &dyn Store, root: &Path) -> (Hash, Hash, Hash) {
         let prog = MorphObject::Blob(Blob {
             kind: "p".into(),
             content: serde_json::json!({}),
@@ -1117,11 +1087,7 @@ mod tests {
 
         store.ref_write("heads/feature", &base).unwrap();
         crate::checkout_tree(store, root, "feature").unwrap();
-        std::fs::write(
-            root.join("file.txt"),
-            "line1\nFEATURE-EDIT\nline3\n",
-        )
-        .unwrap();
+        std::fs::write(root.join("file.txt"), "line1\nFEATURE-EDIT\nline3\n").unwrap();
         crate::add_paths(store, root, &[PathBuf::from(".")]).unwrap();
         create_tree_commit(
             store,
@@ -1137,11 +1103,7 @@ mod tests {
         let feature_tip = resolve_head(store).unwrap().unwrap();
 
         crate::checkout_tree(store, root, "main").unwrap();
-        std::fs::write(
-            root.join("file.txt"),
-            "line1\nMAIN-EDIT\nline3\n",
-        )
-        .unwrap();
+        std::fs::write(root.join("file.txt"), "line1\nMAIN-EDIT\nline3\n").unwrap();
         crate::add_paths(store, root, &[PathBuf::from(".")]).unwrap();
         create_tree_commit(
             store,
@@ -1170,12 +1132,8 @@ mod tests {
         let (_base, main_tip, feature_tip) =
             divergent_branches_text_conflict(store.as_ref(), dir.path());
 
-        let out = start_merge(
-            store.as_ref(),
-            dir.path(),
-            StartMergeOpts::new("feature"),
-        )
-        .expect("start_merge should not error on textual conflicts");
+        let out = start_merge(store.as_ref(), dir.path(), StartMergeOpts::new("feature"))
+            .expect("start_merge should not error on textual conflicts");
 
         assert!(
             out.needs_resolution,
@@ -1217,13 +1175,9 @@ mod tests {
     /// `ModifyModify` `NodeConflict` for node "summarizer".
     ///
     /// Returns (main_tip, feature_tip).
-    fn setup_pipeline_node_conflict(
-        store: &dyn Store,
-        root: &Path,
-    ) -> (Hash, Hash) {
+    fn setup_pipeline_node_conflict(store: &dyn Store, root: &Path) -> (Hash, Hash) {
         use crate::objects::{
-            Commit, EvalContract, EvalSuite, MorphObject, Pipeline, PipelineGraph,
-            PipelineNode,
+            Commit, EvalContract, EvalSuite, MorphObject, Pipeline, PipelineGraph, PipelineNode,
         };
 
         // Helper: build a Pipeline with one node "summarizer" + a
@@ -1299,8 +1253,7 @@ mod tests {
 
         let base = make_commit(pipe_base, vec![], "base");
         let main_tip = make_commit(pipe_main, vec![base.to_string()], "main");
-        let feature_tip =
-            make_commit(pipe_feature, vec![base.to_string()], "feature");
+        let feature_tip = make_commit(pipe_feature, vec![base.to_string()], "feature");
 
         store.ref_write("heads/main", &main_tip).unwrap();
         store.ref_write("heads/feature", &feature_tip).unwrap();
@@ -1316,15 +1269,10 @@ mod tests {
         // `.morph/MERGE_PIPELINE.json` is written so `morph merge
         // resolve-node` can mutate it.
         let (dir, store) = setup_repo();
-        let (_main_tip, _feature_tip) =
-            setup_pipeline_node_conflict(store.as_ref(), dir.path());
+        let (_main_tip, _feature_tip) = setup_pipeline_node_conflict(store.as_ref(), dir.path());
 
-        let out = start_merge(
-            store.as_ref(),
-            dir.path(),
-            StartMergeOpts::new("feature"),
-        )
-        .expect("start_merge should not error on pipeline node conflicts");
+        let out = start_merge(store.as_ref(), dir.path(), StartMergeOpts::new("feature"))
+            .expect("start_merge should not error on pipeline node conflicts");
 
         assert!(
             out.needs_resolution,
@@ -1352,11 +1300,7 @@ mod tests {
         // expect the conflicting node to be present (CLI's resolve-node
         // step rewrites it).
         assert!(
-            merge_pipe
-                .graph
-                .nodes
-                .iter()
-                .any(|n| n.id == "summarizer"),
+            merge_pipe.graph.nodes.iter().any(|n| n.id == "summarizer"),
             "MERGE_PIPELINE.json should contain the conflicting node"
         );
     }
@@ -1372,12 +1316,8 @@ mod tests {
         let (_base, _main_tip, _feature_tip) =
             divergent_branches_text_conflict(store.as_ref(), dir.path());
 
-        let out = start_merge(
-            store.as_ref(),
-            dir.path(),
-            StartMergeOpts::new("feature"),
-        )
-        .expect("start_merge should not error on textual conflicts");
+        let out = start_merge(store.as_ref(), dir.path(), StartMergeOpts::new("feature"))
+            .expect("start_merge should not error on textual conflicts");
 
         assert!(out.needs_resolution);
         assert!(
@@ -1393,7 +1333,10 @@ mod tests {
         // The hash must resolve to a real EvalSuite object in the store.
         match store.get(&suite_hash).unwrap() {
             crate::objects::MorphObject::EvalSuite(_) => {}
-            other => panic!("MERGE_SUITE hash should resolve to an EvalSuite, got: {:?}", other),
+            other => panic!(
+                "MERGE_SUITE hash should resolve to an EvalSuite, got: {:?}",
+                other
+            ),
         }
     }
 
@@ -1405,9 +1348,7 @@ mod tests {
         store: &dyn Store,
         root: &Path,
     ) -> (Hash, Hash, Hash) {
-        use crate::objects::{
-            EvalMetric, Pipeline, PipelineGraph, PipelineNode,
-        };
+        use crate::objects::{EvalMetric, Pipeline, PipelineGraph, PipelineNode};
 
         let pipeline_obj = Pipeline {
             graph: PipelineGraph {
@@ -1635,12 +1576,8 @@ mod tests {
         let (_base, _main_tip, _feature_tip) =
             divergent_branches_text_conflict(store.as_ref(), dir.path());
 
-        let out = start_merge(
-            store.as_ref(),
-            dir.path(),
-            StartMergeOpts::new("feature"),
-        )
-        .expect("start_merge should not error on textual conflicts");
+        let out = start_merge(store.as_ref(), dir.path(), StartMergeOpts::new("feature"))
+            .expect("start_merge should not error on textual conflicts");
 
         assert!(out.needs_resolution);
         assert!(out.textual_conflicts.iter().any(|p| p == "file.txt"));
@@ -1662,14 +1599,8 @@ mod tests {
             entry.base_blob.is_some(),
             "base_blob must be populated for a 3-way conflict"
         );
-        assert!(
-            entry.ours_blob.is_some(),
-            "ours_blob must be populated"
-        );
-        assert!(
-            entry.theirs_blob.is_some(),
-            "theirs_blob must be populated"
-        );
+        assert!(entry.ours_blob.is_some(), "ours_blob must be populated");
+        assert!(entry.theirs_blob.is_some(), "theirs_blob must be populated");
         assert_ne!(
             entry.ours_blob, entry.theirs_blob,
             "ours and theirs differ in a real conflict"
@@ -1694,12 +1625,8 @@ mod tests {
         // Scenario A: clean disjoint changes. feature_only.txt must end
         // up on disk under the main worktree after start_merge.
         let (_b, _m, _f) = divergent_branches_clean(store.as_ref(), dir.path());
-        let _ = start_merge(
-            store.as_ref(),
-            dir.path(),
-            StartMergeOpts::new("feature"),
-        )
-        .expect("clean merge should succeed");
+        let _ = start_merge(store.as_ref(), dir.path(), StartMergeOpts::new("feature"))
+            .expect("clean merge should succeed");
         let feature_only = dir.path().join("feature_only.txt");
         assert!(
             feature_only.exists(),
@@ -1714,12 +1641,8 @@ mod tests {
         // contain conflict markers after start_merge.
         let (dir2, store2) = setup_repo();
         divergent_branches_text_conflict(store2.as_ref(), dir2.path());
-        let _ = start_merge(
-            store2.as_ref(),
-            dir2.path(),
-            StartMergeOpts::new("feature"),
-        )
-        .expect("textual conflict merge should produce markers, not error");
+        let _ = start_merge(store2.as_ref(), dir2.path(), StartMergeOpts::new("feature"))
+            .expect("textual conflict merge should produce markers, not error");
         let file_path = dir2.path().join("file.txt");
         let content = std::fs::read_to_string(&file_path).unwrap();
         assert!(
@@ -1745,12 +1668,8 @@ mod tests {
         // Make a tracked file dirty.
         std::fs::write(dir.path().join("shared.txt"), "DIRTY local edit").unwrap();
 
-        let err = start_merge(
-            store.as_ref(),
-            dir.path(),
-            StartMergeOpts::new("feature"),
-        )
-        .expect_err("start_merge must refuse when working tree is dirty");
+        let err = start_merge(store.as_ref(), dir.path(), StartMergeOpts::new("feature"))
+            .expect_err("start_merge must refuse when working tree is dirty");
         let msg = err.to_string();
         assert!(
             msg.to_lowercase().contains("dirty")
@@ -1789,13 +1708,8 @@ mod tests {
     /// Build divergent main/feature where each side has an incompatible
     /// suite (same metric `acc` with different thresholds). Returns
     /// (main_tip, feature_tip), HEAD on main.
-    fn setup_suite_incompatible(
-        store: &dyn Store,
-        root: &Path,
-    ) -> (Hash, Hash) {
-        use crate::objects::{
-            Commit, EvalContract, EvalMetric, EvalSuite, MorphObject,
-        };
+    fn setup_suite_incompatible(store: &dyn Store, root: &Path) -> (Hash, Hash) {
+        use crate::objects::{Commit, EvalContract, EvalMetric, EvalSuite, MorphObject};
 
         let put_suite = |threshold: f64| -> Hash {
             let suite = MorphObject::EvalSuite(EvalSuite {
@@ -1850,8 +1764,7 @@ mod tests {
 
         let base = make_commit(&suite_base, vec![], "base");
         let main_tip = make_commit(&suite_main, vec![base.to_string()], "main");
-        let feature_tip =
-            make_commit(&suite_feature, vec![base.to_string()], "feature");
+        let feature_tip = make_commit(&suite_feature, vec![base.to_string()], "feature");
 
         store.ref_write("heads/main", &main_tip).unwrap();
         store.ref_write("heads/feature", &feature_tip).unwrap();
@@ -1869,12 +1782,8 @@ mod tests {
         let (dir, store) = setup_repo();
         let (_m, _f) = setup_suite_incompatible(store.as_ref(), dir.path());
 
-        let err = start_merge(
-            store.as_ref(),
-            dir.path(),
-            StartMergeOpts::new("feature"),
-        )
-        .expect_err("start_merge must error on SuiteIncompatible");
+        let err = start_merge(store.as_ref(), dir.path(), StartMergeOpts::new("feature"))
+            .expect_err("start_merge must error on SuiteIncompatible");
         let msg = err.to_string();
         assert!(
             msg.to_lowercase().contains("suite")
@@ -1902,23 +1811,14 @@ mod tests {
         //   - clears MERGE_HEAD/ORIG_HEAD/MERGE_MSG and the staging
         //     index, leaving a clean repo
         let (dir, store) = setup_repo();
-        let (_base, main_tip, feature_tip) =
-            divergent_branches_clean(store.as_ref(), dir.path());
+        let (_base, main_tip, feature_tip) = divergent_branches_clean(store.as_ref(), dir.path());
 
-        let started = start_merge(
-            store.as_ref(),
-            dir.path(),
-            StartMergeOpts::new("feature"),
-        )
-        .unwrap();
+        let started =
+            start_merge(store.as_ref(), dir.path(), StartMergeOpts::new("feature")).unwrap();
         assert!(!started.needs_resolution);
 
-        let cont = continue_merge(
-            store.as_ref(),
-            dir.path(),
-            ContinueMergeOpts::default(),
-        )
-        .expect("continue_merge should succeed for a clean merge");
+        let cont = continue_merge(store.as_ref(), dir.path(), ContinueMergeOpts::default())
+            .expect("continue_merge should succeed for a clean merge");
 
         // Merge commit is a real commit with two parents.
         let commit = match store.get(&cont.merge_commit).unwrap() {
@@ -1943,10 +1843,18 @@ mod tests {
         // All merge state cleared.
         let morph_dir = dir.path().join(".morph");
         assert!(!crate::merge_state::merge_in_progress(&morph_dir));
-        assert!(crate::merge_state::read_merge_msg(&morph_dir).unwrap().is_none());
-        assert!(crate::merge_state::read_orig_head(&morph_dir).unwrap().is_none());
-        assert!(crate::merge_state::read_merge_pipeline(&morph_dir).unwrap().is_none());
-        assert!(crate::merge_state::read_merge_suite(&morph_dir).unwrap().is_none());
+        assert!(crate::merge_state::read_merge_msg(&morph_dir)
+            .unwrap()
+            .is_none());
+        assert!(crate::merge_state::read_orig_head(&morph_dir)
+            .unwrap()
+            .is_none());
+        assert!(crate::merge_state::read_merge_pipeline(&morph_dir)
+            .unwrap()
+            .is_none());
+        assert!(crate::merge_state::read_merge_suite(&morph_dir)
+            .unwrap()
+            .is_none());
         // Staging index empty.
         let idx = crate::index::read_index(&morph_dir).unwrap();
         assert!(idx.is_empty(), "index should be cleared after merge commit");
@@ -1966,8 +1874,7 @@ mod tests {
     #[test]
     fn continue_merge_writes_evidence_union_from_parents() {
         let (dir, store) = setup_repo();
-        let (_base, main_tip, feature_tip) =
-            divergent_branches_clean(store.as_ref(), dir.path());
+        let (_base, main_tip, feature_tip) = divergent_branches_clean(store.as_ref(), dir.path());
 
         // Stamp evidence onto each parent before merging. We're
         // simulating "main was certified by run-A, feature by run-B,
@@ -1984,14 +1891,8 @@ mod tests {
             store.ref_write(branch_ref, &new_hash).unwrap();
             new_hash
         };
-        let main_with_ev = stamp(
-            "heads/main",
-            vec!["run-A".into(), "run-shared".into()],
-        );
-        let feature_with_ev = stamp(
-            "heads/feature",
-            vec!["run-B".into(), "run-shared".into()],
-        );
+        let main_with_ev = stamp("heads/main", vec!["run-A".into(), "run-shared".into()]);
+        let feature_with_ev = stamp("heads/feature", vec!["run-B".into(), "run-shared".into()]);
         // Sanity: the original tip hashes should still be valid
         // commits in the store (we never overwrite blobs by content).
         assert!(matches!(
@@ -2010,20 +1911,12 @@ mod tests {
             Some(feature_with_ev)
         );
 
-        let started = start_merge(
-            store.as_ref(),
-            dir.path(),
-            StartMergeOpts::new("feature"),
-        )
-        .unwrap();
+        let started =
+            start_merge(store.as_ref(), dir.path(), StartMergeOpts::new("feature")).unwrap();
         assert!(!started.needs_resolution);
 
-        let cont = continue_merge(
-            store.as_ref(),
-            dir.path(),
-            ContinueMergeOpts::default(),
-        )
-        .expect("continue_merge should succeed");
+        let cont = continue_merge(store.as_ref(), dir.path(), ContinueMergeOpts::default())
+            .expect("continue_merge should succeed");
 
         let commit = match store.get(&cont.merge_commit).unwrap() {
             MorphObject::Commit(c) => c,
@@ -2049,36 +1942,23 @@ mod tests {
         // are non-empty after start_merge. continue_merge must refuse
         // and not advance HEAD or clear merge state.
         let (dir, store) = setup_repo();
-        let (_b, main_tip, _f) =
-            divergent_branches_text_conflict(store.as_ref(), dir.path());
+        let (_b, main_tip, _f) = divergent_branches_text_conflict(store.as_ref(), dir.path());
 
-        let started = start_merge(
-            store.as_ref(),
-            dir.path(),
-            StartMergeOpts::new("feature"),
-        )
-        .unwrap();
+        let started =
+            start_merge(store.as_ref(), dir.path(), StartMergeOpts::new("feature")).unwrap();
         assert!(started.needs_resolution);
 
-        let err = continue_merge(
-            store.as_ref(),
-            dir.path(),
-            ContinueMergeOpts::default(),
-        )
-        .expect_err("continue_merge must refuse with unmerged entries");
+        let err = continue_merge(store.as_ref(), dir.path(), ContinueMergeOpts::default())
+            .expect_err("continue_merge must refuse with unmerged entries");
         let msg = err.to_string();
         assert!(
-            msg.to_lowercase().contains("unresolved")
-                || msg.to_lowercase().contains("conflict"),
+            msg.to_lowercase().contains("unresolved") || msg.to_lowercase().contains("conflict"),
             "expected unresolved-conflicts message, got: {}",
             msg
         );
 
         // HEAD must still be at main_tip; merge state still present.
-        assert_eq!(
-            store.ref_read("heads/main").unwrap(),
-            Some(main_tip)
-        );
+        assert_eq!(store.ref_read("heads/main").unwrap(), Some(main_tip));
         let morph_dir = dir.path().join(".morph");
         assert!(crate::merge_state::merge_in_progress(&morph_dir));
     }
@@ -2091,31 +1971,16 @@ mod tests {
         // continue_merge then succeeds and writes the resolved blob
         // into the merge tree.
         let (dir, store) = setup_repo();
-        let (_b, _m, _f) =
-            divergent_branches_text_conflict(store.as_ref(), dir.path());
+        let (_b, _m, _f) = divergent_branches_text_conflict(store.as_ref(), dir.path());
 
-        let _ = start_merge(
-            store.as_ref(),
-            dir.path(),
-            StartMergeOpts::new("feature"),
-        )
-        .unwrap();
+        let _ = start_merge(store.as_ref(), dir.path(), StartMergeOpts::new("feature")).unwrap();
 
         let morph_dir = dir.path().join(".morph");
         assert!(crate::index::has_unmerged(&morph_dir).unwrap());
 
         // User resolves: write a clean file (no markers) and `morph add`.
-        std::fs::write(
-            dir.path().join("file.txt"),
-            "line1\nRESOLVED\nline3\n",
-        )
-        .unwrap();
-        crate::add_paths(
-            store.as_ref(),
-            dir.path(),
-            &[PathBuf::from("file.txt")],
-        )
-        .unwrap();
+        std::fs::write(dir.path().join("file.txt"), "line1\nRESOLVED\nline3\n").unwrap();
+        crate::add_paths(store.as_ref(), dir.path(), &[PathBuf::from("file.txt")]).unwrap();
 
         // add_paths must have cleared the unmerged entry.
         assert!(
@@ -2123,12 +1988,8 @@ mod tests {
             "morph add must clear unmerged entries for staged paths"
         );
 
-        let cont = continue_merge(
-            store.as_ref(),
-            dir.path(),
-            ContinueMergeOpts::default(),
-        )
-        .expect("continue_merge should succeed after resolution");
+        let cont = continue_merge(store.as_ref(), dir.path(), ContinueMergeOpts::default())
+            .expect("continue_merge should succeed after resolution");
 
         // The resolved blob is in the tree at file.txt.
         let commit = match store.get(&cont.merge_commit).unwrap() {
@@ -2162,15 +2023,9 @@ mod tests {
         // merge commit must NOT inherit either parent's pipeline hash
         // when an explicit merged pipeline was recorded.
         let (dir, store) = setup_repo();
-        let (_b, main_tip, feature_tip) =
-            divergent_branches_clean(store.as_ref(), dir.path());
+        let (_b, main_tip, feature_tip) = divergent_branches_clean(store.as_ref(), dir.path());
 
-        let _ = start_merge(
-            store.as_ref(),
-            dir.path(),
-            StartMergeOpts::new("feature"),
-        )
-        .unwrap();
+        let _ = start_merge(store.as_ref(), dir.path(), StartMergeOpts::new("feature")).unwrap();
 
         let morph_dir = dir.path().join(".morph");
 
@@ -2192,15 +2047,10 @@ mod tests {
             attribution: None,
             provenance: None,
         };
-        crate::merge_state::write_merge_pipeline(&morph_dir, &resolved_pipeline)
-            .unwrap();
+        crate::merge_state::write_merge_pipeline(&morph_dir, &resolved_pipeline).unwrap();
 
-        let cont = continue_merge(
-            store.as_ref(),
-            dir.path(),
-            ContinueMergeOpts::default(),
-        )
-        .unwrap();
+        let cont =
+            continue_merge(store.as_ref(), dir.path(), ContinueMergeOpts::default()).unwrap();
 
         let commit = match store.get(&cont.merge_commit).unwrap() {
             crate::objects::MorphObject::Commit(c) => c,
@@ -2268,19 +2118,10 @@ mod tests {
         let (dir, store) = setup_repo();
         let (_b, _m, _f) = divergent_branches_clean(store.as_ref(), dir.path());
 
-        let _ = start_merge(
-            store.as_ref(),
-            dir.path(),
-            StartMergeOpts::new("feature"),
-        )
-        .unwrap();
+        let _ = start_merge(store.as_ref(), dir.path(), StartMergeOpts::new("feature")).unwrap();
 
-        let cont = continue_merge(
-            store.as_ref(),
-            dir.path(),
-            ContinueMergeOpts::default(),
-        )
-        .unwrap();
+        let cont =
+            continue_merge(store.as_ref(), dir.path(), ContinueMergeOpts::default()).unwrap();
 
         let commit = match store.get(&cont.merge_commit).unwrap() {
             crate::objects::MorphObject::Commit(c) => c,
@@ -2320,19 +2161,10 @@ mod tests {
         };
         crate::policy::write_policy(&dir.path().join(".morph"), &policy).unwrap();
 
-        let _ = start_merge(
-            store.as_ref(),
-            dir.path(),
-            StartMergeOpts::new("feature"),
-        )
-        .unwrap();
+        let _ = start_merge(store.as_ref(), dir.path(), StartMergeOpts::new("feature")).unwrap();
 
-        let cont = continue_merge(
-            store.as_ref(),
-            dir.path(),
-            ContinueMergeOpts::default(),
-        )
-        .expect("continue_merge should land with merge_policy=none");
+        let cont = continue_merge(store.as_ref(), dir.path(), ContinueMergeOpts::default())
+            .expect("continue_merge should land with merge_policy=none");
         assert!(matches!(
             store.get(&cont.merge_commit).unwrap(),
             crate::objects::MorphObject::Commit(_)
@@ -2348,15 +2180,10 @@ mod tests {
         //  - drop unmerged_entries from the staging index,
         //  - leave HEAD on its original commit.
         let (dir, store) = setup_repo();
-        let (_b, main_tip, _f) =
-            divergent_branches_text_conflict(store.as_ref(), dir.path());
+        let (_b, main_tip, _f) = divergent_branches_text_conflict(store.as_ref(), dir.path());
 
-        let started = start_merge(
-            store.as_ref(),
-            dir.path(),
-            StartMergeOpts::new("feature"),
-        )
-        .unwrap();
+        let started =
+            start_merge(store.as_ref(), dir.path(), StartMergeOpts::new("feature")).unwrap();
         assert!(started.needs_resolution);
         let morph_dir = dir.path().join(".morph");
         assert!(crate::merge_state::merge_in_progress(&morph_dir));
@@ -2404,31 +2231,22 @@ mod tests {
         // ORIG_HEAD's tree (i.e. file.txt back to its pre-merge
         // contents on `main`).
         let (dir, store) = setup_repo();
-        let (_b, _m, _f) =
-            divergent_branches_text_conflict(store.as_ref(), dir.path());
+        let (_b, _m, _f) = divergent_branches_text_conflict(store.as_ref(), dir.path());
 
         let pre_merge = std::fs::read_to_string(dir.path().join("file.txt"))
             .expect("file.txt should exist before start_merge");
 
-        let _ = start_merge(
-            store.as_ref(),
-            dir.path(),
-            StartMergeOpts::new("feature"),
-        )
-        .unwrap();
+        let _ = start_merge(store.as_ref(), dir.path(), StartMergeOpts::new("feature")).unwrap();
 
-        let with_markers =
-            std::fs::read_to_string(dir.path().join("file.txt")).unwrap();
+        let with_markers = std::fs::read_to_string(dir.path().join("file.txt")).unwrap();
         assert!(
-            with_markers.contains("<<<<<<<")
-                || with_markers != pre_merge,
+            with_markers.contains("<<<<<<<") || with_markers != pre_merge,
             "start_merge should have rewritten file.txt with markers"
         );
 
         abort_merge(store.as_ref(), dir.path()).unwrap();
 
-        let after_abort =
-            std::fs::read_to_string(dir.path().join("file.txt")).unwrap();
+        let after_abort = std::fs::read_to_string(dir.path().join("file.txt")).unwrap();
         assert_eq!(
             after_abort, pre_merge,
             "abort_merge must restore file.txt to its pre-merge content"
@@ -2441,8 +2259,7 @@ mod tests {
         let (dir, store) = setup_repo();
         let _ = linear_history(store.as_ref(), dir.path());
 
-        let progress =
-            merge_progress_summary(store.as_ref(), dir.path()).unwrap();
+        let progress = merge_progress_summary(store.as_ref(), dir.path()).unwrap();
         assert!(progress.is_none(), "expected None, got: {:?}", progress);
     }
 
@@ -2451,15 +2268,9 @@ mod tests {
         // Cycle 27: textual-conflict scenario ⇒ Some(MergeProgress)
         // with the unmerged file under `unmerged_paths`.
         let (dir, store) = setup_repo();
-        let (_b, _m, feature_tip) =
-            divergent_branches_text_conflict(store.as_ref(), dir.path());
+        let (_b, _m, feature_tip) = divergent_branches_text_conflict(store.as_ref(), dir.path());
 
-        let _ = start_merge(
-            store.as_ref(),
-            dir.path(),
-            StartMergeOpts::new("feature"),
-        )
-        .unwrap();
+        let _ = start_merge(store.as_ref(), dir.path(), StartMergeOpts::new("feature")).unwrap();
 
         let progress = merge_progress_summary(store.as_ref(), dir.path())
             .unwrap()
@@ -2479,15 +2290,9 @@ mod tests {
         // Cycle 28: pipeline-node conflict scenario ⇒
         // pipeline_node_conflicts non-empty.
         let (dir, store) = setup_repo();
-        let _ctx =
-            setup_pipeline_node_conflict(store.as_ref(), dir.path());
+        let _ctx = setup_pipeline_node_conflict(store.as_ref(), dir.path());
 
-        let _ = start_merge(
-            store.as_ref(),
-            dir.path(),
-            StartMergeOpts::new("feature"),
-        )
-        .unwrap();
+        let _ = start_merge(store.as_ref(), dir.path(), StartMergeOpts::new("feature")).unwrap();
 
         let progress = merge_progress_summary(store.as_ref(), dir.path())
             .unwrap()
@@ -2507,15 +2312,10 @@ mod tests {
         // the node-conflict entry must be removed from the in-memory
         // outcome so continue_merge can proceed.
         let (dir, store) = setup_repo();
-        let _ctx =
-            setup_pipeline_node_conflict(store.as_ref(), dir.path());
+        let _ctx = setup_pipeline_node_conflict(store.as_ref(), dir.path());
 
-        let started = start_merge(
-            store.as_ref(),
-            dir.path(),
-            StartMergeOpts::new("feature"),
-        )
-        .unwrap();
+        let started =
+            start_merge(store.as_ref(), dir.path(), StartMergeOpts::new("feature")).unwrap();
         assert!(
             !started.pipeline_node_conflicts.is_empty(),
             "expected pipeline node conflicts from setup"
@@ -2558,23 +2358,12 @@ mod tests {
         // Cycle 25: feeding a bogus node id (no such conflict) must
         // surface a clear error rather than silently doing nothing.
         let (dir, store) = setup_repo();
-        let _ctx =
-            setup_pipeline_node_conflict(store.as_ref(), dir.path());
+        let _ctx = setup_pipeline_node_conflict(store.as_ref(), dir.path());
 
-        let _ = start_merge(
-            store.as_ref(),
-            dir.path(),
-            StartMergeOpts::new("feature"),
-        )
-        .unwrap();
+        let _ = start_merge(store.as_ref(), dir.path(), StartMergeOpts::new("feature")).unwrap();
 
-        let err = resolve_node(
-            store.as_ref(),
-            dir.path(),
-            "no_such_node",
-            "ours",
-        )
-        .expect_err("resolve_node must error for unknown node id");
+        let err = resolve_node(store.as_ref(), dir.path(), "no_such_node", "ours")
+            .expect_err("resolve_node must error for unknown node id");
         let msg = err.to_string().to_lowercase();
         assert!(
             msg.contains("no_such_node") || msg.contains("not found"),
@@ -2591,16 +2380,11 @@ mod tests {
         let (dir, store) = setup_repo();
         let (_c1, _c2, _c3) = linear_history(store.as_ref(), dir.path());
 
-        let err = continue_merge(
-            store.as_ref(),
-            dir.path(),
-            ContinueMergeOpts::default(),
-        )
-        .expect_err("continue_merge must error without a merge in progress");
+        let err = continue_merge(store.as_ref(), dir.path(), ContinueMergeOpts::default())
+            .expect_err("continue_merge must error without a merge in progress");
         let msg = err.to_string();
         assert!(
-            msg.to_lowercase().contains("no merge")
-                || msg.to_lowercase().contains("merge_head"),
+            msg.to_lowercase().contains("no merge") || msg.to_lowercase().contains("merge_head"),
             "expected `no merge in progress` message, got: {}",
             msg
         );

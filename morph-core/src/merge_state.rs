@@ -161,15 +161,13 @@ pub fn write_merge_retirement(
     write_atomic(&morph_dir.join(MERGE_RETIRED), &bytes)
 }
 
-pub fn read_merge_retirement(
-    morph_dir: &Path,
-) -> Result<Option<MergeRetirement>, MorphError> {
+pub fn read_merge_retirement(morph_dir: &Path) -> Result<Option<MergeRetirement>, MorphError> {
     let bytes = match read_or_none(&morph_dir.join(MERGE_RETIRED))? {
         Some(b) => b,
         None => return Ok(None),
     };
-    let r: MergeRetirement = serde_json::from_slice(&bytes)
-        .map_err(|e| MorphError::Serialization(e.to_string()))?;
+    let r: MergeRetirement =
+        serde_json::from_slice(&bytes).map_err(|e| MorphError::Serialization(e.to_string()))?;
     Ok(Some(r))
 }
 
@@ -306,7 +304,10 @@ mod tests {
         write_merge_pipeline(
             &m,
             &Pipeline {
-                graph: PipelineGraph { nodes: vec![], edges: vec![] },
+                graph: PipelineGraph {
+                    nodes: vec![],
+                    edges: vec![],
+                },
                 prompts: vec![],
                 eval_suite: None,
                 attribution: None,

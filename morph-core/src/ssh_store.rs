@@ -57,10 +57,9 @@ pub struct Connection {
 impl Connection {
     /// Send a single request and read a single response line.
     pub fn round_trip(&mut self, req: &Request) -> Result<RawResponse, MorphError> {
-        let line = serde_json::to_string(req)
-            .map_err(|e| MorphError::Serialization(e.to_string()))?;
-        writeln!(self.stdin, "{}", line)
-            .map_err(MorphError::Io)?;
+        let line =
+            serde_json::to_string(req).map_err(|e| MorphError::Serialization(e.to_string()))?;
+        writeln!(self.stdin, "{}", line).map_err(MorphError::Io)?;
         self.stdin.flush().map_err(MorphError::Io)?;
 
         let mut buf = String::new();
@@ -183,7 +182,12 @@ fn parse_ssh_scheme(rest: &str) -> Option<SshUrl> {
     if host.is_empty() {
         return None;
     }
-    Some(SshUrl { user, host, port, path })
+    Some(SshUrl {
+        user,
+        host,
+        port,
+        path,
+    })
 }
 
 /// Body of legacy scp form: `[user@]host:path`. We refuse:
@@ -226,8 +230,7 @@ pub struct RemoteSpawn {
 
 impl RemoteSpawn {
     pub fn new(url: SshUrl) -> Self {
-        let ssh_command =
-            std::env::var("MORPH_SSH").unwrap_or_else(|_| "ssh".to_string());
+        let ssh_command = std::env::var("MORPH_SSH").unwrap_or_else(|_| "ssh".to_string());
         let remote_morph_bin =
             std::env::var("MORPH_REMOTE_BIN").unwrap_or_else(|_| "morph".to_string());
         Self {
@@ -314,17 +317,16 @@ impl Spawn for LocalSpawn {
             .stderr(Stdio::inherit())
             .spawn()
             .map_err(|e| {
-                MorphError::Serialization(format!(
-                    "failed to spawn morph remote-helper: {}",
-                    e
-                ))
+                MorphError::Serialization(format!("failed to spawn morph remote-helper: {}", e))
             })?;
-        let stdin = child.stdin.take().ok_or_else(|| {
-            MorphError::Serialization("missing stdin from helper".into())
-        })?;
-        let stdout = child.stdout.take().ok_or_else(|| {
-            MorphError::Serialization("missing stdout from helper".into())
-        })?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| MorphError::Serialization("missing stdin from helper".into()))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| MorphError::Serialization("missing stdout from helper".into()))?;
         Ok(Connection {
             child,
             stdin,
@@ -368,7 +370,9 @@ impl SshStore {
         match conn.round_trip(&Request::Hello)? {
             RawResponse::Ok(ok) => {
                 validate_hello(&ok, ssh_proto::MORPH_PROTOCOL_VERSION)?;
-                Ok(Self { inner: Mutex::new(conn) })
+                Ok(Self {
+                    inner: Mutex::new(conn),
+                })
             }
             RawResponse::Err(e) => Err(ssh_proto::to_morph_error(&e)),
         }
@@ -388,7 +392,9 @@ impl SshStore {
 
 impl Store for SshStore {
     fn put(&self, object: &MorphObject) -> Result<Hash, MorphError> {
-        let resp = self.call(&Request::Put { object: object.clone() })?;
+        let resp = self.call(&Request::Put {
+            object: object.clone(),
+        })?;
         let hash = resp
             .hash
             .ok_or_else(|| MorphError::Serialization("put: missing hash field".into()))?;
@@ -396,13 +402,17 @@ impl Store for SshStore {
     }
 
     fn get(&self, hash: &Hash) -> Result<MorphObject, MorphError> {
-        let resp = self.call(&Request::Get { hash: hash.to_string() })?;
+        let resp = self.call(&Request::Get {
+            hash: hash.to_string(),
+        })?;
         resp.object
             .ok_or_else(|| MorphError::Serialization("get: missing object field".into()))
     }
 
     fn has(&self, hash: &Hash) -> Result<bool, MorphError> {
-        let resp = self.call(&Request::Has { hash: hash.to_string() })?;
+        let resp = self.call(&Request::Has {
+            hash: hash.to_string(),
+        })?;
         resp.has
             .ok_or_else(|| MorphError::Serialization("has: missing has field".into()))
     }
@@ -418,7 +428,9 @@ impl Store for SshStore {
     }
 
     fn ref_read(&self, name: &str) -> Result<Option<Hash>, MorphError> {
-        let resp = self.call(&Request::RefRead { name: name.to_string() })?;
+        let resp = self.call(&Request::RefRead {
+            name: name.to_string(),
+        })?;
         // Flat encoding: missing ref ⇒ field is JSON null ⇒
         // deserialized as None. A `put` response always sets it.
         match resp.hash {
@@ -639,7 +651,11 @@ mod tests {
         let ok = ssh_proto::hello_ok("99.0.0", 2, "0.5");
         let err = validate_hello(&ok, 1).expect_err("expected IncompatibleRemote");
         match err {
-            MorphError::IncompatibleRemote { remote, local, reason } => {
+            MorphError::IncompatibleRemote {
+                remote,
+                local,
+                reason,
+            } => {
                 assert_eq!(remote, "2");
                 assert_eq!(local, "1");
                 assert_eq!(reason, "protocol_version");
@@ -686,7 +702,9 @@ mod tests {
     #[test]
     fn ssh_store_has_returns_false_for_missing() {
         // PR5 cycle 16 RED→GREEN.
-        let Some((_dir, spawn)) = setup_remote_repo() else { return };
+        let Some((_dir, spawn)) = setup_remote_repo() else {
+            return;
+        };
         let store = SshStore::connect(&spawn).unwrap();
         let zeros = Hash::from_hex(&"0".repeat(64)).unwrap();
         assert!(!store.has(&zeros).unwrap());
@@ -698,7 +716,9 @@ mod tests {
         // must refuse to record a ref pointing at an object the
         // helper doesn't have. Without this, a bare repo could end
         // up with a `heads/main` whose closure was never uploaded.
-        let Some((_dir, spawn)) = setup_remote_repo() else { return };
+        let Some((_dir, spawn)) = setup_remote_repo() else {
+            return;
+        };
         let store = SshStore::connect(&spawn).unwrap();
         let bogus = Hash::from_hex(&"a".repeat(64)).unwrap();
         let err = store
@@ -719,8 +739,7 @@ mod tests {
         let Some(bin) = morph_bin() else { return };
         let dir = tempfile::tempdir().unwrap();
         crate::repo::init_repo(dir.path()).unwrap();
-        let local_store =
-            crate::repo::open_store(&dir.path().join(".morph")).unwrap();
+        let local_store = crate::repo::open_store(&dir.path().join(".morph")).unwrap();
 
         // Build a commit locally — its closure includes a tree, a
         // pipeline, an eval suite, and one blob.
@@ -828,8 +847,12 @@ mod tests {
         // refuse.
         let local_store = crate::repo::open_store(&morph_dir).unwrap();
         std::fs::write(dir.path().join("f.txt"), "data").unwrap();
-        crate::add_paths(local_store.as_ref(), dir.path(), &[std::path::PathBuf::from(".")])
-            .unwrap();
+        crate::add_paths(
+            local_store.as_ref(),
+            dir.path(),
+            &[std::path::PathBuf::from(".")],
+        )
+        .unwrap();
         let commit_h = crate::create_tree_commit(
             local_store.as_ref(),
             dir.path(),
@@ -863,7 +886,9 @@ mod tests {
     #[test]
     fn ssh_store_ref_round_trip() {
         // PR5 cycle 17/18 RED→GREEN.
-        let Some((_dir, spawn)) = setup_remote_repo() else { return };
+        let Some((_dir, spawn)) = setup_remote_repo() else {
+            return;
+        };
         let store = SshStore::connect(&spawn).unwrap();
 
         let blob = MorphObject::Blob(crate::objects::Blob {
@@ -882,7 +907,9 @@ mod tests {
     #[test]
     fn ssh_store_list_branches_and_refs() {
         // PR5 cycle 19/20 RED→GREEN.
-        let Some((_dir, spawn)) = setup_remote_repo() else { return };
+        let Some((_dir, spawn)) = setup_remote_repo() else {
+            return;
+        };
         let store = SshStore::connect(&spawn).unwrap();
 
         let blob = MorphObject::Blob(crate::objects::Blob {
@@ -906,7 +933,9 @@ mod tests {
     #[test]
     fn ssh_store_get_round_trips_object() {
         // PR5 cycle 21 RED→GREEN.
-        let Some((_dir, spawn)) = setup_remote_repo() else { return };
+        let Some((_dir, spawn)) = setup_remote_repo() else {
+            return;
+        };
         let store = SshStore::connect(&spawn).unwrap();
 
         let blob = MorphObject::Blob(crate::objects::Blob {
@@ -938,8 +967,7 @@ mod tests {
 
         let remote_dir = tempfile::tempdir().unwrap();
         let _ = crate::repo::init_repo(remote_dir.path()).unwrap();
-        let remote_inproc =
-            crate::repo::open_store(&remote_dir.path().join(".morph")).unwrap();
+        let remote_inproc = crate::repo::open_store(&remote_dir.path().join(".morph")).unwrap();
         // Build a real commit on the remote via the in-process
         // Store; we then connect a separate SshStore handle to the
         // same on-disk repo and let `fetch_remote` drive that.
@@ -966,8 +994,7 @@ mod tests {
         let spawn = LocalSpawn::new(bin, remote_dir.path());
         let remote_ssh = SshStore::connect(&spawn).unwrap();
 
-        let updated =
-            crate::sync::fetch_remote(local.as_ref(), &remote_ssh, "origin").unwrap();
+        let updated = crate::sync::fetch_remote(local.as_ref(), &remote_ssh, "origin").unwrap();
         assert_eq!(updated.len(), 1);
         assert_eq!(updated[0].0, "main");
         assert_eq!(updated[0].1, commit);
@@ -981,7 +1008,9 @@ mod tests {
     fn ssh_store_get_missing_surfaces_typed_not_found() {
         // PR5 cycle 22 RED→GREEN: `MorphError::NotFound` must
         // round-trip end-to-end.
-        let Some((_dir, spawn)) = setup_remote_repo() else { return };
+        let Some((_dir, spawn)) = setup_remote_repo() else {
+            return;
+        };
         let store = SshStore::connect(&spawn).unwrap();
         let zeros = Hash::from_hex(&"0".repeat(64)).unwrap();
         let err = store.get(&zeros).unwrap_err();

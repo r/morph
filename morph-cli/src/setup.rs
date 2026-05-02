@@ -5,17 +5,14 @@ use std::path::Path;
 /// Embedded asset contents (compiled into the binary).
 mod assets {
     pub const HOOK_PROMPT: &str = include_str!("../assets/cursor/hooks/morph-record-prompt.sh");
-    pub const HOOK_RESPONSE: &str =
-        include_str!("../assets/cursor/hooks/morph-record-response.sh");
+    pub const HOOK_RESPONSE: &str = include_str!("../assets/cursor/hooks/morph-record-response.sh");
     pub const HOOK_STOP: &str = include_str!("../assets/cursor/hooks/morph-record-stop.sh");
     /// Phase 5b: optional stop hook that surfaces eval gaps via
     /// `morph eval gaps --json`. Co-installed alongside the
     /// recording hooks so users get the nudge without extra setup.
-    pub const HOOK_CHECKS: &str =
-        include_str!("../assets/cursor/hooks/morph-record-checks.sh");
+    pub const HOOK_CHECKS: &str = include_str!("../assets/cursor/hooks/morph-record-checks.sh");
 
-    pub const RULE_MORPH_RECORD: &str =
-        include_str!("../assets/cursor/rules/morph-record.mdc");
+    pub const RULE_MORPH_RECORD: &str = include_str!("../assets/cursor/rules/morph-record.mdc");
     pub const RULE_EVAL_DRIVEN: &str =
         include_str!("../assets/cursor/rules/eval-driven-development.mdc");
     pub const RULE_BEHAVIORAL_COMMITS: &str =
@@ -38,8 +35,7 @@ mod assets {
     ];
 
     pub const OPENCODE_AGENTS_MD: &str = include_str!("../assets/opencode/AGENTS.md");
-    pub const OPENCODE_PLUGIN: &str =
-        include_str!("../assets/opencode/plugins/morph-record.ts");
+    pub const OPENCODE_PLUGIN: &str = include_str!("../assets/opencode/plugins/morph-record.ts");
 
     // Claude Code hook scripts. Mirror the shell scripts in
     // `claude-code/hooks/` so `morph setup claude-code` can install them
@@ -58,8 +54,7 @@ mod assets {
     // `morph setup aoe` so users can opt out of host bind-mounts of
     // /usr/local/bin/morph{,-mcp} by baking the binaries into their
     // sandbox image instead.
-    pub const AOE_DOCKERFILE: &str =
-        include_str!("../assets/aoe/Dockerfile.morph-aoe");
+    pub const AOE_DOCKERFILE: &str = include_str!("../assets/aoe/Dockerfile.morph-aoe");
 }
 
 #[derive(Debug)]
@@ -241,10 +236,7 @@ fn morph_mcp_server_value(project_path: &str) -> serde_json::Value {
     })
 }
 
-fn merge_claude_settings_json(
-    claude_dir: &Path,
-    project_root: &Path,
-) -> anyhow::Result<bool> {
+fn merge_claude_settings_json(claude_dir: &Path, project_root: &Path) -> anyhow::Result<bool> {
     let project_path = project_path_string(project_root);
     let claude_hooks: &[(&str, &str)] = &[
         ("UserPromptSubmit", ".claude/hooks/morph-record-prompt.sh"),
@@ -264,8 +256,7 @@ fn merge_claude_settings_json(
                 .ok_or_else(|| {
                     anyhow::anyhow!(".claude/settings.json mcpServers is not an object")
                 })?;
-            mcp_servers
-                .insert("morph".to_string(), morph_mcp_server_value(&project_path));
+            mcp_servers.insert("morph".to_string(), morph_mcp_server_value(&project_path));
 
             // 2. hooks.UserPromptSubmit + hooks.Stop. Claude Code's hook schema
             //    is `{event: [{matcher?, hooks: [{type, command}]}]}`. Morph
@@ -275,9 +266,7 @@ fn merge_claude_settings_json(
                 .entry("hooks")
                 .or_insert(serde_json::json!({}))
                 .as_object_mut()
-                .ok_or_else(|| {
-                    anyhow::anyhow!(".claude/settings.json hooks is not an object")
-                })?;
+                .ok_or_else(|| anyhow::anyhow!(".claude/settings.json hooks is not an object"))?;
 
             for (event, command) in claude_hooks {
                 let matchers = hooks_section
@@ -285,10 +274,7 @@ fn merge_claude_settings_json(
                     .or_insert(serde_json::json!([]))
                     .as_array_mut()
                     .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            ".claude/settings.json hooks.{} is not an array",
-                            event
-                        )
+                        anyhow::anyhow!(".claude/settings.json hooks.{} is not an array", event)
                     })?;
 
                 // Drop any matcher group whose only hook is the morph entry,
@@ -296,8 +282,7 @@ fn merge_claude_settings_json(
                 // hook with user hooks are kept and their morph-pointing
                 // entry is pruned in-place, preserving the user's hook(s).
                 matchers.retain_mut(|matcher| {
-                    let Some(hooks_arr) =
-                        matcher.get_mut("hooks").and_then(|h| h.as_array_mut())
+                    let Some(hooks_arr) = matcher.get_mut("hooks").and_then(|h| h.as_array_mut())
                     else {
                         return true;
                     };
@@ -377,10 +362,7 @@ pub struct AoeSetupReport {
 /// Requires `.morph/` to exist (run `morph init` first).
 /// Idempotent: safe to call multiple times. Existing user state in
 /// `config.toml` is preserved; only morph-owned entries are rewritten.
-pub fn setup_aoe(
-    project_root: &Path,
-    opts: &AoeSetupOpts,
-) -> anyhow::Result<AoeSetupReport> {
+pub fn setup_aoe(project_root: &Path, opts: &AoeSetupOpts) -> anyhow::Result<AoeSetupReport> {
     if !project_root.join(".morph").is_dir() {
         anyhow::bail!(
             ".morph directory not found in {}. Run `morph init` first.",
@@ -453,10 +435,7 @@ const MORPH_HOOK_PREFIXES: &[&str] = &[
     "morph run record-session --prompt \"aoe-",
 ];
 
-const MORPH_VOLUME_SUFFIXES: &[&str] = &[
-    "/usr/local/bin/morph:ro",
-    "/usr/local/bin/morph-mcp:ro",
-];
+const MORPH_VOLUME_SUFFIXES: &[&str] = &["/usr/local/bin/morph:ro", "/usr/local/bin/morph-mcp:ro"];
 
 const MORPH_ENV_KEYS: &[&str] = &["MORPH_WORKSPACE", "AOE_INSTANCE_ID"];
 
@@ -622,9 +601,7 @@ fn merge_opencode_json(project_root: &Path) -> anyhow::Result<bool> {
                 .entry("instructions")
                 .or_insert(serde_json::json!([]))
                 .as_array_mut()
-                .ok_or_else(|| {
-                    anyhow::anyhow!("opencode.json instructions is not an array")
-                })?;
+                .ok_or_else(|| anyhow::anyhow!("opencode.json instructions is not an array"))?;
             if !instructions.iter().any(|v| v.as_str() == Some("AGENTS.md")) {
                 instructions.push(serde_json::json!("AGENTS.md"));
             }
@@ -704,9 +681,7 @@ fn merge_hooks_json(cursor_dir: &Path) -> anyhow::Result<bool> {
                 .entry("hooks")
                 .or_insert(serde_json::json!({}))
                 .as_object_mut()
-                .ok_or_else(|| {
-                    anyhow::anyhow!(".cursor/hooks.json hooks is not an object")
-                })?;
+                .ok_or_else(|| anyhow::anyhow!(".cursor/hooks.json hooks is not an object"))?;
 
             for (event, command) in morph_hooks {
                 let arr = hooks
@@ -714,10 +689,7 @@ fn merge_hooks_json(cursor_dir: &Path) -> anyhow::Result<bool> {
                     .or_insert(serde_json::json!([]))
                     .as_array_mut()
                     .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            ".cursor/hooks.json hooks.{} is not an array",
-                            event
-                        )
+                        anyhow::anyhow!(".cursor/hooks.json hooks.{} is not an array", event)
                     })?;
                 arr.retain(|entry| {
                     entry
@@ -725,9 +697,9 @@ fn merge_hooks_json(cursor_dir: &Path) -> anyhow::Result<bool> {
                         .and_then(|c| c.as_str())
                         .is_none_or(|c| !old_commands.contains(&c))
                 });
-                let already = arr.iter().any(|entry| {
-                    entry.get("command").and_then(|c| c.as_str()) == Some(*command)
-                });
+                let already = arr
+                    .iter()
+                    .any(|entry| entry.get("command").and_then(|c| c.as_str()) == Some(*command));
                 if !already {
                     arr.push(serde_json::json!({"command": command}));
                 }
@@ -748,9 +720,7 @@ fn merge_mcp_json(cursor_dir: &Path, project_root: &Path) -> anyhow::Result<bool
                 .entry("mcpServers")
                 .or_insert(serde_json::json!({}))
                 .as_object_mut()
-                .ok_or_else(|| {
-                    anyhow::anyhow!(".cursor/mcp.json mcpServers is not an object")
-                })?;
+                .ok_or_else(|| anyhow::anyhow!(".cursor/mcp.json mcpServers is not an object"))?;
             servers.insert("morph".to_string(), morph_mcp_server_value(&project_path));
             Ok(())
         },
@@ -826,15 +796,11 @@ mod tests {
 
         setup_cursor(tmp.path()).unwrap();
 
-        let val: serde_json::Value = serde_json::from_str(
-            &fs::read_to_string(cursor_dir.join("hooks.json")).unwrap(),
-        )
-        .unwrap();
+        let val: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(cursor_dir.join("hooks.json")).unwrap())
+                .unwrap();
         let bsp = val["hooks"]["beforeSubmitPrompt"].as_array().unwrap();
-        let commands: Vec<&str> = bsp
-            .iter()
-            .filter_map(|e| e["command"].as_str())
-            .collect();
+        let commands: Vec<&str> = bsp.iter().filter_map(|e| e["command"].as_str()).collect();
         assert!(
             commands.contains(&"my-custom-hook.sh"),
             "original hook should be preserved: {commands:?}"
@@ -877,10 +843,9 @@ mod tests {
 
         setup_cursor(tmp.path()).unwrap();
 
-        let val: serde_json::Value = serde_json::from_str(
-            &fs::read_to_string(cursor_dir.join("mcp.json")).unwrap(),
-        )
-        .unwrap();
+        let val: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(cursor_dir.join("mcp.json")).unwrap())
+                .unwrap();
         assert!(
             val["mcpServers"]["other-server"].is_object(),
             "existing server should be preserved"
@@ -935,7 +900,10 @@ mod tests {
             let path = tmp.path().join(".cursor/rules").join(name);
             assert!(path.exists(), "rule should exist: {name}");
             let content = fs::read_to_string(&path).unwrap();
-            assert_eq!(content, *expected_content, "rule content should match: {name}");
+            assert_eq!(
+                content, *expected_content,
+                "rule content should match: {name}"
+            );
         }
         assert_eq!(report.rules_written.len(), 4);
     }
@@ -953,11 +921,17 @@ mod tests {
         let hooks_second = fs::read_to_string(tmp.path().join(".cursor/hooks.json")).unwrap();
         let mcp_second = fs::read_to_string(tmp.path().join(".cursor/mcp.json")).unwrap();
 
-        assert_eq!(hooks_first, hooks_second, "hooks.json should be stable across runs");
-        assert_eq!(mcp_first, mcp_second, "mcp.json should be stable across runs");
+        assert_eq!(
+            hooks_first, hooks_second,
+            "hooks.json should be stable across runs"
+        );
+        assert_eq!(
+            mcp_first, mcp_second,
+            "mcp.json should be stable across runs"
+        );
 
-        let bsp = serde_json::from_str::<serde_json::Value>(&hooks_second).unwrap()
-            ["hooks"]["beforeSubmitPrompt"]
+        let bsp = serde_json::from_str::<serde_json::Value>(&hooks_second).unwrap()["hooks"]
+            ["beforeSubmitPrompt"]
             .as_array()
             .unwrap()
             .len();
@@ -1010,10 +984,9 @@ mod tests {
 
         setup_opencode(tmp.path()).unwrap();
 
-        let val: serde_json::Value = serde_json::from_str(
-            &fs::read_to_string(tmp.path().join("opencode.json")).unwrap(),
-        )
-        .unwrap();
+        let val: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(tmp.path().join("opencode.json")).unwrap())
+                .unwrap();
         assert!(
             val["mcp"]["other"].is_object(),
             "existing MCP server should be preserved"
@@ -1048,7 +1021,11 @@ mod tests {
     fn opencode_agents_md_appended_to_existing() {
         let tmp = tempfile::tempdir().unwrap();
         make_morph_repo(tmp.path());
-        fs::write(tmp.path().join("AGENTS.md"), "# My Project\n\nExisting rules here.\n").unwrap();
+        fs::write(
+            tmp.path().join("AGENTS.md"),
+            "# My Project\n\nExisting rules here.\n",
+        )
+        .unwrap();
 
         setup_opencode(tmp.path()).unwrap();
 
@@ -1073,7 +1050,10 @@ mod tests {
         setup_opencode(tmp.path()).unwrap();
         let second = fs::read_to_string(tmp.path().join("AGENTS.md")).unwrap();
 
-        assert_eq!(first, second, "AGENTS.md should not duplicate morph section on re-run");
+        assert_eq!(
+            first, second,
+            "AGENTS.md should not duplicate morph section on re-run"
+        );
     }
 
     #[test]
@@ -1097,10 +1077,9 @@ mod tests {
         make_morph_repo(tmp.path());
         setup_opencode(tmp.path()).unwrap();
 
-        let val: serde_json::Value = serde_json::from_str(
-            &fs::read_to_string(tmp.path().join("opencode.json")).unwrap(),
-        )
-        .unwrap();
+        let val: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(tmp.path().join("opencode.json")).unwrap())
+                .unwrap();
         let instructions = val["instructions"].as_array().unwrap();
         assert!(
             instructions.iter().any(|v| v.as_str() == Some("AGENTS.md")),
@@ -1164,7 +1143,10 @@ mod tests {
                 );
             }
         }
-        assert_eq!(report.hooks_written.len(), assets::CLAUDE_HOOK_SCRIPTS.len());
+        assert_eq!(
+            report.hooks_written.len(),
+            assets::CLAUDE_HOOK_SCRIPTS.len()
+        );
     }
 
     #[test]
@@ -1227,10 +1209,9 @@ mod tests {
 
         setup_claude_code(tmp.path()).unwrap();
 
-        let val: serde_json::Value = serde_json::from_str(
-            &fs::read_to_string(claude_dir.join("settings.json")).unwrap(),
-        )
-        .unwrap();
+        let val: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(claude_dir.join("settings.json")).unwrap())
+                .unwrap();
         assert_eq!(val["model"].as_str().unwrap(), "opus");
         assert!(
             val["mcpServers"]["other-server"].is_object(),
@@ -1262,14 +1243,12 @@ mod tests {
         make_morph_repo(tmp.path());
 
         setup_claude_code(tmp.path()).unwrap();
-        let settings_first =
-            fs::read_to_string(tmp.path().join(".claude/settings.json")).unwrap();
+        let settings_first = fs::read_to_string(tmp.path().join(".claude/settings.json")).unwrap();
         let prompt_first =
             fs::read_to_string(tmp.path().join(".claude/hooks/morph-record-prompt.sh")).unwrap();
 
         setup_claude_code(tmp.path()).unwrap();
-        let settings_second =
-            fs::read_to_string(tmp.path().join(".claude/settings.json")).unwrap();
+        let settings_second = fs::read_to_string(tmp.path().join(".claude/settings.json")).unwrap();
         let prompt_second =
             fs::read_to_string(tmp.path().join(".claude/hooks/morph-record-prompt.sh")).unwrap();
 
@@ -1290,10 +1269,7 @@ mod tests {
             .filter_map(|h| h["command"].as_str())
             .filter(|c| c.contains("morph-record-prompt"))
             .count();
-        assert_eq!(
-            morph_count, 1,
-            "should not duplicate morph hook on re-run"
-        );
+        assert_eq!(morph_count, 1, "should not duplicate morph hook on re-run");
     }
 
     #[test]
@@ -1309,8 +1285,14 @@ mod tests {
         let json_second = fs::read_to_string(tmp.path().join("opencode.json")).unwrap();
         let agents_second = fs::read_to_string(tmp.path().join("AGENTS.md")).unwrap();
 
-        assert_eq!(json_first, json_second, "opencode.json should be stable across runs");
-        assert_eq!(agents_first, agents_second, "AGENTS.md should be stable across runs");
+        assert_eq!(
+            json_first, json_second,
+            "opencode.json should be stable across runs"
+        );
+        assert_eq!(
+            agents_first, agents_second,
+            "AGENTS.md should be stable across runs"
+        );
 
         let instructions = serde_json::from_str::<serde_json::Value>(&json_second).unwrap()
             ["instructions"]
@@ -1319,7 +1301,10 @@ mod tests {
             .iter()
             .filter(|v| v.as_str() == Some("AGENTS.md"))
             .count();
-        assert_eq!(instructions, 1, "should not duplicate AGENTS.md in instructions on re-run");
+        assert_eq!(
+            instructions, 1,
+            "should not duplicate AGENTS.md in instructions on re-run"
+        );
     }
 
     // --- Agent of Empires (`morph setup aoe`) tests ---
@@ -1347,7 +1332,10 @@ mod tests {
         assert!(report.dockerfile_written);
         assert!(report.agents_md_written);
         assert!(tmp.path().join(".agent-of-empires/config.toml").exists());
-        assert!(tmp.path().join(".agent-of-empires/Dockerfile.morph-aoe").exists());
+        assert!(tmp
+            .path()
+            .join(".agent-of-empires/Dockerfile.morph-aoe")
+            .exists());
         assert!(tmp.path().join("AGENTS.md").exists());
     }
 
@@ -1493,7 +1481,11 @@ mod tests {
 
         // Each morph hook line should appear exactly once.
         let occ = |s: &str| cfg_second.matches(s).count();
-        assert_eq!(occ("morph init --quiet"), 1, "morph init line should not duplicate");
+        assert_eq!(
+            occ("morph init --quiet"),
+            1,
+            "morph init line should not duplicate"
+        );
         assert_eq!(
             occ("aoe-create:"),
             1,
@@ -1549,7 +1541,10 @@ extra_volumes = ["/data:/data:ro"]
             cfg.contains("default_tool"),
             "user [session] table preserved"
         );
-        assert!(cfg.contains("\"claude\""), "user default_tool value preserved");
+        assert!(
+            cfg.contains("\"claude\""),
+            "user default_tool value preserved"
+        );
         assert!(
             cfg.contains("default_image"),
             "user sandbox.default_image preserved"
@@ -1598,8 +1593,7 @@ extra_volumes = ["/data:/data:ro"]
         setup_aoe(tmp.path(), &AoeSetupOpts::default()).unwrap();
         setup_aoe(tmp.path(), &AoeSetupOpts::default()).unwrap();
 
-        let cfg =
-            fs::read_to_string(tmp.path().join(".agent-of-empires/config.toml")).unwrap();
+        let cfg = fs::read_to_string(tmp.path().join(".agent-of-empires/config.toml")).unwrap();
         let parsed: toml_edit::DocumentMut = cfg.parse().expect("valid TOML");
 
         let env = parsed["sandbox"]["environment"].as_array().unwrap();
@@ -1607,7 +1601,10 @@ extra_volumes = ["/data:/data:ro"]
             .iter()
             .filter(|v| v.as_str() == Some("MORPH_WORKSPACE"))
             .count();
-        assert_eq!(count_morph_workspace, 1, "MORPH_WORKSPACE should appear once");
+        assert_eq!(
+            count_morph_workspace, 1,
+            "MORPH_WORKSPACE should appear once"
+        );
 
         let vols = parsed["sandbox"]["extra_volumes"].as_array().unwrap();
         let count_mount = vols
@@ -1629,6 +1626,9 @@ extra_volumes = ["/data:/data:ro"]
                     .unwrap_or(false)
             })
             .count();
-        assert_eq!(aoe_create_lines, 1, "aoe-create commit line should appear once");
+        assert_eq!(
+            aoe_create_lines, 1,
+            "aoe-create commit line should appear once"
+        );
     }
 }

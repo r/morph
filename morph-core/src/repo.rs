@@ -113,8 +113,8 @@ fn init_morph_dir_at(morph_dir: &Path, bare: bool) -> Result<FsStore, MorphError
         required_metrics: vec!["tests_total".into(), "tests_passed".into()],
         ..crate::policy::RepoPolicy::default()
     };
-    config["policy"] = serde_json::to_value(&policy)
-        .map_err(|e| MorphError::Serialization(e.to_string()))?;
+    config["policy"] =
+        serde_json::to_value(&policy).map_err(|e| MorphError::Serialization(e.to_string()))?;
     let pretty = serde_json::to_string_pretty(&config)
         .map_err(|e| MorphError::Serialization(e.to_string()))?;
     std::fs::write(morph_dir.join(CONFIG_FILE), pretty)?;
@@ -190,7 +190,10 @@ pub fn is_bare(morph_dir: &Path) -> Result<bool, MorphError> {
     let data = std::fs::read_to_string(&config_path)?;
     let config: serde_json::Value =
         serde_json::from_str(&data).map_err(|e| MorphError::Serialization(e.to_string()))?;
-    Ok(config.get("bare").and_then(|v| v.as_bool()).unwrap_or(false))
+    Ok(config
+        .get("bare")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false))
 }
 
 // Reference mode is the only mode (v0.40+). Repos created by `morph
@@ -311,10 +314,7 @@ pub fn read_init_at_git_sha(morph_dir: &Path) -> Result<Option<String>, MorphErr
 /// `morph init` to record the git HEAD that morph was bootstrapped
 /// against, so `morph reference-sync --backfill` knows where to
 /// start walking. Idempotent — overwrites prior values.
-pub fn write_init_at_git_sha(
-    morph_dir: &Path,
-    init_at_git_sha: &str,
-) -> Result<(), MorphError> {
+pub fn write_init_at_git_sha(morph_dir: &Path, init_at_git_sha: &str) -> Result<(), MorphError> {
     let config_path = morph_dir.join(CONFIG_FILE);
     let mut config: serde_json::Value = if config_path.exists() {
         let data = std::fs::read_to_string(&config_path)?;
@@ -355,10 +355,7 @@ pub fn read_repo_submode(morph_dir: &Path) -> Result<RepoSubmode, MorphError> {
 /// values. Called by `morph init --reference --solo` and
 /// `morph install-hooks --solo`/`--stowaway` to flip between the two
 /// submodes after init.
-pub fn write_repo_submode(
-    morph_dir: &Path,
-    submode: RepoSubmode,
-) -> Result<(), MorphError> {
+pub fn write_repo_submode(morph_dir: &Path, submode: RepoSubmode) -> Result<(), MorphError> {
     let config_path = morph_dir.join(CONFIG_FILE);
     let mut config: serde_json::Value = if config_path.exists() {
         let data = std::fs::read_to_string(&config_path)?;
@@ -456,13 +453,16 @@ fn is_known_prior_version(current: &str, allowed: &[&str]) -> bool {
     }
     let cur = parse_version(current);
     if let Some(cur) = cur {
-        let max_allowed = allowed.iter().filter_map(|a| parse_version(a)).fold(None, |acc, v| {
-            Some(match acc {
-                None => v,
-                Some(prev) if v > prev => v,
-                Some(prev) => prev,
-            })
-        });
+        let max_allowed = allowed
+            .iter()
+            .filter_map(|a| parse_version(a))
+            .fold(None, |acc, v| {
+                Some(match acc {
+                    None => v,
+                    Some(prev) if v > prev => v,
+                    Some(prev) => prev,
+                })
+            });
         if let Some(max) = max_allowed {
             return cur < max;
         }
@@ -518,7 +518,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("project.morph");
         let _ = init_bare(&root).unwrap();
-        assert!(root.join(OBJECTS_DIR).is_dir(), "objects/ must exist at root");
+        assert!(
+            root.join(OBJECTS_DIR).is_dir(),
+            "objects/ must exist at root"
+        );
         assert!(root.join(REFS_HEADS_DIR).is_dir(), "refs/heads/ must exist");
         assert!(root.join(PROMPTS_DIR).is_dir());
         assert!(root.join(EVALS_DIR).is_dir());
@@ -663,16 +666,28 @@ mod tests {
         let gitignore = dir.path().join(".morph/.gitignore");
         assert!(gitignore.exists(), ".morph/.gitignore should exist");
         let content = std::fs::read_to_string(&gitignore).unwrap();
-        assert!(content.contains("/objects/"), ".gitignore should ignore objects/");
+        assert!(
+            content.contains("/objects/"),
+            ".gitignore should ignore objects/"
+        );
     }
 
     #[test]
     fn init_does_not_create_top_level_dirs() {
         let dir = tempfile::tempdir().unwrap();
         let _ = init_repo(dir.path()).unwrap();
-        assert!(!dir.path().join("prompts").exists(), "top-level prompts/ should not exist");
-        assert!(!dir.path().join("programs").exists(), "top-level programs/ should not exist");
-        assert!(!dir.path().join("evals").exists(), "top-level evals/ should not exist");
+        assert!(
+            !dir.path().join("prompts").exists(),
+            "top-level prompts/ should not exist"
+        );
+        assert!(
+            !dir.path().join("programs").exists(),
+            "top-level programs/ should not exist"
+        );
+        assert!(
+            !dir.path().join("evals").exists(),
+            "top-level evals/ should not exist"
+        );
     }
 
     #[test]
@@ -765,7 +780,9 @@ mod tests {
         // `path/.morph`. Verify the policy still made it.
         let policy = crate::read_policy(dir.path()).unwrap();
         assert!(policy.required_metrics.contains(&"tests_total".to_string()));
-        assert!(policy.required_metrics.contains(&"tests_passed".to_string()));
+        assert!(policy
+            .required_metrics
+            .contains(&"tests_passed".to_string()));
     }
 
     #[test]
@@ -809,11 +826,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let _ = init_repo(dir.path()).unwrap();
         let morph_dir = dir.path().join(".morph");
-        std::fs::write(
-            morph_dir.join("config.json"),
-            r#"{"repo_version":"0.3"}"#,
-        )
-        .unwrap();
+        std::fs::write(morph_dir.join("config.json"), r#"{"repo_version":"0.3"}"#).unwrap();
         let err = require_store_version(&morph_dir, &[STORE_VERSION_0_5]).unwrap_err();
         match err {
             MorphError::RepoTooOld(msg) => {
@@ -834,11 +847,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let _ = init_repo(dir.path()).unwrap();
         let morph_dir = dir.path().join(".morph");
-        std::fs::write(
-            morph_dir.join("config.json"),
-            r#"{"repo_version":"0.99"}"#,
-        )
-        .unwrap();
+        std::fs::write(morph_dir.join("config.json"), r#"{"repo_version":"0.99"}"#).unwrap();
         let err = require_store_version(&morph_dir, &[STORE_VERSION_0_5]).unwrap_err();
         match err {
             MorphError::RepoTooNew(msg) => {
@@ -859,11 +868,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let _ = init_repo(dir.path()).unwrap();
         let morph_dir = dir.path().join(".morph");
-        std::fs::write(
-            morph_dir.join("config.json"),
-            r#"{"repo_version":"0.5"}"#,
-        )
-        .unwrap();
+        std::fs::write(morph_dir.join("config.json"), r#"{"repo_version":"0.5"}"#).unwrap();
         // Create an objects/.gitignore safety file the way the migration
         // would have done. Not strictly needed to satisfy the test below.
         let store = open_store(&morph_dir).unwrap();

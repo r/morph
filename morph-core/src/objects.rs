@@ -498,8 +498,7 @@ mod tests {
             "morph_version": null,
             "morph_instance": null
         }"#;
-        let obj: MorphObject =
-            serde_json::from_str(json).expect("legacy commit must deserialize");
+        let obj: MorphObject = serde_json::from_str(json).expect("legacy commit must deserialize");
         match obj {
             MorphObject::Commit(c) => assert_eq!(c.morph_origin, None),
             _ => panic!("expected a Commit variant"),
@@ -566,8 +565,7 @@ mod tests {
             "morph_instance": null,
             "morph_origin": "git-hook"
         }"#;
-        let obj: MorphObject =
-            serde_json::from_str(json).expect("legacy commit must deserialize");
+        let obj: MorphObject = serde_json::from_str(json).expect("legacy commit must deserialize");
         match obj {
             MorphObject::Commit(c) => {
                 assert_eq!(c.morph_origin.as_deref(), Some("git-hook"));
@@ -577,4 +575,3 @@ mod tests {
         }
     }
 }
-

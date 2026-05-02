@@ -33,7 +33,9 @@ impl RepoContext {
         let current_branch = morph_core::current_branch(store.as_ref()).unwrap_or(None);
         let branches = list_branch_names(&store)?;
         let commit_count = match head {
-            Some(_) => log_from(store.as_ref(), "HEAD").map(|v| v.len()).unwrap_or(0),
+            Some(_) => log_from(store.as_ref(), "HEAD")
+                .map(|v| v.len())
+                .unwrap_or(0),
             None => 0,
         };
         let run_count = store.list(ObjectType::Run).map(|v| v.len()).unwrap_or(0);
@@ -98,15 +100,16 @@ impl RepoContext {
         let obj = store.get(&hash)?;
         let commit = match obj {
             MorphObject::Commit(c) => c,
-            _ => return Err(MorphError::Serialization(format!("{} is not a commit", hash_str))),
+            _ => {
+                return Err(MorphError::Serialization(format!(
+                    "{} is not a commit",
+                    hash_str
+                )))
+            }
         };
 
-        let behavioral_status = derive_behavioral_status(
-            store.as_ref(),
-            &self.morph_dir,
-            &hash,
-            &commit,
-        );
+        let behavioral_status =
+            derive_behavioral_status(store.as_ref(), &self.morph_dir, &hash, &commit);
 
         let contributors = commit.contributors.as_ref().map(|cs| {
             cs.iter()
@@ -164,7 +167,12 @@ impl RepoContext {
         let obj = store.get(&hash)?;
         let run = match obj {
             MorphObject::Run(r) => r,
-            _ => return Err(MorphError::Serialization(format!("{} is not a run", hash_str))),
+            _ => {
+                return Err(MorphError::Serialization(format!(
+                    "{} is not a run",
+                    hash_str
+                )))
+            }
         };
         let contributors = run.contributors.as_ref().map(|cs| {
             cs.iter()
@@ -206,7 +214,12 @@ impl RepoContext {
         let obj = store.get(&hash)?;
         let trace = match obj {
             MorphObject::Trace(t) => t,
-            _ => return Err(MorphError::Serialization(format!("{} is not a trace", hash_str))),
+            _ => {
+                return Err(MorphError::Serialization(format!(
+                    "{} is not a trace",
+                    hash_str
+                )))
+            }
         };
         let event_count = trace.events.len();
         let events = trace
@@ -245,12 +258,7 @@ impl RepoContext {
 
         let attribution = pipeline.attribution.as_ref().map(|a| {
             a.iter()
-                .map(|(k, v)| {
-                    (
-                        k.clone(),
-                        serde_json::to_value(v).unwrap_or_default(),
-                    )
-                })
+                .map(|(k, v)| (k.clone(), serde_json::to_value(v).unwrap_or_default()))
                 .collect()
         });
 
@@ -335,10 +343,7 @@ impl RepoContext {
 
     // ── Policy ──────────────────────────────────────────────────────
 
-    pub fn policy(
-        &self,
-        org: Option<&OrgPolicy>,
-    ) -> Result<PolicyResponse, MorphError> {
+    pub fn policy(&self, org: Option<&OrgPolicy>) -> Result<PolicyResponse, MorphError> {
         let repo_policy = core_policy::read_policy(&self.morph_dir)?;
         let repo_view = repo_policy_to_view(&repo_policy);
 
@@ -361,14 +366,10 @@ impl RepoContext {
                 .collect(),
         });
 
-        let effective_required = crate::org_policy::effective_required_metrics(
-            org,
-            &repo_policy.required_metrics,
-        );
-        let effective_thresh = crate::org_policy::effective_thresholds(
-            org,
-            &repo_policy.thresholds,
-        );
+        let effective_required =
+            crate::org_policy::effective_required_metrics(org, &repo_policy.required_metrics);
+        let effective_thresh =
+            crate::org_policy::effective_thresholds(org, &repo_policy.thresholds);
 
         Ok(PolicyResponse {
             repo_policy: repo_view,
@@ -386,7 +387,12 @@ impl RepoContext {
         let obj = store.get(&hash)?;
         let commit = match &obj {
             MorphObject::Commit(c) => c,
-            _ => return Err(MorphError::Serialization(format!("{} is not a commit", hash_str))),
+            _ => {
+                return Err(MorphError::Serialization(format!(
+                    "{} is not a commit",
+                    hash_str
+                )))
+            }
         };
 
         let result = core_policy::gate_check(store.as_ref(), &self.morph_dir, &hash)?;
@@ -435,14 +441,15 @@ fn has_certification(store: &dyn Store, commit_hash: &Hash) -> bool {
     })
 }
 
-fn find_certification_detail(
-    store: &dyn Store,
-    commit_hash: &Hash,
-) -> Option<CertificationView> {
+fn find_certification_detail(store: &dyn Store, commit_hash: &Hash) -> Option<CertificationView> {
     let annotations = morph_core::list_annotations(store, commit_hash, None).unwrap_or_default();
     for (_, a) in annotations.iter().rev() {
         if a.kind == "certification" {
-            let passed = a.data.get("passed").and_then(|v| v.as_bool()).unwrap_or(false);
+            let passed = a
+                .data
+                .get("passed")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             let runner = a
                 .data
                 .get("runner")

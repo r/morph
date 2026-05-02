@@ -3,7 +3,7 @@
 //! Stores the current staging index as a JSON file in `.morph/stashes/`.
 //! Each stash is timestamped and can be popped (applied + removed) or listed.
 
-use crate::index::{read_index, write_index, clear_index, StagingIndex};
+use crate::index::{clear_index, read_index, write_index, StagingIndex};
 use crate::store::MorphError;
 use std::path::Path;
 
@@ -33,10 +33,7 @@ fn next_stash_id(stashes_dir: &Path, now: chrono::DateTime<chrono::Utc>) -> Stri
 }
 
 /// Save the current staging index as a stash and clear the index.
-pub fn stash_save(
-    morph_dir: &Path,
-    message: Option<&str>,
-) -> Result<StashEntry, MorphError> {
+pub fn stash_save(morph_dir: &Path, message: Option<&str>) -> Result<StashEntry, MorphError> {
     let index = read_index(morph_dir)?;
     if index.is_empty() {
         return Err(MorphError::Serialization(
@@ -78,8 +75,8 @@ pub fn stash_list(morph_dir: &Path) -> Result<Vec<StashEntry>, MorphError> {
             continue;
         }
         let data = std::fs::read_to_string(&path)?;
-        let entry: StashEntry = serde_json::from_str(&data)
-            .map_err(|e| MorphError::Serialization(e.to_string()))?;
+        let entry: StashEntry =
+            serde_json::from_str(&data).map_err(|e| MorphError::Serialization(e.to_string()))?;
         entries.push(entry);
     }
     entries.sort_by(|a, b| b.id.cmp(&a.id));
@@ -89,13 +86,16 @@ pub fn stash_list(morph_dir: &Path) -> Result<Vec<StashEntry>, MorphError> {
 /// Pop the most recent stash: restore its index and remove the stash file.
 pub fn stash_pop(morph_dir: &Path) -> Result<StashEntry, MorphError> {
     let stashes = stash_list(morph_dir)?;
-    let entry = stashes.into_iter().next().ok_or_else(|| {
-        MorphError::Serialization("no stashes to pop".into())
-    })?;
+    let entry = stashes
+        .into_iter()
+        .next()
+        .ok_or_else(|| MorphError::Serialization("no stashes to pop".into()))?;
 
     write_index(morph_dir, &entry.index)?;
 
-    let stash_file = morph_dir.join(STASHES_DIR).join(format!("{}.json", entry.id));
+    let stash_file = morph_dir
+        .join(STASHES_DIR)
+        .join(format!("{}.json", entry.id));
     std::fs::remove_file(&stash_file)?;
 
     Ok(entry)
@@ -123,7 +123,10 @@ mod tests {
         assert_eq!(saved.index.entries.len(), 1);
 
         let index_after_save = read_index(morph_dir).unwrap();
-        assert!(index_after_save.is_empty(), "index should be cleared after stash");
+        assert!(
+            index_after_save.is_empty(),
+            "index should be cleared after stash"
+        );
 
         let popped = stash_pop(morph_dir).unwrap();
         assert_eq!(popped.id, saved.id);

@@ -278,12 +278,11 @@ fn is_plausible_symbol(s: &str) -> bool {
     }
     // Common English words we don't want to treat as symbols.
     const STOP: &[&str] = &[
-        "the", "this", "that", "and", "for", "but", "use", "used", "with",
-        "from", "into", "onto", "over", "when", "then", "than", "not",
-        "can", "will", "would", "should", "it", "is", "be", "do", "if",
-        "in", "on", "at", "of", "to", "by", "as", "a", "an", "or",
-        "def", "class", "return", "True", "False", "None", "print",
-        "pass", "try", "except", "raise", "import", "from",
+        "the", "this", "that", "and", "for", "but", "use", "used", "with", "from", "into", "onto",
+        "over", "when", "then", "than", "not", "can", "will", "would", "should", "it", "is", "be",
+        "do", "if", "in", "on", "at", "of", "to", "by", "as", "a", "an", "or", "def", "class",
+        "return", "True", "False", "None", "print", "pass", "try", "except", "raise", "import",
+        "from",
     ];
     if STOP.contains(&s) || STOP.contains(&s.to_ascii_lowercase().as_str()) {
         return false;
@@ -292,7 +291,10 @@ fn is_plausible_symbol(s: &str) -> bool {
     if s.len() < 2 {
         return false;
     }
-    s.chars().next().map(|c| c.is_ascii_alphabetic() || c == '_').unwrap_or(false)
+    s.chars()
+        .next()
+        .map(|c| c.is_ascii_alphabetic() || c == '_')
+        .unwrap_or(false)
 }
 
 /// Pick a language adapter for a filename. Returns `None` if no adapter

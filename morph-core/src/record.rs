@@ -17,7 +17,8 @@ pub fn record_run(
     artifact_paths: &[&Path],
 ) -> Result<Hash, MorphError> {
     let run_json = std::fs::read_to_string(run_path)?;
-    let run_obj: MorphObject = serde_json::from_str(&run_json).map_err(|e| MorphError::Serialization(e.to_string()))?;
+    let run_obj: MorphObject =
+        serde_json::from_str(&run_json).map_err(|e| MorphError::Serialization(e.to_string()))?;
     let run = match &run_obj {
         MorphObject::Run(r) => r,
         _ => return Err(MorphError::Serialization("file is not a Run object".into())),
@@ -25,16 +26,21 @@ pub fn record_run(
 
     if let Some(tp) = trace_path {
         let trace_json = std::fs::read_to_string(tp)?;
-        let trace_obj: MorphObject = serde_json::from_str(&trace_json).map_err(|e| MorphError::Serialization(e.to_string()))?;
+        let trace_obj: MorphObject = serde_json::from_str(&trace_json)
+            .map_err(|e| MorphError::Serialization(e.to_string()))?;
         let trace_hash = store.put(&trace_obj)?;
         if trace_hash.to_string() != run.trace {
-            return Err(MorphError::Serialization(format!("trace hash mismatch: computed {} vs run.trace {}", trace_hash, run.trace)));
+            return Err(MorphError::Serialization(format!(
+                "trace hash mismatch: computed {} vs run.trace {}",
+                trace_hash, run.trace
+            )));
         }
     }
 
     for ap in artifact_paths {
         let art_json = std::fs::read_to_string(ap)?;
-        let art_obj: MorphObject = serde_json::from_str(&art_json).map_err(|e| MorphError::Serialization(e.to_string()))?;
+        let art_obj: MorphObject = serde_json::from_str(&art_json)
+            .map_err(|e| MorphError::Serialization(e.to_string()))?;
         store.put(&art_obj)?;
     }
 
@@ -44,15 +50,26 @@ pub fn record_run(
 
 /// Ingest evaluation results from JSON. Expected shape: {"metrics": {"name": number, ...}}.
 /// Returns the metrics map for use in commit or merge.
-pub fn record_eval_metrics(path: &Path) -> Result<std::collections::BTreeMap<String, f64>, MorphError> {
+pub fn record_eval_metrics(
+    path: &Path,
+) -> Result<std::collections::BTreeMap<String, f64>, MorphError> {
     let s = std::fs::read_to_string(path)?;
-    let value: serde_json::Value = serde_json::from_str(&s).map_err(|e| MorphError::Serialization(e.to_string()))?;
-    let obj = value.as_object().ok_or_else(|| MorphError::Serialization("expected JSON object".into()))?;
-    let metrics = obj.get("metrics").ok_or_else(|| MorphError::Serialization("missing 'metrics' key".into()))?;
-    let map = metrics.as_object().ok_or_else(|| MorphError::Serialization("metrics must be an object".into()))?;
+    let value: serde_json::Value =
+        serde_json::from_str(&s).map_err(|e| MorphError::Serialization(e.to_string()))?;
+    let obj = value
+        .as_object()
+        .ok_or_else(|| MorphError::Serialization("expected JSON object".into()))?;
+    let metrics = obj
+        .get("metrics")
+        .ok_or_else(|| MorphError::Serialization("missing 'metrics' key".into()))?;
+    let map = metrics
+        .as_object()
+        .ok_or_else(|| MorphError::Serialization("metrics must be an object".into()))?;
     let mut out = std::collections::BTreeMap::new();
     for (k, v) in map {
-        let num = v.as_f64().ok_or_else(|| MorphError::Serialization(format!("metric {} must be a number", k)))?;
+        let num = v
+            .as_f64()
+            .ok_or_else(|| MorphError::Serialization(format!("metric {} must be a number", k)))?;
         out.insert(k.clone(), num);
     }
     Ok(out)
@@ -83,8 +100,18 @@ pub fn record_session(
     agent_id: Option<&str>,
 ) -> Result<Hash, MorphError> {
     let messages = vec![
-        ConversationMessage { role: "user".into(), content: prompt.to_string(), metadata: BTreeMap::new(), timestamp: None },
-        ConversationMessage { role: "assistant".into(), content: response.to_string(), metadata: BTreeMap::new(), timestamp: None },
+        ConversationMessage {
+            role: "user".into(),
+            content: prompt.to_string(),
+            metadata: BTreeMap::new(),
+            timestamp: None,
+        },
+        ConversationMessage {
+            role: "assistant".into(),
+            content: response.to_string(),
+            metadata: BTreeMap::new(),
+            timestamp: None,
+        },
     ];
     record_conversation(store, &messages, model_name, agent_id)
 }
@@ -105,7 +132,10 @@ pub fn record_conversation(
         .enumerate()
         .map(|(i, msg)| {
             let mut payload = msg.metadata.clone();
-            payload.insert("text".into(), serde_json::Value::String(msg.content.clone()));
+            payload.insert(
+                "text".into(),
+                serde_json::Value::String(msg.content.clone()),
+            );
             let ts = msg.timestamp.as_deref().unwrap_or(&now).to_string();
             TraceEvent {
                 id: format!("evt_{}", i),
@@ -123,8 +153,17 @@ pub fn record_conversation(
     let identity = identity_pipeline();
     let pipeline_hash = store.put(&identity)?;
 
-    let first_prompt = messages.iter().find(|m| m.role == "user").map(|m| m.content.as_str()).unwrap_or("");
-    let last_response = messages.iter().rev().find(|m| m.role == "assistant").map(|m| m.content.as_str()).unwrap_or("");
+    let first_prompt = messages
+        .iter()
+        .find(|m| m.role == "user")
+        .map(|m| m.content.as_str())
+        .unwrap_or("");
+    let last_response = messages
+        .iter()
+        .rev()
+        .find(|m| m.role == "assistant")
+        .map(|m| m.content.as_str())
+        .unwrap_or("");
 
     let prompt_blob = MorphObject::Blob(Blob {
         kind: "prompt".to_string(),
@@ -138,7 +177,10 @@ pub fn record_conversation(
     store.put(&prompt_blob)?;
 
     // Link run to HEAD commit if one exists
-    let head_commit = crate::commit::resolve_head(store).ok().flatten().map(|h| h.to_string());
+    let head_commit = crate::commit::resolve_head(store)
+        .ok()
+        .flatten()
+        .map(|h| h.to_string());
 
     let run = MorphObject::Run(Run {
         pipeline: pipeline_hash.to_string(),
@@ -208,7 +250,9 @@ pub fn record_eval_run(
         kind: "test_output".into(),
         payload,
     };
-    let trace = MorphObject::Trace(Trace { events: vec![event] });
+    let trace = MorphObject::Trace(Trace {
+        events: vec![event],
+    });
     let trace_hash = store.put(&trace)?;
 
     let identity = identity_pipeline();
@@ -335,21 +379,17 @@ mod tests {
     fn record_session_populates_type_index_dirs() {
         let dir = tempfile::tempdir().unwrap();
         let store = crate::init_repo(dir.path()).unwrap();
-        let run_hash = record_session(
-            &store,
-            "Hello",
-            "Hi there!",
-            None,
-            None,
-        )
-        .unwrap();
+        let run_hash = record_session(&store, "Hello", "Hi there!", None, None).unwrap();
 
         let morph = dir.path().join(".morph");
         let prompts: Vec<_> = std::fs::read_dir(morph.join("prompts"))
             .unwrap()
             .filter_map(|e| e.ok())
             .collect();
-        assert!(!prompts.is_empty(), "prompts/ should contain at least one file");
+        assert!(
+            !prompts.is_empty(),
+            "prompts/ should contain at least one file"
+        );
 
         let runs: Vec<_> = std::fs::read_dir(morph.join("runs"))
             .unwrap()
@@ -357,7 +397,10 @@ mod tests {
             .collect();
         assert_eq!(runs.len(), 1, "runs/ should contain exactly one file");
         assert!(
-            runs[0].file_name().to_string_lossy().contains(&run_hash.to_string()),
+            runs[0]
+                .file_name()
+                .to_string_lossy()
+                .contains(&run_hash.to_string()),
             "runs/ entry should match the run hash"
         );
 
@@ -511,7 +554,11 @@ mod tests {
         let result = record_run(&store, &run_file, Some(trace_file.as_path()), &[]);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("trace hash mismatch"), "expected mismatch error, got: {}", err);
+        assert!(
+            err.contains("trace hash mismatch"),
+            "expected mismatch error, got: {}",
+            err
+        );
     }
 
     #[test]
@@ -552,7 +599,10 @@ mod tests {
 
         let result = record_eval_metrics(&path);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("missing 'metrics' key"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("missing 'metrics' key"));
     }
 
     #[test]
@@ -574,7 +624,10 @@ mod tests {
 
         let result = record_eval_metrics(&path);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("expected JSON object"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("expected JSON object"));
     }
 
     #[test]
@@ -585,7 +638,10 @@ mod tests {
 
         let result = record_eval_metrics(&path);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("metrics must be an object"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("metrics must be an object"));
     }
 
     #[test]
@@ -593,13 +649,39 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = FsStore::new(dir.path());
         let messages = vec![
-            ConversationMessage { role: "user".into(), content: "Build a web server".into(), metadata: BTreeMap::new(), timestamp: None },
-            ConversationMessage { role: "assistant".into(), content: "I'll create the files".into(), metadata: BTreeMap::new(), timestamp: None },
-            ConversationMessage { role: "tool_call".into(), content: "write_file(server.py)".into(), metadata: BTreeMap::new(), timestamp: None },
-            ConversationMessage { role: "tool_result".into(), content: "file written".into(), metadata: BTreeMap::new(), timestamp: None },
-            ConversationMessage { role: "assistant".into(), content: "Done! Server is ready.".into(), metadata: BTreeMap::new(), timestamp: None },
+            ConversationMessage {
+                role: "user".into(),
+                content: "Build a web server".into(),
+                metadata: BTreeMap::new(),
+                timestamp: None,
+            },
+            ConversationMessage {
+                role: "assistant".into(),
+                content: "I'll create the files".into(),
+                metadata: BTreeMap::new(),
+                timestamp: None,
+            },
+            ConversationMessage {
+                role: "tool_call".into(),
+                content: "write_file(server.py)".into(),
+                metadata: BTreeMap::new(),
+                timestamp: None,
+            },
+            ConversationMessage {
+                role: "tool_result".into(),
+                content: "file written".into(),
+                metadata: BTreeMap::new(),
+                timestamp: None,
+            },
+            ConversationMessage {
+                role: "assistant".into(),
+                content: "Done! Server is ready.".into(),
+                metadata: BTreeMap::new(),
+                timestamp: None,
+            },
         ];
-        let hash = record_conversation(&store, &messages, Some("qwen-3.5"), Some("opencode")).unwrap();
+        let hash =
+            record_conversation(&store, &messages, Some("qwen-3.5"), Some("opencode")).unwrap();
         let run_obj = store.get(&hash).unwrap();
         let run = match run_obj {
             MorphObject::Run(r) => r,
@@ -648,17 +730,42 @@ mod tests {
         meta.insert("name".into(), serde_json::json!("read_file"));
         meta.insert("path".into(), serde_json::json!("src/main.rs"));
         let messages = vec![
-            ConversationMessage { role: "user".into(), content: "Read the file".into(), metadata: BTreeMap::new(), timestamp: None },
-            ConversationMessage { role: "file_read".into(), content: "fn main() {}".into(), metadata: meta, timestamp: None },
+            ConversationMessage {
+                role: "user".into(),
+                content: "Read the file".into(),
+                metadata: BTreeMap::new(),
+                timestamp: None,
+            },
+            ConversationMessage {
+                role: "file_read".into(),
+                content: "fn main() {}".into(),
+                metadata: meta,
+                timestamp: None,
+            },
         ];
         let hash = record_conversation(&store, &messages, Some("test"), Some("test")).unwrap();
-        let run = match store.get(&hash).unwrap() { MorphObject::Run(r) => r, _ => panic!("expected Run") };
+        let run = match store.get(&hash).unwrap() {
+            MorphObject::Run(r) => r,
+            _ => panic!("expected Run"),
+        };
         let trace_hash = Hash::from_hex(&run.trace).unwrap();
-        let trace = match store.get(&trace_hash).unwrap() { MorphObject::Trace(t) => t, _ => panic!("expected Trace") };
+        let trace = match store.get(&trace_hash).unwrap() {
+            MorphObject::Trace(t) => t,
+            _ => panic!("expected Trace"),
+        };
 
-        assert_eq!(trace.events[1].payload["text"].as_str().unwrap(), "fn main() {}");
-        assert_eq!(trace.events[1].payload["name"].as_str().unwrap(), "read_file");
-        assert_eq!(trace.events[1].payload["path"].as_str().unwrap(), "src/main.rs");
+        assert_eq!(
+            trace.events[1].payload["text"].as_str().unwrap(),
+            "fn main() {}"
+        );
+        assert_eq!(
+            trace.events[1].payload["name"].as_str().unwrap(),
+            "read_file"
+        );
+        assert_eq!(
+            trace.events[1].payload["path"].as_str().unwrap(),
+            "src/main.rs"
+        );
     }
 
     #[test]
@@ -666,13 +773,29 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = FsStore::new(dir.path());
         let messages = vec![
-            ConversationMessage { role: "user".into(), content: "Hello".into(), metadata: BTreeMap::new(), timestamp: Some("2026-01-01T10:00:00Z".into()) },
-            ConversationMessage { role: "assistant".into(), content: "Hi".into(), metadata: BTreeMap::new(), timestamp: Some("2026-01-01T10:00:05Z".into()) },
+            ConversationMessage {
+                role: "user".into(),
+                content: "Hello".into(),
+                metadata: BTreeMap::new(),
+                timestamp: Some("2026-01-01T10:00:00Z".into()),
+            },
+            ConversationMessage {
+                role: "assistant".into(),
+                content: "Hi".into(),
+                metadata: BTreeMap::new(),
+                timestamp: Some("2026-01-01T10:00:05Z".into()),
+            },
         ];
         let hash = record_conversation(&store, &messages, Some("test"), Some("test")).unwrap();
-        let run = match store.get(&hash).unwrap() { MorphObject::Run(r) => r, _ => panic!("expected Run") };
+        let run = match store.get(&hash).unwrap() {
+            MorphObject::Run(r) => r,
+            _ => panic!("expected Run"),
+        };
         let trace_hash = Hash::from_hex(&run.trace).unwrap();
-        let trace = match store.get(&trace_hash).unwrap() { MorphObject::Trace(t) => t, _ => panic!("expected Trace") };
+        let trace = match store.get(&trace_hash).unwrap() {
+            MorphObject::Trace(t) => t,
+            _ => panic!("expected Trace"),
+        };
 
         assert_eq!(trace.events[0].ts, "2026-01-01T10:00:00Z");
         assert_eq!(trace.events[1].ts, "2026-01-01T10:00:05Z");
@@ -701,19 +824,31 @@ mod tests {
         ]"#;
         let messages: Vec<ConversationMessage> = serde_json::from_str(json).unwrap();
         let hash = record_conversation(
-            &store, &messages, Some("anthropic/claude-opus-4"), Some("opencode"),
-        ).unwrap();
+            &store,
+            &messages,
+            Some("anthropic/claude-opus-4"),
+            Some("opencode"),
+        )
+        .unwrap();
 
-        let run = match store.get(&hash).unwrap() { MorphObject::Run(r) => r, _ => panic!("expected Run") };
+        let run = match store.get(&hash).unwrap() {
+            MorphObject::Run(r) => r,
+            _ => panic!("expected Run"),
+        };
         assert_eq!(run.environment.model, "anthropic/claude-opus-4");
         assert_eq!(run.agent.id, "opencode");
 
         let trace_hash = Hash::from_hex(&run.trace).unwrap();
-        let trace = match store.get(&trace_hash).unwrap() { MorphObject::Trace(t) => t, _ => panic!("expected Trace") };
+        let trace = match store.get(&trace_hash).unwrap() {
+            MorphObject::Trace(t) => t,
+            _ => panic!("expected Trace"),
+        };
 
         // Count kinds — every structured role must be present.
         let mut counts: BTreeMap<String, usize> = BTreeMap::new();
-        for ev in &trace.events { *counts.entry(ev.kind.clone()).or_insert(0) += 1; }
+        for ev in &trace.events {
+            *counts.entry(ev.kind.clone()).or_insert(0) += 1;
+        }
         assert_eq!(counts.get("user").copied().unwrap_or(0), 1);
         assert_eq!(counts.get("assistant").copied().unwrap_or(0), 2);
         assert_eq!(counts.get("file_read").copied().unwrap_or(0), 1);
@@ -724,7 +859,10 @@ mod tests {
 
         // Path metadata should propagate so tap can surface file context.
         let first_file_read = trace.events.iter().find(|e| e.kind == "file_read").unwrap();
-        assert_eq!(first_file_read.payload["path"].as_str().unwrap(), "src/auth.rs");
+        assert_eq!(
+            first_file_read.payload["path"].as_str().unwrap(),
+            "src/auth.rs"
+        );
         assert_eq!(first_file_read.payload["name"].as_str().unwrap(), "read");
         assert_eq!(first_file_read.payload["call_id"].as_str().unwrap(), "c1");
 
@@ -762,13 +900,26 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = crate::init_repo(dir.path()).unwrap();
         let commit_hash = crate::create_tree_commit(
-            &store, dir.path(), None, None,
-            BTreeMap::new(), "initial".into(), None, None,
-        ).unwrap();
+            &store,
+            dir.path(),
+            None,
+            None,
+            BTreeMap::new(),
+            "initial".into(),
+            None,
+            None,
+        )
+        .unwrap();
 
         let hash = record_session(&store, "p", "r", None, None).unwrap();
-        let run = match store.get(&hash).unwrap() { MorphObject::Run(r) => r, _ => panic!("expected Run") };
-        assert_eq!(run.commit.as_deref(), Some(commit_hash.to_string().as_str()));
+        let run = match store.get(&hash).unwrap() {
+            MorphObject::Run(r) => r,
+            _ => panic!("expected Run"),
+        };
+        assert_eq!(
+            run.commit.as_deref(),
+            Some(commit_hash.to_string().as_str())
+        );
     }
 
     #[test]
@@ -785,9 +936,7 @@ mod tests {
         let art_file = dir.path().join("artifact.json");
         std::fs::write(&art_file, &art_json).unwrap();
 
-        let trace = MorphObject::Trace(Trace {
-            events: vec![],
-        });
+        let trace = MorphObject::Trace(Trace { events: vec![] });
         let trace_hash = store.put(&trace).unwrap();
 
         let run = MorphObject::Run(Run {
@@ -878,10 +1027,7 @@ mod tests {
         // `printf` is universal on POSIX. We feed it a one-line cargo
         // summary so the parser produces real metrics.
         let summary = "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s\\n";
-        let cmd = vec![
-            "printf".to_string(),
-            summary.to_string(),
-        ];
+        let cmd = vec!["printf".to_string(), summary.to_string()];
 
         let outcome = run_test_command(&store, dir.path(), &cmd, "cargo", None).unwrap();
         assert_eq!(outcome.exit_code, Some(0));

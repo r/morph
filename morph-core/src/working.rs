@@ -3,8 +3,8 @@
 use crate::diff::{diff_file_maps, DiffEntry};
 use crate::morphignore::{is_ignored, is_rel_path_ignored, load_ignore_rules};
 use crate::objects::{Blob, EvalSuite, MorphObject, Pipeline};
-use crate::Hash;
 use crate::store::{MorphError, Store};
+use crate::Hash;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -52,12 +52,17 @@ pub fn materialize_blob(store: &dyn Store, hash: &Hash, dest: &Path) -> Result<(
     let obj = store.get(hash)?;
     let bytes: Vec<u8> = match &obj {
         MorphObject::Blob(blob) => {
-            let body_str: std::borrow::Cow<str> = match blob.content.get("body").and_then(|v| v.as_str()) {
-                Some(s) => std::borrow::Cow::Borrowed(s),
-                None => std::borrow::Cow::Owned(serde_json::to_string(&blob.content).unwrap_or_default()),
-            };
+            let body_str: std::borrow::Cow<str> =
+                match blob.content.get("body").and_then(|v| v.as_str()) {
+                    Some(s) => std::borrow::Cow::Borrowed(s),
+                    None => std::borrow::Cow::Owned(
+                        serde_json::to_string(&blob.content).unwrap_or_default(),
+                    ),
+                };
             if blob.content.get("encoding").and_then(|v| v.as_str()) == Some("base64") {
-                BASE64.decode(body_str.as_ref().as_bytes()).map_err(|e| MorphError::Serialization(format!("invalid base64: {}", e)))?
+                BASE64
+                    .decode(body_str.as_ref().as_bytes())
+                    .map_err(|e| MorphError::Serialization(format!("invalid base64: {}", e)))?
             } else {
                 body_str.as_bytes().to_vec()
             }
@@ -76,14 +81,16 @@ pub fn materialize_blob(store: &dyn Store, hash: &Hash, dest: &Path) -> Result<(
 /// Parse a Pipeline from a JSON file.
 pub fn pipeline_from_file(path: &Path) -> Result<MorphObject, MorphError> {
     let s = std::fs::read_to_string(path)?;
-    let pipeline: Pipeline = serde_json::from_str(&s).map_err(|e| MorphError::Serialization(e.to_string()))?;
+    let pipeline: Pipeline =
+        serde_json::from_str(&s).map_err(|e| MorphError::Serialization(e.to_string()))?;
     Ok(MorphObject::Pipeline(pipeline))
 }
 
 /// Parse an EvalSuite from a JSON file.
 pub fn eval_suite_from_file(path: &Path) -> Result<MorphObject, MorphError> {
     let s = std::fs::read_to_string(path)?;
-    let suite: EvalSuite = serde_json::from_str(&s).map_err(|e| MorphError::Serialization(e.to_string()))?;
+    let suite: EvalSuite =
+        serde_json::from_str(&s).map_err(|e| MorphError::Serialization(e.to_string()))?;
     Ok(MorphObject::EvalSuite(suite))
 }
 
@@ -115,7 +122,12 @@ fn object_from_file(path: &Path, kind: &str) -> Result<MorphObject, MorphError> 
 }
 
 /// Returns true if `path` is inside `morph_dir` but NOT inside prompts or evals.
-fn is_morph_internal(path: &Path, morph_dir: &Path, morph_prompts: &Path, morph_evals: &Path) -> bool {
+fn is_morph_internal(
+    path: &Path,
+    morph_dir: &Path,
+    morph_prompts: &Path,
+    morph_evals: &Path,
+) -> bool {
     if !path.starts_with(morph_dir) {
         return false;
     }
@@ -123,7 +135,9 @@ fn is_morph_internal(path: &Path, morph_dir: &Path, morph_prompts: &Path, morph_
 }
 
 /// Resolve canonical paths for the morph directory and its metadata subdirs.
-fn resolve_morph_paths(repo_root: &Path) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+fn resolve_morph_paths(
+    repo_root: &Path,
+) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
     let morph_dir = repo_root.join(".morph");
     let morph_dir = morph_dir.canonicalize().unwrap_or(morph_dir);
     let prompts = morph_dir.join("prompts");
@@ -138,7 +152,9 @@ fn resolve_morph_paths(repo_root: &Path) -> (std::path::PathBuf, std::path::Path
 /// files are internal bookkeeping already stored as objects when recorded.
 pub fn status(store: &dyn Store, repo_root: &Path) -> Result<Vec<StatusEntry>, MorphError> {
     let mut entries = Vec::new();
-    let canonical_root = repo_root.canonicalize().unwrap_or_else(|_| repo_root.to_path_buf());
+    let canonical_root = repo_root
+        .canonicalize()
+        .unwrap_or_else(|_| repo_root.to_path_buf());
     let (morph_dir, morph_prompts, morph_evals) = resolve_morph_paths(repo_root);
     let morphignore = load_ignore_rules(&canonical_root);
 
@@ -151,7 +167,12 @@ pub fn status(store: &dyn Store, repo_root: &Path) -> Result<Vec<StatusEntry>, M
             if canonical == morph_dir {
                 return false;
             }
-            !is_ignored(morphignore.as_ref(), &canonical_root, &canonical, e.file_type().is_dir())
+            !is_ignored(
+                morphignore.as_ref(),
+                &canonical_root,
+                &canonical,
+                e.file_type().is_dir(),
+            )
         })
         .filter_map(|e| e.ok())
     {
@@ -182,7 +203,9 @@ pub fn status(store: &dyn Store, repo_root: &Path) -> Result<Vec<StatusEntry>, M
 /// Returns a list of changes (added, modified, deleted) relative to the last commit.
 /// On a fresh repo with no commits, all working-dir files appear as Added.
 pub fn working_status(store: &dyn Store, repo_root: &Path) -> Result<Vec<DiffEntry>, MorphError> {
-    let canonical_root = repo_root.canonicalize().unwrap_or_else(|_| repo_root.to_path_buf());
+    let canonical_root = repo_root
+        .canonicalize()
+        .unwrap_or_else(|_| repo_root.to_path_buf());
     let (morph_dir, morph_prompts, morph_evals) = resolve_morph_paths(repo_root);
     let morphignore = load_ignore_rules(&canonical_root);
 
@@ -197,7 +220,12 @@ pub fn working_status(store: &dyn Store, repo_root: &Path) -> Result<Vec<DiffEnt
             if canonical == morph_dir {
                 return false;
             }
-            !is_ignored(morphignore.as_ref(), &canonical_root, &canonical, e.file_type().is_dir())
+            !is_ignored(
+                morphignore.as_ref(),
+                &canonical_root,
+                &canonical,
+                e.file_type().is_dir(),
+            )
         })
         .filter_map(|e| e.ok())
     {
@@ -233,25 +261,23 @@ pub fn working_status(store: &dyn Store, repo_root: &Path) -> Result<Vec<DiffEnt
         },
         None => None,
     };
-    let head_files: BTreeMap<String, String> = match head_commit
-        .as_ref()
-        .and_then(|c| c.tree.as_deref())
-    {
-        Some(tree_hash_str) => {
-            let tree_hash = Hash::from_hex(tree_hash_str)?;
-            crate::tree::flatten_tree(store, &tree_hash)?
-        }
-        None => {
-            // No morph tree to diff against. If a sibling git
-            // working tree exists, defer to it; otherwise treat
-            // every working-tree file as added (the legacy
-            // empty-repo fallback that pre-existing tests rely on).
-            if crate::reference::is_git_working_tree(repo_root) && head_commit.is_some() {
-                return Ok(working_status_against_git(repo_root, &working_files));
+    let head_files: BTreeMap<String, String> =
+        match head_commit.as_ref().and_then(|c| c.tree.as_deref()) {
+            Some(tree_hash_str) => {
+                let tree_hash = Hash::from_hex(tree_hash_str)?;
+                crate::tree::flatten_tree(store, &tree_hash)?
             }
-            BTreeMap::new()
-        }
-    };
+            None => {
+                // No morph tree to diff against. If a sibling git
+                // working tree exists, defer to it; otherwise treat
+                // every working-tree file as added (the legacy
+                // empty-repo fallback that pre-existing tests rely on).
+                if crate::reference::is_git_working_tree(repo_root) && head_commit.is_some() {
+                    return Ok(working_status_against_git(repo_root, &working_files));
+                }
+                BTreeMap::new()
+            }
+        };
 
     Ok(diff_file_maps(&head_files, &working_files))
 }
@@ -310,7 +336,10 @@ pub struct ActivitySummary {
 
 /// Count accumulated Morph objects by type.
 /// Counts from type-index directories under `.morph/` for speed.
-pub fn activity_summary(_store: &dyn Store, repo_root: &Path) -> Result<ActivitySummary, MorphError> {
+pub fn activity_summary(
+    _store: &dyn Store,
+    repo_root: &Path,
+) -> Result<ActivitySummary, MorphError> {
     let morph_dir = repo_root.join(".morph");
     Ok(ActivitySummary {
         runs: count_dir_entries(&morph_dir.join("runs")),
@@ -335,16 +364,23 @@ fn count_dir_entries(dir: &Path) -> usize {
         .unwrap_or(0)
 }
 
-fn short8(s: &str) -> String { s.chars().take(8).collect() }
+fn short8(s: &str) -> String {
+    s.chars().take(8).collect()
+}
 
 /// Build the structured JSON envelope used by `morph status --json` and
 /// `morph_status` (MCP). Single source of truth so humans and agents see
 /// the same shape.
-pub fn build_status_json(repo_root: &Path, store: &dyn Store) -> Result<serde_json::Value, MorphError> {
+pub fn build_status_json(
+    repo_root: &Path,
+    store: &dyn Store,
+) -> Result<serde_json::Value, MorphError> {
     let morph_dir = repo_root.join(".morph");
     let changes = working_status(store, repo_root)?;
     let summary = activity_summary(store, repo_root)?;
-    let merge = crate::merge_progress_summary(store, &morph_dir).ok().flatten();
+    let merge = crate::merge_progress_summary(store, &morph_dir)
+        .ok()
+        .flatten();
 
     let head_hash = crate::resolve_head(store)?;
     let branch = crate::current_branch(store)?;
@@ -466,13 +502,19 @@ pub fn add_paths(
     paths: &[std::path::PathBuf],
 ) -> Result<Vec<Hash>, MorphError> {
     let (morph_dir, morph_prompts, morph_evals) = resolve_morph_paths(repo_root);
-    let canonical_root = repo_root.canonicalize().unwrap_or_else(|_| repo_root.to_path_buf());
+    let canonical_root = repo_root
+        .canonicalize()
+        .unwrap_or_else(|_| repo_root.to_path_buf());
     let morphignore = load_ignore_rules(&canonical_root);
     let mut hashes = Vec::new();
     let mut staged_entries: Vec<(String, Hash)> = Vec::new();
 
     for p in paths {
-        let full = if p.is_absolute() { p.clone() } else { repo_root.join(p) };
+        let full = if p.is_absolute() {
+            p.clone()
+        } else {
+            repo_root.join(p)
+        };
         let full = full.canonicalize().unwrap_or(full);
 
         if full.is_dir() {
@@ -535,7 +577,9 @@ pub fn add_paths(
             index.unmerged_entries.remove(rel);
         }
         // Prune stale entries that now match ignore rules (self-healing for old repos).
-        index.entries.retain(|rel, _| !is_rel_path_ignored(morphignore.as_ref(), rel, false));
+        index
+            .entries
+            .retain(|rel, _| !is_rel_path_ignored(morphignore.as_ref(), rel, false));
         crate::index::write_index(&morph_dir, &index)?;
     }
 
@@ -550,8 +594,8 @@ fn relative_path(root: &Path, full: &Path) -> Option<String> {
 }
 
 #[allow(clippy::too_many_arguments)] // recursive directory walker; threading
-                                      // a context struct here would make
-                                      // the recursion noisier than it is now
+                                     // a context struct here would make
+                                     // the recursion noisier than it is now
 fn add_directory(
     dir: &Path,
     morph_dir: &Path,
@@ -625,7 +669,10 @@ mod tests {
             _ => panic!("expected blob"),
         };
         assert_eq!(blob.kind, "prompt");
-        assert_eq!(blob.content.get("body").and_then(|v| v.as_str()), Some("Hello world"));
+        assert_eq!(
+            blob.content.get("body").and_then(|v| v.as_str()),
+            Some("Hello world")
+        );
     }
 
     #[test]
@@ -655,9 +702,20 @@ mod tests {
 
         let entries = status(&store, root).unwrap();
         let paths: Vec<_> = entries.iter().map(|e| e.path.clone()).collect();
-        assert!(paths.iter().any(|p| p.ends_with("README.md")), "should see README.md, got: {:?}", paths);
-        assert!(paths.iter().any(|p| p.ends_with("src/main.rs")), "should see src/main.rs, got: {:?}", paths);
-        assert!(entries.iter().all(|e| !e.in_store), "new files should not be in store");
+        assert!(
+            paths.iter().any(|p| p.ends_with("README.md")),
+            "should see README.md, got: {:?}",
+            paths
+        );
+        assert!(
+            paths.iter().any(|p| p.ends_with("src/main.rs")),
+            "should see src/main.rs, got: {:?}",
+            paths
+        );
+        assert!(
+            entries.iter().all(|e| !e.in_store),
+            "new files should not be in store"
+        );
     }
 
     #[test]
@@ -667,20 +725,29 @@ mod tests {
         std::fs::write(root.join(".morph/prompts/p.txt"), "a prompt").unwrap();
 
         let entries = status(&store, root).unwrap();
-        assert!(!entries.iter().any(|e| e.path.to_string_lossy().contains("prompts/p.txt")),
-            "should NOT see .morph/prompts/ in status");
+        assert!(
+            !entries
+                .iter()
+                .any(|e| e.path.to_string_lossy().contains("prompts/p.txt")),
+            "should NOT see .morph/prompts/ in status"
+        );
     }
 
     #[test]
     fn status_excludes_morph_evals() {
         let (dir, store) = setup_repo();
         let root = dir.path();
-        let eval_json = r#"{"cases":[],"metrics":[{"name":"acc","aggregation":"mean","threshold":0.0}]}"#;
+        let eval_json =
+            r#"{"cases":[],"metrics":[{"name":"acc","aggregation":"mean","threshold":0.0}]}"#;
         std::fs::write(root.join(".morph/evals/e.json"), eval_json).unwrap();
 
         let entries = status(&store, root).unwrap();
-        assert!(!entries.iter().any(|e| e.path.to_string_lossy().contains("evals/e.json")),
-            "should NOT see .morph/evals/ in status");
+        assert!(
+            !entries
+                .iter()
+                .any(|e| e.path.to_string_lossy().contains("evals/e.json")),
+            "should NOT see .morph/evals/ in status"
+        );
     }
 
     #[test]
@@ -692,9 +759,17 @@ mod tests {
         let entries = status(&store, root).unwrap();
         for e in &entries {
             let p = e.path.to_string_lossy();
-            assert!(!p.contains(".morph/objects"), "should not include objects: {}", p);
+            assert!(
+                !p.contains(".morph/objects"),
+                "should not include objects: {}",
+                p
+            );
             assert!(!p.contains(".morph/refs"), "should not include refs: {}", p);
-            assert!(!p.contains(".morph/config.json"), "should not include config: {}", p);
+            assert!(
+                !p.contains(".morph/config.json"),
+                "should not include config: {}",
+                p
+            );
         }
     }
 
@@ -709,10 +784,25 @@ mod tests {
         std::fs::write(root.join(".morphignore"), "skip.txt\nvendor/\n").unwrap();
 
         let entries = status(&store, root).unwrap();
-        let paths: Vec<_> = entries.iter().map(|e| e.path.to_string_lossy().into_owned()).collect();
-        assert!(paths.iter().any(|p| p.ends_with("included.txt")), "should see included.txt, got: {:?}", paths);
-        assert!(!paths.iter().any(|p| p.ends_with("skip.txt")), "should not see skip.txt, got: {:?}", paths);
-        assert!(!paths.iter().any(|p| p.contains("vendor")), "should not see vendor/, got: {:?}", paths);
+        let paths: Vec<_> = entries
+            .iter()
+            .map(|e| e.path.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            paths.iter().any(|p| p.ends_with("included.txt")),
+            "should see included.txt, got: {:?}",
+            paths
+        );
+        assert!(
+            !paths.iter().any(|p| p.ends_with("skip.txt")),
+            "should not see skip.txt, got: {:?}",
+            paths
+        );
+        assert!(
+            !paths.iter().any(|p| p.contains("vendor")),
+            "should not see vendor/, got: {:?}",
+            paths
+        );
     }
 
     #[test]
@@ -724,7 +814,10 @@ mod tests {
         add_paths(&store, root, &[std::path::PathBuf::from("file.txt")]).unwrap();
 
         let entries = status(&store, root).unwrap();
-        let entry = entries.iter().find(|e| e.path.to_string_lossy().contains("file.txt")).unwrap();
+        let entry = entries
+            .iter()
+            .find(|e| e.path.to_string_lossy().contains("file.txt"))
+            .unwrap();
         assert!(entry.in_store, "file should be tracked after add");
     }
 
@@ -742,7 +835,10 @@ mod tests {
         match &obj {
             MorphObject::Blob(b) => {
                 assert_eq!(b.kind, "blob");
-                assert_eq!(b.content.get("body").and_then(|v| v.as_str()), Some("world"));
+                assert_eq!(
+                    b.content.get("body").and_then(|v| v.as_str()),
+                    Some("world")
+                );
             }
             _ => panic!("expected blob, got: {:?}", obj),
         }
@@ -762,7 +858,10 @@ mod tests {
             MorphObject::Blob(b) => b,
             _ => panic!("expected blob"),
         };
-        assert_eq!(blob.content.get("encoding").and_then(|v| v.as_str()), Some("base64"));
+        assert_eq!(
+            blob.content.get("encoding").and_then(|v| v.as_str()),
+            Some("base64")
+        );
 
         let dest = root.join("restored.bin");
         materialize_blob(&store, &hashes[0], &dest).unwrap();
@@ -775,7 +874,12 @@ mod tests {
         let root = dir.path();
         std::fs::write(root.join(".morph/prompts/p.txt"), "my prompt").unwrap();
 
-        let hashes = add_paths(&store, root, &[std::path::PathBuf::from(".morph/prompts/p.txt")]).unwrap();
+        let hashes = add_paths(
+            &store,
+            root,
+            &[std::path::PathBuf::from(".morph/prompts/p.txt")],
+        )
+        .unwrap();
         assert_eq!(hashes.len(), 1);
         let obj = store.get(&hashes[0]).unwrap();
         match &obj {
@@ -788,10 +892,16 @@ mod tests {
     fn add_stages_eval_from_morph_evals() {
         let (dir, store) = setup_repo();
         let root = dir.path();
-        let eval_json = r#"{"cases":[],"metrics":[{"name":"acc","aggregation":"mean","threshold":0.0}]}"#;
+        let eval_json =
+            r#"{"cases":[],"metrics":[{"name":"acc","aggregation":"mean","threshold":0.0}]}"#;
         std::fs::write(root.join(".morph/evals/e.json"), eval_json).unwrap();
 
-        let hashes = add_paths(&store, root, &[std::path::PathBuf::from(".morph/evals/e.json")]).unwrap();
+        let hashes = add_paths(
+            &store,
+            root,
+            &[std::path::PathBuf::from(".morph/evals/e.json")],
+        )
+        .unwrap();
         assert_eq!(hashes.len(), 1);
         let obj = store.get(&hashes[0]).unwrap();
         match &obj {
@@ -810,7 +920,12 @@ mod tests {
         std::fs::write(root.join(".morph/prompts/p.txt"), "prompt text").unwrap();
 
         let hashes = add_paths(&store, root, &[std::path::PathBuf::from(".")]).unwrap();
-        assert_eq!(hashes.len(), 2, "should stage app.py and lib/util.py only, got {}", hashes.len());
+        assert_eq!(
+            hashes.len(),
+            2,
+            "should stage app.py and lib/util.py only, got {}",
+            hashes.len()
+        );
     }
 
     #[test]
@@ -819,12 +934,20 @@ mod tests {
         let root = dir.path();
         std::fs::write(root.join("code.rs"), "fn main(){}").unwrap();
 
-        let count_before = std::fs::read_dir(root.join(".morph/objects")).unwrap().count();
+        let count_before = std::fs::read_dir(root.join(".morph/objects"))
+            .unwrap()
+            .count();
         let hashes = add_paths(&store, root, &[std::path::PathBuf::from(".")]).unwrap();
         assert_eq!(hashes.len(), 1, "should only stage code.rs");
 
-        let count_after = std::fs::read_dir(root.join(".morph/objects")).unwrap().count();
-        assert_eq!(count_after - count_before, 1, "only one object should be written");
+        let count_after = std::fs::read_dir(root.join(".morph/objects"))
+            .unwrap()
+            .count();
+        assert_eq!(
+            count_after - count_before,
+            1,
+            "only one object should be written"
+        );
     }
 
     #[test]
@@ -850,14 +973,32 @@ mod tests {
 
         let hashes = add_paths(&store, root, &[std::path::PathBuf::from(".")]).unwrap();
         // staged.txt and .morphignore are staged; ignored.txt is not
-        assert!(!hashes.is_empty() && hashes.len() <= 2, "staged.txt (and optionally .morphignore), got {}", hashes.len());
+        assert!(
+            !hashes.is_empty() && hashes.len() <= 2,
+            "staged.txt (and optionally .morphignore), got {}",
+            hashes.len()
+        );
         let staged: Vec<String> = hashes
             .iter()
             .filter_map(|h| store.get(h).ok())
-            .filter_map(|o| match &o { MorphObject::Blob(b) => b.content.get("body").and_then(|v| v.as_str()).map(String::from), _ => None })
+            .filter_map(|o| match &o {
+                MorphObject::Blob(b) => b
+                    .content
+                    .get("body")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                _ => None,
+            })
             .collect();
-        assert!(staged.iter().any(|s| s == "staged"), "staged.txt should be in store, got: {:?}", staged);
-        assert!(!staged.iter().any(|s| s == "ignored"), "ignored.txt should not be staged");
+        assert!(
+            staged.iter().any(|s| s == "staged"),
+            "staged.txt should be in store, got: {:?}",
+            staged
+        );
+        assert!(
+            !staged.iter().any(|s| s == "ignored"),
+            "ignored.txt should not be staged"
+        );
     }
 
     #[test]
@@ -872,7 +1013,10 @@ mod tests {
         let morph_dir = root.join(".morph");
         let index = crate::index::read_index(&morph_dir).unwrap();
         assert_eq!(index.entries.len(), 1);
-        assert!(index.entries.contains_key("hello.txt"), "index should contain hello.txt");
+        assert!(
+            index.entries.contains_key("hello.txt"),
+            "index should contain hello.txt"
+        );
         assert_eq!(index.entries["hello.txt"], hashes[0].to_string());
     }
 
@@ -888,8 +1032,16 @@ mod tests {
 
         let morph_dir = root.join(".morph");
         let index = crate::index::read_index(&morph_dir).unwrap();
-        assert!(index.entries.contains_key("a.txt"), "index should contain a.txt, got: {:?}", index.entries.keys().collect::<Vec<_>>());
-        assert!(index.entries.contains_key("sub/b.txt"), "index should contain sub/b.txt, got: {:?}", index.entries.keys().collect::<Vec<_>>());
+        assert!(
+            index.entries.contains_key("a.txt"),
+            "index should contain a.txt, got: {:?}",
+            index.entries.keys().collect::<Vec<_>>()
+        );
+        assert!(
+            index.entries.contains_key("sub/b.txt"),
+            "index should contain sub/b.txt, got: {:?}",
+            index.entries.keys().collect::<Vec<_>>()
+        );
     }
 
     // ── built-in ignore tests ────────────────────────────────────────
@@ -903,9 +1055,19 @@ mod tests {
         std::fs::write(root.join(".git/config"), "[core]").unwrap();
 
         let entries = status(&store, root).unwrap();
-        let paths: Vec<_> = entries.iter().map(|e| e.path.to_string_lossy().into_owned()).collect();
-        assert!(paths.iter().any(|p| p.ends_with("app.py")), "should see app.py");
-        assert!(!paths.iter().any(|p| p.contains(".git")), "should not see .git/, got: {:?}", paths);
+        let paths: Vec<_> = entries
+            .iter()
+            .map(|e| e.path.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            paths.iter().any(|p| p.ends_with("app.py")),
+            "should see app.py"
+        );
+        assert!(
+            !paths.iter().any(|p| p.contains(".git")),
+            "should not see .git/, got: {:?}",
+            paths
+        );
     }
 
     #[test]
@@ -917,9 +1079,18 @@ mod tests {
         std::fs::write(root.join("node_modules/foo/index.js"), "nope").unwrap();
 
         let entries = status(&store, root).unwrap();
-        let paths: Vec<_> = entries.iter().map(|e| e.path.to_string_lossy().into_owned()).collect();
-        assert!(paths.iter().any(|p| p.ends_with("index.js") && !p.contains("node_modules")));
-        assert!(!paths.iter().any(|p| p.contains("node_modules")), "should not see node_modules/, got: {:?}", paths);
+        let paths: Vec<_> = entries
+            .iter()
+            .map(|e| e.path.to_string_lossy().into_owned())
+            .collect();
+        assert!(paths
+            .iter()
+            .any(|p| p.ends_with("index.js") && !p.contains("node_modules")));
+        assert!(
+            !paths.iter().any(|p| p.contains("node_modules")),
+            "should not see node_modules/, got: {:?}",
+            paths
+        );
     }
 
     #[test]
@@ -931,8 +1102,12 @@ mod tests {
         std::fs::write(root.join(".venv/bin/python"), "#!/bin/sh").unwrap();
 
         let entries = status(&store, root).unwrap();
-        assert!(!entries.iter().any(|e| e.path.to_string_lossy().contains(".venv")),
-            "should not see .venv/");
+        assert!(
+            !entries
+                .iter()
+                .any(|e| e.path.to_string_lossy().contains(".venv")),
+            "should not see .venv/"
+        );
     }
 
     #[test]
@@ -944,10 +1119,16 @@ mod tests {
         std::fs::write(root.join("secret.key"), "s3cr3t").unwrap();
 
         let entries = status(&store, root).unwrap();
-        let paths: Vec<_> = entries.iter().map(|e| e.path.to_string_lossy().into_owned()).collect();
+        let paths: Vec<_> = entries
+            .iter()
+            .map(|e| e.path.to_string_lossy().into_owned())
+            .collect();
         assert!(paths.iter().any(|p| p.ends_with("app.py")));
-        assert!(!paths.iter().any(|p| p.ends_with("secret.key")),
-            "should not see secret.key (gitignore), got: {:?}", paths);
+        assert!(
+            !paths.iter().any(|p| p.ends_with("secret.key")),
+            "should not see secret.key (gitignore), got: {:?}",
+            paths
+        );
     }
 
     #[test]
@@ -959,7 +1140,11 @@ mod tests {
         std::fs::write(root.join(".git/config"), "[core]").unwrap();
 
         let hashes = add_paths(&store, root, &[std::path::PathBuf::from(".")]).unwrap();
-        assert_eq!(hashes.len(), 1, "should only stage code.rs, not .git/config");
+        assert_eq!(
+            hashes.len(),
+            1,
+            "should only stage code.rs, not .git/config"
+        );
     }
 
     #[test]
@@ -970,8 +1155,12 @@ mod tests {
 
         // Simulate stale index from an old binary that tracked .git/ and .venv/
         let mut stale_index = crate::index::StagingIndex::new();
-        stale_index.entries.insert(".git/config".into(), "a".repeat(64));
-        stale_index.entries.insert(".venv/bin/python".into(), "b".repeat(64));
+        stale_index
+            .entries
+            .insert(".git/config".into(), "a".repeat(64));
+        stale_index
+            .entries
+            .insert(".venv/bin/python".into(), "b".repeat(64));
         stale_index.entries.insert("app.py".into(), "c".repeat(64));
         crate::index::write_index(&morph_dir, &stale_index).unwrap();
 
@@ -981,10 +1170,15 @@ mod tests {
 
         let index = crate::index::read_index(&morph_dir).unwrap();
         assert!(index.entries.contains_key("app.py"), "app.py should remain");
-        assert!(!index.entries.contains_key(".git/config"),
-            "stale .git/config should be pruned, got: {:?}", index.entries.keys().collect::<Vec<_>>());
-        assert!(!index.entries.contains_key(".venv/bin/python"),
-            "stale .venv/bin/python should be pruned");
+        assert!(
+            !index.entries.contains_key(".git/config"),
+            "stale .git/config should be pruned, got: {:?}",
+            index.entries.keys().collect::<Vec<_>>()
+        );
+        assert!(
+            !index.entries.contains_key(".venv/bin/python"),
+            "stale .venv/bin/python should be pruned"
+        );
     }
 
     #[test]
@@ -999,9 +1193,16 @@ mod tests {
 
     fn commit_helper(store: &dyn Store, repo_root: &Path, msg: &str) -> Hash {
         crate::commit::create_tree_commit(
-            store, repo_root, None, None,
-            std::collections::BTreeMap::new(), msg.to_string(), None, None,
-        ).unwrap()
+            store,
+            repo_root,
+            None,
+            None,
+            std::collections::BTreeMap::new(),
+            msg.to_string(),
+            None,
+            None,
+        )
+        .unwrap()
     }
 
     #[test]

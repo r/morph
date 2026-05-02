@@ -67,9 +67,7 @@ fn run_helper(repo_root: &std::path::Path, body: &str) -> (String, String, i32) 
     }
     drop(child.stdin.take());
 
-    let out = child
-        .wait_with_output()
-        .expect("wait remote-helper");
+    let out = child.wait_with_output().expect("wait remote-helper");
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
     let code = out.status.code().unwrap_or(-1);
@@ -121,8 +119,7 @@ fn remote_helper_responds_to_hello() {
     assert_eq!(code, 0, "stderr={}", stderr);
 
     let line = stdout.lines().next().expect("hello response");
-    let resp: serde_json::Value = serde_json::from_str(line)
-        .expect("hello response is JSON");
+    let resp: serde_json::Value = serde_json::from_str(line).expect("hello response is JSON");
     assert_eq!(resp["ok"], json!(true));
     assert!(
         resp["morph_version"].is_string(),
@@ -185,8 +182,7 @@ fn remote_helper_ref_read_returns_hash_or_null() {
         .status()
         .unwrap();
     let out = morph_commit(repo, &["-m", "first", "--json"]).stdout;
-    let json_out: serde_json::Value =
-        serde_json::from_slice(&out).expect("--json output");
+    let json_out: serde_json::Value = serde_json::from_slice(&out).expect("--json output");
     let head_hash = json_out["hash"].as_str().unwrap().to_string();
 
     // Existing ref.
@@ -198,13 +194,11 @@ fn remote_helper_ref_read_returns_hash_or_null() {
     assert_eq!(code, 0, "stderr={}", stderr);
     let mut lines = stdout.lines();
 
-    let r1: serde_json::Value =
-        serde_json::from_str(lines.next().unwrap()).unwrap();
+    let r1: serde_json::Value = serde_json::from_str(lines.next().unwrap()).unwrap();
     assert_eq!(r1["ok"], json!(true));
     assert_eq!(r1["hash"].as_str().unwrap(), head_hash);
 
-    let r2: serde_json::Value =
-        serde_json::from_str(lines.next().unwrap()).unwrap();
+    let r2: serde_json::Value = serde_json::from_str(lines.next().unwrap()).unwrap();
     assert_eq!(r2["ok"], json!(true));
     assert!(r2["hash"].is_null(), "missing ref must be null: {}", r2);
 }
@@ -238,18 +232,15 @@ fn remote_helper_has_and_get_object() {
     assert_eq!(code, 0, "stderr={}", stderr);
     let mut lines = stdout.lines();
 
-    let r1: serde_json::Value =
-        serde_json::from_str(lines.next().unwrap()).unwrap();
+    let r1: serde_json::Value = serde_json::from_str(lines.next().unwrap()).unwrap();
     assert_eq!(r1["ok"], json!(true));
     assert_eq!(r1["has"], json!(true));
 
-    let r2: serde_json::Value =
-        serde_json::from_str(lines.next().unwrap()).unwrap();
+    let r2: serde_json::Value = serde_json::from_str(lines.next().unwrap()).unwrap();
     assert_eq!(r2["ok"], json!(true));
     assert_eq!(r2["has"], json!(false));
 
-    let r3: serde_json::Value =
-        serde_json::from_str(lines.next().unwrap()).unwrap();
+    let r3: serde_json::Value = serde_json::from_str(lines.next().unwrap()).unwrap();
     assert_eq!(r3["ok"], json!(true));
     assert!(
         r3["object"].is_object(),
@@ -290,8 +281,7 @@ fn remote_helper_put_object_returns_hash() {
     // Object must be retrievable on the same repo via the same helper.
     let req2 = json!({"op": "has", "hash": hash}).to_string() + "\n";
     let (stdout2, _, _) = run_helper(repo, &req2);
-    let r2: serde_json::Value =
-        serde_json::from_str(stdout2.lines().next().unwrap()).unwrap();
+    let r2: serde_json::Value = serde_json::from_str(stdout2.lines().next().unwrap()).unwrap();
     assert_eq!(r2["has"], json!(true));
 }
 
@@ -306,13 +296,20 @@ fn remote_helper_unknown_op_is_an_error_response() {
 
     let req = json!({"op": "frob"}).to_string() + "\n";
     let (stdout, stderr, code) = run_helper(repo, &req);
-    assert_eq!(code, 0, "helper stays alive on unknown op, stderr={}", stderr);
+    assert_eq!(
+        code, 0,
+        "helper stays alive on unknown op, stderr={}",
+        stderr
+    );
     let line = stdout.lines().next().expect("error response");
     let resp: serde_json::Value = serde_json::from_str(line).unwrap();
     assert_eq!(resp["ok"], json!(false));
     assert!(
         resp["error"].as_str().unwrap_or("").contains("frob")
-            || resp["error_kind"].as_str().unwrap_or("").contains("unknown_op"),
+            || resp["error_kind"]
+                .as_str()
+                .unwrap_or("")
+                .contains("unknown_op"),
         "expected useful error, got: {}",
         resp
     );

@@ -71,7 +71,10 @@ pub fn merge_pipelines(
     theirs: &Pipeline,
 ) -> PipelineMergeOutcome {
     let empty: Pipeline = Pipeline {
-        graph: PipelineGraph { nodes: vec![], edges: vec![] },
+        graph: PipelineGraph {
+            nodes: vec![],
+            edges: vec![],
+        },
         prompts: vec![],
         eval_suite: None,
         attribution: None,
@@ -85,7 +88,10 @@ pub fn merge_pipelines(
     let merged_prompts = merge_prompts(base_ref, ours, theirs);
 
     let merged = Pipeline {
-        graph: PipelineGraph { nodes: merged_nodes, edges: merged_edges },
+        graph: PipelineGraph {
+            nodes: merged_nodes,
+            edges: merged_edges,
+        },
         prompts: merged_prompts,
         eval_suite: ours
             .eval_suite
@@ -114,12 +120,24 @@ fn merge_nodes(
     ours: &Pipeline,
     theirs: &Pipeline,
 ) -> (Vec<PipelineNode>, Vec<NodeConflict>) {
-    let base_map: BTreeMap<&str, &PipelineNode> =
-        base.graph.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
-    let ours_map: BTreeMap<&str, &PipelineNode> =
-        ours.graph.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
-    let theirs_map: BTreeMap<&str, &PipelineNode> =
-        theirs.graph.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
+    let base_map: BTreeMap<&str, &PipelineNode> = base
+        .graph
+        .nodes
+        .iter()
+        .map(|n| (n.id.as_str(), n))
+        .collect();
+    let ours_map: BTreeMap<&str, &PipelineNode> = ours
+        .graph
+        .nodes
+        .iter()
+        .map(|n| (n.id.as_str(), n))
+        .collect();
+    let theirs_map: BTreeMap<&str, &PipelineNode> = theirs
+        .graph
+        .nodes
+        .iter()
+        .map(|n| (n.id.as_str(), n))
+        .collect();
 
     let mut all_ids: BTreeSet<&str> = BTreeSet::new();
     all_ids.extend(base_map.keys().copied());
@@ -241,14 +259,18 @@ fn merge_edges(
             (false, true, true) | (false, true, false) | (false, false, true) => true,
             (true, true, true) => true,
             (true, true, false) | (true, false, true) => false, // one side deleted
-            (true, false, false) => false,                       // both deleted
+            (true, false, false) => false,                      // both deleted
         };
         if !keep {
             continue;
         }
         // Drop edges whose endpoints didn't survive node merge.
         if merged_node_ids.contains(k.0.as_str()) && merged_node_ids.contains(k.1.as_str()) {
-            kept.push(PipelineEdge { from: k.0, to: k.1, kind: k.2 });
+            kept.push(PipelineEdge {
+                from: k.0,
+                to: k.1,
+                kind: k.2,
+            });
         }
     }
     kept
@@ -367,11 +389,25 @@ mod tests {
     #[test]
     fn merge_pipelines_disjoint_node_adds_unioned() {
         let base = pipe(vec![node("a", "prompt_call")], vec![], vec![]);
-        let ours = pipe(vec![node("a", "prompt_call"), node("b", "tool_call")], vec![], vec![]);
-        let theirs = pipe(vec![node("a", "prompt_call"), node("c", "transform")], vec![], vec![]);
+        let ours = pipe(
+            vec![node("a", "prompt_call"), node("b", "tool_call")],
+            vec![],
+            vec![],
+        );
+        let theirs = pipe(
+            vec![node("a", "prompt_call"), node("c", "transform")],
+            vec![],
+            vec![],
+        );
         let outcome = merge_pipelines(Some(&base), &ours, &theirs);
         assert!(outcome.conflicts.is_empty(), "got: {:?}", outcome.conflicts);
-        let ids: Vec<_> = outcome.merged.graph.nodes.iter().map(|n| n.id.as_str()).collect();
+        let ids: Vec<_> = outcome
+            .merged
+            .graph
+            .nodes
+            .iter()
+            .map(|n| n.id.as_str())
+            .collect();
         assert!(ids.contains(&"a"));
         assert!(ids.contains(&"b"));
         assert!(ids.contains(&"c"));
@@ -381,8 +417,16 @@ mod tests {
     fn merge_pipelines_same_id_same_body_added_both_no_conflict() {
         let base = pipe(vec![node("a", "prompt_call")], vec![], vec![]);
         let added = node_with_param("x", "tool_call", "k", "v");
-        let ours = pipe(vec![node("a", "prompt_call"), added.clone()], vec![], vec![]);
-        let theirs = pipe(vec![node("a", "prompt_call"), added.clone()], vec![], vec![]);
+        let ours = pipe(
+            vec![node("a", "prompt_call"), added.clone()],
+            vec![],
+            vec![],
+        );
+        let theirs = pipe(
+            vec![node("a", "prompt_call"), added.clone()],
+            vec![],
+            vec![],
+        );
         let outcome = merge_pipelines(Some(&base), &ours, &theirs);
         assert!(outcome.conflicts.is_empty(), "got: {:?}", outcome.conflicts);
         assert!(outcome.merged.graph.nodes.iter().any(|n| n.id == "x"));
@@ -392,12 +436,18 @@ mod tests {
     fn merge_pipelines_same_id_diff_body_added_both_conflicts() {
         let base = pipe(vec![node("a", "prompt_call")], vec![], vec![]);
         let ours = pipe(
-            vec![node("a", "prompt_call"), node_with_param("x", "tool_call", "k", "v1")],
+            vec![
+                node("a", "prompt_call"),
+                node_with_param("x", "tool_call", "k", "v1"),
+            ],
             vec![],
             vec![],
         );
         let theirs = pipe(
-            vec![node("a", "prompt_call"), node_with_param("x", "tool_call", "k", "v2")],
+            vec![
+                node("a", "prompt_call"),
+                node_with_param("x", "tool_call", "k", "v2"),
+            ],
             vec![],
             vec![],
         );
@@ -413,30 +463,70 @@ mod tests {
 
     #[test]
     fn merge_pipelines_node_modified_one_side() {
-        let base = pipe(vec![node_with_param("a", "prompt_call", "k", "old")], vec![], vec![]);
-        let ours = pipe(vec![node_with_param("a", "prompt_call", "k", "new")], vec![], vec![]);
+        let base = pipe(
+            vec![node_with_param("a", "prompt_call", "k", "old")],
+            vec![],
+            vec![],
+        );
+        let ours = pipe(
+            vec![node_with_param("a", "prompt_call", "k", "new")],
+            vec![],
+            vec![],
+        );
         let theirs = base.clone();
         let outcome = merge_pipelines(Some(&base), &ours, &theirs);
         assert!(outcome.conflicts.is_empty(), "got: {:?}", outcome.conflicts);
-        let a = outcome.merged.graph.nodes.iter().find(|n| n.id == "a").unwrap();
+        let a = outcome
+            .merged
+            .graph
+            .nodes
+            .iter()
+            .find(|n| n.id == "a")
+            .unwrap();
         assert_eq!(a.params.get("k").unwrap(), &serde_json::json!("new"));
     }
 
     #[test]
     fn merge_pipelines_node_modified_both_sides_same_way() {
-        let base = pipe(vec![node_with_param("a", "prompt_call", "k", "old")], vec![], vec![]);
-        let modified = pipe(vec![node_with_param("a", "prompt_call", "k", "new")], vec![], vec![]);
+        let base = pipe(
+            vec![node_with_param("a", "prompt_call", "k", "old")],
+            vec![],
+            vec![],
+        );
+        let modified = pipe(
+            vec![node_with_param("a", "prompt_call", "k", "new")],
+            vec![],
+            vec![],
+        );
         let outcome = merge_pipelines(Some(&base), &modified, &modified);
         assert!(outcome.conflicts.is_empty(), "got: {:?}", outcome.conflicts);
-        let a = outcome.merged.graph.nodes.iter().find(|n| n.id == "a").unwrap();
+        let a = outcome
+            .merged
+            .graph
+            .nodes
+            .iter()
+            .find(|n| n.id == "a")
+            .unwrap();
         assert_eq!(a.params.get("k").unwrap(), &serde_json::json!("new"));
     }
 
     #[test]
     fn merge_pipelines_node_modified_both_sides_differently_conflicts() {
-        let base = pipe(vec![node_with_param("a", "prompt_call", "k", "old")], vec![], vec![]);
-        let ours = pipe(vec![node_with_param("a", "prompt_call", "k", "v1")], vec![], vec![]);
-        let theirs = pipe(vec![node_with_param("a", "prompt_call", "k", "v2")], vec![], vec![]);
+        let base = pipe(
+            vec![node_with_param("a", "prompt_call", "k", "old")],
+            vec![],
+            vec![],
+        );
+        let ours = pipe(
+            vec![node_with_param("a", "prompt_call", "k", "v1")],
+            vec![],
+            vec![],
+        );
+        let theirs = pipe(
+            vec![node_with_param("a", "prompt_call", "k", "v2")],
+            vec![],
+            vec![],
+        );
         let outcome = merge_pipelines(Some(&base), &ours, &theirs);
         assert_eq!(outcome.conflicts.len(), 1);
         assert_eq!(outcome.conflicts[0].id, "a");
@@ -447,7 +537,11 @@ mod tests {
 
     #[test]
     fn merge_pipelines_node_deleted_one_side_unchanged_other() {
-        let base = pipe(vec![node("a", "prompt_call"), node("b", "tool_call")], vec![], vec![]);
+        let base = pipe(
+            vec![node("a", "prompt_call"), node("b", "tool_call")],
+            vec![],
+            vec![],
+        );
         let ours = pipe(vec![node("a", "prompt_call")], vec![], vec![]);
         let theirs = base.clone();
         let outcome = merge_pipelines(Some(&base), &ours, &theirs);
@@ -457,7 +551,11 @@ mod tests {
 
     #[test]
     fn merge_pipelines_node_deleted_both_sides() {
-        let base = pipe(vec![node("a", "prompt_call"), node("b", "tool_call")], vec![], vec![]);
+        let base = pipe(
+            vec![node("a", "prompt_call"), node("b", "tool_call")],
+            vec![],
+            vec![],
+        );
         let ours = pipe(vec![node("a", "prompt_call")], vec![], vec![]);
         let theirs = pipe(vec![node("a", "prompt_call")], vec![], vec![]);
         let outcome = merge_pipelines(Some(&base), &ours, &theirs);
@@ -467,8 +565,16 @@ mod tests {
 
     #[test]
     fn merge_pipelines_modify_delete_conflicts() {
-        let base = pipe(vec![node_with_param("a", "prompt_call", "k", "old")], vec![], vec![]);
-        let ours = pipe(vec![node_with_param("a", "prompt_call", "k", "new")], vec![], vec![]);
+        let base = pipe(
+            vec![node_with_param("a", "prompt_call", "k", "old")],
+            vec![],
+            vec![],
+        );
+        let ours = pipe(
+            vec![node_with_param("a", "prompt_call", "k", "new")],
+            vec![],
+            vec![],
+        );
         let theirs = pipe(vec![], vec![], vec![]);
         let outcome = merge_pipelines(Some(&base), &ours, &theirs);
         assert_eq!(outcome.conflicts.len(), 1);
@@ -483,7 +589,11 @@ mod tests {
     #[test]
     fn merge_pipelines_edges_unioned_disjoint() {
         let base = pipe(
-            vec![node("a", "prompt_call"), node("b", "tool_call"), node("c", "transform")],
+            vec![
+                node("a", "prompt_call"),
+                node("b", "tool_call"),
+                node("c", "transform"),
+            ],
             vec![],
             vec![],
         );
@@ -523,9 +633,11 @@ mod tests {
             "orphaned edge is a derived consequence, not a conflict; got: {:?}",
             outcome.conflicts
         );
-        assert!(outcome.merged.graph.edges.is_empty(),
+        assert!(
+            outcome.merged.graph.edges.is_empty(),
             "edge a→b must be dropped because b was deleted; got: {:?}",
-            outcome.merged.graph.edges);
+            outcome.merged.graph.edges
+        );
     }
 
     // ── prompts ───────────────────────────────────────────────────────

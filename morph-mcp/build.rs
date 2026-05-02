@@ -18,18 +18,43 @@ fn epoch_to_iso(secs: u64) -> String {
     let mut y: u64 = 1970;
     let mut rem = days;
     loop {
-        let ylen = if y.is_multiple_of(4) && (!y.is_multiple_of(100) || y.is_multiple_of(400)) { 366 } else { 365 };
-        if rem < ylen { break; }
+        let ylen = if y.is_multiple_of(4) && (!y.is_multiple_of(100) || y.is_multiple_of(400)) {
+            366
+        } else {
+            365
+        };
+        if rem < ylen {
+            break;
+        }
         rem -= ylen;
         y += 1;
     }
     let leap = y.is_multiple_of(4) && (!y.is_multiple_of(100) || y.is_multiple_of(400));
-    let mdays = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mdays = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut mo = 0u64;
     for md in mdays {
-        if rem < md { break; }
+        if rem < md {
+            break;
+        }
         rem -= md;
         mo += 1;
     }
-    format!("{y:04}-{:02}-{:02}T{hh:02}:{mm:02}:{ss:02}Z", mo + 1, rem + 1)
+    format!(
+        "{y:04}-{:02}-{:02}T{hh:02}:{mm:02}:{ss:02}Z",
+        mo + 1,
+        rem + 1
+    )
 }

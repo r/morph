@@ -86,7 +86,12 @@ mod tests {
         (dir, store)
     }
 
-    fn make_commit(store: &dyn Store, message: &str, parent: Option<&Hash>, tree_hash: Option<&str>) -> Hash {
+    fn make_commit(
+        store: &dyn Store,
+        message: &str,
+        parent: Option<&Hash>,
+        tree_hash: Option<&str>,
+    ) -> Hash {
         let suite = MorphObject::EvalSuite(EvalSuite {
             cases: vec![],
             metrics: vec![],
@@ -148,7 +153,12 @@ mod tests {
         entries2.insert("file.txt".into(), hb.to_string());
         let tree_b = crate::tree::build_tree(store.as_ref(), &entries2).unwrap();
 
-        let c2 = make_commit(store.as_ref(), "second", Some(&c1), Some(&tree_b.to_string()));
+        let c2 = make_commit(
+            store.as_ref(),
+            "second",
+            Some(&c1),
+            Some(&tree_b.to_string()),
+        );
 
         let revert_hash = revert_commit(store.as_ref(), &c2, None).unwrap();
         let obj = store.get(&revert_hash).unwrap();

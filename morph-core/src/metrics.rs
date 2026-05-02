@@ -16,13 +16,15 @@ pub fn aggregate(scores: &[f64], method: &str) -> Result<f64, MorphError> {
             let sum: f64 = scores.iter().sum();
             sum / scores.len() as f64
         }
-        "min" => scores
-            .iter()
-            .cloned()
-            .fold(f64::INFINITY, f64::min),
+        "min" => scores.iter().cloned().fold(f64::INFINITY, f64::min),
         "p95" => percentile(scores, 0.95),
         "lower_ci_bound" => lower_ci_95(scores),
-        _ => return Err(MorphError::Serialization(format!("unknown aggregation: {}", method))),
+        _ => {
+            return Err(MorphError::Serialization(format!(
+                "unknown aggregation: {}",
+                method
+            )))
+        }
     };
     Ok(out)
 }
@@ -53,9 +55,9 @@ pub fn check_thresholds(
     suite: &EvalSuite,
 ) -> Result<bool, MorphError> {
     for m in &suite.metrics {
-        let val = observed.get(&m.name).ok_or_else(|| {
-            MorphError::Serialization(format!("missing metric: {}", m.name))
-        })?;
+        let val = observed
+            .get(&m.name)
+            .ok_or_else(|| MorphError::Serialization(format!("missing metric: {}", m.name)))?;
         let passes = if m.direction == "minimize" {
             *val <= m.threshold
         } else {
@@ -71,11 +73,10 @@ pub fn check_thresholds(
 /// Check that merged metrics dominate parent for every key in parent.
 /// Assumes all metrics are "maximize" (merged >= parent). Use [check_dominance_with_suite]
 /// when direction information is available.
-pub fn check_dominance(
-    merged: &BTreeMap<String, f64>,
-    parent: &BTreeMap<String, f64>,
-) -> bool {
-    parent.iter().all(|(k, v)| merged.get(k).is_some_and(|m| *m >= *v))
+pub fn check_dominance(merged: &BTreeMap<String, f64>, parent: &BTreeMap<String, f64>) -> bool {
+    parent
+        .iter()
+        .all(|(k, v)| merged.get(k).is_some_and(|m| *m >= *v))
 }
 
 /// Direction-aware dominance: merged must be "at least as good" as parent for every metric
@@ -142,11 +143,9 @@ pub fn union_suites(a: &EvalSuite, b: &EvalSuite) -> Result<EvalSuite, MorphErro
 
 /// Retire metrics from a suite (paper §5.3). Returns a new suite with the retired
 /// metrics removed. Each retired metric name must exist in the suite.
-pub fn retire_metrics(
-    suite: &EvalSuite,
-    retired: &[String],
-) -> Result<EvalSuite, MorphError> {
-    let retired_set: std::collections::BTreeSet<&str> = retired.iter().map(|s| s.as_str()).collect();
+pub fn retire_metrics(suite: &EvalSuite, retired: &[String]) -> Result<EvalSuite, MorphError> {
+    let retired_set: std::collections::BTreeSet<&str> =
+        retired.iter().map(|s| s.as_str()).collect();
     for name in &retired_set {
         if !suite.metrics.iter().any(|m| m.name == *name) {
             return Err(MorphError::Serialization(format!(
@@ -409,8 +408,14 @@ mod tests {
     #[test]
     fn union_suites_overlapping_identical() {
         let m = EvalMetric::new("acc", "mean", 0.8);
-        let a = EvalSuite { cases: vec![], metrics: vec![m.clone()] };
-        let b = EvalSuite { cases: vec![], metrics: vec![m] };
+        let a = EvalSuite {
+            cases: vec![],
+            metrics: vec![m.clone()],
+        };
+        let b = EvalSuite {
+            cases: vec![],
+            metrics: vec![m],
+        };
         let u = union_suites(&a, &b).unwrap();
         assert_eq!(u.metrics.len(), 1);
     }
@@ -437,8 +442,14 @@ mod tests {
             metric: "acc".into(),
             fixture_source: "candidate".into(),
         };
-        let a = EvalSuite { cases: vec![case.clone()], metrics: vec![] };
-        let b = EvalSuite { cases: vec![case], metrics: vec![] };
+        let a = EvalSuite {
+            cases: vec![case.clone()],
+            metrics: vec![],
+        };
+        let b = EvalSuite {
+            cases: vec![case],
+            metrics: vec![],
+        };
         let u = union_suites(&a, &b).unwrap();
         assert_eq!(u.cases.len(), 1);
     }
@@ -516,7 +527,10 @@ mod tests {
         merged.insert("f1".into(), 0.90);
         let mut parent = BTreeMap::new();
         parent.insert("acc".into(), 0.9);
-        assert!(check_dominance(&merged, &parent), "superset should dominate");
+        assert!(
+            check_dominance(&merged, &parent),
+            "superset should dominate"
+        );
     }
 
     #[test]
@@ -525,7 +539,10 @@ mod tests {
         merged.insert("f1".into(), 0.95);
         let mut parent = BTreeMap::new();
         parent.insert("acc".into(), 0.9);
-        assert!(!check_dominance(&merged, &parent), "missing parent metric should fail");
+        assert!(
+            !check_dominance(&merged, &parent),
+            "missing parent metric should fail"
+        );
     }
 
     #[test]

@@ -9,19 +9,22 @@ use clap::Parser;
 use cli::*;
 use morph_core::{
     find_repo, migrate_0_0_to_0_2, migrate_0_2_to_0_3, migrate_to_latest, open_store,
-    read_repo_version, require_store_version, resolve_revision, short_hash_str, Hash,
-    MorphObject, ObjectType, Store, STORE_VERSION_INIT, STORE_VERSION_0_2, STORE_VERSION_0_3,
-    STORE_VERSION_0_4, SUPPORTED_REPO_VERSIONS,
+    read_repo_version, require_store_version, resolve_revision, short_hash_str, Hash, MorphObject,
+    ObjectType, Store, STORE_VERSION_0_2, STORE_VERSION_0_3, STORE_VERSION_0_4, STORE_VERSION_INIT,
+    SUPPORTED_REPO_VERSIONS,
 };
 use std::path::PathBuf;
 
 fn get_store(verbose: bool) -> anyhow::Result<(PathBuf, Box<dyn Store>)> {
     let cwd = std::env::current_dir()?;
-    let repo_root = find_repo(&cwd)
-        .ok_or_else(|| anyhow::anyhow!("not a morph repository (or any parent)"))?;
+    let repo_root =
+        find_repo(&cwd).ok_or_else(|| anyhow::anyhow!("not a morph repository (or any parent)"))?;
     let morph_dir = repo_root.join(".morph");
     let version = read_repo_version(&morph_dir)?;
-    verbose_msg(verbose, &format!("repo {} (store version {})", repo_root.display(), version));
+    verbose_msg(
+        verbose,
+        &format!("repo {} (store version {})", repo_root.display(), version),
+    );
     require_store_version(&morph_dir, SUPPORTED_REPO_VERSIONS)?;
     let store = open_store(&morph_dir)?;
     Ok((repo_root, store))
@@ -110,8 +113,8 @@ fn write_last_run_breadcrumb(store: &dyn Store, repo_root: &std::path::Path, run
 /// user runs `morph hook ...` themselves.
 fn run_hook(event: &str, args: &[String]) -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;
-    let repo_root = morph_core::find_repo(&cwd)
-        .ok_or_else(|| anyhow::anyhow!("not in a morph repository"))?;
+    let repo_root =
+        morph_core::find_repo(&cwd).ok_or_else(|| anyhow::anyhow!("not in a morph repository"))?;
     let morph_dir = repo_root.join(".morph");
     let store = morph_core::open_store(&morph_dir)?;
     let version = Some(env!("CARGO_PKG_VERSION"));
@@ -128,7 +131,11 @@ fn run_hook(event: &str, args: &[String]) -> anyhow::Result<()> {
             if outcome.already_synced {
                 println!("Already up to date.");
             } else if let Some(sha) = outcome.git_sha.as_deref() {
-                let plural = if outcome.created == 1 { "commit" } else { "commits" };
+                let plural = if outcome.created == 1 {
+                    "commit"
+                } else {
+                    "commits"
+                };
                 println!(
                     "Synced {} git {} (HEAD {}).",
                     outcome.created,
@@ -193,7 +200,11 @@ fn run_hook(event: &str, args: &[String]) -> anyhow::Result<()> {
             if outcome.already_synced {
                 println!("Already up to date.");
             } else if let Some(sha) = outcome.git_sha.as_deref() {
-                let plural = if outcome.created == 1 { "commit" } else { "commits" };
+                let plural = if outcome.created == 1 {
+                    "commit"
+                } else {
+                    "commits"
+                };
                 println!(
                     "Synced {} git {} (HEAD {}).",
                     outcome.created,
@@ -208,8 +219,7 @@ fn run_hook(event: &str, args: &[String]) -> anyhow::Result<()> {
             // morph mirrors, runs dominance against the
             // worse-of-parents bar, and exits 1 with explanation if
             // the merge would regress. "No claim" stays a warning.
-            let outcome =
-                morph_core::handle_pre_merge_commit(store.as_ref(), &repo_root, version)?;
+            let outcome = morph_core::handle_pre_merge_commit(store.as_ref(), &repo_root, version)?;
             for side in &outcome.no_claim_sides {
                 eprintln!(
                     "morph: no morph evidence on '{}' — pre-merge gate proceeds without behavioral assertion from this side",
@@ -272,9 +282,7 @@ fn run_reference_commit(
     no_auto_run: bool,
     json: bool,
 ) -> anyhow::Result<()> {
-    let prog_hash: Option<Hash> = pipeline
-        .map(|s| resolve_obj_hash(store, s))
-        .transpose()?;
+    let prog_hash: Option<Hash> = pipeline.map(|s| resolve_obj_hash(store, s)).transpose()?;
     let policy = morph_core::read_policy(morph_dir)?;
 
     let auto_run_hash: Option<Hash> = if no_auto_run || from_run.is_some() {
@@ -583,9 +591,8 @@ fn run_reference_commit(
             })
             .and_then(|t| morph_core::Hash::from_hex(&t).ok())
             .and_then(|h| morph_core::flatten_tree(store, &h).ok());
-        let edits =
-            morph_core::compute_human_edits(store, &rh, &staged, parent_tree.as_ref())
-                .unwrap_or_default();
+        let edits = morph_core::compute_human_edits(store, &rh, &staged, parent_tree.as_ref())
+            .unwrap_or_default();
         if edits.is_empty() {
             None
         } else {
@@ -656,8 +663,9 @@ fn run_reference_commit(
         }
         let rewritten = store.put(&MorphObject::Commit(new_commit))?;
         new_morph_hash = rewritten;
-        let branch =
-            morph_core::current_branch(store).unwrap_or(None).unwrap_or_else(|| "main".to_string());
+        let branch = morph_core::current_branch(store)
+            .unwrap_or(None)
+            .unwrap_or_else(|| "main".to_string());
         store.ref_write(&format!("heads/{}", branch), &rewritten)?;
     }
 
@@ -717,10 +725,7 @@ fn run_reference_commit(
     // staged after `morph commit` because `morph add` writes both
     // `.morph/index.json` and `git add`'s index.
     if let Err(e) = morph_core::clear_index(morph_dir) {
-        eprintln!(
-            "warning: could not clear staging index after commit: {}",
-            e
-        );
+        eprintln!("warning: could not clear staging index after commit: {}", e);
     }
 
     if observed_metrics.is_empty() {
@@ -741,15 +746,8 @@ fn run_reference_commit(
         });
         println!("{}", serde_json::to_string(&out)?);
     } else {
-        println!(
-            "[{} (cli)] {}",
-            new_morph_hash.short(),
-            message
-        );
-        println!(
-            "  git: {}",
-            &new_git_sha[..new_git_sha.len().min(12)]
-        );
+        println!("[{} (cli)] {}", new_morph_hash.short(), message);
+        println!("  git: {}", &new_git_sha[..new_git_sha.len().min(12)]);
     }
     Ok(())
 }
@@ -771,12 +769,17 @@ fn version_json() -> String {
 
 fn print_tap_task(task: &morph_core::TapTask) {
     println!("=== Run {} ===", &task.run_hash[..12]);
-    println!("  model: {}  agent: {}  events: {}  steps: {}",
-        task.model, task.agent, task.event_count, task.step_count);
+    println!(
+        "  model: {}  agent: {}  events: {}  steps: {}",
+        task.model, task.agent, task.event_count, task.step_count
+    );
     for (i, step) in task.steps.iter().enumerate() {
         println!("\n  --- Step {} ---", i + 1);
         let prompt_preview = if step.prompt.len() > 120 {
-            format!("{}...", &step.prompt[..step.prompt.floor_char_boundary(120)])
+            format!(
+                "{}...",
+                &step.prompt[..step.prompt.floor_char_boundary(120)]
+            )
         } else {
             step.prompt.clone()
         };
@@ -784,8 +787,15 @@ fn print_tap_task(task: &morph_core::TapTask) {
         if !step.tool_calls.is_empty() {
             println!("  Tool calls: {}", step.tool_calls.len());
             for tc in &step.tool_calls {
-                println!("    - {}{}", tc.name.as_deref().unwrap_or("(unnamed)"),
-                    if tc.output.is_some() { " [has output]" } else { "" });
+                println!(
+                    "    - {}{}",
+                    tc.name.as_deref().unwrap_or("(unnamed)"),
+                    if tc.output.is_some() {
+                        " [has output]"
+                    } else {
+                        ""
+                    }
+                );
             }
         }
         if !step.file_reads.is_empty() {
@@ -795,7 +805,10 @@ fn print_tap_task(task: &morph_core::TapTask) {
             println!("  File edits: {}", step.file_edits.len());
         }
         let resp_preview = if step.response.len() > 200 {
-            format!("{}...", &step.response[..step.response.floor_char_boundary(200)])
+            format!(
+                "{}...",
+                &step.response[..step.response.floor_char_boundary(200)]
+            )
         } else {
             step.response.clone()
         };
@@ -810,26 +823,48 @@ fn print_tap_task(task: &morph_core::TapTask) {
 
 fn print_trace_events(trace: &morph_core::objects::Trace) {
     for ev in &trace.events {
-        let text = ev.payload.get("text").and_then(|v| v.as_str()).unwrap_or("");
+        let text = ev
+            .payload
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         match ev.kind.as_str() {
             "prompt" | "user" => println!("--- prompt ---\n{}", text),
             "response" | "assistant" => println!("--- response ---\n{}", text),
             "tool_call" | "tool_use" | "function_call" => {
-                let name = ev.payload.get("name").and_then(|v| v.as_str()).unwrap_or("(unnamed)");
+                let name = ev
+                    .payload
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("(unnamed)");
                 println!("--- tool_call: {} ---\n{}", name, text);
             }
             "tool_result" | "tool_output" | "function_result" => {
-                let output = ev.payload.get("output").and_then(|v| v.as_str()).unwrap_or(text);
+                let output = ev
+                    .payload
+                    .get("output")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(text);
                 let err = ev.payload.get("error").and_then(|v| v.as_str());
                 println!("--- tool_result ---\n{}", output);
-                if let Some(e) = err { println!("  error: {}", e); }
+                if let Some(e) = err {
+                    println!("  error: {}", e);
+                }
             }
             "file_read" | "read_file" => {
-                let path = ev.payload.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+                let path = ev
+                    .payload
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?");
                 println!("--- file_read: {} ---", path);
             }
             "file_edit" | "edit_file" | "write_file" | "file_write" => {
-                let path = ev.payload.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+                let path = ev
+                    .payload
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?");
                 println!("--- file_edit: {} ---", path);
             }
             _ => println!("--- {} ---\n{}", ev.kind, text),
@@ -913,9 +948,8 @@ fn run_reference_merge(
     if let Some(ref obs) = observed {
         let dominance = plan.check_dominance(obs);
         if !dominance.passed {
-            let mut msg = String::from(
-                "merge rejected: merged metrics do not dominate both parents\n",
-            );
+            let mut msg =
+                String::from("merge rejected: merged metrics do not dominate both parents\n");
             for v in &dominance.violations {
                 msg.push_str(&format!("  {}\n", v));
             }
@@ -948,18 +982,11 @@ fn run_reference_merge(
         }
         morph_core::GitMergeOutcome::FastForward { new_head } => {
             morph_core::sync_to_head_with_origin(store, repo_root, "cli", Some(&version))?;
-            println!(
-                "Fast-forwarded to {}.",
-                &new_head[..new_head.len().min(12)]
-            );
+            println!("Fast-forwarded to {}.", &new_head[..new_head.len().min(12)]);
         }
         morph_core::GitMergeOutcome::Merged { new_head } => {
-            let sync_outcome = morph_core::sync_to_head_with_origin(
-                store,
-                repo_root,
-                "cli",
-                Some(&version),
-            )?;
+            let sync_outcome =
+                morph_core::sync_to_head_with_origin(store, repo_root, "cli", Some(&version))?;
             let mirrored = sync_outcome.new_commit.ok_or_else(|| {
                 anyhow::anyhow!(
                     "git merge {} did not produce a new morph commit",
@@ -983,9 +1010,8 @@ fn run_reference_merge(
             };
             let new_morph = morph_core::rebuild_merge_commit(store, &mirrored, &plan, &opts)?;
             if let Some(obs) = observed {
-                let cert = morph_core::certify_commit(
-                    store, morph_dir, &new_morph, &obs, None, None,
-                )?;
+                let cert =
+                    morph_core::certify_commit(store, morph_dir, &new_morph, &obs, None, None)?;
                 if !cert.passed {
                     eprintln!("warning: certification failed for {}:", new_morph);
                     for f in &cert.failures {
@@ -1003,8 +1029,8 @@ fn run_reference_merge(
             // (the unfinished merge hasn't created a commit yet).
             let head_git_sha = morph_core::git_head_sha(repo_root)?
                 .ok_or_else(|| anyhow::anyhow!("git HEAD missing during conflict path"))?;
-            let other_git_sha =
-                morph_core::lookup_branch_git_sha(repo_root, bare_branch)?.ok_or_else(|| {
+            let other_git_sha = morph_core::lookup_branch_git_sha(repo_root, bare_branch)?
+                .ok_or_else(|| {
                     anyhow::anyhow!(
                         "could not resolve git SHA for branch '{}' after conflict",
                         bare_branch
@@ -1055,11 +1081,12 @@ fn run_reference_merge_continue(
     metrics: Option<String>,
     author: Option<String>,
 ) -> anyhow::Result<()> {
-    let breadcrumb = morph_core::read_merge_breadcrumb(morph_dir)?
-        .ok_or_else(|| anyhow::anyhow!(
+    let breadcrumb = morph_core::read_merge_breadcrumb(morph_dir)?.ok_or_else(|| {
+        anyhow::anyhow!(
             "no merge in progress (.morph/MERGE_REF.json missing). \
              Did you mean to start a new merge with `morph merge <branch>`?"
-        ))?;
+        )
+    })?;
 
     // Refuse to commit until git's index is clean — every unmerged
     // path must be resolved AND staged.
@@ -1073,7 +1100,9 @@ fn run_reference_merge_continue(
         for p in &unmerged {
             eprintln!("  unmerged: {}", p);
         }
-        anyhow::bail!("resolve conflicts and `git add` each path, then re-run `morph merge --continue`");
+        anyhow::bail!(
+            "resolve conflicts and `git add` each path, then re-run `morph merge --continue`"
+        );
     }
 
     let version = read_repo_version(morph_dir)?;
@@ -1112,23 +1141,21 @@ fn run_reference_merge_continue(
             .map_err(|e| anyhow::anyhow!("{}", e))?;
 
     // Mirror the new merge commit into morph with origin = "cli".
-    let outcome =
-        morph_core::sync_to_head_with_origin(store, repo_root, "cli", Some(&version))?;
-    let mirrored = outcome
-        .new_commit
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "git merge {} did not produce a new morph commit",
-                &new_git_sha[..new_git_sha.len().min(12)]
-            )
-        })?;
+    let outcome = morph_core::sync_to_head_with_origin(store, repo_root, "cli", Some(&version))?;
+    let mirrored = outcome.new_commit.ok_or_else(|| {
+        anyhow::anyhow!(
+            "git merge {} did not produce a new morph commit",
+            &new_git_sha[..new_git_sha.len().min(12)]
+        )
+    })?;
 
     // Apply the same v0.42 rebuild the single-shot path uses so
     // `--continue` finalizes a fully-fledged merge commit (suite,
     // pipeline-with-review-node, observed_metrics, evidence_refs).
     let observed_for_rebuild: std::collections::BTreeMap<String, f64> = match &metrics {
-        Some(m) => serde_json::from_str(m)
-            .map_err(|e| anyhow::anyhow!("invalid --metrics JSON: {}", e))?,
+        Some(m) => {
+            serde_json::from_str(m).map_err(|e| anyhow::anyhow!("invalid --metrics JSON: {}", e))?
+        }
         None => std::collections::BTreeMap::new(),
     };
     let resolved_author = morph_core::resolve_author_for_repo(morph_dir, author.as_deref())
@@ -1149,9 +1176,8 @@ fn run_reference_merge_continue(
     // Optional certification — same code path as the single-shot
     // merge in `run_reference_merge`.
     if let Some(metrics_str) = metrics {
-        let observed: std::collections::BTreeMap<String, f64> =
-            serde_json::from_str(&metrics_str)
-                .map_err(|e| anyhow::anyhow!("invalid --metrics JSON: {}", e))?;
+        let observed: std::collections::BTreeMap<String, f64> = serde_json::from_str(&metrics_str)
+            .map_err(|e| anyhow::anyhow!("invalid --metrics JSON: {}", e))?;
         if !observed.is_empty() {
             let cert =
                 morph_core::certify_commit(store, morph_dir, &new_morph, &observed, None, None)?;
@@ -1257,7 +1283,10 @@ fn ensure_reference_synced_for_merge(
             tip
         );
     } else if other.branch_moved {
-        eprintln!("morph: pointing morph branch '{}' at the existing mirror", bare);
+        eprintln!(
+            "morph: pointing morph branch '{}' at the existing mirror",
+            bare
+        );
     }
 
     Ok(())
@@ -1269,10 +1298,7 @@ fn ensure_reference_synced_for_merge(
 /// branch never ran `morph eval run`), and we want the user to know
 /// the merge gate has nothing to enforce on that side rather than
 /// quietly blessing an evidence-free commit.
-fn warn_when_no_morph_claim(
-    store: &dyn morph_core::Store,
-    plan: &morph_core::MergePlan,
-) {
+fn warn_when_no_morph_claim(store: &dyn morph_core::Store, plan: &morph_core::MergePlan) {
     if plan.head_metrics.is_empty() {
         let label = plan.head_branch.as_deref().unwrap_or("HEAD");
         eprintln!(
@@ -1400,11 +1426,10 @@ fn run_merge(
             .as_deref()
             .map(|s| resolve_obj_hash(store.as_ref(), s))
             .transpose()?;
-        let observed: std::collections::BTreeMap<String, f64> =
-            serde_json::from_str(metrics_json)
-                .map_err(|e| anyhow::anyhow!("invalid --metrics JSON: {}", e))?;
-        let retired: Option<Vec<String>> = retire
-            .map(|s| s.split(',').map(|m| m.trim().to_string()).collect());
+        let observed: std::collections::BTreeMap<String, f64> = serde_json::from_str(metrics_json)
+            .map_err(|e| anyhow::anyhow!("invalid --metrics JSON: {}", e))?;
+        let retired: Option<Vec<String>> =
+            retire.map(|s| s.split(',').map(|m| m.trim().to_string()).collect());
         let mut plan = morph_core::prepare_merge(
             store.as_ref(),
             &branch,
@@ -1413,8 +1438,7 @@ fn run_merge(
         )?;
         warn_when_no_morph_claim(store.as_ref(), &plan);
         plan.retire_reason = retire_reason;
-        let resolved_author =
-            morph_core::resolve_author_for_repo(&morph_dir, author.as_deref())?;
+        let resolved_author = morph_core::resolve_author_for_repo(&morph_dir, author.as_deref())?;
         let hash = morph_core::execute_merge(
             store.as_ref(),
             &plan,
@@ -1446,7 +1470,11 @@ fn run_merge(
             println!(
                 "Auto-merging failed for {} path{}; conflict markers written to disk.",
                 outcome.textual_conflicts.len(),
-                if outcome.textual_conflicts.len() == 1 { "" } else { "s" }
+                if outcome.textual_conflicts.len() == 1 {
+                    ""
+                } else {
+                    "s"
+                }
             );
             for p in &outcome.textual_conflicts {
                 println!("  CONFLICT (content): {}", p);
@@ -1456,27 +1484,32 @@ fn run_merge(
             println!(
                 "Pipeline has {} node-level conflict{}:",
                 outcome.pipeline_node_conflicts.len(),
-                if outcome.pipeline_node_conflicts.len() == 1 { "" } else { "s" }
+                if outcome.pipeline_node_conflicts.len() == 1 {
+                    ""
+                } else {
+                    "s"
+                }
             );
             for c in &outcome.pipeline_node_conflicts {
                 println!("  CONFLICT (pipeline node): {}", c.id);
             }
-            println!(
-                "  resolve with: morph merge resolve-node <id> --pick ours|theirs|base"
-            );
+            println!("  resolve with: morph merge resolve-node <id> --pick ours|theirs|base");
         }
         println!("Run `morph status` for details, then `morph merge --continue`.");
         std::process::exit(1);
     }
 
-    if matches!(outcome.trivial, morph_core::TrivialOutcome::AlreadyMerged | morph_core::TrivialOutcome::AlreadyAhead) {
+    if matches!(
+        outcome.trivial,
+        morph_core::TrivialOutcome::AlreadyMerged | morph_core::TrivialOutcome::AlreadyAhead
+    ) {
         println!("Already up to date.");
         return Ok(());
     }
 
     if matches!(outcome.trivial, morph_core::TrivialOutcome::FastForward) {
-        let branch_ref = morph_core::current_branch(store.as_ref())?
-            .unwrap_or_else(|| "main".to_string());
+        let branch_ref =
+            morph_core::current_branch(store.as_ref())?.unwrap_or_else(|| "main".to_string());
         store.ref_write(&format!("heads/{}", branch_ref), &outcome.other)?;
         morph_core::checkout_tree(store.as_ref(), &repo_root, &branch_ref)?;
         println!("Fast-forwarded {} to {}.", branch_ref, outcome.other);
@@ -1520,7 +1553,14 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        Command::Init { path, bare, no_default_policy, solo, git_init, no_git_init } => {
+        Command::Init {
+            path,
+            bare,
+            no_default_policy,
+            solo,
+            git_init,
+            no_git_init,
+        } => {
             verbose_msg(
                 verbose,
                 &format!(
@@ -1550,9 +1590,7 @@ fn main() -> anyhow::Result<()> {
                     false
                 } else if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
                     use std::io::Write;
-                    eprint!(
-                        "morph requires a git repository here. Run `git init` for you? [y/N] "
-                    );
+                    eprint!("morph requires a git repository here. Run `git init` for you? [y/N] ");
                     let _ = std::io::stderr().flush();
                     let mut answer = String::new();
                     if std::io::stdin().read_line(&mut answer).is_err() {
@@ -1633,7 +1671,10 @@ fn main() -> anyhow::Result<()> {
                 .canonicalize()
                 .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(&path))
                 .join(".morph");
-            println!("Initialized empty Morph repository in {}/", abs_morph.display());
+            println!(
+                "Initialized empty Morph repository in {}/",
+                abs_morph.display()
+            );
             if let Some(sha) = init_at.as_deref() {
                 println!("  bound to git HEAD {}", &sha[..sha.len().min(12)]);
             } else {
@@ -1723,7 +1764,11 @@ fn main() -> anyhow::Result<()> {
                         .as_deref()
                         .map(|s| &s[..s.len().min(8)])
                         .unwrap_or("?");
-                    let plural = if outcome.created == 1 { "commit" } else { "commits" };
+                    let plural = if outcome.created == 1 {
+                        "commit"
+                    } else {
+                        "commits"
+                    };
                     println!(
                         "Synced {} git {} (HEAD {}).",
                         outcome.created, plural, short
@@ -1806,8 +1851,14 @@ fn main() -> anyhow::Result<()> {
             run_hook(&event, &args)?;
         }
 
-        Command::Clone { url, destination, branch, bare } => {
-            let dest = destination.unwrap_or_else(|| std::path::PathBuf::from(default_clone_dest(&url)));
+        Command::Clone {
+            url,
+            destination,
+            branch,
+            bare,
+        } => {
+            let dest =
+                destination.unwrap_or_else(|| std::path::PathBuf::from(default_clone_dest(&url)));
             verbose_msg(
                 verbose,
                 &format!(
@@ -1817,11 +1868,8 @@ fn main() -> anyhow::Result<()> {
                     if bare { "bare" } else { "working" }
                 ),
             );
-            let outcome = morph_core::clone_repo(
-                &url,
-                &dest,
-                morph_core::CloneOpts { branch, bare },
-            )?;
+            let outcome =
+                morph_core::clone_repo(&url, &dest, morph_core::CloneOpts { branch, bare })?;
             let abs = dest
                 .canonicalize()
                 .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(&dest));
@@ -1834,46 +1882,113 @@ fn main() -> anyhow::Result<()> {
                     abs.display().to_string()
                 }
             );
-            println!(
-                "  branch:  {} ({})",
-                outcome.branch,
-                outcome.tip.short()
-            );
+            println!("  branch:  {} ({})", outcome.branch, outcome.tip.short());
             println!("  fetched: {} branch(es)", outcome.fetched.len());
         }
 
         #[cfg(feature = "cursor-setup")]
         Command::Setup { sub } => match sub {
             SetupCmd::Cursor { path } => {
-                let root = std::path::Path::new(&path).canonicalize().unwrap_or_else(|_| path.clone());
-                verbose_msg(verbose, &format!("setting up Cursor integration at {}", root.display()));
+                let root = std::path::Path::new(&path)
+                    .canonicalize()
+                    .unwrap_or_else(|_| path.clone());
+                verbose_msg(
+                    verbose,
+                    &format!("setting up Cursor integration at {}", root.display()),
+                );
                 let report = setup::setup_cursor(&root)?;
                 println!("Cursor integration installed in {}", root.display());
                 println!("  Hook scripts: {}", report.hooks_written.join(", "));
                 println!("  Rules: {}", report.rules_written.join(", "));
-                println!("  .cursor/hooks.json: {}", if report.hooks_json_updated { "updated" } else { "unchanged" });
-                println!("  .cursor/mcp.json: {}", if report.mcp_json_updated { "updated" } else { "unchanged" });
+                println!(
+                    "  .cursor/hooks.json: {}",
+                    if report.hooks_json_updated {
+                        "updated"
+                    } else {
+                        "unchanged"
+                    }
+                );
+                println!(
+                    "  .cursor/mcp.json: {}",
+                    if report.mcp_json_updated {
+                        "updated"
+                    } else {
+                        "unchanged"
+                    }
+                );
             }
             SetupCmd::Opencode { path } => {
-                let root = std::path::Path::new(&path).canonicalize().unwrap_or_else(|_| path.clone());
-                verbose_msg(verbose, &format!("setting up OpenCode integration at {}", root.display()));
+                let root = std::path::Path::new(&path)
+                    .canonicalize()
+                    .unwrap_or_else(|_| path.clone());
+                verbose_msg(
+                    verbose,
+                    &format!("setting up OpenCode integration at {}", root.display()),
+                );
                 let report = setup::setup_opencode(&root)?;
                 println!("OpenCode integration installed in {}", root.display());
-                println!("  opencode.json: {}", if report.opencode_json_updated { "updated" } else { "unchanged" });
-                println!("  AGENTS.md: {}", if report.agents_md_written { "written" } else { "unchanged" });
-                println!("  .opencode/plugins/morph-record.ts: {}", if report.plugin_written { "written" } else { "unchanged" });
+                println!(
+                    "  opencode.json: {}",
+                    if report.opencode_json_updated {
+                        "updated"
+                    } else {
+                        "unchanged"
+                    }
+                );
+                println!(
+                    "  AGENTS.md: {}",
+                    if report.agents_md_written {
+                        "written"
+                    } else {
+                        "unchanged"
+                    }
+                );
+                println!(
+                    "  .opencode/plugins/morph-record.ts: {}",
+                    if report.plugin_written {
+                        "written"
+                    } else {
+                        "unchanged"
+                    }
+                );
             }
             SetupCmd::ClaudeCode { path } => {
-                let root = std::path::Path::new(&path).canonicalize().unwrap_or_else(|_| path.clone());
-                verbose_msg(verbose, &format!("setting up Claude Code integration at {}", root.display()));
+                let root = std::path::Path::new(&path)
+                    .canonicalize()
+                    .unwrap_or_else(|_| path.clone());
+                verbose_msg(
+                    verbose,
+                    &format!("setting up Claude Code integration at {}", root.display()),
+                );
                 let report = setup::setup_claude_code(&root)?;
                 println!("Claude Code integration installed in {}", root.display());
                 println!("  Hook scripts: {}", report.hooks_written.join(", "));
-                println!("  .claude/settings.json: {}", if report.settings_json_updated { "updated" } else { "unchanged" });
+                println!(
+                    "  .claude/settings.json: {}",
+                    if report.settings_json_updated {
+                        "updated"
+                    } else {
+                        "unchanged"
+                    }
+                );
             }
-            SetupCmd::Aoe { path, agent, skip_agents, no_bind_mount, no_dockerfile } => {
-                let root = std::path::Path::new(&path).canonicalize().unwrap_or_else(|_| path.clone());
-                verbose_msg(verbose, &format!("setting up Agent of Empires integration at {}", root.display()));
+            SetupCmd::Aoe {
+                path,
+                agent,
+                skip_agents,
+                no_bind_mount,
+                no_dockerfile,
+            } => {
+                let root = std::path::Path::new(&path)
+                    .canonicalize()
+                    .unwrap_or_else(|_| path.clone());
+                verbose_msg(
+                    verbose,
+                    &format!(
+                        "setting up Agent of Empires integration at {}",
+                        root.display()
+                    ),
+                );
                 let opts = setup::AoeSetupOpts {
                     agents: agent,
                     skip_agents,
@@ -1881,10 +1996,34 @@ fn main() -> anyhow::Result<()> {
                     write_dockerfile: !no_dockerfile,
                 };
                 let report = setup::setup_aoe(&root, &opts)?;
-                println!("Agent of Empires integration installed in {}", root.display());
-                println!("  .agent-of-empires/config.toml: {}", if report.config_toml_updated { "updated" } else { "unchanged" });
-                println!("  .agent-of-empires/Dockerfile.morph-aoe: {}", if report.dockerfile_written { "written" } else { "skipped" });
-                println!("  AGENTS.md: {}", if report.agents_md_written { "written" } else { "unchanged" });
+                println!(
+                    "Agent of Empires integration installed in {}",
+                    root.display()
+                );
+                println!(
+                    "  .agent-of-empires/config.toml: {}",
+                    if report.config_toml_updated {
+                        "updated"
+                    } else {
+                        "unchanged"
+                    }
+                );
+                println!(
+                    "  .agent-of-empires/Dockerfile.morph-aoe: {}",
+                    if report.dockerfile_written {
+                        "written"
+                    } else {
+                        "skipped"
+                    }
+                );
+                println!(
+                    "  AGENTS.md: {}",
+                    if report.agents_md_written {
+                        "written"
+                    } else {
+                        "unchanged"
+                    }
+                );
                 if report.delegated.is_empty() {
                     println!("  Per-agent setups: skipped");
                 } else {
@@ -1996,10 +2135,7 @@ fn main() -> anyhow::Result<()> {
             // Pre-flight: load and classify so dry-run / confirm
             // can be honest about what's about to die.
             if morph_core::Store::is_forgotten(&fs_store, &target)? {
-                anyhow::bail!(
-                    "{} is already forgotten in this store",
-                    target
-                );
+                anyhow::bail!("{} is already forgotten in this store", target);
             }
             let obj = morph_core::Store::get(&fs_store, &target)?;
             let kind = morph_core::forget::forgettable_kind_label(&obj).ok_or_else(|| {
@@ -2015,10 +2151,7 @@ fn main() -> anyhow::Result<()> {
             println!("Forget plan:");
             println!("  hash:     {}", target);
             println!("  kind:     {}", kind);
-            println!(
-                "  reason:   {}",
-                reason.as_deref().unwrap_or("(none)")
-            );
+            println!("  reason:   {}", reason.as_deref().unwrap_or("(none)"));
             if referencing.is_empty() {
                 println!("  commits:  0 (no commit references this hash)");
             } else {
@@ -2046,7 +2179,10 @@ fn main() -> anyhow::Result<()> {
                 }
             }
             if let Some(name) = &remote {
-                println!("  remote:   {} (push tombstone with `morph push {}`)", name, name);
+                println!(
+                    "  remote:   {} (push tombstone with `morph push {}`)",
+                    name, name
+                );
             }
 
             if dry_run {
@@ -2089,13 +2225,8 @@ fn main() -> anyhow::Result<()> {
             }
 
             let actor = morph_core::resolve_author_for_repo(&morph_dir, None)?;
-            let report = morph_core::forget_local(
-                &fs_store,
-                &target,
-                &actor,
-                reason.as_deref(),
-                force,
-            )?;
+            let report =
+                morph_core::forget_local(&fs_store, &target, &actor, reason.as_deref(), force)?;
 
             println!(
                 "forgot {} {}; tombstone {}",
@@ -2137,7 +2268,10 @@ fn main() -> anyhow::Result<()> {
             let fs_store = morph_core::FsStore::from_store_version(&morph_dir)?;
             let result = morph_core::gc(&fs_store, &morph_dir)?;
             if result.objects_removed == 0 {
-                println!("Nothing to clean up. {} objects total.", result.objects_before);
+                println!(
+                    "Nothing to clean up. {} objects total.",
+                    result.objects_before
+                );
             } else {
                 let freed_mb = result.bytes_freed as f64 / 1_048_576.0;
                 println!(
@@ -2149,7 +2283,11 @@ fn main() -> anyhow::Result<()> {
         }
 
         #[cfg(feature = "visualize")]
-        Command::Visualize { path, port, interface } => {
+        Command::Visualize {
+            path,
+            port,
+            interface,
+        } => {
             let repo_root = path.canonicalize().unwrap_or(path);
             let morph_dir = if repo_root.join(".morph").exists() {
                 repo_root.join(".morph")
@@ -2158,49 +2296,82 @@ fn main() -> anyhow::Result<()> {
                     .ok_or_else(|| anyhow::anyhow!("not a morph repository"))?
                     .join(".morph")
             };
-            let addr = format!("{}:{}", interface, port).parse()
+            let addr = format!("{}:{}", interface, port)
+                .parse()
                 .map_err(|_| anyhow::anyhow!("invalid address: {}:{}", interface, port))?;
             morph_serve::run_blocking(morph_dir, addr).map_err(|e| anyhow::anyhow!("{}", e))?;
         }
 
         #[cfg(feature = "visualize")]
-        Command::Serve { repos, port, interface, org_policy } => {
+        Command::Serve {
+            repos,
+            port,
+            interface,
+            org_policy,
+        } => {
             let repo_entries = if repos.is_empty() {
                 let cwd = std::env::current_dir()?;
-                let repo_root = find_repo(&cwd)
-                    .ok_or_else(|| anyhow::anyhow!("not a morph repository; specify --repo name=path"))?;
-                vec![morph_serve::RepoEntry { name: "default".into(), morph_dir: repo_root.join(".morph") }]
+                let repo_root = find_repo(&cwd).ok_or_else(|| {
+                    anyhow::anyhow!("not a morph repository; specify --repo name=path")
+                })?;
+                vec![morph_serve::RepoEntry {
+                    name: "default".into(),
+                    morph_dir: repo_root.join(".morph"),
+                }]
             } else {
-                repos.iter().map(|spec| {
-                    let (name, path_str) = spec.split_once('=')
-                        .ok_or_else(|| anyhow::anyhow!("repo spec must be name=path, got: {}", spec))?;
-                    let path = PathBuf::from(path_str);
-                    let morph_dir = if path.join(".morph").exists() {
-                        path.join(".morph")
-                    } else {
-                        find_repo(&path)
-                            .ok_or_else(|| anyhow::anyhow!("not a morph repository: {}", path_str))?
-                            .join(".morph")
-                    };
-                    Ok(morph_serve::RepoEntry { name: name.to_string(), morph_dir })
-                }).collect::<anyhow::Result<Vec<_>>>()?
+                repos
+                    .iter()
+                    .map(|spec| {
+                        let (name, path_str) = spec.split_once('=').ok_or_else(|| {
+                            anyhow::anyhow!("repo spec must be name=path, got: {}", spec)
+                        })?;
+                        let path = PathBuf::from(path_str);
+                        let morph_dir = if path.join(".morph").exists() {
+                            path.join(".morph")
+                        } else {
+                            find_repo(&path)
+                                .ok_or_else(|| {
+                                    anyhow::anyhow!("not a morph repository: {}", path_str)
+                                })?
+                                .join(".morph")
+                        };
+                        Ok(morph_serve::RepoEntry {
+                            name: name.to_string(),
+                            morph_dir,
+                        })
+                    })
+                    .collect::<anyhow::Result<Vec<_>>>()?
             };
-            let addr: std::net::SocketAddr = format!("{}:{}", interface, port).parse()
+            let addr: std::net::SocketAddr = format!("{}:{}", interface, port)
+                .parse()
                 .map_err(|_| anyhow::anyhow!("invalid address: {}:{}", interface, port))?;
-            morph_serve::run_service(morph_serve::ServiceConfig { repos: repo_entries, addr, org_policy_path: org_policy })
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            morph_serve::run_service(morph_serve::ServiceConfig {
+                repos: repo_entries,
+                addr,
+                org_policy_path: org_policy,
+            })
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
         }
 
-        Command::Diff { old_ref, new_ref, json } => {
+        Command::Diff {
+            old_ref,
+            new_ref,
+            json,
+        } => {
             let (_repo_root, store) = get_store(verbose)?;
             let old_hash = resolve_ref_name(&store, &old_ref)?;
             let new_hash = resolve_ref_name(&store, &new_ref)?;
             let entries = morph_core::diff_commits(&store, &old_hash, &new_hash)?;
             if json {
-                let changes: Vec<_> = entries.iter().map(|e| serde_json::json!({
-                    "status": e.status.to_string(),
-                    "path": e.path,
-                })).collect();
+                let changes: Vec<_> = entries
+                    .iter()
+                    .map(|e| {
+                        serde_json::json!({
+                            "status": e.status.to_string(),
+                            "path": e.path,
+                        })
+                    })
+                    .collect();
                 let body = serde_json::json!({
                     "from": { "ref": old_ref, "hash": old_hash.to_string() },
                     "to":   { "ref": new_ref, "hash": new_hash.to_string() },
@@ -2229,11 +2400,16 @@ fn main() -> anyhow::Result<()> {
             } else {
                 let tags = morph_core::list_tags(&store)?;
                 if json {
-                    let entries: Vec<_> = tags.iter().map(|(name, hash)| serde_json::json!({
-                        "name": name,
-                        "hash": hash.to_string(),
-                        "short": hash.short(),
-                    })).collect();
+                    let entries: Vec<_> = tags
+                        .iter()
+                        .map(|(name, hash)| {
+                            serde_json::json!({
+                                "name": name,
+                                "hash": hash.to_string(),
+                                "short": hash.short(),
+                            })
+                        })
+                        .collect();
                     let body = serde_json::json!({ "tags": entries, "count": tags.len() });
                     println!("{}", serde_json::to_string_pretty(&body)?);
                 } else {
@@ -2250,15 +2426,35 @@ fn main() -> anyhow::Result<()> {
             match sub {
                 StashCmd::Save { message } => {
                     let entry = morph_core::stash_save(&morph_dir, message.as_deref())?;
-                    println!("Saved stash {}{}", entry.id, entry.message.as_ref().map(|m| format!(": {}", m)).unwrap_or_default());
+                    println!(
+                        "Saved stash {}{}",
+                        entry.id,
+                        entry
+                            .message
+                            .as_ref()
+                            .map(|m| format!(": {}", m))
+                            .unwrap_or_default()
+                    );
                 }
                 StashCmd::Pop => {
                     let entry = morph_core::stash_pop(&morph_dir)?;
-                    println!("Restored stash {}{}", entry.id, entry.message.as_ref().map(|m| format!(": {}", m)).unwrap_or_default());
+                    println!(
+                        "Restored stash {}{}",
+                        entry.id,
+                        entry
+                            .message
+                            .as_ref()
+                            .map(|m| format!(": {}", m))
+                            .unwrap_or_default()
+                    );
                 }
                 StashCmd::List => {
                     for (i, entry) in morph_core::stash_list(&morph_dir)?.iter().enumerate() {
-                        println!("stash@{{{}}}: {}", i, entry.message.as_deref().unwrap_or("(no message)"));
+                        println!(
+                            "stash@{{{}}}: {}",
+                            i,
+                            entry.message.as_deref().unwrap_or("(no message)")
+                        );
                     }
                 }
             }
@@ -2274,7 +2470,11 @@ fn main() -> anyhow::Result<()> {
         Command::Prompt { sub } => match sub {
             PromptCmd::Create { path } => {
                 let (repo_root, store) = get_store(verbose)?;
-                let full = if path.is_absolute() { path } else { repo_root.join(&path) };
+                let full = if path.is_absolute() {
+                    path
+                } else {
+                    repo_root.join(&path)
+                };
                 let obj = morph_core::blob_from_prompt_file(&full)?;
                 let hash = store.put(&obj)?;
                 println!("{}", hash);
@@ -2283,12 +2483,18 @@ fn main() -> anyhow::Result<()> {
                 let (repo_root, store) = get_store(verbose)?;
                 let h = resolve_obj_hash(store.as_ref(), &hash)?;
                 let dest = output.unwrap_or_else(|| {
-                    repo_root.join(".morph").join("prompts").join(format!("{}.prompt", h))
+                    repo_root
+                        .join(".morph")
+                        .join("prompts")
+                        .join(format!("{}.prompt", h))
                 });
                 morph_core::materialize_blob(&store, &h, &dest)?;
                 println!("Materialized to {}", dest.display());
             }
-            PromptCmd::Show { run_ref, run_upgrade } => {
+            PromptCmd::Show {
+                run_ref,
+                run_upgrade,
+            } => {
                 cmd_prompt_show(verbose, &run_ref, run_upgrade)?;
             }
         },
@@ -2296,7 +2502,11 @@ fn main() -> anyhow::Result<()> {
         Command::Pipeline { sub } => match sub {
             PipelineCmd::Create { path } => {
                 let (repo_root, store) = get_store(verbose)?;
-                let full = if path.is_absolute() { path } else { repo_root.join(&path) };
+                let full = if path.is_absolute() {
+                    path
+                } else {
+                    repo_root.join(&path)
+                };
                 let obj = morph_core::pipeline_from_file(&full)?;
                 println!("{}", store.put(&obj)?);
             }
@@ -2312,7 +2522,10 @@ fn main() -> anyhow::Result<()> {
             PipelineCmd::Extract { from_run } => {
                 let (_repo_root, store) = get_store(verbose)?;
                 let run_hash = resolve_obj_hash(store.as_ref(), &from_run)?;
-                println!("{}", morph_core::extract_pipeline_from_run(&store, &run_hash)?);
+                println!(
+                    "{}",
+                    morph_core::extract_pipeline_from_run(&store, &run_hash)?
+                );
             }
         },
 
@@ -2379,9 +2592,27 @@ fn main() -> anyhow::Result<()> {
 
             if summary.runs > 0 || summary.traces > 0 || summary.prompts > 0 {
                 let mut parts = Vec::new();
-                if summary.runs > 0 { parts.push(format!("{} run{}", summary.runs, if summary.runs == 1 { "" } else { "s" })); }
-                if summary.traces > 0 { parts.push(format!("{} trace{}", summary.traces, if summary.traces == 1 { "" } else { "s" })); }
-                if summary.prompts > 0 { parts.push(format!("{} prompt{}", summary.prompts, if summary.prompts == 1 { "" } else { "s" })); }
+                if summary.runs > 0 {
+                    parts.push(format!(
+                        "{} run{}",
+                        summary.runs,
+                        if summary.runs == 1 { "" } else { "s" }
+                    ));
+                }
+                if summary.traces > 0 {
+                    parts.push(format!(
+                        "{} trace{}",
+                        summary.traces,
+                        if summary.traces == 1 { "" } else { "s" }
+                    ));
+                }
+                if summary.prompts > 0 {
+                    parts.push(format!(
+                        "{} prompt{}",
+                        summary.prompts,
+                        if summary.prompts == 1 { "" } else { "s" }
+                    ));
+                }
                 println!("Morph activity: {}", parts.join(", "));
             }
 
@@ -2429,7 +2660,9 @@ fn main() -> anyhow::Result<()> {
                     if let Some(last) = drift.last_mirrored_git_sha.as_deref() {
                         println!("  last mirrored:   {}", &last[..last.len().min(12)]);
                     } else {
-                        println!("  last mirrored:   (none — run `morph reference-sync --backfill`)");
+                        println!(
+                            "  last mirrored:   (none — run `morph reference-sync --backfill`)"
+                        );
                     }
                 }
                 let stale = morph_core::list_stale_certifications(store.as_ref())?;
@@ -2487,11 +2720,16 @@ fn main() -> anyhow::Result<()> {
             let (repo_root, store) = get_store(verbose)?;
             let entries = morph_core::status(&store, &repo_root)?;
             if json {
-                let items: Vec<_> = entries.iter().map(|e| serde_json::json!({
-                    "path": e.path.display().to_string(),
-                    "status": if e.in_store { "tracked" } else { "new" },
-                    "hash": e.hash.as_ref().map(|h| h.to_string()),
-                })).collect();
+                let items: Vec<_> = entries
+                    .iter()
+                    .map(|e| {
+                        serde_json::json!({
+                            "path": e.path.display().to_string(),
+                            "status": if e.in_store { "tracked" } else { "new" },
+                            "hash": e.hash.as_ref().map(|h| h.to_string()),
+                        })
+                    })
+                    .collect();
                 let body = serde_json::json!({ "files": items, "count": entries.len() });
                 println!("{}", serde_json::to_string_pretty(&body)?);
                 return Ok(());
@@ -2509,9 +2747,9 @@ fn main() -> anyhow::Result<()> {
 
         Command::Add { paths } => {
             let (repo_root, store) = get_store(verbose)?;
-            let any_dir = paths.iter().any(|p| {
-                p.as_os_str() == "." || repo_root.join(p).is_dir()
-            });
+            let any_dir = paths
+                .iter()
+                .any(|p| p.as_os_str() == "." || repo_root.join(p).is_dir());
             let hashes = morph_core::add_paths(&store, &repo_root, &paths)?;
             // Reference mode is the only mode (v0.40+); morph
             // commits ride on top of git commits. Mirror the user's
@@ -2529,7 +2767,11 @@ fn main() -> anyhow::Result<()> {
             }
             if any_dir && !verbose {
                 if !hashes.is_empty() {
-                    eprintln!("{} file{} staged", hashes.len(), if hashes.len() == 1 { "" } else { "s" });
+                    eprintln!(
+                        "{} file{} staged",
+                        hashes.len(),
+                        if hashes.len() == 1 { "" } else { "s" }
+                    );
                 }
             } else {
                 for h in &hashes {
@@ -2538,7 +2780,19 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        Command::Commit { message, pipeline, eval_suite, metrics, author, from_run, allow_empty_metrics, new_cases, no_auto_run, json, allow_empty_commit } => {
+        Command::Commit {
+            message,
+            pipeline,
+            eval_suite,
+            metrics,
+            author,
+            from_run,
+            allow_empty_metrics,
+            new_cases,
+            no_auto_run,
+            json,
+            allow_empty_commit,
+        } => {
             let (repo_root, store) = get_store(verbose)?;
             let morph_dir = repo_root.join(".morph");
             let version = read_repo_version(&morph_dir)?;
@@ -2568,14 +2822,20 @@ fn main() -> anyhow::Result<()> {
                     json,
                 )?;
                 if let Err(e) = morph_core::clear_last_run(&morph_dir) {
-                    eprintln!("warning: could not clear LAST_RUN breadcrumb after commit: {}", e);
+                    eprintln!(
+                        "warning: could not clear LAST_RUN breadcrumb after commit: {}",
+                        e
+                    );
                 }
                 return Ok(());
             }
             // Reference-mode-only flag: a no-op for standalone commits
             // since we don't shell out to git here.
             let _ = allow_empty_commit;
-            let prog_hash = pipeline.as_deref().map(|s| resolve_obj_hash(store.as_ref(), s)).transpose()?;
+            let prog_hash = pipeline
+                .as_deref()
+                .map(|s| resolve_obj_hash(store.as_ref(), s))
+                .transpose()?;
             let policy = morph_core::read_policy(&morph_dir)?;
             // Resolve --eval-suite, falling back to the policy default
             // when unset so commits inherit the latest registered
@@ -2623,7 +2883,8 @@ fn main() -> anyhow::Result<()> {
                 }
             };
 
-            let mut observed_metrics: std::collections::BTreeMap<String, f64> = metrics.as_deref()
+            let mut observed_metrics: std::collections::BTreeMap<String, f64> = metrics
+                .as_deref()
                 .map(serde_json::from_str)
                 .transpose()
                 .map_err(|e| anyhow::anyhow!("invalid --metrics JSON: {}", e))?
@@ -2701,7 +2962,10 @@ fn main() -> anyhow::Result<()> {
                             );
                         }
                         Err(e) => {
-                            eprintln!("warning: could not load run from LAST_RUN breadcrumb: {}", e);
+                            eprintln!(
+                                "warning: could not load run from LAST_RUN breadcrumb: {}",
+                                e
+                            );
                         }
                     }
                 }
@@ -2720,7 +2984,11 @@ fn main() -> anyhow::Result<()> {
                     ));
                 }
             }
-            let provenance = match from_run.as_ref().map(|s| resolve_obj_hash(store.as_ref(), s)).transpose()? {
+            let provenance = match from_run
+                .as_ref()
+                .map(|s| resolve_obj_hash(store.as_ref(), s))
+                .transpose()?
+            {
                 Some(run_hash) => Some(morph_core::resolve_provenance_from_run(&store, &run_hash)?),
                 None => match &auto_run_hash {
                     Some(h) => Some(morph_core::resolve_provenance_from_run(&store, h)?),
@@ -2754,17 +3022,25 @@ fn main() -> anyhow::Result<()> {
                     suite_hash.as_ref(),
                     head_suite_hash.as_ref(),
                 )?;
-                if diff.is_empty() { None } else { Some(diff) }
+                if diff.is_empty() {
+                    None
+                } else {
+                    Some(diff)
+                }
             };
 
-            let resolved_author = morph_core::resolve_author_for_repo(
-                &morph_dir,
-                author.as_deref(),
-            )?;
+            let resolved_author =
+                morph_core::resolve_author_for_repo(&morph_dir, author.as_deref())?;
             let hash = morph_core::create_tree_commit_with_provenance(
-                &store, &repo_root, prog_hash.as_ref(), suite_hash.as_ref(),
-                observed_metrics, message.clone(), Some(resolved_author),
-                Some(&version), provenance.as_ref(),
+                &store,
+                &repo_root,
+                prog_hash.as_ref(),
+                suite_hash.as_ref(),
+                observed_metrics,
+                message.clone(),
+                Some(resolved_author),
+                Some(&version),
+                provenance.as_ref(),
             )?;
 
             // Phase 6b: record which acceptance cases this commit
@@ -2779,7 +3055,9 @@ fn main() -> anyhow::Result<()> {
             };
             if let Some(cases) = cases_for_annotation {
                 if let Some(ann) = morph_core::build_introduces_cases_annotation(
-                    &hash, &cases, Some(branch.clone()),
+                    &hash,
+                    &cases,
+                    Some(branch.clone()),
                 ) {
                     store.put(&ann)?;
                 }
@@ -2791,7 +3069,10 @@ fn main() -> anyhow::Result<()> {
             // single-use by design — its job is to bridge the
             // `eval run` → `commit` boundary, not to persist evidence.
             if let Err(e) = morph_core::clear_last_run(&morph_dir) {
-                eprintln!("warning: could not clear LAST_RUN breadcrumb after commit: {}", e);
+                eprintln!(
+                    "warning: could not clear LAST_RUN breadcrumb after commit: {}",
+                    e
+                );
             }
 
             // Phase 1a: warn when committing without observed_metrics.
@@ -2821,7 +3102,11 @@ fn main() -> anyhow::Result<()> {
                 let first_line = message.lines().next().unwrap_or("");
                 println!("[{}{} {}] {}", branch, root_tag, short, first_line);
                 if file_count > 0 {
-                    println!(" {} file{} committed", file_count, if file_count == 1 { "" } else { "s" });
+                    println!(
+                        " {} file{} committed",
+                        file_count,
+                        if file_count == 1 { "" } else { "s" }
+                    );
                 }
             }
         }
@@ -2832,7 +3117,13 @@ fn main() -> anyhow::Result<()> {
             println!("{}", serde_json::to_string_pretty(&obj)?);
         }
 
-        Command::Log { ref_name, max_count, oneline, full_hash, json } => {
+        Command::Log {
+            ref_name,
+            max_count,
+            oneline,
+            full_hash,
+            json,
+        } => {
             let (_repo_root, store) = get_store(verbose)?;
             let mut hashes = morph_core::log_from(&store, &ref_name)?;
             if let Some(n) = max_count {
@@ -2872,11 +3163,20 @@ fn main() -> anyhow::Result<()> {
                     if oneline {
                         println!("{}  {}", display_hash, subject);
                     } else {
-                        let ver_tag = c.morph_version.as_deref()
+                        let ver_tag = c
+                            .morph_version
+                            .as_deref()
                             .map(|v| format!("[v{}]", v))
                             .unwrap_or_else(|| "[pre-tree]".into());
-                        let tree_tag = if c.tree.is_some() { "" } else { " (no file tree)" };
-                        println!("{} {} {}{} {}", display_hash, ver_tag, subject, tree_tag, c.author);
+                        let tree_tag = if c.tree.is_some() {
+                            ""
+                        } else {
+                            " (no file tree)"
+                        };
+                        println!(
+                            "{} {} {}{} {}",
+                            display_hash, ver_tag, subject, tree_tag, c.author
+                        );
                     }
                 }
             }
@@ -2948,23 +3248,26 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        Command::Branch { name, set_upstream, json } => {
+        Command::Branch {
+            name,
+            set_upstream,
+            json,
+        } => {
             let (repo_root, store) = get_store(verbose)?;
             // `branch --set-upstream <remote>/<branch>` works on
             // the named branch (or current if unspecified).
             if let Some(spec) = set_upstream {
                 let target = match name.as_ref() {
                     Some(n) => n.clone(),
-                    None => morph_core::current_branch(&store)?
-                        .ok_or_else(|| anyhow::anyhow!(
+                    None => morph_core::current_branch(&store)?.ok_or_else(|| {
+                        anyhow::anyhow!(
                             "no current branch (detached HEAD?); name a branch explicitly"
-                        ))?,
+                        )
+                    })?,
                 };
                 let (remote, upstream_branch) = spec
                     .split_once('/')
-                    .ok_or_else(|| anyhow::anyhow!(
-                        "expected <remote>/<branch>, got: {}", spec
-                    ))?;
+                    .ok_or_else(|| anyhow::anyhow!("expected <remote>/<branch>, got: {}", spec))?;
                 morph_core::set_branch_upstream(
                     &repo_root.join(".morph"),
                     &target,
@@ -3003,15 +3306,18 @@ fn main() -> anyhow::Result<()> {
                 let mut branches = store.list_branches()?;
                 branches.sort_by(|a, b| a.0.cmp(&b.0));
                 if json {
-                    let entries: Vec<_> = branches.iter().map(|(name, hash)| {
-                        let h_str = hash.to_string();
-                        serde_json::json!({
-                            "name": name,
-                            "hash": h_str,
-                            "short": short_hash_str(&h_str),
-                            "current": current.as_deref() == Some(name.as_str()),
+                    let entries: Vec<_> = branches
+                        .iter()
+                        .map(|(name, hash)| {
+                            let h_str = hash.to_string();
+                            serde_json::json!({
+                                "name": name,
+                                "hash": h_str,
+                                "short": short_hash_str(&h_str),
+                                "current": current.as_deref() == Some(name.as_str()),
+                            })
                         })
-                    }).collect();
+                        .collect();
                     let body = serde_json::json!({
                         "current": current,
                         "branches": entries,
@@ -3020,7 +3326,11 @@ fn main() -> anyhow::Result<()> {
                     println!("{}", serde_json::to_string_pretty(&body)?);
                 } else {
                     for (name, _hash) in branches {
-                        let mark = if current.as_deref() == Some(&name) { "* " } else { "  " };
+                        let mark = if current.as_deref() == Some(&name) {
+                            "* "
+                        } else {
+                            "  "
+                        };
                         println!("{}{}", mark, name);
                     }
                 }
@@ -3036,8 +3346,8 @@ fn main() -> anyhow::Result<()> {
             // refs to keep them aligned. Skip the git step for bare
             // hex hashes — git wouldn't know about a morph object
             // hash, and morph's detached-HEAD semantics still apply.
-            let is_hex_hash = ref_name.len() == 64
-                && ref_name.chars().all(|c| c.is_ascii_hexdigit());
+            let is_hex_hash =
+                ref_name.len() == 64 && ref_name.chars().all(|c| c.is_ascii_hexdigit());
             if !is_hex_hash && morph_core::is_git_working_tree(&repo_root) {
                 let status = std::process::Command::new("git")
                     .current_dir(&repo_root)
@@ -3058,7 +3368,10 @@ fn main() -> anyhow::Result<()> {
             if is_hex_hash {
                 println!("Detached HEAD at {}", hash);
             } else {
-                println!("Switched to branch {}", ref_name.trim_start_matches("heads/"));
+                println!(
+                    "Switched to branch {}",
+                    ref_name.trim_start_matches("heads/")
+                );
             }
             if tree_restored {
                 verbose_msg(verbose, "working tree restored from commit tree");
@@ -3070,29 +3383,35 @@ fn main() -> anyhow::Result<()> {
                 let (_repo_root, store) = get_store(verbose)?;
                 let runs = store.list(ObjectType::Run)?;
                 if json {
-                    let entries: Vec<_> = runs.iter().map(|h| {
-                        let h_str = h.to_string();
-                        let mut entry = serde_json::json!({
-                            "hash": h_str,
-                            "short": short_hash_str(&h_str),
-                        });
-                        if let Ok(MorphObject::Run(r)) = store.get(h) {
-                            entry["agent_id"] = serde_json::Value::String(r.agent.id.clone());
-                            entry["agent_version"] = serde_json::Value::String(r.agent.version.clone());
-                            entry["model"] = serde_json::Value::String(r.environment.model.clone());
-                            entry["pipeline"] = serde_json::Value::String(r.pipeline.clone());
-                            if let Some(c) = &r.commit {
-                                entry["commit"] = serde_json::Value::String(c.clone());
-                            }
-                            entry["has_metrics"] = serde_json::Value::Bool(!r.metrics.is_empty());
-                            if !r.metrics.is_empty() {
-                                if let Ok(m) = serde_json::to_value(&r.metrics) {
-                                    entry["metrics"] = m;
+                    let entries: Vec<_> = runs
+                        .iter()
+                        .map(|h| {
+                            let h_str = h.to_string();
+                            let mut entry = serde_json::json!({
+                                "hash": h_str,
+                                "short": short_hash_str(&h_str),
+                            });
+                            if let Ok(MorphObject::Run(r)) = store.get(h) {
+                                entry["agent_id"] = serde_json::Value::String(r.agent.id.clone());
+                                entry["agent_version"] =
+                                    serde_json::Value::String(r.agent.version.clone());
+                                entry["model"] =
+                                    serde_json::Value::String(r.environment.model.clone());
+                                entry["pipeline"] = serde_json::Value::String(r.pipeline.clone());
+                                if let Some(c) = &r.commit {
+                                    entry["commit"] = serde_json::Value::String(c.clone());
+                                }
+                                entry["has_metrics"] =
+                                    serde_json::Value::Bool(!r.metrics.is_empty());
+                                if !r.metrics.is_empty() {
+                                    if let Ok(m) = serde_json::to_value(&r.metrics) {
+                                        entry["metrics"] = m;
+                                    }
                                 }
                             }
-                        }
-                        entry
-                    }).collect();
+                            entry
+                        })
+                        .collect();
                     let body = serde_json::json!({ "runs": entries, "count": runs.len() });
                     println!("{}", serde_json::to_string_pretty(&body)?);
                 } else {
@@ -3101,7 +3420,11 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
             }
-            RunCmd::Show { hash, json, with_trace } => {
+            RunCmd::Show {
+                hash,
+                json,
+                with_trace,
+            } => {
                 let (_repo_root, store) = get_store(verbose)?;
                 let hash = resolve_obj_hash(store.as_ref(), &hash)?;
                 let obj = store.get(&hash)?;
@@ -3110,9 +3433,16 @@ fn main() -> anyhow::Result<()> {
                         if json {
                             println!("{}", serde_json::to_string_pretty(run)?);
                         } else {
-                            println!("run    {}\ntrace  {}\npipeline {}\nagent  {} {}", hash, run.trace, run.pipeline, run.agent.id, run.agent.version);
-                            if let Some(ref c) = run.commit { println!("commit {}", c); }
-                            if !run.metrics.is_empty() { println!("metrics {:?}", run.metrics); }
+                            println!(
+                                "run    {}\ntrace  {}\npipeline {}\nagent  {} {}",
+                                hash, run.trace, run.pipeline, run.agent.id, run.agent.version
+                            );
+                            if let Some(ref c) = run.commit {
+                                println!("commit {}", c);
+                            }
+                            if !run.metrics.is_empty() {
+                                println!("metrics {:?}", run.metrics);
+                            }
                         }
                         if with_trace {
                             let trace_obj = store.get(&parse_hash(&run.trace)?)?;
@@ -3127,20 +3457,57 @@ fn main() -> anyhow::Result<()> {
                     _ => anyhow::bail!("object {} is not a run", hash),
                 }
             }
-            RunCmd::Record { run_file, trace, artifact } => {
+            RunCmd::Record {
+                run_file,
+                trace,
+                artifact,
+            } => {
                 let (repo_root, store) = get_store(verbose)?;
-                let full_run = if run_file.is_absolute() { run_file } else { repo_root.join(&run_file) };
-                let trace_opt = trace.map(|t| if t.is_absolute() { t } else { repo_root.join(&t) });
-                let artifact_paths: Vec<_> = artifact.iter().map(|a| if a.is_absolute() { a.clone() } else { repo_root.join(a) }).collect();
+                let full_run = if run_file.is_absolute() {
+                    run_file
+                } else {
+                    repo_root.join(&run_file)
+                };
+                let trace_opt = trace.map(|t| {
+                    if t.is_absolute() {
+                        t
+                    } else {
+                        repo_root.join(&t)
+                    }
+                });
+                let artifact_paths: Vec<_> = artifact
+                    .iter()
+                    .map(|a| {
+                        if a.is_absolute() {
+                            a.clone()
+                        } else {
+                            repo_root.join(a)
+                        }
+                    })
+                    .collect();
                 let refs: Vec<_> = artifact_paths.iter().map(|p| p.as_path()).collect();
-                println!("{}", morph_core::record_run(&store, &full_run, trace_opt.as_deref(), &refs)?);
+                println!(
+                    "{}",
+                    morph_core::record_run(&store, &full_run, trace_opt.as_deref(), &refs)?
+                );
             }
-            RunCmd::RecordSession { prompt, response, messages, model_name, agent_id } => {
+            RunCmd::RecordSession {
+                prompt,
+                response,
+                messages,
+                model_name,
+                agent_id,
+            } => {
                 let (_repo_root, store) = get_store(verbose)?;
                 let hash = if let Some(ref json) = messages {
                     let msgs: Vec<morph_core::ConversationMessage> = serde_json::from_str(json)
                         .map_err(|e| anyhow::anyhow!("invalid --messages JSON: {}", e))?;
-                    morph_core::record_conversation(&store, &msgs, model_name.as_deref(), agent_id.as_deref())?
+                    morph_core::record_conversation(
+                        &store,
+                        &msgs,
+                        model_name.as_deref(),
+                        agent_id.as_deref(),
+                    )?
                 } else {
                     morph_core::record_session(
                         &store,
@@ -3220,13 +3587,15 @@ fn main() -> anyhow::Result<()> {
                 if run_hash == "all" {
                     let hashes = store.list(ObjectType::Run)?;
                     let mut total_issues = 0;
-                    let mut issue_counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+                    let mut issue_counts: std::collections::BTreeMap<String, usize> =
+                        std::collections::BTreeMap::new();
                     for h in &hashes {
                         match morph_core::diagnose_run(store.as_ref(), h) {
                             Ok(diag) => {
                                 for issue in &diag.issues {
                                     total_issues += 1;
-                                    let key = issue.split(" — ").next().unwrap_or(issue).to_string();
+                                    let key =
+                                        issue.split(" — ").next().unwrap_or(issue).to_string();
                                     *issue_counts.entry(key).or_insert(0) += 1;
                                 }
                             }
@@ -3244,13 +3613,22 @@ fn main() -> anyhow::Result<()> {
                     println!("{}", serde_json::to_string_pretty(&diag)?);
                 }
             }
-            TapCmd::Export { mode, output, model, agent, min_steps } => {
+            TapCmd::Export {
+                mode,
+                output,
+                model,
+                agent,
+                min_steps,
+            } => {
                 let (_repo_root, store) = get_store(verbose)?;
                 let export_mode = match mode.as_str() {
                     "prompt-only" => morph_core::ExportMode::PromptOnly,
                     "with-context" => morph_core::ExportMode::WithContext,
                     "agentic" => morph_core::ExportMode::Agentic,
-                    other => anyhow::bail!("unknown export mode '{}' (use: prompt-only, with-context, agentic)", other),
+                    other => anyhow::bail!(
+                        "unknown export mode '{}' (use: prompt-only, with-context, agentic)",
+                        other
+                    ),
                 };
 
                 let cases = if model.is_some() || agent.is_some() || min_steps.is_some() {
@@ -3285,9 +3663,19 @@ fn main() -> anyhow::Result<()> {
                 let (_repo_root, store) = get_store(verbose)?;
                 let h = resolve_obj_hash(store.as_ref(), &trace_hash)?;
                 let stats = morph_core::trace_stats(store.as_ref(), &h)?;
-                println!("=== Trace {} ===\n", &trace_hash[..12.min(trace_hash.len())]);
+                println!(
+                    "=== Trace {} ===\n",
+                    &trace_hash[..12.min(trace_hash.len())]
+                );
                 println!("Events:             {}", stats.event_count);
-                println!("Structured events:  {}", if stats.has_structured_events { "yes" } else { "no" });
+                println!(
+                    "Structured events:  {}",
+                    if stats.has_structured_events {
+                        "yes"
+                    } else {
+                        "no"
+                    }
+                );
                 if let Some((first, last)) = &stats.timestamp_range {
                     println!("Time range:         {} .. {}", first, last);
                 }
@@ -3304,12 +3692,22 @@ fn main() -> anyhow::Result<()> {
                     println!("  {:<20} {}", key, count);
                 }
                 if !stats.prompt_lengths.is_empty() {
-                    let avg: f64 = stats.prompt_lengths.iter().sum::<usize>() as f64 / stats.prompt_lengths.len() as f64;
-                    println!("\nPrompt lengths:     {} prompts, avg {:.0} chars", stats.prompt_lengths.len(), avg);
+                    let avg: f64 = stats.prompt_lengths.iter().sum::<usize>() as f64
+                        / stats.prompt_lengths.len() as f64;
+                    println!(
+                        "\nPrompt lengths:     {} prompts, avg {:.0} chars",
+                        stats.prompt_lengths.len(),
+                        avg
+                    );
                 }
                 if !stats.response_lengths.is_empty() {
-                    let avg: f64 = stats.response_lengths.iter().sum::<usize>() as f64 / stats.response_lengths.len() as f64;
-                    println!("Response lengths:   {} responses, avg {:.0} chars", stats.response_lengths.len(), avg);
+                    let avg: f64 = stats.response_lengths.iter().sum::<usize>() as f64
+                        / stats.response_lengths.len() as f64;
+                    println!(
+                        "Response lengths:   {} responses, avg {:.0} chars",
+                        stats.response_lengths.len(),
+                        avg
+                    );
                 }
             }
             TapCmd::Preview { run_hash, mode } => {
@@ -3320,11 +3718,19 @@ fn main() -> anyhow::Result<()> {
                     "prompt-only" => morph_core::ExportMode::PromptOnly,
                     "with-context" => morph_core::ExportMode::WithContext,
                     "agentic" => morph_core::ExportMode::Agentic,
-                    other => anyhow::bail!("unknown export mode '{}' (use: prompt-only, with-context, agentic)", other),
+                    other => anyhow::bail!(
+                        "unknown export mode '{}' (use: prompt-only, with-context, agentic)",
+                        other
+                    ),
                 };
                 let cases = morph_core::task_to_eval_cases(&task, &export_mode);
 
-                println!("=== Preview: {} ({} steps, mode: {}) ===\n", &run_hash[..12.min(run_hash.len())], task.step_count, mode);
+                println!(
+                    "=== Preview: {} ({} steps, mode: {}) ===\n",
+                    &run_hash[..12.min(run_hash.len())],
+                    task.step_count,
+                    mode
+                );
                 println!("Model: {}  Agent: {}", task.model, task.agent);
                 println!();
 
@@ -3332,7 +3738,10 @@ fn main() -> anyhow::Result<()> {
                     println!("--- Step {}/{} ---", case.step_index + 1, case.total_steps);
                     println!("[PROMPT] ({} chars)", case.prompt.len());
                     let prompt_preview = if case.prompt.len() > 300 {
-                        format!("{}...", &case.prompt[..case.prompt.floor_char_boundary(300)])
+                        format!(
+                            "{}...",
+                            &case.prompt[..case.prompt.floor_char_boundary(300)]
+                        )
                     } else {
                         case.prompt.clone()
                     };
@@ -3352,30 +3761,62 @@ fn main() -> anyhow::Result<()> {
                         println!("\n[FILE READS] {}", case.file_reads.len());
                         for fr in &case.file_reads {
                             let has_content = fr.content.is_some();
-                            println!("  {} {}", fr.path.as_deref().unwrap_or("?"),
-                                if has_content { "(has content)" } else { "(path only)" });
+                            println!(
+                                "  {} {}",
+                                fr.path.as_deref().unwrap_or("?"),
+                                if has_content {
+                                    "(has content)"
+                                } else {
+                                    "(path only)"
+                                }
+                            );
                         }
                     }
                     if !case.file_edits.is_empty() {
                         println!("\n[FILE EDITS] {}", case.file_edits.len());
                         for fe in &case.file_edits {
                             let has_content = fe.content.is_some();
-                            println!("  {} {}", fe.path.as_deref().unwrap_or("?"),
-                                if has_content { "(has content)" } else { "(path only)" });
+                            println!(
+                                "  {} {}",
+                                fe.path.as_deref().unwrap_or("?"),
+                                if has_content {
+                                    "(has content)"
+                                } else {
+                                    "(path only)"
+                                }
+                            );
                         }
                     }
                     if !case.tool_calls.is_empty() {
                         println!("\n[TOOL CALLS] {}", case.tool_calls.len());
                         for tc in &case.tool_calls {
-                            println!("  {} {}{}", tc.name.as_deref().unwrap_or("(unnamed)"),
-                                if tc.output.is_some() { "[has output]" } else { "" },
-                                if tc.error.is_some() { " [has error]" } else { "" });
+                            println!(
+                                "  {} {}{}",
+                                tc.name.as_deref().unwrap_or("(unnamed)"),
+                                if tc.output.is_some() {
+                                    "[has output]"
+                                } else {
+                                    ""
+                                },
+                                if tc.error.is_some() {
+                                    " [has error]"
+                                } else {
+                                    ""
+                                }
+                            );
                         }
                     }
 
-                    println!("\n[EXPECTED RESPONSE] ({} chars)", case.expected_response.len());
+                    println!(
+                        "\n[EXPECTED RESPONSE] ({} chars)",
+                        case.expected_response.len()
+                    );
                     let resp_preview = if case.expected_response.len() > 300 {
-                        format!("{}...", &case.expected_response[..case.expected_response.floor_char_boundary(300)])
+                        format!(
+                            "{}...",
+                            &case.expected_response
+                                [..case.expected_response.floor_char_boundary(300)]
+                        )
                     } else {
                         case.expected_response.clone()
                     };
@@ -3389,11 +3830,19 @@ fn main() -> anyhow::Result<()> {
         Command::Eval { sub } => match sub {
             EvalCmd::Record { file } => {
                 let (repo_root, _store) = get_store(verbose)?;
-                let full = if file.is_absolute() { file } else { repo_root.join(&file) };
+                let full = if file.is_absolute() {
+                    file
+                } else {
+                    repo_root.join(&file)
+                };
                 let metrics = morph_core::record_eval_metrics(&full)?;
                 println!("{}", serde_json::to_string_pretty(&metrics)?);
             }
-            EvalCmd::FromOutput { runner, file, record } => {
+            EvalCmd::FromOutput {
+                runner,
+                file,
+                record,
+            } => {
                 let stdout_text = if file.as_os_str() == "-" {
                     use std::io::Read;
                     let mut buf = String::new();
@@ -3407,9 +3856,7 @@ fn main() -> anyhow::Result<()> {
                     // the command works outside a repo (handy for one-off
                     // scripts piping CI output).
                     match get_store(verbose) {
-                        Ok((repo_root, _store)) => {
-                            std::fs::read_to_string(repo_root.join(&file))?
-                        }
+                        Ok((repo_root, _store)) => std::fs::read_to_string(repo_root.join(&file))?,
                         Err(_) => std::fs::read_to_string(&file)?,
                     }
                 };
@@ -3480,7 +3927,10 @@ fn main() -> anyhow::Result<()> {
                 );
                 println!("{}", new_hash);
             }
-            EvalCmd::SuiteFromSpecs { paths, no_set_default } => {
+            EvalCmd::SuiteFromSpecs {
+                paths,
+                no_set_default,
+            } => {
                 if paths.is_empty() {
                     return Err(anyhow::anyhow!(
                         "no paths supplied. Usage: morph eval suite-from-specs <dir>..."
@@ -3498,8 +3948,7 @@ fn main() -> anyhow::Result<()> {
                             .join(", ")
                     ));
                 }
-                let new_hash =
-                    morph_core::build_or_extend_suite(store.as_ref(), None, &cases)?;
+                let new_hash = morph_core::build_or_extend_suite(store.as_ref(), None, &cases)?;
                 let morph_dir = repo_root.join(".morph");
                 if !no_set_default {
                     let mut policy = morph_core::read_policy(&morph_dir)?;
@@ -3547,11 +3996,7 @@ fn main() -> anyhow::Result<()> {
                     println!("  cases:    {}", suite_obj.cases.len());
                     println!("  metrics:  {}", suite_obj.metrics.len());
                     for c in &suite_obj.cases {
-                        let kind = c
-                            .input
-                            .get("kind")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("?");
+                        let kind = c.input.get("kind").and_then(|v| v.as_str()).unwrap_or("?");
                         println!("    - {}  [{}]  metric={}", c.id, kind, c.metric);
                     }
                     for m in &suite_obj.metrics {
@@ -3591,7 +4036,11 @@ fn main() -> anyhow::Result<()> {
                     std::process::exit(1);
                 }
             }
-            EvalCmd::Run { runner, cwd, command } => {
+            EvalCmd::Run {
+                runner,
+                cwd,
+                command,
+            } => {
                 if command.is_empty() {
                     return Err(anyhow::anyhow!(
                         "no command supplied. Usage: morph eval run -- cargo test --workspace"
@@ -3626,18 +4075,51 @@ fn main() -> anyhow::Result<()> {
 
         Command::MergePlan { branch, retire } => {
             let (_repo_root, store) = get_store(verbose)?;
-            let retired: Option<Vec<String>> = retire.map(|s| s.split(',').map(|m| m.trim().to_string()).collect());
+            let retired: Option<Vec<String>> =
+                retire.map(|s| s.split(',').map(|m| m.trim().to_string()).collect());
             let plan = morph_core::prepare_merge(&store, &branch, None, retired.as_deref())?;
             print!("{}", plan.format_plan());
         }
 
-        Command::Merge { branch, cont, abort, message, pipeline, eval_suite, metrics, author, retire, retire_reason, sub } => {
-            run_merge(verbose, branch, cont, abort, message, pipeline, eval_suite, metrics, author, retire, retire_reason, sub)?;
+        Command::Merge {
+            branch,
+            cont,
+            abort,
+            message,
+            pipeline,
+            eval_suite,
+            metrics,
+            author,
+            retire,
+            retire_reason,
+            sub,
+        } => {
+            run_merge(
+                verbose,
+                branch,
+                cont,
+                abort,
+                message,
+                pipeline,
+                eval_suite,
+                metrics,
+                author,
+                retire,
+                retire_reason,
+                sub,
+            )?;
         }
 
-        Command::Rollup { base_ref, tip_ref, message } => {
+        Command::Rollup {
+            base_ref,
+            tip_ref,
+            message,
+        } => {
             let (_repo_root, store) = get_store(verbose)?;
-            println!("{}", morph_core::rollup(&store, &base_ref, &tip_ref, message)?);
+            println!(
+                "{}",
+                morph_core::rollup(&store, &base_ref, &tip_ref, message)?
+            );
         }
 
         Command::Remote { sub } => match sub {
@@ -3649,13 +4131,15 @@ fn main() -> anyhow::Result<()> {
                 // are still resolved to absolute so the remote
                 // works from any cwd.
                 let raw = path.to_string_lossy().to_string();
-                let stored = if morph_core::ssh_store::SshUrl::parse(&raw).is_some()
-                    || path.is_absolute()
-                {
-                    raw
-                } else {
-                    std::env::current_dir()?.join(&path).to_string_lossy().to_string()
-                };
+                let stored =
+                    if morph_core::ssh_store::SshUrl::parse(&raw).is_some() || path.is_absolute() {
+                        raw
+                    } else {
+                        std::env::current_dir()?
+                            .join(&path)
+                            .to_string_lossy()
+                            .to_string()
+                    };
                 morph_core::add_remote(&morph_dir, &name, &stored)?;
                 println!("Remote '{}' added: {}", name, stored);
             }
@@ -3663,10 +4147,15 @@ fn main() -> anyhow::Result<()> {
                 let (repo_root, _store) = get_store(verbose)?;
                 let remotes = morph_core::read_remotes(&repo_root.join(".morph"))?;
                 if json {
-                    let entries: Vec<_> = remotes.iter().map(|(name, spec)| serde_json::json!({
-                        "name": name,
-                        "path": spec.path,
-                    })).collect();
+                    let entries: Vec<_> = remotes
+                        .iter()
+                        .map(|(name, spec)| {
+                            serde_json::json!({
+                                "name": name,
+                                "path": spec.path,
+                            })
+                        })
+                        .collect();
                     let body = serde_json::json!({ "remotes": entries, "count": remotes.len() });
                     println!("{}", serde_json::to_string_pretty(&body)?);
                 } else {
@@ -3680,20 +4169,24 @@ fn main() -> anyhow::Result<()> {
         Command::Push { remote, branch } => {
             let (repo_root, local_store) = get_store(verbose)?;
             let remotes = morph_core::read_remotes(&repo_root.join(".morph"))?;
-            let spec = remotes.get(&remote)
+            let spec = remotes
+                .get(&remote)
                 .ok_or_else(|| anyhow::anyhow!("remote '{}' not found", remote))?;
             let remote_store = morph_core::open_remote_store(&spec.path)?;
-            let tip = morph_core::push_branch(local_store.as_ref(), remote_store.as_ref(), &branch)?;
+            let tip =
+                morph_core::push_branch(local_store.as_ref(), remote_store.as_ref(), &branch)?;
             println!("Pushed {} -> {}/{} ({})", branch, remote, branch, tip);
         }
 
         Command::Fetch { remote } => {
             let (repo_root, local_store) = get_store(verbose)?;
             let remotes = morph_core::read_remotes(&repo_root.join(".morph"))?;
-            let spec = remotes.get(&remote)
+            let spec = remotes
+                .get(&remote)
                 .ok_or_else(|| anyhow::anyhow!("remote '{}' not found", remote))?;
             let remote_store = morph_core::open_remote_store(&spec.path)?;
-            let updated = morph_core::fetch_remote(local_store.as_ref(), remote_store.as_ref(), &remote)?;
+            let updated =
+                morph_core::fetch_remote(local_store.as_ref(), remote_store.as_ref(), &remote)?;
             if updated.is_empty() {
                 println!("Already up to date.");
             } else {
@@ -3703,19 +4196,31 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        Command::Pull { remote, branch, merge } => {
+        Command::Pull {
+            remote,
+            branch,
+            merge,
+        } => {
             let (repo_root, local_store) = get_store(verbose)?;
             let remotes = morph_core::read_remotes(&repo_root.join(".morph"))?;
-            let spec = remotes.get(&remote)
+            let spec = remotes
+                .get(&remote)
                 .ok_or_else(|| anyhow::anyhow!("remote '{}' not found", remote))?;
             let remote_store = morph_core::open_remote_store(&spec.path)?;
-            match morph_core::pull_branch(local_store.as_ref(), remote_store.as_ref(), &remote, &branch) {
+            match morph_core::pull_branch(
+                local_store.as_ref(),
+                remote_store.as_ref(),
+                &remote,
+                &branch,
+            ) {
                 Ok(tip) => {
                     println!("Updated {} -> {} ({})", branch, tip, remote);
                 }
-                Err(morph_core::MorphError::Diverged { branch: b, local_tip, remote_tip })
-                    if merge =>
-                {
+                Err(morph_core::MorphError::Diverged {
+                    branch: b,
+                    local_tip,
+                    remote_tip,
+                }) if merge => {
                     // Fast-forward not possible. Kick off a structural
                     // merge against the remote-tracking ref so the user
                     // can resolve conflicts locally.
@@ -3747,10 +4252,7 @@ fn main() -> anyhow::Result<()> {
                                 author: None,
                             },
                         )?;
-                        println!(
-                            "Merged {} -> {} ({})",
-                            b, cont.merge_commit, remote
-                        );
+                        println!("Merged {} -> {} ({})", b, cont.merge_commit, remote);
                     }
                 }
                 Err(e) => return Err(e.into()),
@@ -3766,10 +4268,9 @@ fn main() -> anyhow::Result<()> {
             let morph_dir = repo_root.join(".morph");
             let target = match branch {
                 Some(n) => n,
-                None => morph_core::current_branch(&local_store)?
-                    .ok_or_else(|| anyhow::anyhow!(
-                        "no current branch (detached HEAD?); name a branch explicitly"
-                    ))?,
+                None => morph_core::current_branch(&local_store)?.ok_or_else(|| {
+                    anyhow::anyhow!("no current branch (detached HEAD?); name a branch explicitly")
+                })?,
             };
             let upstream = morph_core::get_branch_upstream(&morph_dir, &target)?
                 .ok_or_else(|| anyhow::anyhow!(
@@ -3796,7 +4297,11 @@ fn main() -> anyhow::Result<()> {
                         target, tip, upstream.remote, upstream.branch
                     );
                 }
-                Err(morph_core::MorphError::Diverged { branch: b, local_tip, remote_tip }) => {
+                Err(morph_core::MorphError::Diverged {
+                    branch: b,
+                    local_tip,
+                    remote_tip,
+                }) => {
                     eprintln!(
                         "fast-forward not possible (local {} vs remote {}); starting merge",
                         local_tip, remote_tip
@@ -3838,14 +4343,17 @@ fn main() -> anyhow::Result<()> {
             let (_repo_root, store) = get_store(verbose)?;
             let refs = morph_core::list_refs(store.as_ref())?;
             if json {
-                let entries: Vec<_> = refs.iter().map(|(name, hash)| {
-                    let h_str = hash.to_string();
-                    serde_json::json!({
-                        "name": name,
-                        "hash": h_str,
-                        "short": short_hash_str(&h_str),
+                let entries: Vec<_> = refs
+                    .iter()
+                    .map(|(name, hash)| {
+                        let h_str = hash.to_string();
+                        serde_json::json!({
+                            "name": name,
+                            "hash": h_str,
+                            "short": short_hash_str(&h_str),
+                        })
                     })
-                }).collect();
+                    .collect();
                 let body = serde_json::json!({ "refs": entries, "count": refs.len() });
                 println!("{}", serde_json::to_string_pretty(&body)?);
             } else {
@@ -3872,11 +4380,7 @@ fn main() -> anyhow::Result<()> {
                             None => std::process::exit(1),
                         }
                     } else {
-                        morph_core::write_identity_config(
-                            &morph_dir,
-                            value.as_deref(),
-                            None,
-                        )?;
+                        morph_core::write_identity_config(&morph_dir, value.as_deref(), None)?;
                     }
                 }
                 "user.email" => {
@@ -3886,11 +4390,7 @@ fn main() -> anyhow::Result<()> {
                             None => std::process::exit(1),
                         }
                     } else {
-                        morph_core::write_identity_config(
-                            &morph_dir,
-                            None,
-                            value.as_deref(),
-                        )?;
+                        morph_core::write_identity_config(&morph_dir, None, value.as_deref())?;
                     }
                 }
                 other => {
@@ -3902,7 +4402,15 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        Command::Certify { metrics, metrics_file, commit, eval_suite, runner, author, json } => {
+        Command::Certify {
+            metrics,
+            metrics_file,
+            commit,
+            eval_suite,
+            runner,
+            author,
+            json,
+        } => {
             let (repo_root, store) = get_store(verbose)?;
             let morph_dir = repo_root.join(".morph");
             let commit_hash = match commit {
@@ -3915,10 +4423,15 @@ fn main() -> anyhow::Result<()> {
             // conflict via `conflicts_with`; here we just pick which
             // source to read from. At least one must be provided.
             let metrics: std::collections::BTreeMap<String, f64> = match (metrics, metrics_file) {
-                (Some(s), None) => serde_json::from_str(&s)
-                    .map_err(|e| anyhow::anyhow!("--metrics is not a JSON object of metric → number: {}", e))?,
+                (Some(s), None) => serde_json::from_str(&s).map_err(|e| {
+                    anyhow::anyhow!("--metrics is not a JSON object of metric → number: {}", e)
+                })?,
                 (None, Some(path)) => {
-                    let full_path = if path.is_absolute() { path } else { repo_root.join(&path) };
+                    let full_path = if path.is_absolute() {
+                        path
+                    } else {
+                        repo_root.join(&path)
+                    };
                     serde_json::from_str(&std::fs::read_to_string(&full_path)?)?
                 }
                 (Some(_), Some(_)) => unreachable!("clap conflicts_with prevents this"),
@@ -3929,17 +4442,25 @@ fn main() -> anyhow::Result<()> {
                 }
             };
             let result = morph_core::certify_commit(
-                &store, &morph_dir, &commit_hash, &metrics,
-                runner.as_deref().or(author.as_deref()), eval_suite.as_deref(),
+                &store,
+                &morph_dir,
+                &commit_hash,
+                &metrics,
+                runner.as_deref().or(author.as_deref()),
+                eval_suite.as_deref(),
             )?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else if result.passed {
                 println!("PASS: commit {} certified", commit_hash);
-                for (k, v) in &result.metrics_provided { println!("  {} = {}", k, v); }
+                for (k, v) in &result.metrics_provided {
+                    println!("  {} = {}", k, v);
+                }
             } else {
                 eprintln!("FAIL: commit {} not certified", commit_hash);
-                for f in &result.failures { eprintln!("  {}", f); }
+                for f in &result.failures {
+                    eprintln!("  {}", f);
+                }
                 std::process::exit(1);
             }
         }
@@ -3955,12 +4476,16 @@ fn main() -> anyhow::Result<()> {
             let result = morph_core::gate_check(&store, &morph_dir, &commit_hash)?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&result)?);
-                if !result.passed { std::process::exit(1); }
+                if !result.passed {
+                    std::process::exit(1);
+                }
             } else if result.passed {
                 println!("PASS: commit {} satisfies policy", commit_hash);
             } else {
                 eprintln!("FAIL: commit {} does not satisfy policy", commit_hash);
-                for r in &result.reasons { eprintln!("  {}", r); }
+                for r in &result.reasons {
+                    eprintln!("  {}", r);
+                }
                 std::process::exit(1);
             }
         }
@@ -3996,8 +4521,13 @@ fn main() -> anyhow::Result<()> {
             PolicyCmd::Set { file } => {
                 let (repo_root, _store) = get_store(verbose)?;
                 let morph_dir = repo_root.join(".morph");
-                let full = if file.is_absolute() { file } else { repo_root.join(&file) };
-                let policy: morph_core::RepoPolicy = serde_json::from_str(&std::fs::read_to_string(&full)?)?;
+                let full = if file.is_absolute() {
+                    file
+                } else {
+                    repo_root.join(&file)
+                };
+                let policy: morph_core::RepoPolicy =
+                    serde_json::from_str(&std::fs::read_to_string(&full)?)?;
                 morph_core::write_policy(&morph_dir, &policy)?;
                 println!("Policy updated");
             }
@@ -4024,32 +4554,46 @@ fn main() -> anyhow::Result<()> {
             }
         },
 
-        Command::Annotate { target_hash, kind, data, sub, author } => {
+        Command::Annotate {
+            target_hash,
+            kind,
+            data,
+            sub,
+            author,
+        } => {
             let (_repo_root, store) = get_store(verbose)?;
             let target = resolve_obj_hash(store.as_ref(), &target_hash)?;
             let data_map: std::collections::BTreeMap<String, serde_json::Value> =
-                serde_json::from_str(&data).map_err(|e| anyhow::anyhow!("invalid --data JSON: {}", e))?;
+                serde_json::from_str(&data)
+                    .map_err(|e| anyhow::anyhow!("invalid --data JSON: {}", e))?;
             let ann = morph_core::create_annotation(&target, sub, kind, data_map, author);
             println!("{}", store.put(&ann)?);
         }
 
-        Command::Annotations { target_hash, sub, json } => {
+        Command::Annotations {
+            target_hash,
+            sub,
+            json,
+        } => {
             let (_repo_root, store) = get_store(verbose)?;
             let target = resolve_obj_hash(store.as_ref(), &target_hash)?;
             let anns = morph_core::list_annotations(&store, &target, sub.as_deref())?;
             if json {
-                let entries: Vec<_> = anns.iter().map(|(h, a)| {
-                    let h_str = h.to_string();
-                    serde_json::json!({
-                        "hash": h_str,
-                        "short": short_hash_str(&h_str),
-                        "kind": a.kind,
-                        "author": a.author,
-                        "target": a.target,
-                        "target_sub": a.target_sub,
-                        "data": a.data,
+                let entries: Vec<_> = anns
+                    .iter()
+                    .map(|(h, a)| {
+                        let h_str = h.to_string();
+                        serde_json::json!({
+                            "hash": h_str,
+                            "short": short_hash_str(&h_str),
+                            "kind": a.kind,
+                            "author": a.author,
+                            "target": a.target,
+                            "target_sub": a.target_sub,
+                            "data": a.data,
+                        })
                     })
-                }).collect();
+                    .collect();
                 let body = serde_json::json!({
                     "target": target.to_string(),
                     "target_short": target.short(),
@@ -4059,14 +4603,24 @@ fn main() -> anyhow::Result<()> {
                 println!("{}", serde_json::to_string_pretty(&body)?);
             } else {
                 for (h, a) in &anns {
-                    println!("{} {} {} {}", h, a.kind, a.author, serde_json::to_string(&a.data).unwrap_or_default());
+                    println!(
+                        "{} {} {} {}",
+                        h,
+                        a.kind,
+                        a.author,
+                        serde_json::to_string(&a.data).unwrap_or_default()
+                    );
                 }
             }
         }
 
         Command::HashObject { path } => {
             let (repo_root, store) = get_store(verbose)?;
-            let full = if path.is_absolute() { path } else { repo_root.join(&path) };
+            let full = if path.is_absolute() {
+                path
+            } else {
+                repo_root.join(&path)
+            };
             let json = std::fs::read_to_string(&full)?;
             let obj: MorphObject = serde_json::from_str(&json)
                 .map_err(|e| anyhow::anyhow!("invalid Morph object JSON: {}", e))?;
@@ -4096,18 +4650,34 @@ fn cmd_prompt_show(verbose: bool, run_ref: &str, run_upgrade: bool) -> anyhow::R
         });
 
         let run_path = if run_ref == "latest" || run_ref.is_empty() {
-            run_files.first()
-                .ok_or_else(|| anyhow::anyhow!("no runs in .morph/runs/"))?.path()
-        } else if let Some(n_str) = run_ref.strip_prefix("latest~").or_else(|| run_ref.strip_prefix("latest-")) {
-            let n: usize = n_str.parse().map_err(|_| anyhow::anyhow!("invalid ref '{}': expected latest~N", run_ref))?;
-            run_files.get(n)
-                .ok_or_else(|| anyhow::anyhow!("no run at index {} (only {} run(s))", n, run_files.len()))?.path()
+            run_files
+                .first()
+                .ok_or_else(|| anyhow::anyhow!("no runs in .morph/runs/"))?
+                .path()
+        } else if let Some(n_str) = run_ref
+            .strip_prefix("latest~")
+            .or_else(|| run_ref.strip_prefix("latest-"))
+        {
+            let n: usize = n_str
+                .parse()
+                .map_err(|_| anyhow::anyhow!("invalid ref '{}': expected latest~N", run_ref))?;
+            run_files
+                .get(n)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("no run at index {} (only {} run(s))", n, run_files.len())
+                })?
+                .path()
         } else if run_ref.len() == 64 && run_ref.chars().all(|c| c.is_ascii_hexdigit()) {
             let path = runs_dir.join(format!("{}.json", run_ref));
-            if !path.exists() { anyhow::bail!("run not found: {}", run_ref); }
+            if !path.exists() {
+                anyhow::bail!("run not found: {}", run_ref);
+            }
             path
         } else {
-            anyhow::bail!("invalid ref '{}': use 'latest', 'latest~N', or a 64-char run hash", run_ref);
+            anyhow::bail!(
+                "invalid ref '{}': use 'latest', 'latest~N', or a 64-char run hash",
+                run_ref
+            );
         };
 
         let run_json = std::fs::read_to_string(&run_path)?;
@@ -4116,8 +4686,12 @@ fn cmd_prompt_show(verbose: bool, run_ref: &str, run_upgrade: bool) -> anyhow::R
 
         match store.get(&trace_hash) {
             Ok(MorphObject::Trace(t)) => {
-                let text = t.events.iter().rfind(|e| e.kind == "prompt" || e.kind == "user")
-                    .and_then(|e| e.payload.get("text").and_then(|v| v.as_str())).unwrap_or("");
+                let text = t
+                    .events
+                    .iter()
+                    .rfind(|e| e.kind == "prompt" || e.kind == "user")
+                    .and_then(|e| e.payload.get("text").and_then(|v| v.as_str()))
+                    .unwrap_or("");
                 print!("{}", text);
                 return Ok(());
             }
@@ -4125,10 +4699,15 @@ fn cmd_prompt_show(verbose: bool, run_ref: &str, run_upgrade: bool) -> anyhow::R
             Err(_) => {
                 let trace_path = morph_dir.join("traces").join(format!("{}.json", run.trace));
                 if trace_path.exists() {
-                    let obj: MorphObject = serde_json::from_str(&std::fs::read_to_string(&trace_path)?)?;
+                    let obj: MorphObject =
+                        serde_json::from_str(&std::fs::read_to_string(&trace_path)?)?;
                     if let MorphObject::Trace(t) = obj {
-                        let text = t.events.iter().rfind(|e| e.kind == "prompt" || e.kind == "user")
-                            .and_then(|e| e.payload.get("text").and_then(|v| v.as_str())).unwrap_or("");
+                        let text = t
+                            .events
+                            .iter()
+                            .rfind(|e| e.kind == "prompt" || e.kind == "user")
+                            .and_then(|e| e.payload.get("text").and_then(|v| v.as_str()))
+                            .unwrap_or("");
                         print!("{}", text);
                         return Ok(());
                     }
@@ -4165,8 +4744,7 @@ fn cmd_prompt_show(verbose: bool, run_ref: &str, run_upgrade: bool) -> anyhow::R
 /// hash-prefix resolution and converts errors to `anyhow`.
 fn resolve_run_hash(store: &dyn Store, hash_str: &str) -> anyhow::Result<Hash> {
     let h = resolve_obj_hash(store, hash_str)?;
-    morph_core::resolve_run_or_trace_hash(store, &h)
-        .map_err(|e| anyhow::anyhow!("{}", e))
+    morph_core::resolve_run_or_trace_hash(store, &h).map_err(|e| anyhow::anyhow!("{}", e))
 }
 
 fn handle_traces_command(verbose: bool, sub: TracesCmd) -> anyhow::Result<()> {
@@ -4182,7 +4760,13 @@ fn handle_traces_command(verbose: bool, sub: TracesCmd) -> anyhow::Result<()> {
                     let short = &s.run_hash[..12.min(s.run_hash.len())];
                     let phase = serde_json::to_string(&s.task_phase).unwrap_or_default();
                     let scope = serde_json::to_string(&s.task_scope).unwrap_or_default();
-                    println!("{} {}  phase={}  scope={}", short, s.timestamp, phase.trim_matches('"'), scope.trim_matches('"'));
+                    println!(
+                        "{} {}  phase={}  scope={}",
+                        short,
+                        s.timestamp,
+                        phase.trim_matches('"'),
+                        scope.trim_matches('"')
+                    );
                     if !s.target_files.is_empty() {
                         println!("  files:   {}", s.target_files.join(", "));
                     }
@@ -4231,7 +4815,10 @@ mod tests {
     /// a trailing `.morph` if present.
     #[test]
     fn default_clone_dest_strips_morph_suffix() {
-        assert_eq!(default_clone_dest("you@host:repos/myproject.morph"), "myproject");
+        assert_eq!(
+            default_clone_dest("you@host:repos/myproject.morph"),
+            "myproject"
+        );
         assert_eq!(default_clone_dest("ssh://you@host/srv/proj.morph"), "proj");
         assert_eq!(default_clone_dest("/tmp/foo.morph"), "foo");
         assert_eq!(default_clone_dest("/tmp/bar/"), "bar");
@@ -4243,13 +4830,19 @@ mod tests {
     /// `SshUrl::parse`; we still want a sensible basename.
     #[test]
     fn default_clone_dest_handles_ipv6_ssh_url() {
-        assert_eq!(default_clone_dest("ssh://you@[::1]:2222/srv/repo.morph"), "repo");
+        assert_eq!(
+            default_clone_dest("ssh://you@[::1]:2222/srv/repo.morph"),
+            "repo"
+        );
         assert_eq!(default_clone_dest("ssh://[::1]/srv/proj"), "proj");
     }
 
     #[test]
     fn short_hash_str_truncates_to_eight_chars() {
-        assert_eq!(short_hash_str("abcdef0123456789abcdef0123456789"), "abcdef01");
+        assert_eq!(
+            short_hash_str("abcdef0123456789abcdef0123456789"),
+            "abcdef01"
+        );
         assert_eq!(short_hash_str("abc"), "abc");
         assert_eq!(short_hash_str(""), "");
     }

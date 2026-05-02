@@ -149,7 +149,11 @@ impl fmt::Display for DominanceViolation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.merged_value {
             Some(merged) => {
-                let op = if self.direction == "minimize" { "<=" } else { ">=" };
+                let op = if self.direction == "minimize" {
+                    "<="
+                } else {
+                    ">="
+                };
                 write!(
                     f,
                     "metric '{}': merged {} does not dominate {} branch's {} (direction: {}, need {} {})",
@@ -228,8 +232,20 @@ impl MergePlan {
     /// Only metrics present in the (post-retirement) union suite are checked.
     pub fn check_dominance(&self, merged: &BTreeMap<String, f64>) -> DominanceResult {
         let mut violations = Vec::new();
-        check_parent_dominance(merged, &self.head_metrics, &self.union_suite, "current", &mut violations);
-        check_parent_dominance(merged, &self.other_metrics, &self.union_suite, "other", &mut violations);
+        check_parent_dominance(
+            merged,
+            &self.head_metrics,
+            &self.union_suite,
+            "current",
+            &mut violations,
+        );
+        check_parent_dominance(
+            merged,
+            &self.other_metrics,
+            &self.union_suite,
+            "other",
+            &mut violations,
+        );
         DominanceResult {
             passed: violations.is_empty(),
             violations,
@@ -240,24 +256,39 @@ impl MergePlan {
     pub fn format_plan(&self) -> String {
         let mut out = String::new();
         let head_label = self.head_branch.as_deref().unwrap_or("HEAD (detached)");
-        out.push_str(&format!("Merge plan: {} -> {}\n\n", self.other_branch, head_label));
+        out.push_str(&format!(
+            "Merge plan: {} -> {}\n\n",
+            self.other_branch, head_label
+        ));
 
         out.push_str(&format!("Current branch ({}):\n", head_label));
         out.push_str(&format!("  commit: {}\n", self.head_hash));
         out.push_str(&format!("  suite: {}\n", self.head_suite_hash));
-        out.push_str(&format!("  metrics: {}\n\n", format_metrics_inline(&self.head_metrics)));
+        out.push_str(&format!(
+            "  metrics: {}\n\n",
+            format_metrics_inline(&self.head_metrics)
+        ));
 
         out.push_str(&format!("Other branch ({}):\n", self.other_branch));
         out.push_str(&format!("  commit: {}\n", self.other_hash));
         out.push_str(&format!("  suite: {}\n", self.other_suite_hash));
-        out.push_str(&format!("  metrics: {}\n\n", format_metrics_inline(&self.other_metrics)));
+        out.push_str(&format!(
+            "  metrics: {}\n\n",
+            format_metrics_inline(&self.other_metrics)
+        ));
 
-        out.push_str(&format!("Union eval suite ({} metrics):\n", self.union_suite.metrics.len()));
+        out.push_str(&format!(
+            "Union eval suite ({} metrics):\n",
+            self.union_suite.metrics.len()
+        ));
         if self.union_suite.metrics.is_empty() {
             out.push_str("  (none)\n");
         } else {
             for m in &self.union_suite.metrics {
-                out.push_str(&format!("  {} {} threshold={}\n", m.name, m.direction, m.threshold));
+                out.push_str(&format!(
+                    "  {} {} threshold={}\n",
+                    m.name, m.direction, m.threshold
+                ));
             }
         }
         out.push('\n');
@@ -267,7 +298,10 @@ impl MergePlan {
             out.push_str("  (none)\n");
         } else {
             for (name, val) in &self.reference_bar {
-                let dir = self.union_suite.metrics.iter()
+                let dir = self
+                    .union_suite
+                    .metrics
+                    .iter()
                     .find(|m| m.name == *name)
                     .map(|m| m.direction.as_str())
                     .unwrap_or("maximize");
@@ -399,7 +433,11 @@ fn compute_reference_bar(
         let o = other_metrics.get(&m.name);
         let best = match (h, o) {
             (Some(&hv), Some(&ov)) => {
-                if m.direction == "minimize" { hv.min(ov) } else { hv.max(ov) }
+                if m.direction == "minimize" {
+                    hv.min(ov)
+                } else {
+                    hv.max(ov)
+                }
             }
             (Some(&hv), None) => hv,
             (None, Some(&ov)) => ov,
@@ -409,7 +447,6 @@ fn compute_reference_bar(
     }
     bar
 }
-
 
 /// Prepare a merge plan: resolve both parents, compute union suite, reference bar.
 ///
@@ -422,8 +459,8 @@ pub fn prepare_merge(
     eval_suite_hash: Option<&Hash>,
     retired_metrics: Option<&[String]>,
 ) -> Result<MergePlan, MorphError> {
-    let head_hash = resolve_head(store)?
-        .ok_or_else(|| MorphError::Serialization("no HEAD commit".into()))?;
+    let head_hash =
+        resolve_head(store)?.ok_or_else(|| MorphError::Serialization("no HEAD commit".into()))?;
 
     let other_ref = if other_branch.starts_with("heads/") {
         other_branch.to_string()
@@ -440,14 +477,20 @@ pub fn prepare_merge(
     };
     let other_commit = match store.get(&other_hash)? {
         MorphObject::Commit(c) => c,
-        _ => return Err(MorphError::Serialization("other ref is not a commit".into())),
+        _ => {
+            return Err(MorphError::Serialization(
+                "other ref is not a commit".into(),
+            ))
+        }
     };
 
     let union = match eval_suite_hash {
         Some(h) => crate::commit::load_eval_suite(store, &h.to_string())?,
         None => {
-            let head_suite = crate::commit::load_eval_suite(store, &head_commit.eval_contract.suite)?;
-            let other_suite = crate::commit::load_eval_suite(store, &other_commit.eval_contract.suite)?;
+            let head_suite =
+                crate::commit::load_eval_suite(store, &head_commit.eval_contract.suite)?;
+            let other_suite =
+                crate::commit::load_eval_suite(store, &other_commit.eval_contract.suite)?;
             crate::metrics::union_suites(&head_suite, &other_suite)?
         }
     };
@@ -467,12 +510,10 @@ pub fn prepare_merge(
     // certified evidence to the bar — no need to rewrite the parent
     // commit. The plan also stores the effective values so the
     // merge commit is self-describing without re-reading annotations.
-    let head_effective = crate::policy::effective_metrics_for_commit(
-        store, &head_hash, &head_commit,
-    )?;
-    let other_effective = crate::policy::effective_metrics_for_commit(
-        store, &other_hash, &other_commit,
-    )?;
+    let head_effective =
+        crate::policy::effective_metrics_for_commit(store, &head_hash, &head_commit)?;
+    let other_effective =
+        crate::policy::effective_metrics_for_commit(store, &other_hash, &other_commit)?;
 
     let reference_bar = compute_reference_bar(&head_effective, &other_effective, &union);
 
@@ -495,10 +536,8 @@ pub fn prepare_merge(
     // We deliberately tolerate missing-base (disjoint histories) by
     // walking back to root.
     let base = crate::objmerge::merge_base(store, &head_hash, &other_hash)?;
-    let head_introduces_cases =
-        collect_introduces_cases(store, &head_hash, base.as_ref())?;
-    let other_introduces_cases =
-        collect_introduces_cases(store, &other_hash, base.as_ref())?;
+    let head_introduces_cases = collect_introduces_cases(store, &head_hash, base.as_ref())?;
+    let other_introduces_cases = collect_introduces_cases(store, &other_hash, base.as_ref())?;
 
     Ok(MergePlan {
         head_hash,
@@ -559,7 +598,9 @@ pub fn collect_introduces_cases(
 
     let mut cases: BTreeSet<String> = BTreeSet::new();
     for ah in store.list(ObjectType::Annotation)? {
-        let MorphObject::Annotation(a) = store.get(&ah)? else { continue };
+        let MorphObject::Annotation(a) = store.get(&ah)? else {
+            continue;
+        };
         if a.kind != "introduces_cases" || !branch_commits.contains(&a.target) {
             continue;
         }
@@ -621,7 +662,8 @@ pub fn execute_merge(
     if dominance_required(repo_root) {
         let dominance = plan.check_dominance(&merged_observed_metrics);
         if !dominance.passed {
-            let mut msg = String::from("merge rejected: merged metrics do not dominate both parents\n");
+            let mut msg =
+                String::from("merge rejected: merged metrics do not dominate both parents\n");
             for v in &dominance.violations {
                 msg.push_str(&format!("  {}\n", v));
             }
@@ -642,13 +684,17 @@ pub fn execute_merge(
         None
     };
 
-    let merged_contributors = crate::commit::merge_contributors(&plan.head_commit, &plan.other_commit);
+    let merged_contributors =
+        crate::commit::merge_contributors(&plan.head_commit, &plan.other_commit);
 
     let parents = vec![plan.head_hash.to_string(), plan.other_hash.to_string()];
     let timestamp = now_rfc3339_utc();
     let author = author.unwrap_or_else(|| "morph".to_string());
-    let morph_instance = repo_root
-        .and_then(|r| crate::agent::read_instance_id(&r.join(".morph")).ok().flatten());
+    let morph_instance = repo_root.and_then(|r| {
+        crate::agent::read_instance_id(&r.join(".morph"))
+            .ok()
+            .flatten()
+    });
     // Paper §4.3: enforce review-node attribution for any retirement.
     // Auto-injection happens after the dominance check (so we don't
     // mutate the pipeline on a doomed merge) and before commit
@@ -684,12 +730,12 @@ pub fn execute_merge(
     });
     let hash = store.put(&commit)?;
 
-    let branch = current_branch(store)?.unwrap_or_else(|| crate::commit::DEFAULT_BRANCH.to_string());
+    let branch =
+        current_branch(store)?.unwrap_or_else(|| crate::commit::DEFAULT_BRANCH.to_string());
     store.ref_write(&format!("heads/{}", branch), &hash)?;
 
     Ok(hash)
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -706,7 +752,10 @@ mod tests {
     }
 
     fn make_suite(metrics: Vec<EvalMetric>) -> EvalSuite {
-        EvalSuite { cases: vec![], metrics }
+        EvalSuite {
+            cases: vec![],
+            metrics,
+        }
     }
 
     fn setup_two_branches(
@@ -717,7 +766,10 @@ mod tests {
         head_metrics: BTreeMap<String, f64>,
         other_metrics: BTreeMap<String, f64>,
     ) {
-        let prog = MorphObject::Blob(Blob { kind: "p".into(), content: serde_json::json!({}) });
+        let prog = MorphObject::Blob(Blob {
+            kind: "p".into(),
+            content: serde_json::json!({}),
+        });
         let prog_hash = store.put(&prog).unwrap();
 
         let suite_a_obj = MorphObject::EvalSuite(head_suite.clone());
@@ -729,9 +781,16 @@ mod tests {
         std::fs::write(root.join("a.txt"), "a").unwrap();
         crate::add_paths(store, root, &[std::path::PathBuf::from(".")]).unwrap();
         crate::create_tree_commit(
-            store, root, Some(&prog_hash), Some(&suite_a_hash),
-            head_metrics, "main commit".into(), None, Some("0.3"),
-        ).unwrap();
+            store,
+            root,
+            Some(&prog_hash),
+            Some(&suite_a_hash),
+            head_metrics,
+            "main commit".into(),
+            None,
+            Some("0.3"),
+        )
+        .unwrap();
         let main_hash = crate::resolve_head(store).unwrap().unwrap();
 
         store.ref_write("heads/feature", &main_hash).unwrap();
@@ -740,9 +799,16 @@ mod tests {
         std::fs::write(root.join("b.txt"), "b").unwrap();
         crate::add_paths(store, root, &[std::path::PathBuf::from(".")]).unwrap();
         crate::create_tree_commit(
-            store, root, Some(&prog_hash), Some(&suite_b_hash),
-            other_metrics, "feature commit".into(), None, Some("0.3"),
-        ).unwrap();
+            store,
+            root,
+            Some(&prog_hash),
+            Some(&suite_b_hash),
+            other_metrics,
+            "feature commit".into(),
+            None,
+            Some("0.3"),
+        )
+        .unwrap();
         let feature_hash = crate::resolve_head(store).unwrap().unwrap();
 
         store.ref_write("heads/feature", &feature_hash).unwrap();
@@ -756,7 +822,10 @@ mod tests {
         let a: Vec<String> = vec!["zzz".into(), "aaa".into(), "mmm".into()];
         let b: Vec<String> = vec!["aaa".into(), "bbb".into()];
         let out = union_evidence_refs(Some(&a), Some(&b)).unwrap();
-        assert_eq!(out, vec!["aaa".to_string(), "bbb".into(), "mmm".into(), "zzz".into()]);
+        assert_eq!(
+            out,
+            vec!["aaa".to_string(), "bbb".into(), "mmm".into(), "zzz".into()]
+        );
     }
 
     #[test]
@@ -796,21 +865,21 @@ mod tests {
             "cases".to_string(),
             serde_json::Value::Array(vec![serde_json::json!("alpha")]),
         );
-        let ann_main = crate::create_annotation(
-            &main_hash, None, "introduces_cases".into(), data_main, None,
-        );
+        let ann_main =
+            crate::create_annotation(&main_hash, None, "introduces_cases".into(), data_main, None);
         store.put(&ann_main).unwrap();
 
         let mut data_feat = BTreeMap::new();
         data_feat.insert(
             "cases".to_string(),
-            serde_json::Value::Array(vec![
-                serde_json::json!("beta"),
-                serde_json::json!("gamma"),
-            ]),
+            serde_json::Value::Array(vec![serde_json::json!("beta"), serde_json::json!("gamma")]),
         );
         let ann_feat = crate::create_annotation(
-            &feature_hash, None, "introduces_cases".into(), data_feat, None,
+            &feature_hash,
+            None,
+            "introduces_cases".into(),
+            data_feat,
+            None,
         );
         store.put(&ann_feat).unwrap();
 
@@ -832,8 +901,14 @@ mod tests {
         let txt = plan.format_plan();
         assert!(txt.contains("Case provenance:"), "missing header: {txt}");
         assert!(txt.contains("introduces 0 case(s)"), "head 0: {txt}");
-        assert!(txt.contains("introduces 2 case(s): beta, gamma"), "feature 2: {txt}");
-        assert!(txt.contains("Merged candidate must pass all 2"), "union: {txt}");
+        assert!(
+            txt.contains("introduces 2 case(s): beta, gamma"),
+            "feature 2: {txt}"
+        );
+        assert!(
+            txt.contains("Merged candidate must pass all 2"),
+            "union: {txt}"
+        );
     }
 
     #[test]
@@ -883,8 +958,11 @@ mod tests {
         setup_two_branches(store.as_ref(), dir.path(), &suite, &suite, m1, m2);
 
         let plan = prepare_merge(store.as_ref(), "feature", None, None).unwrap();
-        assert_eq!(*plan.reference_bar.get("latency").unwrap(), 2.0,
-            "minimize reference bar should be the min (strictest)");
+        assert_eq!(
+            *plan.reference_bar.get("latency").unwrap(),
+            2.0,
+            "minimize reference bar should be the min (strictest)"
+        );
     }
 
     #[test]
@@ -902,10 +980,17 @@ mod tests {
         bad.insert("acc".into(), 0.87);
         let result = plan.check_dominance(&bad);
         assert!(!result.passed);
-        assert!(result.violations.iter().any(|v| v.metric == "acc" && v.parent_label == "current"),
-            "should identify acc violation against current branch");
-        assert!(!result.violations.iter().any(|v| v.parent_label == "other"),
-            "should pass against other branch (0.87 >= 0.85)");
+        assert!(
+            result
+                .violations
+                .iter()
+                .any(|v| v.metric == "acc" && v.parent_label == "current"),
+            "should identify acc violation against current branch"
+        );
+        assert!(
+            !result.violations.iter().any(|v| v.parent_label == "other"),
+            "should pass against other branch (0.87 >= 0.85)"
+        );
     }
 
     #[test]
@@ -933,7 +1018,10 @@ mod tests {
         bad.insert("latency".into(), 2.5);
         let result = plan.check_dominance(&bad);
         assert!(!result.passed);
-        assert!(result.violations.iter().any(|v| v.metric == "latency" && v.direction == "minimize"));
+        assert!(result
+            .violations
+            .iter()
+            .any(|v| v.metric == "latency" && v.direction == "minimize"));
     }
 
     #[test]
@@ -955,14 +1043,23 @@ mod tests {
         let mut merged = BTreeMap::new();
         merged.insert("acc".into(), 0.92);
         let result = plan_no_retire.check_dominance(&merged);
-        assert!(!result.passed, "should fail without retirement (missing old_metric)");
+        assert!(
+            !result.passed,
+            "should fail without retirement (missing old_metric)"
+        );
 
         let plan_retire = prepare_merge(
-            store.as_ref(), "feature", None, Some(&["old_metric".to_string()]),
-        ).unwrap();
+            store.as_ref(),
+            "feature",
+            None,
+            Some(&["old_metric".to_string()]),
+        )
+        .unwrap();
         assert_eq!(plan_retire.union_suite.metrics.len(), 1);
-        assert!(plan_retire.check_dominance(&merged).passed,
-            "should pass with old_metric retired");
+        assert!(
+            plan_retire.check_dominance(&merged).passed,
+            "should pass with old_metric retired"
+        );
     }
 
     #[test]
@@ -979,8 +1076,11 @@ mod tests {
         let result = prepare_merge(store.as_ref(), "feature", None, None);
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("defined differently"),
-            "error should mention conflicting metric: {}", msg);
+        assert!(
+            msg.contains("defined differently"),
+            "error should mention conflicting metric: {}",
+            msg
+        );
     }
 
     #[test]
@@ -994,15 +1094,25 @@ mod tests {
         setup_two_branches(store.as_ref(), dir.path(), &suite, &suite, m1, m2);
 
         let plan = prepare_merge(store.as_ref(), "feature", None, None).unwrap();
-        let prog = MorphObject::Blob(Blob { kind: "p".into(), content: serde_json::json!({}) });
+        let prog = MorphObject::Blob(Blob {
+            kind: "p".into(),
+            content: serde_json::json!({}),
+        });
         let prog_hash = store.put(&prog).unwrap();
         let mut merged = BTreeMap::new();
         merged.insert("acc".into(), 0.92);
 
         let hash = execute_merge(
-            store.as_ref(), &plan, &prog_hash, merged,
-            "merge".into(), None, None, Some("0.3"),
-        ).unwrap();
+            store.as_ref(),
+            &plan,
+            &prog_hash,
+            merged,
+            "merge".into(),
+            None,
+            None,
+            Some("0.3"),
+        )
+        .unwrap();
 
         let commit = match store.get(&hash).unwrap() {
             MorphObject::Commit(c) => c,
@@ -1024,20 +1134,41 @@ mod tests {
         setup_two_branches(store.as_ref(), dir.path(), &suite, &suite, m1, m2);
 
         let plan = prepare_merge(store.as_ref(), "feature", None, None).unwrap();
-        let prog = MorphObject::Blob(Blob { kind: "p".into(), content: serde_json::json!({}) });
+        let prog = MorphObject::Blob(Blob {
+            kind: "p".into(),
+            content: serde_json::json!({}),
+        });
         let prog_hash = store.put(&prog).unwrap();
         let mut merged = BTreeMap::new();
         merged.insert("acc".into(), 0.87);
 
         let result = execute_merge(
-            store.as_ref(), &plan, &prog_hash, merged,
-            "merge".into(), None, None, None,
+            store.as_ref(),
+            &plan,
+            &prog_hash,
+            merged,
+            "merge".into(),
+            None,
+            None,
+            None,
         );
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("merge rejected"), "should say 'merge rejected': {}", msg);
-        assert!(msg.contains("acc"), "should name the blocking metric: {}", msg);
-        assert!(msg.contains("current"), "should identify the parent: {}", msg);
+        assert!(
+            msg.contains("merge rejected"),
+            "should say 'merge rejected': {}",
+            msg
+        );
+        assert!(
+            msg.contains("acc"),
+            "should name the blocking metric: {}",
+            msg
+        );
+        assert!(
+            msg.contains("current"),
+            "should identify the parent: {}",
+            msg
+        );
     }
 
     #[test]
@@ -1061,15 +1192,25 @@ mod tests {
         crate::policy::write_policy(&dir.path().join(".morph"), &policy).unwrap();
 
         let plan = prepare_merge(store.as_ref(), "feature", None, None).unwrap();
-        let prog = MorphObject::Blob(Blob { kind: "p".into(), content: serde_json::json!({}) });
+        let prog = MorphObject::Blob(Blob {
+            kind: "p".into(),
+            content: serde_json::json!({}),
+        });
         let prog_hash = store.put(&prog).unwrap();
         let mut merged = BTreeMap::new();
         merged.insert("acc".into(), 0.5);
 
         let hash = execute_merge(
-            store.as_ref(), &plan, &prog_hash, merged,
-            "merge".into(), None, Some(dir.path()), None,
-        ).expect("merge_policy=none must let the regression land");
+            store.as_ref(),
+            &plan,
+            &prog_hash,
+            merged,
+            "merge".into(),
+            None,
+            Some(dir.path()),
+            None,
+        )
+        .expect("merge_policy=none must let the regression land");
         assert!(matches!(store.get(&hash).unwrap(), MorphObject::Commit(_)));
     }
 
@@ -1118,24 +1259,48 @@ mod tests {
         // Sanity: plan reflects the union before we call execute_merge.
         assert_eq!(
             plan.evidence_refs.as_deref(),
-            Some(["run-A", "run-B", "shared"].as_slice().iter().map(|s| s.to_string()).collect::<Vec<_>>().as_slice())
+            Some(
+                ["run-A", "run-B", "shared"]
+                    .as_slice()
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<_>>()
+                    .as_slice()
+            )
         );
 
-        let prog = MorphObject::Blob(Blob { kind: "p".into(), content: serde_json::json!({}) });
+        let prog = MorphObject::Blob(Blob {
+            kind: "p".into(),
+            content: serde_json::json!({}),
+        });
         let prog_hash = store.put(&prog).unwrap();
         let mut merged = BTreeMap::new();
         merged.insert("acc".into(), 0.92);
         let h = execute_merge(
-            store.as_ref(), &plan, &prog_hash, merged,
-            "merge".into(), None, None, Some("0.5"),
-        ).unwrap();
+            store.as_ref(),
+            &plan,
+            &prog_hash,
+            merged,
+            "merge".into(),
+            None,
+            None,
+            Some("0.5"),
+        )
+        .unwrap();
         let commit = match store.get(&h).unwrap() {
             MorphObject::Commit(c) => c,
             _ => panic!("expected commit"),
         };
         assert_eq!(
             commit.evidence_refs.as_deref(),
-            Some(["run-A", "run-B", "shared"].as_slice().iter().map(|s| s.to_string()).collect::<Vec<_>>().as_slice()),
+            Some(
+                ["run-A", "run-B", "shared"]
+                    .as_slice()
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<_>>()
+                    .as_slice()
+            ),
             "merge commit should carry the deduped sorted union of parent evidence"
         );
     }
@@ -1158,14 +1323,24 @@ mod tests {
         let plan = prepare_merge(store.as_ref(), "feature", None, None).unwrap();
         assert_eq!(plan.evidence_refs, None);
 
-        let prog = MorphObject::Blob(Blob { kind: "p".into(), content: serde_json::json!({}) });
+        let prog = MorphObject::Blob(Blob {
+            kind: "p".into(),
+            content: serde_json::json!({}),
+        });
         let prog_hash = store.put(&prog).unwrap();
         let mut merged = BTreeMap::new();
         merged.insert("acc".into(), 0.92);
         let h = execute_merge(
-            store.as_ref(), &plan, &prog_hash, merged,
-            "merge".into(), None, None, Some("0.5"),
-        ).unwrap();
+            store.as_ref(),
+            &plan,
+            &prog_hash,
+            merged,
+            "merge".into(),
+            None,
+            None,
+            Some("0.5"),
+        )
+        .unwrap();
         let commit = match store.get(&h).unwrap() {
             MorphObject::Commit(c) => c,
             _ => panic!("expected commit"),
@@ -1186,10 +1361,19 @@ mod tests {
         let plan = prepare_merge(store.as_ref(), "feature", None, None).unwrap();
         let text = plan.format_plan();
         assert!(text.contains("Merge plan"), "should have header");
-        assert!(text.contains(&plan.head_hash.to_string()), "should have head hash");
-        assert!(text.contains(&plan.other_hash.to_string()), "should have other hash");
+        assert!(
+            text.contains(&plan.head_hash.to_string()),
+            "should have head hash"
+        );
+        assert!(
+            text.contains(&plan.other_hash.to_string()),
+            "should have other hash"
+        );
         assert!(text.contains("Reference bar"), "should have reference bar");
         assert!(text.contains(">= 0.9"), "should show reference bar value");
-        assert!(text.contains("Retired metrics: none"), "should show no retired metrics");
+        assert!(
+            text.contains("Retired metrics: none"),
+            "should show no retired metrics"
+        );
     }
 }

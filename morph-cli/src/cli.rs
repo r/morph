@@ -251,9 +251,7 @@ pub enum Command {
     /// Show a stored Morph object (commit, run, trace, etc.) as pretty JSON.
     /// Accepts a full hash, hash prefix (≥4 hex chars), `HEAD`, a branch
     /// name, or a tag name.
-    Show {
-        hash: String,
-    },
+    Show { hash: String },
     /// Show commit history. Accepts `HEAD`, branches, tags, or hashes.
     /// Defaults to short hashes so output stays scannable; pass
     /// `--full-hash` to restore the long form.
@@ -301,9 +299,7 @@ pub enum Command {
         json: bool,
     },
     /// Switch branch or detach to a commit
-    Checkout {
-        ref_name: String,
-    },
+    Checkout { ref_name: String },
     /// Ingest a run (execution receipt)
     Run {
         #[command(subcommand)]
@@ -404,14 +400,9 @@ pub enum Command {
         sub: RemoteCmd,
     },
     /// Push a branch to a remote repository
-    Push {
-        remote: String,
-        branch: String,
-    },
+    Push { remote: String, branch: String },
     /// Fetch branches from a remote into remote-tracking refs
-    Fetch {
-        remote: String,
-    },
+    Fetch { remote: String },
     /// Pull: fetch from remote + fast-forward local branch
     Pull {
         remote: String,
@@ -513,9 +504,7 @@ pub enum Command {
         json: bool,
     },
     /// Read a Morph object from JSON, store it, print its content hash
-    HashObject {
-        path: PathBuf,
-    },
+    HashObject { path: PathBuf },
     /// Set up IDE integration
     #[cfg(feature = "cursor-setup")]
     Setup {
@@ -754,21 +743,13 @@ pub enum TracesCmd {
         hash: String,
     },
     /// Show the target file/function context for replay or eval
-    TargetContext {
-        hash: String,
-    },
+    TargetContext { hash: String },
     /// Show the final artifact produced by the agent
-    FinalArtifact {
-        hash: String,
-    },
+    FinalArtifact { hash: String },
     /// Show change / preserved / restored semantic summaries
-    Semantics {
-        hash: String,
-    },
+    Semantics { hash: String },
     /// Show verification commands/tests/demo steps
-    Verification {
-        hash: String,
-    },
+    Verification { hash: String },
 }
 
 #[derive(clap::Subcommand)]
@@ -971,7 +952,9 @@ pub enum EvalCmd {
 
 #[derive(clap::Subcommand)]
 pub enum PromptCmd {
-    Create { path: PathBuf },
+    Create {
+        path: PathBuf,
+    },
     Materialize {
         hash: String,
         #[arg(short, long)]
@@ -987,7 +970,10 @@ pub enum PromptCmd {
 
 #[derive(clap::Subcommand)]
 pub enum RemoteCmd {
-    Add { name: String, path: PathBuf },
+    Add {
+        name: String,
+        path: PathBuf,
+    },
     List {
         /// Emit a JSON envelope with every configured remote.
         #[arg(long)]
@@ -1007,8 +993,12 @@ pub enum PolicyCmd {
         force: bool,
     },
     Show,
-    Set { file: PathBuf },
-    SetDefaultEval { hash: String },
+    Set {
+        file: PathBuf,
+    },
+    SetDefaultEval {
+        hash: String,
+    },
     /// Replace `policy.required_metrics` with the supplied list.
     /// Pass an empty list to disable the gate; existing thresholds
     /// and default-suite reference are preserved.
@@ -1019,8 +1009,12 @@ pub enum PolicyCmd {
 
 #[derive(clap::Subcommand)]
 pub enum PipelineCmd {
-    Create { path: PathBuf },
-    Show { hash: String },
+    Create {
+        path: PathBuf,
+    },
+    Show {
+        hash: String,
+    },
     IdentityHash,
     Extract {
         #[arg(long)]

@@ -171,10 +171,7 @@ fn morph_pull_fast_forwards_over_ssh_url() {
     );
     // local heads/main must now match remote tip.
     let local_main = local.join(".morph/refs/heads/main");
-    assert!(
-        local_main.exists(),
-        "local main not created after pull"
-    );
+    assert!(local_main.exists(), "local main not created after pull");
 }
 
 #[test]
@@ -524,7 +521,11 @@ fn push_and_fetch_against_bare_ssh_server() {
         String::from_utf8_lossy(&out.stderr)
     );
     let body = String::from_utf8_lossy(&out.stdout);
-    assert!(body.contains("alpha"), "show should contain commit msg: {}", body);
+    assert!(
+        body.contains("alpha"),
+        "show should contain commit msg: {}",
+        body
+    );
 }
 
 #[test]
@@ -584,8 +585,8 @@ fn fetched_commit_preserves_morph_instance_across_ssh() {
         String::from_utf8_lossy(&out.stderr)
     );
     let body = String::from_utf8_lossy(&out.stdout);
-    let parsed: serde_json::Value = serde_json::from_str(&body)
-        .expect("morph show should emit a commit JSON object");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&body).expect("morph show should emit a commit JSON object");
     assert_eq!(
         parsed["morph_instance"].as_str(),
         Some(remote_instance.as_str()),
@@ -756,8 +757,16 @@ fn morph_clone_works_against_bare_ssh_server() {
         String::from_utf8_lossy(&out.stderr)
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("Cloned"), "expected `Cloned` line, got: {}", stdout);
-    assert!(stdout.contains("branch:  main"), "expected branch line, got: {}", stdout);
+    assert!(
+        stdout.contains("Cloned"),
+        "expected `Cloned` line, got: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("branch:  main"),
+        "expected branch line, got: {}",
+        stdout
+    );
 
     // Layout sanity: working repo with origin, remote-tracking ref,
     // local branch, and Alice's file in the working tree.
@@ -767,7 +776,11 @@ fn morph_clone_works_against_bare_ssh_server() {
         "bob should have origin/main tracking ref"
     );
     let local_main = fs::read_to_string(bob.join(".morph/refs/heads/main")).unwrap();
-    assert_eq!(local_main.trim(), alpha_hash, "bob's main should match alice's tip");
+    assert_eq!(
+        local_main.trim(),
+        alpha_hash,
+        "bob's main should match alice's tip"
+    );
     assert!(
         bob.join("greeting.txt").exists(),
         "bob's working tree should contain alice's file"

@@ -51,7 +51,9 @@ pub enum MorphError {
     /// Branch has diverged from its remote tracking ref; fast-forward not
     /// possible. The CLI surfaces this with a hint to run
     /// `morph pull --merge` (PR 4) or `morph merge` manually.
-    #[error("Diverged: branch '{branch}' at {local_tip} has diverged from remote tip {remote_tip}")]
+    #[error(
+        "Diverged: branch '{branch}' at {local_tip} has diverged from remote tip {remote_tip}"
+    )]
     Diverged {
         branch: String,
         local_tip: String,
@@ -226,10 +228,7 @@ pub trait Store {
     /// tombstones surfaces the limitation rather than silently
     /// applying nothing. Callers wrap with try-best-effort if they
     /// want to skip unsupported backends.
-    fn write_tombstone(
-        &self,
-        _tombstone: &crate::objects::Tombstone,
-    ) -> Result<Hash, MorphError> {
+    fn write_tombstone(&self, _tombstone: &crate::objects::Tombstone) -> Result<Hash, MorphError> {
         Err(MorphError::Other(
             "tombstones unsupported by this store backend".into(),
         ))
@@ -308,22 +307,54 @@ fn list_refs_recursive(
 }
 
 impl Store for Box<dyn Store + '_> {
-    fn put(&self, object: &MorphObject) -> Result<Hash, MorphError> { self.as_ref().put(object) }
-    fn get(&self, hash: &Hash) -> Result<MorphObject, MorphError> { self.as_ref().get(hash) }
-    fn has(&self, hash: &Hash) -> Result<bool, MorphError> { self.as_ref().has(hash) }
-    fn list(&self, tf: ObjectType) -> Result<Vec<Hash>, MorphError> { self.as_ref().list(tf) }
-    fn ref_read(&self, name: &str) -> Result<Option<Hash>, MorphError> { self.as_ref().ref_read(name) }
-    fn ref_write(&self, name: &str, hash: &Hash) -> Result<(), MorphError> { self.as_ref().ref_write(name, hash) }
-    fn ref_read_raw(&self, name: &str) -> Result<Option<String>, MorphError> { self.as_ref().ref_read_raw(name) }
-    fn ref_write_raw(&self, name: &str, value: &str) -> Result<(), MorphError> { self.as_ref().ref_write_raw(name, value) }
-    fn ref_delete(&self, name: &str) -> Result<(), MorphError> { self.as_ref().ref_delete(name) }
-    fn refs_dir(&self) -> PathBuf { self.as_ref().refs_dir() }
-    fn hash_object(&self, object: &MorphObject) -> Result<Hash, MorphError> { self.as_ref().hash_object(object) }
-    fn list_hashes_with_prefix(&self, prefix: &str) -> Result<Vec<Hash>, MorphError> { self.as_ref().list_hashes_with_prefix(prefix) }
-    fn list_forgotten(&self) -> Result<Vec<Hash>, MorphError> { self.as_ref().list_forgotten() }
-    fn is_forgotten(&self, h: &Hash) -> Result<bool, MorphError> { self.as_ref().is_forgotten(h) }
-    fn read_tombstone(&self, h: &Hash) -> Result<Option<crate::objects::Tombstone>, MorphError> { self.as_ref().read_tombstone(h) }
-    fn write_tombstone(&self, t: &crate::objects::Tombstone) -> Result<Hash, MorphError> { self.as_ref().write_tombstone(t) }
+    fn put(&self, object: &MorphObject) -> Result<Hash, MorphError> {
+        self.as_ref().put(object)
+    }
+    fn get(&self, hash: &Hash) -> Result<MorphObject, MorphError> {
+        self.as_ref().get(hash)
+    }
+    fn has(&self, hash: &Hash) -> Result<bool, MorphError> {
+        self.as_ref().has(hash)
+    }
+    fn list(&self, tf: ObjectType) -> Result<Vec<Hash>, MorphError> {
+        self.as_ref().list(tf)
+    }
+    fn ref_read(&self, name: &str) -> Result<Option<Hash>, MorphError> {
+        self.as_ref().ref_read(name)
+    }
+    fn ref_write(&self, name: &str, hash: &Hash) -> Result<(), MorphError> {
+        self.as_ref().ref_write(name, hash)
+    }
+    fn ref_read_raw(&self, name: &str) -> Result<Option<String>, MorphError> {
+        self.as_ref().ref_read_raw(name)
+    }
+    fn ref_write_raw(&self, name: &str, value: &str) -> Result<(), MorphError> {
+        self.as_ref().ref_write_raw(name, value)
+    }
+    fn ref_delete(&self, name: &str) -> Result<(), MorphError> {
+        self.as_ref().ref_delete(name)
+    }
+    fn refs_dir(&self) -> PathBuf {
+        self.as_ref().refs_dir()
+    }
+    fn hash_object(&self, object: &MorphObject) -> Result<Hash, MorphError> {
+        self.as_ref().hash_object(object)
+    }
+    fn list_hashes_with_prefix(&self, prefix: &str) -> Result<Vec<Hash>, MorphError> {
+        self.as_ref().list_hashes_with_prefix(prefix)
+    }
+    fn list_forgotten(&self) -> Result<Vec<Hash>, MorphError> {
+        self.as_ref().list_forgotten()
+    }
+    fn is_forgotten(&self, h: &Hash) -> Result<bool, MorphError> {
+        self.as_ref().is_forgotten(h)
+    }
+    fn read_tombstone(&self, h: &Hash) -> Result<Option<crate::objects::Tombstone>, MorphError> {
+        self.as_ref().read_tombstone(h)
+    }
+    fn write_tombstone(&self, t: &crate::objects::Tombstone) -> Result<Hash, MorphError> {
+        self.as_ref().write_tombstone(t)
+    }
 }
 
 // ── Filesystem-backed store ──────────────────────────────────────────
@@ -352,17 +383,29 @@ pub struct FsStore {
 impl FsStore {
     /// Create a legacy store (v0.0/v0.1). Hash = SHA-256(canonical_json). Flat layout.
     pub fn new(root: impl AsRef<Path>) -> Self {
-        FsStore { root: root.as_ref().to_path_buf(), hash_fn: crate::content_hash, layout: ObjectLayout::Flat }
+        FsStore {
+            root: root.as_ref().to_path_buf(),
+            hash_fn: crate::content_hash,
+            layout: ObjectLayout::Flat,
+        }
     }
 
     /// Create a Git-format store (v0.2/v0.3). Hash = Git-format SHA-256. Flat layout.
     pub fn new_git(root: impl AsRef<Path>) -> Self {
-        FsStore { root: root.as_ref().to_path_buf(), hash_fn: crate::content_hash_git, layout: ObjectLayout::Flat }
+        FsStore {
+            root: root.as_ref().to_path_buf(),
+            hash_fn: crate::content_hash_git,
+            layout: ObjectLayout::Flat,
+        }
     }
 
     /// Create a Git-format store with fan-out layout (v0.4+).
     pub fn new_git_fanout(root: impl AsRef<Path>) -> Self {
-        FsStore { root: root.as_ref().to_path_buf(), hash_fn: crate::content_hash_git, layout: ObjectLayout::Fanout }
+        FsStore {
+            root: root.as_ref().to_path_buf(),
+            hash_fn: crate::content_hash_git,
+            layout: ObjectLayout::Fanout,
+        }
     }
 
     /// Open a concrete FsStore by reading the store version from config.json.
@@ -375,11 +418,17 @@ impl FsStore {
         })
     }
 
-    pub fn objects_dir(&self) -> PathBuf { self.root.join("objects") }
+    pub fn objects_dir(&self) -> PathBuf {
+        self.root.join("objects")
+    }
 
-    pub fn refs_dir(&self) -> PathBuf { self.root.join("refs") }
+    pub fn refs_dir(&self) -> PathBuf {
+        self.root.join("refs")
+    }
 
-    pub fn layout(&self) -> ObjectLayout { self.layout }
+    pub fn layout(&self) -> ObjectLayout {
+        self.layout
+    }
 
     fn object_path(&self, hash: &Hash) -> PathBuf {
         let hex = hash.to_string();
@@ -387,7 +436,9 @@ impl FsStore {
             ObjectLayout::Flat => self.objects_dir().join(format!("{}.json", hex)),
             ObjectLayout::Fanout => {
                 let (prefix, rest) = hex.split_at(2);
-                self.objects_dir().join(prefix).join(format!("{}.json", rest))
+                self.objects_dir()
+                    .join(prefix)
+                    .join(format!("{}.json", rest))
             }
         }
     }
@@ -419,7 +470,9 @@ impl FsStore {
     /// independent: `tombstones/` answers "give me every tombstone
     /// object", `forgotten/` answers "is this hash retired?".
     fn forgotten_marker_path(&self, original_hash: &Hash) -> PathBuf {
-        self.root.join("forgotten").join(format!("{}.txt", original_hash))
+        self.root
+            .join("forgotten")
+            .join(format!("{}.txt", original_hash))
     }
 
     /// True iff the named hash has been retired by `morph forget`
@@ -542,7 +595,13 @@ impl Store for FsStore {
     }
 
     fn list(&self, type_filter: ObjectType) -> Result<Vec<Hash>, MorphError> {
-        fs_list(&self.root, &self.objects_dir(), type_filter, &|h| self.get(h), self.layout)
+        fs_list(
+            &self.root,
+            &self.objects_dir(),
+            type_filter,
+            &|h| self.get(h),
+            self.layout,
+        )
     }
 
     fn list_hashes_with_prefix(&self, prefix: &str) -> Result<Vec<Hash>, MorphError> {
@@ -619,7 +678,9 @@ impl Store for FsStore {
         fs_ref_delete(&self.refs_dir(), name)
     }
 
-    fn refs_dir(&self) -> PathBuf { self.root.join("refs") }
+    fn refs_dir(&self) -> PathBuf {
+        self.root.join("refs")
+    }
 
     fn hash_object(&self, object: &MorphObject) -> Result<Hash, MorphError> {
         (self.hash_fn)(object)
@@ -640,10 +701,7 @@ impl Store for FsStore {
         FsStore::read_tombstone(self, original_hash)
     }
 
-    fn write_tombstone(
-        &self,
-        tombstone: &crate::objects::Tombstone,
-    ) -> Result<Hash, MorphError> {
+    fn write_tombstone(&self, tombstone: &crate::objects::Tombstone) -> Result<Hash, MorphError> {
         FsStore::write_tombstone(self, tombstone)
     }
 }
@@ -681,22 +739,58 @@ struct TypeIndex {
 fn type_indexes_for_object(object: &MorphObject) -> Vec<TypeIndex> {
     let mut out = Vec::new();
     let primary = match object {
-        MorphObject::Blob(_) => TypeIndex { dir: "blobs", full_content: false },
-        MorphObject::Tree(_) => TypeIndex { dir: "trees", full_content: false },
-        MorphObject::Pipeline(_) => TypeIndex { dir: "pipelines", full_content: false },
-        MorphObject::EvalSuite(_) => TypeIndex { dir: "evals", full_content: true },
-        MorphObject::Commit(_) => TypeIndex { dir: "commits", full_content: false },
-        MorphObject::Run(_) => TypeIndex { dir: "runs", full_content: true },
-        MorphObject::Artifact(_) => TypeIndex { dir: "artifacts", full_content: false },
-        MorphObject::Trace(_) => TypeIndex { dir: "traces", full_content: true },
-        MorphObject::TraceRollup(_) => TypeIndex { dir: "trace_rollups", full_content: false },
-        MorphObject::Annotation(_) => TypeIndex { dir: "annotations", full_content: true },
-        MorphObject::Tombstone(_) => TypeIndex { dir: "tombstones", full_content: true },
+        MorphObject::Blob(_) => TypeIndex {
+            dir: "blobs",
+            full_content: false,
+        },
+        MorphObject::Tree(_) => TypeIndex {
+            dir: "trees",
+            full_content: false,
+        },
+        MorphObject::Pipeline(_) => TypeIndex {
+            dir: "pipelines",
+            full_content: false,
+        },
+        MorphObject::EvalSuite(_) => TypeIndex {
+            dir: "evals",
+            full_content: true,
+        },
+        MorphObject::Commit(_) => TypeIndex {
+            dir: "commits",
+            full_content: false,
+        },
+        MorphObject::Run(_) => TypeIndex {
+            dir: "runs",
+            full_content: true,
+        },
+        MorphObject::Artifact(_) => TypeIndex {
+            dir: "artifacts",
+            full_content: false,
+        },
+        MorphObject::Trace(_) => TypeIndex {
+            dir: "traces",
+            full_content: true,
+        },
+        MorphObject::TraceRollup(_) => TypeIndex {
+            dir: "trace_rollups",
+            full_content: false,
+        },
+        MorphObject::Annotation(_) => TypeIndex {
+            dir: "annotations",
+            full_content: true,
+        },
+        MorphObject::Tombstone(_) => TypeIndex {
+            dir: "tombstones",
+            full_content: true,
+        },
     };
     out.push(primary);
     if let MorphObject::Blob(b) = object {
         if b.kind == "prompt" {
-            out.push(TypeIndex { dir: "prompts", full_content: true });
+            out.push(TypeIndex {
+                dir: "prompts",
+                full_content: true,
+            });
         }
     }
     out
@@ -726,8 +820,16 @@ fn type_index_for_object_type(t: ObjectType) -> Option<&'static str> {
 /// `ensure_type_indexes` writes them on a legacy rebuild. Tests use
 /// this to assert every type is covered.
 const ALL_TYPE_INDEX_DIRS: &[&str] = &[
-    "blobs", "trees", "pipelines", "evals", "commits",
-    "runs", "artifacts", "traces", "trace_rollups", "annotations",
+    "blobs",
+    "trees",
+    "pipelines",
+    "evals",
+    "commits",
+    "runs",
+    "artifacts",
+    "traces",
+    "trace_rollups",
+    "annotations",
     "tombstones",
 ];
 
@@ -985,7 +1087,11 @@ fn fs_ref_write_raw(refs_dir: &Path, name: &str, value: &str) -> Result<(), Morp
             std::fs::create_dir_all(parent)?;
         }
     }
-    let content = if value.ends_with('\n') { value.to_string() } else { format!("{}\n", value) };
+    let content = if value.ends_with('\n') {
+        value.to_string()
+    } else {
+        format!("{}\n", value)
+    };
     std::fs::write(&path, content)?;
     Ok(())
 }
@@ -1074,7 +1180,10 @@ pub fn resolve_hash_prefix(store: &dyn Store, s: &str) -> Result<Hash, MorphErro
     let lower = s.to_ascii_lowercase();
     let matches = store.list_hashes_with_prefix(&lower)?;
     match matches.len() {
-        0 => Err(MorphError::NotFound(format!("no object matches prefix '{}'", s))),
+        0 => Err(MorphError::NotFound(format!(
+            "no object matches prefix '{}'",
+            s
+        ))),
         1 => Ok(matches.into_iter().next().unwrap()),
         n => Err(MorphError::InvalidHash(format!(
             "ambiguous hash prefix '{}': {} objects match",
@@ -1163,7 +1272,10 @@ mod tests {
         });
         let hash = store.put(&blob).unwrap();
         let prompts_dir = dir.path().join("prompts");
-        assert!(prompts_dir.is_dir(), "put() should create prompts/ when missing");
+        assert!(
+            prompts_dir.is_dir(),
+            "put() should create prompts/ when missing"
+        );
         let index_file = prompts_dir.join(format!("{}.json", hash));
         assert!(index_file.is_file(), "prompts/<hash>.json should exist");
     }
@@ -1294,7 +1406,10 @@ mod tests {
         store.ref_write_raw("HEAD", "ref: heads/main").unwrap();
         let raw = store.ref_read_raw("HEAD").unwrap();
         assert!(raw.as_deref().map(|s| s.contains("ref:")).unwrap_or(false));
-        assert!(raw.as_deref().map(|s| s.contains("heads/main")).unwrap_or(false));
+        assert!(raw
+            .as_deref()
+            .map(|s| s.contains("heads/main"))
+            .unwrap_or(false));
     }
 
     #[test]
@@ -1318,7 +1433,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = FsStore::new(dir.path());
         std::fs::create_dir_all(store.refs_dir().join("tags")).unwrap();
-        let blob = MorphObject::Blob(Blob { kind: "x".into(), content: serde_json::json!({}) });
+        let blob = MorphObject::Blob(Blob {
+            kind: "x".into(),
+            content: serde_json::json!({}),
+        });
         let hash = store.put(&blob).unwrap();
         store.ref_write("tags/v1", &hash).unwrap();
         assert!(store.ref_read("tags/v1").unwrap().is_some());
@@ -1403,7 +1521,11 @@ mod tests {
 
         let hex = hash.to_string();
         let (prefix, rest) = hex.split_at(2);
-        let expected = dir.path().join("objects").join(prefix).join(format!("{}.json", rest));
+        let expected = dir
+            .path()
+            .join("objects")
+            .join(prefix)
+            .join(format!("{}.json", rest));
         assert!(expected.exists(), "object should be at fan-out path");
     }
 
@@ -1433,8 +1555,14 @@ mod tests {
     fn fanout_all_object_hashes() {
         let dir = tempfile::tempdir().unwrap();
         let store = FsStore::new_git_fanout(dir.path());
-        let b1 = MorphObject::Blob(Blob { kind: "a".into(), content: serde_json::json!(1) });
-        let b2 = MorphObject::Blob(Blob { kind: "b".into(), content: serde_json::json!(2) });
+        let b1 = MorphObject::Blob(Blob {
+            kind: "a".into(),
+            content: serde_json::json!(1),
+        });
+        let b2 = MorphObject::Blob(Blob {
+            kind: "b".into(),
+            content: serde_json::json!(2),
+        });
         let h1 = store.put(&b1).unwrap();
         let h2 = store.put(&b2).unwrap();
         let all = store.all_object_hashes().unwrap();
@@ -1447,7 +1575,10 @@ mod tests {
     fn fanout_delete_object() {
         let dir = tempfile::tempdir().unwrap();
         let store = FsStore::new_git_fanout(dir.path());
-        let blob = MorphObject::Blob(Blob { kind: "x".into(), content: serde_json::json!({}) });
+        let blob = MorphObject::Blob(Blob {
+            kind: "x".into(),
+            content: serde_json::json!({}),
+        });
         let hash = store.put(&blob).unwrap();
         assert!(store.has(&hash).unwrap());
         assert!(store.delete_object(&hash).unwrap());
@@ -1477,7 +1608,10 @@ mod tests {
     fn resolve_hash_prefix_full_hash_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
         let store = FsStore::new(dir.path());
-        let blob = MorphObject::Blob(Blob { kind: "x".into(), content: serde_json::json!({"a": 1}) });
+        let blob = MorphObject::Blob(Blob {
+            kind: "x".into(),
+            content: serde_json::json!({"a": 1}),
+        });
         let hash = store.put(&blob).unwrap();
         let full = hash.to_string();
         let resolved = resolve_hash_prefix(&store, &full).unwrap();
@@ -1488,7 +1622,10 @@ mod tests {
     fn resolve_hash_prefix_short_prefix_matches() {
         let dir = tempfile::tempdir().unwrap();
         let store = FsStore::new(dir.path());
-        let blob = MorphObject::Blob(Blob { kind: "x".into(), content: serde_json::json!({"a": 1}) });
+        let blob = MorphObject::Blob(Blob {
+            kind: "x".into(),
+            content: serde_json::json!({"a": 1}),
+        });
         let hash = store.put(&blob).unwrap();
         let full = hash.to_string();
         for len in [4, 6, 8, 12, 40] {
@@ -1502,7 +1639,10 @@ mod tests {
     fn resolve_hash_prefix_accepts_uppercase() {
         let dir = tempfile::tempdir().unwrap();
         let store = FsStore::new(dir.path());
-        let blob = MorphObject::Blob(Blob { kind: "x".into(), content: serde_json::json!({"a": 1}) });
+        let blob = MorphObject::Blob(Blob {
+            kind: "x".into(),
+            content: serde_json::json!({"a": 1}),
+        });
         let hash = store.put(&blob).unwrap();
         let prefix_upper = hash.to_string()[..10].to_ascii_uppercase();
         let resolved = resolve_hash_prefix(&store, &prefix_upper).unwrap();
@@ -1513,7 +1653,10 @@ mod tests {
     fn resolve_hash_prefix_trims_whitespace() {
         let dir = tempfile::tempdir().unwrap();
         let store = FsStore::new(dir.path());
-        let blob = MorphObject::Blob(Blob { kind: "x".into(), content: serde_json::json!({"a": 1}) });
+        let blob = MorphObject::Blob(Blob {
+            kind: "x".into(),
+            content: serde_json::json!({"a": 1}),
+        });
         let hash = store.put(&blob).unwrap();
         let padded = format!("  {}  ", &hash.to_string()[..8]);
         let resolved = resolve_hash_prefix(&store, &padded).unwrap();
@@ -1524,7 +1667,10 @@ mod tests {
     fn resolve_hash_prefix_no_match_errors() {
         let dir = tempfile::tempdir().unwrap();
         let store = FsStore::new(dir.path());
-        let blob = MorphObject::Blob(Blob { kind: "x".into(), content: serde_json::json!({"a": 1}) });
+        let blob = MorphObject::Blob(Blob {
+            kind: "x".into(),
+            content: serde_json::json!({"a": 1}),
+        });
         let _ = store.put(&blob).unwrap();
         let err = resolve_hash_prefix(&store, "deadbeefcafe").unwrap_err();
         assert!(matches!(err, MorphError::NotFound(_)), "got {:?}", err);
@@ -1536,7 +1682,12 @@ mod tests {
         let store = FsStore::new(dir.path());
         for bad in ["", "a", "ab", "abc"] {
             let err = resolve_hash_prefix(&store, bad).unwrap_err();
-            assert!(matches!(err, MorphError::InvalidHash(_)), "input {:?} got {:?}", bad, err);
+            assert!(
+                matches!(err, MorphError::InvalidHash(_)),
+                "input {:?} got {:?}",
+                bad,
+                err
+            );
         }
     }
 
@@ -1570,19 +1721,30 @@ mod tests {
             for existing in &hashes {
                 let es = existing.to_string();
                 // find longest common hex prefix
-                let common = hs.chars().zip(es.chars()).take_while(|(a, b)| a == b).count();
+                let common = hs
+                    .chars()
+                    .zip(es.chars())
+                    .take_while(|(a, b)| a == b)
+                    .count();
                 if common >= 4 {
                     collision = Some((*existing, h, common));
                     break;
                 }
             }
-            if collision.is_some() { break; }
+            if collision.is_some() {
+                break;
+            }
             hashes.push(h);
         }
-        let (a, b, common_len) = collision.expect("expected a ≥4-char prefix collision within 10k blobs");
+        let (a, b, common_len) =
+            collision.expect("expected a ≥4-char prefix collision within 10k blobs");
         let shared = &a.to_string()[..common_len];
         let err = resolve_hash_prefix(&store, shared).unwrap_err();
-        assert!(matches!(err, MorphError::InvalidHash(_)), "expected ambiguous, got {:?}", err);
+        assert!(
+            matches!(err, MorphError::InvalidHash(_)),
+            "expected ambiguous, got {:?}",
+            err
+        );
         // Longer prefixes should disambiguate (different next char).
         let a_str = a.to_string();
         let b_str = b.to_string();
@@ -1597,12 +1759,27 @@ mod tests {
     fn resolve_hash_prefix_matches_across_object_types() {
         let dir = tempfile::tempdir().unwrap();
         let store = FsStore::new(dir.path());
-        let blob = MorphObject::Blob(Blob { kind: "b".into(), content: serde_json::json!({}) });
-        let tree = MorphObject::Tree(Tree { entries: vec![TreeEntry { name: "f".into(), hash: "0".repeat(64), entry_type: "blob".into() }] });
+        let blob = MorphObject::Blob(Blob {
+            kind: "b".into(),
+            content: serde_json::json!({}),
+        });
+        let tree = MorphObject::Tree(Tree {
+            entries: vec![TreeEntry {
+                name: "f".into(),
+                hash: "0".repeat(64),
+                entry_type: "blob".into(),
+            }],
+        });
         let bh = store.put(&blob).unwrap();
         let th = store.put(&tree).unwrap();
-        assert_eq!(resolve_hash_prefix(&store, &bh.to_string()[..8]).unwrap(), bh);
-        assert_eq!(resolve_hash_prefix(&store, &th.to_string()[..8]).unwrap(), th);
+        assert_eq!(
+            resolve_hash_prefix(&store, &bh.to_string()[..8]).unwrap(),
+            bh
+        );
+        assert_eq!(
+            resolve_hash_prefix(&store, &th.to_string()[..8]).unwrap(),
+            th
+        );
     }
 
     /// Regression test for the v0.37.4 hang: prior to the fix,
@@ -1623,22 +1800,42 @@ mod tests {
             inner: FsStore,
         }
         impl Store for PanicListByTypeStore {
-            fn put(&self, o: &MorphObject) -> Result<Hash, MorphError> { self.inner.put(o) }
-            fn get(&self, h: &Hash) -> Result<MorphObject, MorphError> { self.inner.get(h) }
-            fn has(&self, h: &Hash) -> Result<bool, MorphError> { self.inner.has(h) }
+            fn put(&self, o: &MorphObject) -> Result<Hash, MorphError> {
+                self.inner.put(o)
+            }
+            fn get(&self, h: &Hash) -> Result<MorphObject, MorphError> {
+                self.inner.get(h)
+            }
+            fn has(&self, h: &Hash) -> Result<bool, MorphError> {
+                self.inner.has(h)
+            }
             fn list(&self, _t: ObjectType) -> Result<Vec<Hash>, MorphError> {
                 panic!("resolve_hash_prefix must not call Store::list(type) — use list_hashes_with_prefix");
             }
             fn list_hashes_with_prefix(&self, p: &str) -> Result<Vec<Hash>, MorphError> {
                 self.inner.list_hashes_with_prefix(p)
             }
-            fn ref_read(&self, n: &str) -> Result<Option<Hash>, MorphError> { self.inner.ref_read(n) }
-            fn ref_write(&self, n: &str, h: &Hash) -> Result<(), MorphError> { self.inner.ref_write(n, h) }
-            fn ref_read_raw(&self, n: &str) -> Result<Option<String>, MorphError> { self.inner.ref_read_raw(n) }
-            fn ref_write_raw(&self, n: &str, v: &str) -> Result<(), MorphError> { self.inner.ref_write_raw(n, v) }
-            fn ref_delete(&self, n: &str) -> Result<(), MorphError> { self.inner.ref_delete(n) }
-            fn refs_dir(&self) -> PathBuf { self.inner.refs_dir() }
-            fn hash_object(&self, o: &MorphObject) -> Result<Hash, MorphError> { self.inner.hash_object(o) }
+            fn ref_read(&self, n: &str) -> Result<Option<Hash>, MorphError> {
+                self.inner.ref_read(n)
+            }
+            fn ref_write(&self, n: &str, h: &Hash) -> Result<(), MorphError> {
+                self.inner.ref_write(n, h)
+            }
+            fn ref_read_raw(&self, n: &str) -> Result<Option<String>, MorphError> {
+                self.inner.ref_read_raw(n)
+            }
+            fn ref_write_raw(&self, n: &str, v: &str) -> Result<(), MorphError> {
+                self.inner.ref_write_raw(n, v)
+            }
+            fn ref_delete(&self, n: &str) -> Result<(), MorphError> {
+                self.inner.ref_delete(n)
+            }
+            fn refs_dir(&self) -> PathBuf {
+                self.inner.refs_dir()
+            }
+            fn hash_object(&self, o: &MorphObject) -> Result<Hash, MorphError> {
+                self.inner.hash_object(o)
+            }
         }
 
         let dir = tempfile::tempdir().unwrap();
@@ -1704,7 +1901,8 @@ mod tests {
             });
             let json = crate::canonical_json(&ann).unwrap();
             let hash = crate::content_hash_git(&ann).unwrap();
-            let path = store.objects_dir()
+            let path = store
+                .objects_dir()
                 .join(&hash.to_string()[..2])
                 .join(format!("{}.json", &hash.to_string()[2..]));
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -1725,7 +1923,10 @@ mod tests {
         let mut listed = store.list(ObjectType::Annotation).unwrap();
         listed.sort_by_key(|h| h.to_string());
         expected.sort_by_key(|h| h.to_string());
-        assert_eq!(listed, expected, "lazy rebuild must surface every legacy annotation");
+        assert_eq!(
+            listed, expected,
+            "lazy rebuild must surface every legacy annotation"
+        );
         assert!(
             dir.path().join("annotations").join(".indexed").exists(),
             "rebuild must drop the .indexed marker so subsequent calls skip the walk"
@@ -1827,22 +2028,42 @@ mod tests {
             inner: FsStore,
         }
         impl Store for PanicGetStore {
-            fn put(&self, o: &MorphObject) -> Result<Hash, MorphError> { self.inner.put(o) }
+            fn put(&self, o: &MorphObject) -> Result<Hash, MorphError> {
+                self.inner.put(o)
+            }
             fn get(&self, _h: &Hash) -> Result<MorphObject, MorphError> {
                 panic!("list(t) must not call get() once indexes are built");
             }
-            fn has(&self, h: &Hash) -> Result<bool, MorphError> { self.inner.has(h) }
-            fn list(&self, t: ObjectType) -> Result<Vec<Hash>, MorphError> { self.inner.list(t) }
+            fn has(&self, h: &Hash) -> Result<bool, MorphError> {
+                self.inner.has(h)
+            }
+            fn list(&self, t: ObjectType) -> Result<Vec<Hash>, MorphError> {
+                self.inner.list(t)
+            }
             fn list_hashes_with_prefix(&self, p: &str) -> Result<Vec<Hash>, MorphError> {
                 self.inner.list_hashes_with_prefix(p)
             }
-            fn ref_read(&self, n: &str) -> Result<Option<Hash>, MorphError> { self.inner.ref_read(n) }
-            fn ref_write(&self, n: &str, h: &Hash) -> Result<(), MorphError> { self.inner.ref_write(n, h) }
-            fn ref_read_raw(&self, n: &str) -> Result<Option<String>, MorphError> { self.inner.ref_read_raw(n) }
-            fn ref_write_raw(&self, n: &str, v: &str) -> Result<(), MorphError> { self.inner.ref_write_raw(n, v) }
-            fn ref_delete(&self, n: &str) -> Result<(), MorphError> { self.inner.ref_delete(n) }
-            fn refs_dir(&self) -> PathBuf { self.inner.refs_dir() }
-            fn hash_object(&self, o: &MorphObject) -> Result<Hash, MorphError> { self.inner.hash_object(o) }
+            fn ref_read(&self, n: &str) -> Result<Option<Hash>, MorphError> {
+                self.inner.ref_read(n)
+            }
+            fn ref_write(&self, n: &str, h: &Hash) -> Result<(), MorphError> {
+                self.inner.ref_write(n, h)
+            }
+            fn ref_read_raw(&self, n: &str) -> Result<Option<String>, MorphError> {
+                self.inner.ref_read_raw(n)
+            }
+            fn ref_write_raw(&self, n: &str, v: &str) -> Result<(), MorphError> {
+                self.inner.ref_write_raw(n, v)
+            }
+            fn ref_delete(&self, n: &str) -> Result<(), MorphError> {
+                self.inner.ref_delete(n)
+            }
+            fn refs_dir(&self) -> PathBuf {
+                self.inner.refs_dir()
+            }
+            fn hash_object(&self, o: &MorphObject) -> Result<Hash, MorphError> {
+                self.inner.hash_object(o)
+            }
         }
 
         let dir = tempfile::tempdir().unwrap();
@@ -1851,7 +2072,10 @@ mod tests {
         // One object of every easily-constructible top-level type.
         let mut puts: Vec<(ObjectType, Hash)> = Vec::new();
         for obj in [
-            MorphObject::Blob(Blob { kind: "x".into(), content: serde_json::json!({"a": 1}) }),
+            MorphObject::Blob(Blob {
+                kind: "x".into(),
+                content: serde_json::json!({"a": 1}),
+            }),
             MorphObject::Tree(Tree { entries: vec![] }),
             MorphObject::TraceRollup(crate::objects::TraceRollup {
                 trace: "0".repeat(64),
@@ -1903,7 +2127,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = FsStore::new_git_fanout(dir.path());
         let pipeline = MorphObject::Pipeline(crate::objects::Pipeline {
-            graph: crate::objects::PipelineGraph { nodes: vec![], edges: vec![] },
+            graph: crate::objects::PipelineGraph {
+                nodes: vec![],
+                edges: vec![],
+            },
             prompts: vec![],
             eval_suite: None,
             attribution: None,
@@ -1938,13 +2165,20 @@ mod tests {
         // into the fanout (bypassing `put`) — that's what a
         // pre-0.37.6 store looks like after upgrade.
         for obj in [
-            MorphObject::Blob(Blob { kind: "x".into(), content: serde_json::json!({"a": 1}) }),
-            MorphObject::Blob(Blob { kind: "prompt".into(), content: serde_json::json!({"t": "hi"}) }),
+            MorphObject::Blob(Blob {
+                kind: "x".into(),
+                content: serde_json::json!({"a": 1}),
+            }),
+            MorphObject::Blob(Blob {
+                kind: "prompt".into(),
+                content: serde_json::json!({"t": "hi"}),
+            }),
             MorphObject::Tree(Tree { entries: vec![] }),
         ] {
             let h = crate::content_hash_git(&obj).unwrap();
             let json = crate::canonical_json(&obj).unwrap();
-            let path = store.objects_dir()
+            let path = store
+                .objects_dir()
                 .join(&h.to_string()[..2])
                 .join(format!("{}.json", &h.to_string()[2..]));
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -1953,12 +2187,20 @@ mod tests {
 
         // Sanity: no type-index dirs exist yet.
         for d in ALL_TYPE_INDEX_DIRS {
-            assert!(!dir.path().join(d).exists(), "{} should be missing pre-rebuild", d);
+            assert!(
+                !dir.path().join(d).exists(),
+                "{} should be missing pre-rebuild",
+                d
+            );
         }
 
         // First list call triggers the unified rebuild.
         let blobs = store.list(ObjectType::Blob).unwrap();
-        assert_eq!(blobs.len(), 2, "both regular and prompt blobs surface via blobs/");
+        assert_eq!(
+            blobs.len(),
+            2,
+            "both regular and prompt blobs surface via blobs/"
+        );
 
         // Every type-index dir now has a `.indexed` marker, so
         // subsequent `list(t)` calls hit the fast path for any type.
@@ -2002,7 +2244,10 @@ mod tests {
         let blob_hash = store.put(&blob).unwrap();
         let blob_idx = dir.path().join("blobs").join(format!("{}.json", blob_hash));
         let blob_idx_size = std::fs::metadata(&blob_idx).unwrap().len();
-        assert_eq!(blob_idx_size, 0, "new blob index must be a zero-byte marker");
+        assert_eq!(
+            blob_idx_size, 0,
+            "new blob index must be a zero-byte marker"
+        );
 
         let ann = MorphObject::Annotation(Annotation {
             target: "0".repeat(64),
@@ -2013,7 +2258,10 @@ mod tests {
             timestamp: "2026-04-29T00:00:00Z".into(),
         });
         let ann_hash = store.put(&ann).unwrap();
-        let ann_idx = dir.path().join("annotations").join(format!("{}.json", ann_hash));
+        let ann_idx = dir
+            .path()
+            .join("annotations")
+            .join(format!("{}.json", ann_hash));
         let ann_idx_size = std::fs::metadata(&ann_idx).unwrap().len();
         assert!(
             ann_idx_size > 0,
@@ -2033,10 +2281,20 @@ mod tests {
             content: serde_json::json!({"text": "hi"}),
         });
         let h = store.put(&prompt).unwrap();
-        assert!(dir.path().join("blobs").join(format!("{}.json", h)).exists(),
-            "blob index must include prompts");
-        assert!(dir.path().join("prompts").join(format!("{}.json", h)).exists(),
-            "prompts index must keep its kind-subset entry for recording flows");
+        assert!(
+            dir.path()
+                .join("blobs")
+                .join(format!("{}.json", h))
+                .exists(),
+            "blob index must include prompts"
+        );
+        assert!(
+            dir.path()
+                .join("prompts")
+                .join(format!("{}.json", h))
+                .exists(),
+            "prompts index must keep its kind-subset entry for recording flows"
+        );
         assert!(store.list(ObjectType::Blob).unwrap().contains(&h));
     }
 
@@ -2070,6 +2328,10 @@ mod tests {
 
         let prefix = &hex[..8];
         let result = store.list_hashes_with_prefix(prefix).unwrap();
-        assert_eq!(result, vec![h], "fast path must not touch unrelated fanout subdirs");
+        assert_eq!(
+            result,
+            vec![h],
+            "fast path must not touch unrelated fanout subdirs"
+        );
     }
 }

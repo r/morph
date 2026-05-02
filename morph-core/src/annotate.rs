@@ -72,9 +72,7 @@ pub fn auto_detect_introduces_cases(
         Some(h) => match store.get(h) {
             Ok(MorphObject::Commit(c)) if !c.eval_contract.suite.is_empty() => {
                 match crate::commit::load_eval_suite(store, &c.eval_contract.suite) {
-                    Ok(parent_suite) => {
-                        parent_suite.cases.iter().map(|c| c.id.clone()).collect()
-                    }
+                    Ok(parent_suite) => parent_suite.cases.iter().map(|c| c.id.clone()).collect(),
                     Err(_) => std::collections::BTreeSet::new(),
                 }
             }
@@ -103,7 +101,10 @@ pub fn build_introduces_cases_annotation(
     data.insert(
         "cases".to_string(),
         serde_json::Value::Array(
-            cases.iter().map(|c| serde_json::Value::String(c.clone())).collect(),
+            cases
+                .iter()
+                .map(|c| serde_json::Value::String(c.clone()))
+                .collect(),
         ),
     );
     Some(create_annotation(
@@ -155,7 +156,10 @@ mod tests {
         let store = FsStore::new(dir.path());
         std::fs::create_dir_all(store.objects_dir()).unwrap();
 
-        let blob = MorphObject::Blob(Blob { kind: "x".into(), content: serde_json::json!({}) });
+        let blob = MorphObject::Blob(Blob {
+            kind: "x".into(),
+            content: serde_json::json!({}),
+        });
         let target_hash = store.put(&blob).unwrap();
 
         let mut data = BTreeMap::new();
@@ -188,12 +192,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = FsStore::new(dir.path());
         std::fs::create_dir_all(store.objects_dir()).unwrap();
-        let blob = MorphObject::Blob(Blob { kind: "x".into(), content: serde_json::json!({}) });
+        let blob = MorphObject::Blob(Blob {
+            kind: "x".into(),
+            content: serde_json::json!({}),
+        });
         let target = store.put(&blob).unwrap();
         assert!(build_introduces_cases_annotation(&target, &[], None).is_none());
 
         let cases = vec!["login:alpha".to_string(), "login:beta".to_string()];
-        let ann = build_introduces_cases_annotation(&target, &cases, None).expect("non-empty cases yield annotation");
+        let ann = build_introduces_cases_annotation(&target, &cases, None)
+            .expect("non-empty cases yield annotation");
         if let MorphObject::Annotation(a) = ann {
             assert_eq!(a.kind, "introduces_cases");
             let arr = a.data.get("cases").and_then(|v| v.as_array()).unwrap();
@@ -209,11 +217,26 @@ mod tests {
         let store = FsStore::new(dir.path());
         std::fs::create_dir_all(store.objects_dir()).unwrap();
 
-        let blob = MorphObject::Blob(Blob { kind: "x".into(), content: serde_json::json!({}) });
+        let blob = MorphObject::Blob(Blob {
+            kind: "x".into(),
+            content: serde_json::json!({}),
+        });
         let target_hash = store.put(&blob).unwrap();
 
-        let ann1 = create_annotation(&target_hash, Some("evt_1".into()), "bookmark".into(), BTreeMap::new(), None);
-        let ann2 = create_annotation(&target_hash, Some("evt_2".into()), "note".into(), BTreeMap::new(), None);
+        let ann1 = create_annotation(
+            &target_hash,
+            Some("evt_1".into()),
+            "bookmark".into(),
+            BTreeMap::new(),
+            None,
+        );
+        let ann2 = create_annotation(
+            &target_hash,
+            Some("evt_2".into()),
+            "note".into(),
+            BTreeMap::new(),
+            None,
+        );
         store.put(&ann1).unwrap();
         store.put(&ann2).unwrap();
 

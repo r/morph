@@ -29,11 +29,8 @@ struct GraphEdge {
     to: String,
 }
 
-pub(crate) fn build_graph_response(
-    store: &dyn Store,
-) -> Result<serde_json::Value, MorphError> {
-    let mut nodes: std::collections::HashMap<String, GraphNode> =
-        std::collections::HashMap::new();
+pub(crate) fn build_graph_response(store: &dyn Store) -> Result<serde_json::Value, MorphError> {
+    let mut nodes: std::collections::HashMap<String, GraphNode> = std::collections::HashMap::new();
     let mut edges: Vec<GraphEdge> = Vec::new();
 
     fn ensure_node(
@@ -177,13 +174,7 @@ pub(crate) fn build_graph_response(
             from: id.clone(),
             to: run.trace.clone(),
         });
-        ensure_node(
-            &mut nodes,
-            store,
-            &run.trace,
-            "trace",
-            "trace".to_string(),
-        );
+        ensure_node(&mut nodes, store, &run.trace, "trace", "trace".to_string());
         edges.push(GraphEdge {
             from: id.clone(),
             to: run.pipeline.clone(),
@@ -217,7 +208,10 @@ pub(crate) fn build_graph_response(
                     continue;
                 }
                 ensure_node(&mut nodes, store, prompt_hash, "?", String::new());
-                if !edges.iter().any(|e| e.from == pipeline_id && e.to == *prompt_hash) {
+                if !edges
+                    .iter()
+                    .any(|e| e.from == pipeline_id && e.to == *prompt_hash)
+                {
                     edges.push(GraphEdge {
                         from: pipeline_id.clone(),
                         to: prompt_hash.clone(),

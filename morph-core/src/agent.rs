@@ -38,8 +38,8 @@ pub fn read_instance_id(morph_dir: &Path) -> Result<Option<String>, MorphError> 
         return Ok(None);
     }
     let data = std::fs::read_to_string(&config_path)?;
-    let config: serde_json::Value = serde_json::from_str(&data)
-        .map_err(|e| MorphError::Serialization(e.to_string()))?;
+    let config: serde_json::Value =
+        serde_json::from_str(&data).map_err(|e| MorphError::Serialization(e.to_string()))?;
     let agent = match config.get("agent") {
         Some(a) => a,
         None => return Ok(None),
@@ -73,9 +73,7 @@ pub fn write_instance_id(morph_dir: &Path, id: &str) -> Result<(), MorphError> {
     };
     let agent = config
         .as_object_mut()
-        .ok_or_else(|| {
-            MorphError::Serialization("config.json is not a JSON object".to_string())
-        })?
+        .ok_or_else(|| MorphError::Serialization("config.json is not a JSON object".to_string()))?
         .entry("agent".to_string())
         .or_insert_with(|| serde_json::json!({}));
     if !agent.is_object() {
@@ -170,6 +168,9 @@ mod tests {
         let tmp = tempdir().unwrap();
         assert_eq!(read_instance_id(tmp.path()).unwrap(), None);
         let id = ensure_instance_id(tmp.path()).unwrap();
-        assert_eq!(read_instance_id(tmp.path()).unwrap().as_deref(), Some(id.as_str()));
+        assert_eq!(
+            read_instance_id(tmp.path()).unwrap().as_deref(),
+            Some(id.as_str())
+        );
     }
 }

@@ -106,7 +106,9 @@ mod tests {
     fn unwrap_clean(r: TextMergeResult) -> Vec<u8> {
         match r {
             TextMergeResult::Clean(b) => b,
-            TextMergeResult::Conflict { content_with_markers } => panic!(
+            TextMergeResult::Conflict {
+                content_with_markers,
+            } => panic!(
                 "expected clean merge, got conflict:\n{}",
                 String::from_utf8_lossy(&content_with_markers)
             ),
@@ -115,7 +117,9 @@ mod tests {
 
     fn unwrap_conflict(r: TextMergeResult) -> Vec<u8> {
         match r {
-            TextMergeResult::Conflict { content_with_markers } => content_with_markers,
+            TextMergeResult::Conflict {
+                content_with_markers,
+            } => content_with_markers,
             TextMergeResult::Clean(b) => panic!(
                 "expected conflict, got clean merge:\n{}",
                 String::from_utf8_lossy(&b)
@@ -145,7 +149,11 @@ mod tests {
         let s = String::from_utf8_lossy(&bytes);
         assert!(s.contains("<<<<<<< HEAD"), "missing ours marker:\n{}", s);
         assert!(s.contains("======="), "missing separator:\n{}", s);
-        assert!(s.contains(">>>>>>> MERGE_HEAD"), "missing theirs marker:\n{}", s);
+        assert!(
+            s.contains(">>>>>>> MERGE_HEAD"),
+            "missing theirs marker:\n{}",
+            s
+        );
         assert!(s.contains("OURS_LINE2"), "ours content missing:\n{}", s);
         assert!(s.contains("THEIRS_LINE2"), "theirs content missing:\n{}", s);
     }
@@ -153,13 +161,8 @@ mod tests {
     #[test]
     fn merge_text_identical_inputs_returns_unchanged() {
         let content = b"line1\nline2\nline3\n";
-        let result = merge_text(
-            Some(content),
-            content,
-            content,
-            TextMergeLabels::default(),
-        )
-        .unwrap();
+        let result =
+            merge_text(Some(content), content, content, TextMergeLabels::default()).unwrap();
         let bytes = unwrap_clean(result);
         assert_eq!(bytes, content);
     }
