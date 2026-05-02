@@ -258,6 +258,23 @@ pub enum Command {
         /// available.
         #[arg(long)]
         no_auto_run: bool,
+        /// Skip the auto-run of `commit.test_command` (Phase 2,
+        /// v0.44+). Use when the configured test suite is too slow
+        /// for an in-progress commit, when you've gathered metrics
+        /// out-of-band, or when you explicitly want a metrics-less
+        /// audit commit without removing the configured command.
+        /// `--no-test` does not disable the breadcrumb pickup; pair
+        /// with `--no-auto-run` to suppress that as well.
+        #[arg(long)]
+        no_test: bool,
+        /// Force the configured `commit.test_command` to re-run even
+        /// when the most recent `morph eval run` breadcrumb is still
+        /// fresh. Useful when an external state change (env var,
+        /// fixture refresh) means the cached metrics no longer
+        /// reflect reality but the commit's HEAD + index haven't
+        /// moved.
+        #[arg(long)]
+        rerun: bool,
         /// Output structured JSON instead of human-readable summary
         #[arg(long)]
         json: bool,

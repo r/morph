@@ -876,6 +876,19 @@
           line, which <code>pytest -q</code> in recent versions doesn't emit. If
           <code>morph eval run</code> warns "no metrics extracted," drop the <code>-q</code>.
         </div>
+        <div class="callout">
+          <strong>Skip the two-step? (v0.44+)</strong>
+          You'll see this two-step (eval run → commit) repeatedly in
+          this tutorial because it makes the underlying mechanics
+          obvious. Once you internalize them, run
+          <code>morph config commit.test_command "python3 -m pytest"</code>
+          once per repo, and from then on plain
+          <code>morph commit -m "&hellip;"</code> runs your suite, parses
+          the metrics, and attaches them &mdash; one command, same
+          evidence. <code>--no-test</code> opts out for a single commit;
+          <code>--rerun</code> forces a fresh run when the breadcrumb is
+          stale.
+        </div>
       </section>
 
       <!-- 8 -->

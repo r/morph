@@ -1,0 +1,125 @@
+# Phase 2 (v0.44): when `commit.test_command` is configured, plain
+# `morph commit` shells out to the command, parses the metrics, and
+# attaches them to the commit — no separate `morph eval run` step.
+# This collapses the eval-driven flow from two commands to one for
+# the common case.
+#
+# Behavior:
+#   - configured + no fresh breadcrumb + no `--no-test` + no
+#     `--from-run` + no `--metrics`  →  run, attach, commit.
+#   - `--no-test` always skips the auto-run.
+#   - `--rerun` forces a fresh run even when the breadcrumb is current.
+#   - explicit `--from-run` / `--metrics` win over the auto-run.
+
+- name: commit_runs_configured_test_command_when_set
+  files:
+    foo.txt: "seed"
+    .morph/config.json: |
+      {
+        "repo_version": "0.0",
+        "policy": { "required_metrics": ["tests_passed", "tests_total"] },
+        "commit": { "test_command": "printf 'test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s\\n'" }
+      }
+  steps:
+    - morph: [add, foo.txt]
+    - morph: [commit, -m, "implement feature", --json]
+      capture_json_field:
+        var: commit_hash
+        field: hash
+      assert_hash: true
+      stderr_contains:
+        - "running configured test command"
+        - "tests_passed=5"
+        - "tests_total=5"
+    - morph: [show, "${commit_hash}"]
+      stdout_contains:
+        - "tests_passed"
+        - "tests_total"
+
+- name: commit_no_test_skips_configured_command
+  files:
+    foo.txt: "seed"
+    .morph/config.json: |
+      {
+        "repo_version": "0.0",
+        "policy": { "required_metrics": [] },
+        "commit": { "test_command": "printf 'test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s\\n'" }
+      }
+  steps:
+    - morph: [add, foo.txt]
+    - morph: [commit, -m, "no auto-run", --no-test, --json]
+      capture_json_field:
+        var: commit_hash
+        field: hash
+      assert_hash: true
+      stderr_contains:
+        - "warning: commit has no observed_metrics"
+      stderr_not_contains:
+        - "running configured test command"
+
+- name: commit_uses_breadcrumb_when_fresh_and_no_rerun
+  files:
+    foo.txt: "seed"
+    .morph/config.json: |
+      {
+        "repo_version": "0.0",
+        "policy": { "required_metrics": ["tests_passed"] },
+        "commit": { "test_command": "printf 'test result: ok. 99 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.99s\\n'" }
+      }
+  steps:
+    - morph: [add, foo.txt]
+    - morph:
+        - eval
+        - run
+        - --runner
+        - cargo
+        - --
+        - printf
+        - "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.42s\n"
+      capture_first_line: run_hash
+      assert_hash: true
+    # Breadcrumb has 7 passing tests; commit must reuse it (not the
+    # configured 99). Absence of "running configured test command"
+    # proves we didn't shell out.
+    - morph: [commit, -m, "use breadcrumb", --json]
+      capture_json_field:
+        var: commit_hash
+        field: hash
+      assert_hash: true
+      stderr_contains:
+        - "tests_passed=7"
+      stderr_not_contains:
+        - "running configured test command"
+        - "tests_passed=99"
+
+- name: commit_rerun_forces_fresh_test_even_when_breadcrumb_exists
+  files:
+    foo.txt: "seed"
+    .morph/config.json: |
+      {
+        "repo_version": "0.0",
+        "policy": { "required_metrics": ["tests_passed"] },
+        "commit": { "test_command": "printf 'test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.23s\\n'" }
+      }
+  steps:
+    - morph: [add, foo.txt]
+    - morph:
+        - eval
+        - run
+        - --runner
+        - cargo
+        - --
+        - printf
+        - "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.42s\n"
+      capture_first_line: run_hash
+      assert_hash: true
+    # --rerun must override the fresh breadcrumb and re-run the
+    # configured command, attaching the new (12) metrics.
+    - morph: [commit, -m, "rerun please", --rerun, --json]
+      capture_json_field:
+        var: commit_hash
+        field: hash
+      assert_hash: true
+      stderr_contains:
+        - "running configured test command"
+        - "tests_passed=12"

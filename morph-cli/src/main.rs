@@ -98,6 +98,79 @@ fn write_last_run_breadcrumb(store: &dyn Store, repo_root: &std::path::Path, run
     }
 }
 
+/// Run the repository's configured `commit.test_command` (Phase 2,
+/// v0.44+) before a commit is recorded, parse its output, and write
+/// a fresh `LAST_RUN.json` breadcrumb so the commit's metric
+/// resolution path picks the metrics up via the existing auto-run
+/// machinery.
+///
+/// Returns:
+/// - `Ok(true)` when the test command ran (or was found stale-and-
+///   re-run); the breadcrumb is now fresh and the caller should
+///   re-resolve `auto_run_hash` to pick it up.
+/// - `Ok(false)` when no auto-run was warranted: `--no-test` was set,
+///   `--from-run` already provides evidence, no command is
+///   configured, or the existing breadcrumb is fresh and
+///   `--rerun` wasn't passed.
+/// - `Err` only on configuration / parse / shell-out failures.
+///
+/// On a non-zero exit from the configured command, the commit is
+/// aborted: a failing test is treated as evidence the code is not in
+/// a committable state. Override with `--no-test` (or fix the test).
+fn maybe_run_configured_test(
+    store: &dyn Store,
+    repo_root: &std::path::Path,
+    morph_dir: &std::path::Path,
+    no_test: bool,
+    rerun: bool,
+    has_from_run: bool,
+) -> anyhow::Result<bool> {
+    if no_test || has_from_run {
+        return Ok(false);
+    }
+    let command = match morph_core::read_commit_test_command(morph_dir)? {
+        Some(c) if !c.trim().is_empty() => c,
+        _ => return Ok(false),
+    };
+    if !rerun {
+        // Reuse a fresh breadcrumb: skip the (potentially expensive)
+        // shell-out when the most recent `morph eval run` already
+        // covers this commit.
+        if let Ok((Some(_), _)) = morph_core::resolve_fresh_last_run(store, morph_dir) {
+            return Ok(false);
+        }
+    }
+    let argv = shlex::split(&command).ok_or_else(|| {
+        anyhow::anyhow!(
+            "commit.test_command is not parseable as POSIX shell argv: {:?}",
+            command
+        )
+    })?;
+    if argv.is_empty() {
+        return Ok(false);
+    }
+    eprintln!("running configured test command: {}", command);
+    let outcome = morph_core::run_test_command(store, repo_root, &argv, "auto", None)?;
+    if let Some(code) = outcome.exit_code {
+        if code != 0 {
+            // Drop the breadcrumb anyway so the failing run is
+            // inspectable via `morph show <hash>`. Then bail —
+            // committing on a failing test would attach negative
+            // evidence the merge gate would later reject anyway.
+            write_last_run_breadcrumb(store, repo_root, &outcome.run_hash);
+            return Err(anyhow::anyhow!(
+                "commit.test_command exited with code {} (run {}). \
+                 Fix the failure and re-run, or pass `--no-test` to \
+                 commit without behavioral evidence.",
+                code,
+                outcome.run_hash.short()
+            ));
+        }
+    }
+    write_last_run_breadcrumb(store, repo_root, &outcome.run_hash);
+    Ok(true)
+}
+
 /// Print a one-line policy summary at the end of `morph init` so a
 /// fresh user can see the behavioral gate they're under (and how to
 /// change it) without running `morph policy show`. The output is
@@ -295,10 +368,29 @@ fn run_reference_commit(
     allow_empty_metrics: bool,
     allow_empty_commit: bool,
     no_auto_run: bool,
+    no_test: bool,
+    rerun: bool,
     json: bool,
 ) -> anyhow::Result<()> {
     let prog_hash: Option<Hash> = pipeline.map(|s| resolve_obj_hash(store, s)).transpose()?;
     let policy = morph_core::read_policy(morph_dir)?;
+
+    // Phase 2 (v0.44+): when `commit.test_command` is configured and
+    // the user didn't already supply evidence, run it now so the
+    // breadcrumb is fresh by the time `auto_run_hash` is resolved
+    // below. Skipped under `--no-test`, when `--from-run` already
+    // attaches a Run, or when a fresh breadcrumb already exists
+    // (unless `--rerun` is passed).
+    if !no_auto_run {
+        maybe_run_configured_test(
+            store,
+            repo_root,
+            morph_dir,
+            no_test,
+            rerun,
+            from_run.is_some(),
+        )?;
+    }
 
     let auto_run_hash: Option<Hash> = if no_auto_run || from_run.is_some() {
         None
@@ -2820,6 +2912,8 @@ fn main() -> anyhow::Result<()> {
             allow_empty_metrics,
             new_cases,
             no_auto_run,
+            no_test,
+            rerun,
             json,
             allow_empty_commit,
         } => {
@@ -2849,6 +2943,8 @@ fn main() -> anyhow::Result<()> {
                     allow_empty_metrics,
                     allow_empty_commit,
                     no_auto_run,
+                    no_test,
+                    rerun,
                     json,
                 )?;
                 if let Err(e) = morph_core::clear_last_run(&morph_dir) {
@@ -2858,6 +2954,21 @@ fn main() -> anyhow::Result<()> {
                     );
                 }
                 return Ok(());
+            }
+            // Phase 2 (v0.44+): mirror the reference-mode auto-run on
+            // the standalone path so spec tests (which run in
+            // tempdirs without a `.git/`) and any remaining
+            // standalone users get the same one-command commit
+            // ergonomics.
+            if !no_auto_run {
+                maybe_run_configured_test(
+                    store.as_ref(),
+                    &repo_root,
+                    &morph_dir,
+                    no_test,
+                    rerun,
+                    from_run.is_some(),
+                )?;
             }
             // Reference-mode-only flag: a no-op for standalone commits
             // since we don't shell out to git here.
@@ -4394,16 +4505,18 @@ fn main() -> anyhow::Result<()> {
         }
 
         Command::Config { key, value, get } => {
-            // PR 6 stage A: a minimal `morph config` subcommand.
-            // Today only `user.name` and `user.email` are first-class;
-            // unknown keys produce a helpful error rather than
-            // silently writing to a generic JSON tree.
+            // `morph config` exposes a small, explicit set of keys
+            // rather than a generic JSON tree. Each key has its own
+            // typed reader/writer in `morph-core` so the on-disk
+            // shape stays consistent across versions. Unknown keys
+            // error out with the supported list rather than silently
+            // writing.
             let (repo_root, _) = get_store(verbose)?;
             let morph_dir = repo_root.join(".morph");
             let getting = get || value.is_none();
-            let (cfg_name, cfg_email) = morph_core::read_identity_config(&morph_dir)?;
             match key.as_str() {
                 "user.name" => {
+                    let (cfg_name, _) = morph_core::read_identity_config(&morph_dir)?;
                     if getting {
                         match cfg_name {
                             Some(v) => println!("{}", v),
@@ -4414,6 +4527,7 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
                 "user.email" => {
+                    let (_, cfg_email) = morph_core::read_identity_config(&morph_dir)?;
                     if getting {
                         match cfg_email {
                             Some(v) => println!("{}", v),
@@ -4423,9 +4537,22 @@ fn main() -> anyhow::Result<()> {
                         morph_core::write_identity_config(&morph_dir, None, value.as_deref())?;
                     }
                 }
+                "commit.test_command" => {
+                    if getting {
+                        match morph_core::read_commit_test_command(&morph_dir)? {
+                            Some(v) => println!("{}", v),
+                            None => std::process::exit(1),
+                        }
+                    } else {
+                        morph_core::write_commit_test_command(
+                            &morph_dir,
+                            value.as_deref().unwrap_or(""),
+                        )?;
+                    }
+                }
                 other => {
                     return Err(anyhow::anyhow!(
-                        "unsupported config key '{}'. Supported keys: user.name, user.email",
+                        "unsupported config key '{}'. Supported keys: user.name, user.email, commit.test_command",
                         other
                     ));
                 }

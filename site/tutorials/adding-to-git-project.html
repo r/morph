@@ -953,20 +953,31 @@
           metrics to the resulting Morph mirror as a certification annotation.
         </p>
         <p>
-          The pattern is identical to Tutorial 1. Run your test suite under
-          <code>morph eval run</code> first &mdash; it leaves a <code>LAST_RUN</code>
-          breadcrumb that <code>morph commit</code> picks up automatically:
+          The pattern is identical to Tutorial 1, but shorter: tell Morph
+          your test suite once with
+          <code>morph config commit.test_command "&hellip;"</code>, then
+          plain <code>morph commit</code> runs it, parses the metrics,
+          and attaches them to both sides:
         </p>
 <div class="cli-block"><span class="comment"># Make a real change: add GBP support, add a test, edit the spec.</span>
 
+<span class="prompt">$ </span><span class="cmd">morph config commit.test_command <span class="str">"python3 -m pytest"</span></span>&nbsp;<span class="comment"># once per repo</span>
 <span class="prompt">$ </span><span class="cmd">git add <span class="flag">-A</span></span>
-<span class="prompt">$ </span><span class="cmd">morph eval run -- python3 -m pytest</span>
-<span class="out">e19963e9cd2defa46d69cd2a0086de30a6454581d5b5301e16706ded92b4c16c</span>
-
 <span class="prompt">$ </span><span class="cmd">morph commit <span class="flag">-m</span> <span class="str">"add GBP support"</span></span>
+<span class="out">running configured test command: python3 -m pytest</span>
 <span class="out-good">attaching evidence from run e19963e9: pass_rate=1, tests_failed=0, tests_passed=3, tests_total=3</span>
 <span class="out-good">[3006006a (cli)] add GBP support</span>
 <span class="out">  git: e7d8df044d8b</span></div>
+        <p>
+          Prefer the manual flow? Run
+          <code>morph eval run -- python3 -m pytest</code> first; the
+          breadcrumb it leaves behind is what
+          <code>commit.test_command</code> would have produced, and
+          <code>morph commit</code> picks it up the same way. Use
+          <code>--no-test</code> to skip the auto-run for a single
+          commit (e.g. a quick chore) and <code>--rerun</code> to force
+          a fresh run when the breadcrumb is stale.
+        </p>
         <p>
           Two hashes printed side-by-side: the new Morph commit and the new Git
           commit it wraps. Both happened in one step. Verify:

@@ -5,6 +5,7 @@
 
 pub mod annotate;
 pub mod commit;
+pub mod commit_config;
 pub mod diff;
 pub mod eval_parsers;
 pub mod eval_suite;
@@ -55,6 +56,7 @@ pub use commit::{
     log_from, resolve_head, resolve_provenance_from_run, rollup, set_head_branch,
     set_head_detached, CommitProvenance, DEFAULT_BRANCH,
 };
+pub use commit_config::{read_commit_test_command, write_commit_test_command};
 pub use diff::{diff_commits, diff_file_maps, diff_trees, DiffEntry, DiffStatus};
 pub use eval_parsers::{
     parse_auto, parse_cargo_test, parse_go_test, parse_jest, parse_pytest, parse_vitest,

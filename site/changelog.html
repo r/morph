@@ -321,7 +321,90 @@
 
     <article class="release">
       <header>
-        <span class="version">0.43.0 <span class="latest">Latest</span></span>
+        <span class="version">0.44.0 <span class="latest">Latest</span></span>
+        <span class="date">2026-05-02</span>
+      </header>
+      <p class="summary">
+        <strong>Commit ergonomics.</strong> Second release of the
+        &ldquo;make morph intuitive&rdquo; effort.
+        <code>morph commit</code> becomes a one-liner even when you
+        want metrics: tell Morph your test suite once with
+        <code>morph config commit.test_command "cargo test --workspace"</code>
+        (or pytest, vitest, jest, go) and from then on plain
+        <code>morph commit</code> shells out to the command, parses
+        the output, writes a fresh <code>LAST_RUN.json</code>
+        breadcrumb, and attaches the metrics + run as evidence
+        &mdash; collapsing the eval-driven flow from two commands to
+        one for the common case. <code>--no-test</code> opts out for
+        a single commit, <code>--rerun</code> forces a fresh run when
+        the breadcrumb is stale, and a failing test aborts the commit
+        so red suites don't slip into the behavioral history.
+      </p>
+
+      <h3 class="added"><span class="marker"></span>Added</h3>
+      <ul>
+        <li><code>commit.test_command</code> config key in
+          <code>.morph/config.json</code>. Set with
+          <code>morph config commit.test_command "&hellip;"</code>;
+          read with <code>morph config commit.test_command</code> or
+          <code>--get</code>; exit 1 when unset (matches the
+          <code>user.*</code> convention). The string is
+          POSIX-shell-split with <code>shlex</code> so quoted
+          arguments survive
+          (<code>"pytest -k 'fast and not slow'"</code>). Spec
+          coverage:
+          <code>commit_runs_configured_test_command.yaml</code>,
+          <code>config_commit_test_command.yaml</code>.</li>
+        <li><code>morph commit --no-test</code> &mdash; skip the
+          configured auto-run for this commit without removing the
+          configured command. Useful for chores or out-of-band
+          certification.</li>
+        <li><code>morph commit --rerun</code> &mdash; force a fresh
+          test run even when the most recent breadcrumb is current.
+          Use after an external state change makes cached metrics
+          stale.</li>
+      </ul>
+
+      <h3 class="changed"><span class="marker"></span>Changed</h3>
+      <ul>
+        <li><strong>Failing tests abort the commit.</strong> A
+          non-zero exit from <code>commit.test_command</code> is
+          treated as evidence the code is not in a committable
+          state. The failing run is still recorded (inspect with
+          <code>morph show &lt;hash&gt;</code>), but the commit
+          doesn't land. Override with <code>--no-test</code>.</li>
+        <li><strong>README quickstart leads with the configured
+          command.</strong> The recommended one-time setup is
+          <code>morph config commit.test_command "&hellip;"</code>;
+          the old two-step (<code>morph eval run</code> then
+          <code>morph commit</code>) is preserved as the manual
+          fallback for repos that prefer it.</li>
+        <li><strong><code>docs/EVAL-DRIVEN.md</code> &sect;5 features
+          the one-command flow</strong> as the primary path. The
+          breadcrumb-pickup and explicit
+          <code>--from-run &lt;hash&gt;</code> forms are demoted to
+          subsections.</li>
+        <li><strong>Tutorials updated.</strong>
+          <code>site/tutorials/getting-started.html</code> &sect;7
+          gains a "Skip the two-step?" callout pointing at the
+          configured-command flow;
+          <code>site/tutorials/adding-to-git-project.html</code>
+          rewrites the post-staging commit example to use it.</li>
+      </ul>
+
+      <h3 class="tests"><span class="marker"></span>Tests</h3>
+      <ul>
+        <li>Workspace <strong>1203 / 1203 passing</strong> (1192
+          baseline + 6 new acceptance cases across the two new spec
+          files + 5 new unit tests in
+          <code>morph-core/src/commit_config.rs</code>). Cucumber 34
+          / 37 (3 skipped, 0 failed) &mdash; no change.</li>
+      </ul>
+    </article>
+
+    <article class="release">
+      <header>
+        <span class="version">0.43.0</span>
         <span class="date">2026-05-02</span>
       </header>
       <p class="summary">
@@ -446,63 +529,6 @@
           <strong>1187 / 1187 passing, 0 ignored</strong>. No
           regressions on hosts that already default to
           <code>main</code>.</li>
-      </ul>
-    </article>
-
-    <article class="release">
-      <header>
-        <span class="version">0.42.1</span>
-        <span class="date">2026-05-01</span>
-      </header>
-      <p class="summary">
-        <strong>Mixed-authorship plumbing on the ref-mode commit
-        rebuild.</strong> The last three previously-skipped
-        acceptance specs unblock: ref-mode <code>morph commit
-        --from-run</code> now folds the human author into
-        <code>commit.contributors</code> with <code>role =
-        "human-author"</code> alongside the agent's
-        <code>role = "primary"</code>, and the rebuild runs
-        <code>compute_human_edits</code> against the mirror
-        commit's flattened tree so the trace-claim-vs-staged-blob
-        diff lands in <code>human_edits</code> just like
-        standalone mode. Workspace test count: <strong>1187 /
-        1187 passing, 0 ignored</strong> (down from 13 ignored
-        at the start of the v0.41 line).
-      </p>
-
-      <h3 class="fixed"><span class="marker"></span>Fixed</h3>
-      <ul>
-        <li>Human author lands in
-          <code>commit.contributors</code> with
-          <code>role = "human-author"</code> on ref-mode
-          <code>morph commit --from-run</code>. Earlier ref-mode
-          commits showed only the agent in the structured
-          contributors list.</li>
-        <li><code>human_edits</code> records
-          <em>(trace claim) vs (staged blob)</em> divergence:
-          <code>post-agent-edit</code> when the human edits a
-          path the agent already wrote;
-          <code>no-trace-record</code> when the human authors a
-          path the trace never references. Earlier ref-mode
-          commits silently dropped this diff.</li>
-      </ul>
-
-      <h3 class="changed"><span class="marker"></span>Changed</h3>
-      <ul>
-        <li><code>morph_core::fold_human_author_into_contributors</code>
-          is now public so the CLI can call it directly. Same
-          recipe the standalone-mode commit path already used.</li>
-      </ul>
-
-      <h3 class="tests"><span class="marker"></span>Tests</h3>
-      <ul>
-        <li><code>mixed_authorship.yaml</code>:
-          <code>mixed_authorship_human_author_in_contributors_when_run_attached</code>,
-          <code>mixed_authorship_variant_a_post_agent_edit_recorded</code>,
-          <code>mixed_authorship_variant_b_no_trace_record_recorded</code>
-          &mdash; all three un-skipped and passing.
-          <code>version.yaml</code> updated to expect
-          <code>0.42.1</code>.</li>
       </ul>
     </article>
 

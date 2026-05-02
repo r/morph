@@ -1148,10 +1148,12 @@
               contract: which pipeline was run, which evaluation suite, what scores were
               observed, and in which environment. Fresh repos start relaxed so you can
               commit immediately; opt into <code>tests_total</code> and <code>tests_passed</code>
-              enforcement with <code>morph policy init</code> when ready. Run
-              <code>morph eval run -- cargo test</code> (or pytest, vitest, jest, go),
-              then plain <code>morph commit -m &quot;&hellip;&quot;</code> &mdash; the next commit
-              picks up the run's metrics and attaches them automatically.
+              enforcement with <code>morph policy init</code> when ready. Tell Morph
+              your test suite once with
+              <code>morph config commit.test_command "cargo test --workspace"</code>
+              (or pytest, vitest, jest, go), then plain
+              <code>morph commit -m &quot;&hellip;&quot;</code> runs it, parses the metrics,
+              and attaches them automatically.
             </p>
           </div>
           <div class="commit-box">
@@ -1294,9 +1296,9 @@
       <span class="comment"># Standard Git-shaped workflow (init is relaxed by default;</span><br>
       <span class="comment">#   tighten with `morph policy init` when ready)</span><br>
       <span class="prompt">$ </span><span class="cmd">morph init</span><br>
+      <span class="prompt">$ </span><span class="cmd">morph config commit.test_command <span class="str">"cargo test --workspace"</span></span>&nbsp;<span class="comment"># once</span><br>
       <span class="prompt">$ </span><span class="cmd">morph add .</span><br>
-      <span class="prompt">$ </span><span class="cmd">morph eval run -- cargo test</span>&nbsp;<span class="comment"># records a metric-bearing Run</span><br>
-      <span class="prompt">$ </span><span class="cmd">morph commit <span class="flag">-m</span> <span class="str">"fix retry loop"</span></span>&nbsp;&nbsp;&nbsp;<span class="comment"># auto-attaches the run's metrics</span><br>
+      <span class="prompt">$ </span><span class="cmd">morph commit <span class="flag">-m</span> <span class="str">"fix retry loop"</span></span>&nbsp;&nbsp;&nbsp;<span class="comment"># runs tests, attaches metrics</span><br>
       <span class="prompt">$ </span><span class="cmd">morph log</span> <span class="comment"># history with metrics</span><br>
       <span class="prompt">$ </span><span class="cmd">morph diff <span class="flag">main</span> <span class="flag">feature</span></span><br>
       <br>

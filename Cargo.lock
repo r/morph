@@ -1087,7 +1087,7 @@ dependencies = [
 
 [[package]]
 name = "morph-cli"
-version = "0.43.0"
+version = "0.44.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1099,13 +1099,14 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "shlex",
  "tempfile",
  "toml_edit",
 ]
 
 [[package]]
 name = "morph-core"
-version = "0.43.0"
+version = "0.44.0"
 dependencies = [
  "base64",
  "chrono",
@@ -1125,7 +1126,7 @@ dependencies = [
 
 [[package]]
 name = "morph-e2e"
-version = "0.43.0"
+version = "0.44.0"
 dependencies = [
  "assert_cmd",
  "cucumber",
@@ -1137,7 +1138,7 @@ dependencies = [
 
 [[package]]
 name = "morph-mcp"
-version = "0.43.0"
+version = "0.44.0"
 dependencies = [
  "anyhow",
  "morph-core",
@@ -1151,7 +1152,7 @@ dependencies = [
 
 [[package]]
 name = "morph-serve"
-version = "0.43.0"
+version = "0.44.0"
 dependencies = [
  "axum",
  "http-body-util",

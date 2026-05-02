@@ -16,6 +16,81 @@ metrics — see `.cursor/rules/behavioral-commits.mdc`.
 
 ## [Unreleased]
 
+## [0.44.0] — 2026-05-02
+
+Commit ergonomics: `morph commit` becomes a one-liner even when you
+want metrics. Tell Morph your test suite once, every commit thereafter
+runs it and attaches the results — collapsing the eval-driven flow
+from two commands to one for the common case. Second release of the
+multi-phase "make morph intuitive" effort. No behavior breaks; the
+existing `morph eval run` → `morph commit` flow keeps working
+unchanged for repos that don't set the new key.
+
+### Added
+
+- **`commit.test_command` config key.** New nested entry in
+  `.morph/config.json`:
+
+  ```bash
+  morph config commit.test_command "cargo test --workspace"
+  ```
+
+  When set, plain `morph commit` shells out to the command before
+  recording the commit, parses the output via the same auto-detected
+  runner stack as `morph eval run` (cargo / pytest / vitest / jest /
+  go), writes a fresh `LAST_RUN.json` breadcrumb, and attaches the
+  metrics + run as evidence. Unset = old behavior. The string is
+  POSIX-shell-split with `shlex` so quoted arguments survive
+  (`"pytest -k 'fast and not slow'"`). Spec coverage:
+  `commit_runs_configured_test_command.yaml`,
+  `config_commit_test_command.yaml`. Five new unit tests in
+  `morph-core/src/commit_config.rs` cover the read/write helpers.
+- **`morph commit --no-test`.** Skip the configured auto-run for
+  this commit without removing the configured command. Useful for
+  quick chores or when you've gathered metrics out-of-band.
+- **`morph commit --rerun`.** Force a fresh test run even when an
+  existing breadcrumb is current. Use when an external state change
+  (env var, fixture refresh) means cached metrics no longer reflect
+  reality but the commit's HEAD + index haven't moved.
+- **`morph config commit.test_command`** read/write/unset support
+  alongside the existing `user.name` / `user.email` keys.
+  Round-trips: `morph config commit.test_command "..."` then
+  `morph config commit.test_command` (or `--get`) prints the value;
+  exit code 1 when unset (matches the `user.*` convention).
+
+### Changed
+
+- **`morph commit` aborts on a failing configured test command.**
+  A non-zero exit from `commit.test_command` is treated as evidence
+  that the code is not in a committable state. The failing run is
+  still recorded (inspect with `morph show <hash>`), but the commit
+  doesn't land. Override with `--no-test` or by fixing the failure.
+- **README quickstart features the configured-command flow.** The
+  `morph config commit.test_command` line is now the recommended
+  one-time setup; the old two-step (`morph eval run` then
+  `morph commit`) is preserved as the manual fallback.
+- **`docs/EVAL-DRIVEN.md` §5 features the one-command flow** as the
+  primary path, with the manual breadcrumb form as "When you've
+  already run the suite". Documents the new `--no-test` / `--rerun`
+  flags and the failing-test abort behavior.
+- **`docs/MORPH-AND-GIT.md` daily workflow** is now a single
+  `morph commit` after a one-time `morph config commit.test_command`,
+  matching the reference-mode behavior most users actually want.
+- **Site copy aligned**: `site/index.html` quickstart and
+  How-It-Works code blocks, `site/tutorials/getting-started.html` §7
+  "Skip the two-step?" callout, and
+  `site/tutorials/adding-to-git-project.html` post-commit narration
+  all now feature the configured-command flow as the recommended
+  path.
+
+### Tests
+
+- Workspace **1203 / 1203 passing** (1192 baseline + 6 new acceptance
+  cases in `commit_runs_configured_test_command.yaml` (4) and
+  `config_commit_test_command.yaml` (2), plus 5 unit tests in
+  `morph-core/src/commit_config.rs`). Cucumber 34 / 37 (3 skipped,
+  0 failed) — no change.
+
 ## [0.43.0] — 2026-05-02
 
 Onboarding polish: make Morph easier to discover and lean into without
@@ -1080,7 +1155,8 @@ Three coordinated changes to repo setup, adoption, and migration.
 - 15 new YAML acceptance spec cases in the default eval suite:
   `init_at_latest:*` ×4, `init_in_git_dir:*` ×6, `upgrade:*` ×5.
 
-[Unreleased]: https://github.com/r/morph/compare/v0.43.0...HEAD
+[Unreleased]: https://github.com/r/morph/compare/v0.44.0...HEAD
+[0.44.0]: https://github.com/r/morph/compare/v0.43.0...v0.44.0
 [0.43.0]: https://github.com/r/morph/compare/v0.42.2...v0.43.0
 [0.42.2]: https://github.com/r/morph/compare/v0.42.1...v0.42.2
 [0.42.1]: https://github.com/r/morph/compare/v0.42.0...v0.42.1

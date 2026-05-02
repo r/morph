@@ -70,14 +70,24 @@ Make sure `morph` and `morph-mcp` are on your PATH, then open the project in you
 
 ### Tie commits to test results
 
-Two commands. The first runs your tests and records a Run; the second commits and auto-attaches its metrics:
+Tell Morph what your test suite is, once:
 
 ```bash
-morph eval run -- cargo test --workspace
-morph commit -m "fix retry logic"
+morph config commit.test_command "cargo test --workspace"
 ```
 
-The auto-attach uses a single-use `LAST_RUN.json` breadcrumb, so the next commit won't accidentally re-claim stale metrics. See [docs/EVAL-DRIVEN.md](docs/EVAL-DRIVEN.md) for the full spec-first workflow (acceptance cases as YAML, suite gating, case provenance through merges).
+From then on, plain `morph commit` runs the suite, parses the metrics, and attaches them to the commit:
+
+```bash
+morph commit -m "fix retry logic"
+# running configured test command: cargo test --workspace
+# attaching evidence from run a3f2c…: pass_rate=1, tests_passed=42, tests_total=42
+# [d4e5f6a7 (cli)] fix retry logic
+```
+
+Escape hatches: `--no-test` skips the run for this commit; `--rerun` forces a fresh run even when the most recent `morph eval run` breadcrumb is still current. If you'd rather drive the run yourself, the two-line form still works (`morph eval run -- cargo test --workspace` then plain `morph commit` picks up the breadcrumb).
+
+See [docs/EVAL-DRIVEN.md](docs/EVAL-DRIVEN.md) for the full spec-first workflow (acceptance cases as YAML, suite gating, case provenance through merges).
 
 ### Gate merges on behavioral dominance
 
@@ -123,6 +133,7 @@ morph status [--json]
 morph add <paths>
 morph commit -m <msg> [--from-run <hash>] [--metrics <json>] [--new-cases ids]
                      [--allow-empty-metrics] [--no-auto-run]
+                     [--no-test] [--rerun]    # gate commit.test_command auto-run
 morph log [<ref>] [-n N] [--oneline] [--json]
 morph diff <old> [<new>] [--json]
 morph show <hash|ref>

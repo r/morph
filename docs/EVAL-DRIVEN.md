@@ -128,25 +128,65 @@ turn.
 
 ## 5. Commit from the recorded run
 
-The everyday flow is two commands: run the eval, commit. The most
-recent `morph eval run` drops a `LAST_RUN.json` breadcrumb under
-`.morph/`; the next `morph commit` (without explicit
-`--from-run`/`--metrics`) auto-attaches that run's metrics, evidence,
-and provenance — no hash copy-paste, no extra flags.
+The everyday flow is **one command**: tell Morph your test suite once,
+then plain `morph commit` runs it and attaches the metrics.
+
+```bash
+# One-time per repo:
+morph config commit.test_command "cargo test --workspace"
+
+# Every commit thereafter:
+morph commit -m "implement login"
+# running configured test command: cargo test --workspace
+# attaching evidence from run a3f2c…: pass_rate=1, tests_passed=42, tests_total=42
+# [d4e5f6a7 (cli)] implement login
+```
+
+Behavior:
+
+- `commit.test_command` is read from `.morph/config.json` (set per
+  repo). The string is split with POSIX-shell quoting, so quoted
+  arguments survive (`"pytest -k 'fast and not slow'"`).
+- A failing test (non-zero exit) aborts the commit: a failing
+  suite is evidence the code is not in a committable state. The
+  failing run is still stored, accessible via `morph show <hash>`.
+- `morph commit` writes a fresh `LAST_RUN.json` breadcrumb after
+  the run and consumes it during the same commit. After success,
+  the breadcrumb is cleared so the next commit won't accidentally
+  re-attach stale metrics.
+- `morph commit` also auto-detects acceptance cases this commit
+  added to the default suite (vs HEAD's) and records them as
+  `introduces_cases` for `morph merge-plan` provenance.
+
+Flags that gate the auto-run:
+
+- `--no-test` skips the configured command for this commit (audit
+  escape hatch when the suite is too slow or you've already
+  certified out-of-band).
+- `--rerun` forces a fresh test run even when an existing breadcrumb
+  is still current. Use after an external state change (env var,
+  fixture refresh) means the cached metrics no longer reflect
+  reality.
+- `--no-auto-run` disables both the configured command **and** the
+  breadcrumb pickup. The commit lands metrics-less unless
+  `--metrics` / `--from-run` is also supplied.
+
+### When you've already run the suite
+
+Skip the per-commit auto-run by either passing `--no-test` or by
+running the suite yourself first; the resulting breadcrumb is
+picked up the same way:
 
 ```bash
 morph eval run -- cargo test --workspace
 morph commit -m "implement login"
-# metrics, evidence_refs, contributors all attached from the run above.
-# `morph commit` also auto-detects acceptance cases this commit added
-# to the default suite (vs HEAD's) and records them as
-# `introduces_cases` for `morph merge-plan` provenance.
+# (no auto-run because breadcrumb is fresh; metrics come from
+#  the breadcrumb you already produced)
 ```
 
-The breadcrumb is single-use: after a successful commit it's cleared,
-so the next `morph commit` won't accidentally re-attach stale
-metrics. If HEAD changes between the run and the commit, the
-breadcrumb is invalidated automatically.
+The breadcrumb is single-use: after a successful commit it's cleared.
+If HEAD changes between the run and the commit, the breadcrumb is
+invalidated automatically.
 
 ### When you need precision
 

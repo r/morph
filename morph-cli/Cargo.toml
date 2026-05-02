@@ -23,6 +23,10 @@ serde_json = "1.0"
 # layer its hooks/sandbox block into a user's existing
 # `.agent-of-empires/config.toml` without clobbering their other settings.
 toml_edit = "0.22"
+# `shlex` parses POSIX-shell-quoted strings into argv. Used to take
+# `commit.test_command` (a single string the user types into
+# `morph config`) and split it for `morph_core::run_test_command`.
+shlex = "1.3"
 
 [build-dependencies]
 serde = { version = "1.0", features = ["derive"] }

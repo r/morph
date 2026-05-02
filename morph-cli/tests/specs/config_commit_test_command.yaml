@@ -1,0 +1,23 @@
+# Phase 2 (v0.44): `morph config` learns a new key,
+# `commit.test_command`, mirroring the `user.name` / `user.email`
+# pattern. Set/get round-trip; missing key returns exit 1; stored as
+# `commit.test_command` in `.morph/config.json` under a nested object.
+
+- name: config_set_then_get_commit_test_command
+  steps:
+    - morph: [config, commit.test_command, "cargo test --workspace"]
+    - morph: [config, commit.test_command]
+      stdout_contains:
+        - "cargo test --workspace"
+    - morph: [config, --get, commit.test_command]
+      stdout_contains:
+        - "cargo test --workspace"
+  assert:
+    - kind: file_contains
+      path: .morph/config.json
+      contents: "test_command"
+
+- name: config_get_unset_commit_test_command_exits_one
+  steps:
+    - morph: [config, commit.test_command]
+      expect_exit: 1

@@ -82,20 +82,32 @@ touch `.gitignore`.
 
 ## Daily workflow
 
-You don't do everything twice. The common path is:
+You don't do everything twice. Tell Morph what your test suite is
+once:
+
+```bash
+morph config commit.test_command "cargo test --workspace"
+```
+
+After that, the common path is one command:
 
 ```bash
 # you write code (or an agent does), then:
-morph commit -m "add retry logic to auth service" \
-    --metrics '{"tests_passed": 42, "tests_total": 42, "pass_rate": 1.0}'
+morph commit -m "add retry logic to auth service"
+# running configured test command: cargo test --workspace
+# attaching evidence from run a3f2c…: pass_rate=1, tests_passed=42, tests_total=42
 git push origin main
 ```
 
-Behind the scenes `morph commit` does the `git add -A` and `git
-commit` for you, then attaches the metrics and any
-`--from-run <hash>` evidence as a behavioral commit on top of the
-git commit it just produced. Both worlds stay in sync without you
-having to keep two commit messages aligned.
+Behind the scenes `morph commit` runs your configured suite, parses
+the metrics, then does the `git add -A` and `git commit` for you and
+mirrors a behavioral commit on top of the git commit it just
+produced. Both worlds stay in sync without you having to keep two
+commit messages aligned. If a test fails, the commit is aborted —
+Morph treats a red suite as evidence the code is not in a committable
+state. Pass `--no-test` to skip the auto-run for a specific commit
+(e.g. a quick chore) and `--rerun` to force a fresh run when the
+breadcrumb is stale.
 
 If you want to make a pure git commit (no behavioral evidence,
 e.g. for a quick chore), `git commit` directly still works — the
