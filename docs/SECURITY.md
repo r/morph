@@ -67,7 +67,7 @@ your-project/
     traces/              # one JSON per trace (the event log)
     prompts/             # prompts referenced from traces
     refs/                # branches, tags
-    config.json          # repo-local config (mode, submode, init_at_git_sha)
+    config.json          # repo-local config (repo_version, repo_submode, init_at_git_sha, policy, …)
   src/
   ...
 ```

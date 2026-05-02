@@ -6,7 +6,7 @@ Morph is a version control system for AI-assisted development. It extends Git's 
 2. **Behavioral contracts** — a commit can pin a pipeline, an evaluation suite, observed metric scores, and the environment those scores were captured in.
 3. **Merge by dominance** — merges succeed only when the candidate is at least as good as both parents on every declared metric, not just because the text diff is clean.
 
-Morph stores the same thing Git stores (a file tree snapshot) *and* the behavioral record on top of it. You can run it alongside Git today and drop Git later if you want to.
+Morph stores the same thing Git stores (a file tree snapshot) *and* the behavioral record on top of it. You run it alongside Git: `morph init` requires a git repo (it offers to `git init` for you when there isn't one), morph mirrors every git commit into a behavioral commit, and `.morph/` stays out of git entirely.
 
 Project links: [github.com/r/morph](https://github.com/r/morph) and [r.github.io/morph](https://r.github.io/morph).
 
@@ -76,7 +76,7 @@ THEORY.md defines the algebra. v0-spec.md projects that algebra into a buildable
 | **[CLAUDE-CODE-SETUP.md](CLAUDE-CODE-SETUP.md)** | Users | Full Claude Code reference: MCP server, hooks, committing. |
 | **[OPENCODE-SETUP.md](OPENCODE-SETUP.md)** | Users | Full OpenCode reference: MCP server, AGENTS.md, recording plugin, committing. |
 | **[SESSION-TRACKING.md](SESSION-TRACKING.md)** | Users | Why morph records every agent session as an immutable Run + Trace, why neither Claude/Cursor/OpenCode on-disk transcripts nor OTEL nor Langfuse/Phoenix/Helicone can deliver what the morph trace contract delivers, and seven concrete things you can only do because the prompt is in the commit graph. |
-| **[SECURITY.md](SECURITY.md)** | Users / Teams | What morph records, where it lives on disk, what crosses the wire on `git push` vs `morph push`, the recommended team setup, and the things morph does not yet do (no encryption at rest, no client-side redaction filter on push, no automatic secret scanning, and — until v0.41.0 — no `morph forget`). **Read before you push to a morph remote.** |
+| **[SECURITY.md](SECURITY.md)** | Users / Teams | What morph records, where it lives on disk, what crosses the wire on `git push` vs `morph push`, the recommended team setup, the `morph forget` flow for retiring sensitive runs/traces/prompts (with tombstones that propagate across morph remotes), and the things morph still doesn't do (no encryption at rest, no client-side redaction filter on push, no automatic secret scanning, no MCP `morph_forget` tool yet). **Read before you push to a morph remote.** |
 | **[MORPH-AND-GIT.md](MORPH-AND-GIT.md)** | Users | Running Morph and Git side-by-side in the same repository. |
 | **[reference-mode.md](reference-mode.md)** | Users | Reference mode: tight git ↔ morph coupling, the Solo / Stowaway submodes (`morph install-hooks --solo`/`--stowaway` to flip), hooks, drift, stale certifications, stateful merge with `morph merge --continue`/`--abort`. The default (and only) mode since v0.40.0. |
 | **[MULTI-MACHINE.md](MULTI-MACHINE.md)** | Users | Sharing a Morph repo across machines: bare server, SSH transport, `morph push` / `morph pull` / `morph sync`. |

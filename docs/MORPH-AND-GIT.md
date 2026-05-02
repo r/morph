@@ -131,7 +131,8 @@ This separation exists so the team can have different access
 policies on each — e.g. the git remote may be open to contractors
 while the morph remote is restricted to full-time staff. The
 sharing model and the privacy implications are written up in detail
-in [`SECURITY.md`](SECURITY.md) (landing in v0.40.2).
+in [`SECURITY.md`](SECURITY.md), including the `morph forget`
+flow that lands tombstones on every configured morph remote.
 
 ## Reference
 

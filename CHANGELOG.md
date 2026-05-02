@@ -789,7 +789,8 @@ Three coordinated changes to repo setup, adoption, and migration.
 - 15 new YAML acceptance spec cases in the default eval suite:
   `init_at_latest:*` ×4, `init_in_git_dir:*` ×6, `upgrade:*` ×5.
 
-[Unreleased]: https://github.com/r/morph/compare/v0.40.2...HEAD
+[Unreleased]: https://github.com/r/morph/compare/v0.41.0...HEAD
+[0.41.0]: https://github.com/r/morph/compare/v0.40.2...v0.41.0
 [0.40.2]: https://github.com/r/morph/compare/v0.40.1...v0.40.2
 [0.40.1]: https://github.com/r/morph/compare/v0.40.0...v0.40.1
 [0.40.0]: https://github.com/r/morph/compare/v0.39.2...v0.40.0

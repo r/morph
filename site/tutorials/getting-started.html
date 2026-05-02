@@ -787,8 +787,12 @@
           Morph concept where you write down what the project promises in plain
           English. It's optional for a single-branch project (your test runner
           already produces the numeric metrics the policy needs), but it earns its
-          keep in <a href="./branches-and-merge.html">Tutorial 3</a> when we get to
-          merges and case provenance. Ignore the gap for now.
+          keep when you start merging branches and want the merge gate to compare
+          richer claims than raw numbers — see
+          <a href="https://github.com/r/morph/blob/main/docs/MERGE.md">MERGE.md</a>
+          and
+          <a href="https://github.com/r/morph/blob/main/docs/EVAL-DRIVEN.md">EVAL-DRIVEN.md</a>
+          for the merge-gate and case-provenance flow. Ignore the gap for now.
         </div>
         <div class="callout warn">
           <strong>Use the full pytest output, not <code>-q</code>.</strong>
@@ -1070,12 +1074,15 @@
             run Morph alongside Git as a behavioral safety net.
           </li>
           <li>
-            <strong><a href="./branches-and-merge.html">Tutorial 3 — Branches, merges, and merge conflicts</a>:</strong>
+            <strong><a href="https://github.com/r/morph/blob/main/docs/MERGE.md">MERGE.md</a>
+            and <a href="https://github.com/r/morph/blob/main/docs/EVAL-DRIVEN.md">EVAL-DRIVEN.md</a>:</strong>
             behavioral merge gating, dominance, case provenance, and what happens
             when two branches genuinely conflict. This is where YAML
             <strong>acceptance suites</strong> (the <code>empty_default_suite</code> gap
             you saw throughout this tutorial) start earning their keep — they
             give the merge gate something more than raw numbers to compare against.
+            (A standalone "Tutorial 3" page is on the roadmap; for now the
+            authoritative writeup lives in those two docs.)
           </li>
           <li>
             <strong><a href="https://github.com/r/morph/blob/main/docs/EVAL-DRIVEN.md">Eval-driven development</a>:</strong>

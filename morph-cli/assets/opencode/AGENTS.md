@@ -1,8 +1,9 @@
 # Morph — Behavioral Version Control
 
 This project uses [Morph](https://github.com/r/morph) for behavioral version
-control. Morph tracks every prompt, response, and file-tree commit
-independently of Git, and gates merges on **behavioral evidence** — the
+control. Morph runs alongside Git: it mirrors every git commit into a
+behavioral commit, records every prompt, response, and tool call as an
+immutable Run + Trace, and gates merges on **behavioral evidence** — the
 metrics produced by the repo's eval suite. Project website:
 [r.github.io/morph](https://r.github.io/morph).
 

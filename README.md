@@ -89,17 +89,19 @@ morph upgrade                    # migrate the store to the latest version
 morph gc                         # remove unreachable objects
 ```
 
-### Reference mode (sit alongside Git)
+### Sit alongside Git
 
-If you already use Git, run Morph in *reference mode*: Git owns file
-storage, Morph stores only behavioral metadata and mirrors every git
-commit into a Morph commit via installed git hooks. See
-[docs/reference-mode.md](docs/reference-mode.md) for the details.
+Morph always runs coupled to Git in this workspace: Git owns file
+storage, Morph stores only behavioral metadata, and `morph init`
+installs git hooks that mirror every git commit into a Morph
+commit. See [docs/MORPH-AND-GIT.md](docs/MORPH-AND-GIT.md) and
+[docs/reference-mode.md](docs/reference-mode.md) for the details
+of how the two layers cooperate.
 
 ```bash
-morph init --reference            # alongside an existing git repo (Stowaway: passive)
-morph init --reference --solo     # Solo submode: install pre-merge-commit gate
-morph install-hooks               # (re-)install the reference-mode git hooks
+morph init                        # alongside an existing git repo (Stowaway: passive hooks)
+morph init --solo                 # Solo submode: install pre-merge-commit gate
+morph install-hooks               # (re-)install the git hooks
 morph reference-sync [--backfill] # rebuild Morph commits from git history
 ```
 
@@ -162,7 +164,7 @@ Stable JSON API and browser UI for inspecting commits (with certification/gate s
 ## Develop Morph (this repo)
 
 ```bash
-cargo test --workspace                    # ~1100 unit + YAML acceptance tests
+cargo test --workspace                    # ~1170 unit + YAML acceptance tests
 cargo test -p morph-e2e --test cucumber   # end-to-end Cucumber scenarios
 ```
 
