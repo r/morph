@@ -16,6 +16,104 @@ metrics — see `.cursor/rules/behavioral-commits.mdc`.
 
 ## [Unreleased]
 
+## [0.46.0] — 2026-05-02
+
+Vocabulary unification, part 1: introduce `morph session` as the
+user-facing namespace for what's stored internally as a Run+Trace
+pair, and flatten the `morph eval` surface so cases and suites
+stop leaking from the storage model into the CLI. Fourth release
+of the multi-phase "make morph intuitive" effort. The old
+`morph run *`, `morph eval add-case`, `morph eval suite-show`,
+and `morph eval suite-from-specs` spellings continue to work in
+v0.46 and v0.47 with a one-line stderr deprecation notice; they're
+removed in v0.48. No on-disk format changes.
+
+### Added
+
+- **`morph session` namespace.** Subsumes the most common
+  `morph run *` operations plus the `morph inspect export` path
+  under a single user-facing noun:
+
+  ```text
+  morph session list [--json]                          # was: morph run list
+  morph session show <hash> [--json] [--with-trace]    # was: morph run show
+  morph session record [--prompt P --response R |      # was: morph run record-session
+                        --messages JSON]
+                       [--model-name N --agent-id A]
+  morph session export [--mode prompt-only|with-context|agentic]
+                       [--output FILE] [--model M]
+                       [--agent A] [--min-steps N]    # was: morph inspect export
+  ```
+
+  All four subcommands share their implementations with the
+  existing `morph_*` MCP tools (no MCP changes needed in v0.46).
+- **Flat `morph eval` surface.** New top-level subcommands that
+  drop the Suite/Case noun split:
+
+  ```text
+  morph eval add <files>... [--suite H] [--no-default]
+                            [--no-set-default]      # was: morph eval add-case
+  morph eval show [--suite H] [--json]              # was: morph eval suite-show
+  morph eval rebuild <dirs>... [--no-set-default]   # was: morph eval suite-from-specs
+  ```
+
+  Identical semantics to the v0.45 spellings (and the same
+  policy-default-suite update behavior).
+- New specs: `session.yaml` (8 cases covering list / show /
+  record / export and the messages-array form), `eval_flat.yaml`
+  (4 cases covering add / show / rebuild including default-suite
+  pickup), `session_eval_deprecated_aliases.yaml` (6 cases pinning
+  the deprecation-notice text on every old command).
+
+### Changed
+
+- **`morph --help` "SESSIONS" group** replaces the old "INSPECT"
+  group, listing `session, inspect, show, head, identify, refs,
+  annotate, annotations`. The deprecated `morph run` namespace is
+  hidden from `--help`. The flat `morph eval` subcommands inherit
+  the existing `EVALS & METRICS` heading.
+- Doc + site sweep: every `morph run record-session` / `morph run
+  list` / `morph eval add-case` / `morph eval suite-show` / `morph
+  eval suite-from-specs` mention in `README.md`,
+  `docs/EVAL-DRIVEN.md`, `docs/v0-spec.md`, `docs/SECURITY.md`,
+  `docs/SESSION-TRACKING.md`, `docs/AOE-SETUP.md`,
+  `docs/OPENCODE-SETUP.md`, `docs/CURSOR-SETUP.md`,
+  `morph-cli/assets/opencode/AGENTS.md`,
+  `morph-cli/assets/opencode/plugins/morph-record.ts`,
+  `morph-cli/assets/cursor/rules/*.mdc`,
+  `.cursor/rules/*.mdc`, and `site/index.html` rewritten to use
+  the new spellings. The opencode hook script now calls
+  `morph session record` directly so freshly-installed users get
+  the new spelling without a re-setup.
+
+### Deprecated
+
+- **`morph run list`**, **`morph run show <hash>`**, **`morph run
+  record-session ...`** — use `morph session list`,
+  `morph session show`, `morph session record`. Removed in v0.48.
+- **`morph run record <file>`** — JSON-file ingest will be folded
+  into `morph session import` in v0.48; for now the existing
+  `morph_run_record` MCP path is unchanged.
+- **`morph eval add-case <files>`** — use `morph eval add <files>`.
+  Removed in v0.48.
+- **`morph eval suite-show [--suite H] [--json]`** — use
+  `morph eval show`. Removed in v0.48.
+- **`morph eval suite-from-specs <dirs>`** — use
+  `morph eval rebuild`. Removed in v0.48.
+
+  Each deprecated invocation prints a one-line stderr notice in
+  the `git`-style format:
+
+  ```text
+  warning: `morph eval add-case` is deprecated; use `morph eval add` instead (removed in v0.48).
+  ```
+
+### Tests
+
+- Workspace **1244 / 1244 passing** (1226 baseline + 18 new
+  acceptance cases). Cucumber 34 / 37 (3 skipped, 0 failed) — no
+  change.
+
 ## [0.45.0] — 2026-05-02
 
 Inspection collapse: three near-synonymous CLIs (`morph trace`,
@@ -1237,7 +1335,8 @@ Three coordinated changes to repo setup, adoption, and migration.
 - 15 new YAML acceptance spec cases in the default eval suite:
   `init_at_latest:*` ×4, `init_in_git_dir:*` ×6, `upgrade:*` ×5.
 
-[Unreleased]: https://github.com/r/morph/compare/v0.45.0...HEAD
+[Unreleased]: https://github.com/r/morph/compare/v0.46.0...HEAD
+[0.46.0]: https://github.com/r/morph/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/r/morph/compare/v0.44.0...v0.45.0
 [0.44.0]: https://github.com/r/morph/compare/v0.43.0...v0.44.0
 [0.43.0]: https://github.com/r/morph/compare/v0.42.2...v0.43.0

@@ -321,7 +321,105 @@
 
     <article class="release">
       <header>
-        <span class="version">0.45.0 <span class="latest">Latest</span></span>
+        <span class="version">0.46.0 <span class="latest">Latest</span></span>
+        <span class="date">2026-05-02</span>
+      </header>
+      <p class="summary">
+        <strong>Vocabulary unification, part 1.</strong> Fourth
+        release of the &ldquo;make morph intuitive&rdquo; effort.
+        Introduce <code>morph session</code> as the user-facing
+        namespace for what's stored internally as a Run+Trace
+        pair, and flatten the <code>morph eval</code> surface so
+        cases and suites stop leaking from the storage model into
+        the CLI. The old <code>morph run *</code>,
+        <code>morph eval add-case</code>,
+        <code>morph eval suite-show</code>, and
+        <code>morph eval suite-from-specs</code> spellings continue
+        to work in v0.46 and v0.47 with a one-line stderr
+        deprecation notice; they're removed in v0.48. No on-disk
+        format changes.
+      </p>
+
+      <h3 class="added"><span class="marker"></span>Added</h3>
+      <ul>
+        <li><strong><code>morph session</code> namespace</strong>
+          subsumes <code>morph run list</code>,
+          <code>morph run show</code>,
+          <code>morph run record-session</code>, and the
+          <code>morph inspect export</code> path under one
+          coherent noun. Subcommands: <code>list [--json]</code>,
+          <code>show &lt;hash&gt; [--with-trace] [--json]</code>,
+          <code>record [--prompt P --response R | --messages
+          JSON]</code>, <code>export [--mode ...]</code>. Spec
+          coverage: <code>session.yaml</code>.</li>
+        <li><strong>Flat <code>morph eval</code> surface</strong>
+          drops the Suite/Case noun split. New subcommands:
+          <code>eval add &lt;files&gt;</code> (was
+          <code>add-case</code>), <code>eval show
+          [--suite H] [--json]</code> (was <code>suite-show</code>),
+          <code>eval rebuild &lt;dirs&gt;</code> (was
+          <code>suite-from-specs</code>). Identical semantics and
+          identical effect on
+          <code>policy.default_eval_suite</code>. Spec coverage:
+          <code>eval_flat.yaml</code>.</li>
+        <li>New spec
+          <code>session_eval_deprecated_aliases.yaml</code> pins
+          the wording of the <code>git</code>-style stderr
+          deprecation notice on every old command.</li>
+      </ul>
+
+      <h3 class="changed"><span class="marker"></span>Changed</h3>
+      <ul>
+        <li><strong><code>morph --help</code> SESSIONS group</strong>
+          replaces the v0.45 INSPECT group, listing
+          <code>session, inspect, show, head, identify, refs,
+          annotate, annotations</code>. The deprecated
+          <code>morph run</code> namespace is hidden from
+          <code>--help</code>.</li>
+        <li><strong>Doc, site, and asset sweep.</strong> Every
+          <code>morph run record-session</code> /
+          <code>morph run list</code> /
+          <code>morph eval add-case</code> /
+          <code>morph eval suite-show</code> /
+          <code>morph eval suite-from-specs</code> mention in
+          <code>README.md</code>, <code>docs/EVAL-DRIVEN.md</code>,
+          <code>docs/v0-spec.md</code>,
+          <code>docs/SECURITY.md</code>,
+          <code>docs/SESSION-TRACKING.md</code>, the IDE setup
+          guides (<code>AOE-SETUP</code>,
+          <code>OPENCODE-SETUP</code>, <code>CURSOR-SETUP</code>),
+          the cursor / opencode rule files, the opencode plugin
+          script (<code>morph-record.ts</code>), and
+          <code>site/index.html</code> rewritten to the new
+          spellings. Freshly-installed opencode hooks now call
+          <code>morph session record</code> directly.</li>
+      </ul>
+
+      <h3 class="removed"><span class="marker"></span>Deprecated</h3>
+      <ul>
+        <li><code>morph run {list, show, record-session}</code>
+          &mdash; use the corresponding <code>morph session</code>
+          subcommand. Removed in v0.48.</li>
+        <li><code>morph eval {add-case, suite-show,
+          suite-from-specs}</code> &mdash; use
+          <code>morph eval {add, show, rebuild}</code>. Removed in
+          v0.48. Each invocation prints a one-line
+          <code>git</code>-style stderr notice
+          (<em>warning: `morph eval add-case` is deprecated; use
+          `morph eval add` instead (removed in v0.48).</em>).</li>
+      </ul>
+
+      <h3 class="tests"><span class="marker"></span>Tests</h3>
+      <ul>
+        <li>Workspace <strong>1244 / 1244 passing</strong> (1226
+          baseline + 18 new acceptance cases). Cucumber 34 / 37
+          (3 skipped, 0 failed) &mdash; no change.</li>
+      </ul>
+    </article>
+
+    <article class="release">
+      <header>
+        <span class="version">0.45.0</span>
         <span class="date">2026-05-02</span>
       </header>
       <p class="summary">
@@ -486,87 +584,6 @@
           files + 5 new unit tests in
           <code>morph-core/src/commit_config.rs</code>). Cucumber 34
           / 37 (3 skipped, 0 failed) &mdash; no change.</li>
-      </ul>
-    </article>
-
-    <article class="release">
-      <header>
-        <span class="version">0.43.0</span>
-        <span class="date">2026-05-02</span>
-      </header>
-      <p class="summary">
-        <strong>Onboarding polish.</strong> First release of the
-        multi-phase &ldquo;make morph intuitive&rdquo; effort.
-        <code>morph init</code> now prints the active policy as
-        the last line of init output (<em>policy: relaxed
-        (metrics optional) &mdash; tighten with
-        <code>morph policy init</code></em>), so a fresh user
-        knows the gate they're under without having to run
-        <code>morph policy show</code>. <code>morph --help</code>
-        gains a <code>COMMANDS BY GROUP:</code> section
-        (ESSENTIAL / REMOTES / EVALS &amp; METRICS / INSPECT /
-        ADVANCED / INTEGRATIONS) so the day-one happy path is
-        discoverable without scanning 46 alphabetical entries.
-        The README now leads with one command
-        (<code>morph init</code> + <code>morph commit</code>);
-        the full surface is preserved in a reference section
-        below. <code>docs/EVAL-DRIVEN.md</code> aligns with
-        reality (reference-mode default has been permissive
-        since v0.40) and leads with the
-        <code>LAST_RUN.json</code> auto-pickup flow instead of
-        the manual <code>--from-run &lt;hash&gt;</code> ritual.
-      </p>
-
-      <h3 class="added"><span class="marker"></span>Added</h3>
-      <ul>
-        <li><code>morph init</code> prints the active policy in
-          its last line, with a one-liner showing how to switch.
-          Reference-mode shows <em>relaxed</em>; bare repos show
-          <em>strict</em> with the loosening recipe. Spec
-          coverage:
-          <code>init_prints_active_policy.yaml</code>.</li>
-        <li><code>morph --help</code> renders a grouped
-          subcommand overview after the auto-generated list:
-          ESSENTIAL / REMOTES / EVALS &amp; METRICS / INSPECT /
-          ADVANCED / INTEGRATIONS. Spec coverage:
-          <code>help_is_grouped.yaml</code>.</li>
-      </ul>
-
-      <h3 class="changed"><span class="marker"></span>Changed</h3>
-      <ul>
-        <li><strong>README leads with one command.</strong> The
-          quickstart is <code>morph init</code> followed by
-          <code>morph commit -m "..."</code> and nothing else;
-          the full command list moved to a reference section
-          near the bottom. The "When you want more" section
-          gradually introduces IDE recording, test-result
-          attachment, and dominance gating as opt-in upgrades.</li>
-        <li><strong><code>docs/EVAL-DRIVEN.md</code> documents
-          reality.</strong> &sect;0 used to claim reference-mode
-          <code>morph init</code> installed a strict default
-          policy; in fact reference-mode has been writing a
-          permissive one (with the <code>git-hook</code> carve-out)
-          since v0.40. The doc now matches the code and points
-          readers at <code>morph policy init</code> for opt-in
-          strict mode.</li>
-        <li><strong>&sect;5 leads with auto-pickup.</strong>
-          <code>morph eval run</code> followed by plain
-          <code>morph commit</code> (the
-          <code>LAST_RUN.json</code> breadcrumb attaches metrics
-          automatically) is now the canonical flow; the manual
-          <code>--from-run &lt;hash&gt;</code> ritual is
-          preserved in a "When you need precision" section.</li>
-      </ul>
-
-      <h3 class="tests"><span class="marker"></span>Tests</h3>
-      <ul>
-        <li>Workspace <strong>1192 / 1192 passing</strong> (1187
-          baseline + 5 new acceptance cases across the two new
-          spec files). Cucumber 34 / 37 (3 skipped, 0 failed)
-          &mdash; no change. Pre-existing fmt drift across 55
-          workspace files cleared in a separate
-          <code>chore: cargo fmt --all baseline</code> commit so
-          this release lands on a fmt-clean base.</li>
       </ul>
     </article>
 

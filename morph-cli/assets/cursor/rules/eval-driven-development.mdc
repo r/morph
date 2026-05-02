@@ -27,8 +27,8 @@ To feed this system, work spec-first.
 2. **Register it.** Add the case to the default eval suite:
 
    ```bash
-   morph eval add-case path/to/spec.yaml
-   morph eval suite-show           # sanity-check what's registered
+   morph eval add path/to/spec.yaml
+   morph eval show                 # sanity-check what's registered
    ```
 
    The first call also wires the suite to `policy.default_eval_suite`, so

@@ -155,12 +155,15 @@ morph fetch <remote>
 morph pull <remote> <branch> [--merge]
 morph sync [<branch>]
 
-morph eval add-case <files>... | suite-from-specs <dirs>... | suite-show [--suite H] [--json]
+morph eval add <files>... | rebuild <dirs>... | show [--suite H] [--json]
 morph eval run -- <cmd>... | from-output [--runner R] [--record] <file> | record <file.json>
 morph eval gaps [--json] [--fail-on-gap]
 morph policy init|show|set|require-metrics|set-default-eval ...
 morph certify --metrics(-file) ... [--commit <hash>] [--runner ...]
 morph gate [--commit <hash>] [--json]
+
+morph session list | show <hash> [--with-trace] | record [--prompt ... --response ...]
+morph session export [--mode prompt-only|with-context|agentic] [--output FILE]
 
 morph inspect summary | recent | show <hash> | diagnose [<hash>] | export ...
               | stats <trace_hash> | preview <run_hash>
@@ -188,9 +191,9 @@ The IDE hooks parse the agent's full transcript (tool calls, file reads/edits, s
 - `morph inspect summary` — repo-level overview of recorded runs.
 - `morph inspect show <run-hash>` — grouped steps for one run (or pass a trace hash for raw events).
 - `morph inspect recent` / `morph inspect task <ref>` / `morph inspect artifact <ref>` — structured task views for replay or eval generation.
-- `morph run record-session --prompt "..." --response "..."` — record a session manually.
+- `morph session record --prompt "..." --response "..."` — record a session manually (v0.46+; was `morph run record-session`).
 
-The older `morph trace` / `morph tap` / `morph traces` spellings still work in v0.45 and v0.46 with a deprecation notice; they're removed in v0.47.
+The older `morph trace` / `morph tap` / `morph traces` spellings still work in v0.45 and v0.46 with a deprecation notice; they're removed in v0.47. Likewise `morph run` / `morph eval add-case` / `morph eval suite-show` / `morph eval suite-from-specs` work in v0.46 and v0.47 and are removed in v0.48; new code should use `morph session` and the flat `morph eval add` / `show` / `rebuild`.
 
 See [docs/SESSION-TRACKING.md](docs/SESSION-TRACKING.md).
 

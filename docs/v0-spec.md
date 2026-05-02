@@ -643,7 +643,7 @@ Pipeline manifests are created via `morph pipeline create <file>` and exist only
 
 `morph pipeline identity-hash` prints the hash of the identity pipeline (creating it in the store if needed). Useful for hook scripts and automation.
 
-`morph pipeline extract --from-run <run_hash>` extracts a Pipeline from a recorded Run. For session-backed Runs (created by `morph run record-session`), this produces a deterministic minimal graph: a `generate` (prompt_call) node flowing into a `review` node. The extracted Pipeline includes provenance (`derived_from_run`, `derived_from_trace`, `derived_from_event`, `method: "extracted"`), attribution derived from the Run's agent and contributors, and a prompt blob reference. The extracted Pipeline is a first-class object reusable anywhere a Pipeline hash is accepted (e.g., `morph commit --pipeline <hash>`).
+`morph pipeline extract --from-run <run_hash>` extracts a Pipeline from a recorded Run. For session-backed Runs (created by `morph session record`, was `morph run record-session` pre-v0.46), this produces a deterministic minimal graph: a `generate` (prompt_call) node flowing into a `review` node. The extracted Pipeline includes provenance (`derived_from_run`, `derived_from_trace`, `derived_from_event`, `method: "extracted"`), attribution derived from the Run's agent and contributors, and a prompt blob reference. The extracted Pipeline is a first-class object reusable anywhere a Pipeline hash is accepted (e.g., `morph commit --pipeline <hash>`).
 
 ## 6.4 Commit Workflow
 
@@ -664,7 +664,7 @@ morph commit -m "message" --new-cases id1,id2                # record introduced
 - Eval suite presence and hash integrity
 - Uses **recorded** observed metrics (from external evaluation or prior `morph eval record`) to form the eval contract
 
-`--eval-suite <hash>` is optional: when omitted, the commit picks up `policy.default_eval_suite` so the suite registered by `morph eval add-case` flows into every commit automatically. Pass an explicit hash to override.
+`--eval-suite <hash>` is optional: when omitted, the commit picks up `policy.default_eval_suite` so the suite registered by `morph eval add` flows into every commit automatically. Pass an explicit hash to override.
 
 `--from-run <run_hash>` derives commit provenance from a recorded Run:
 
@@ -690,16 +690,25 @@ morph checkout <name|hash>
 
 `morph branch` without arguments lists all branches. With a name, it creates a new branch at HEAD. Branches are pointers to commits. `morph checkout` accepts a branch name or a 64-char commit hash (detached HEAD). If the commit has a tree, the working directory is restored from it.
 
-## 6.6 Run ingestion
+## 6.6 Session / Run ingestion
 
 ```
+morph session record [--prompt <text> --response <text> | --messages <json>] [--model-name <name>] [--agent-id <id>]
 morph run record <file> [--trace <file>] [--artifact <file>...]
-morph run record-session --prompt <text> --response <text> [--model-name <name>] [--agent-id <id>]
 ```
 
-`morph run record` **ingests** a Run object (JSON). Does not execute any pipeline. External tools (IDE, agent, CI) produce the run and report it. Morph stores the Run, its Trace, and Artifacts.
+`morph session record` (Phase 4.1, v0.46+) is the primary user-facing
+command for recording an agent session as a Run + Trace pair from a
+single prompt/response or a structured message array. Used by hook
+scripts and automation to record IDE sessions without constructing the
+full Run JSON. Replaces `morph run record-session`, which remains as a
+deprecated alias through v0.47.
 
-`morph run record-session` is a convenience command that creates a Run + Trace from a single prompt/response pair. Used by hook scripts and automation to record IDE sessions without constructing the full Run JSON.
+`morph run record` **ingests** a Run object (JSON). Does not execute
+any pipeline. External tools (IDE, agent, CI) produce the run and
+report it. Morph stores the Run, its Trace, and Artifacts. The whole
+`morph run` namespace is deprecated in v0.46+; the JSON-ingest path
+will be folded into `morph session import` in v0.48.
 
 ## 6.7 Eval ingestion
 
@@ -712,11 +721,15 @@ output into a metric-bearing `Run`. Both feed the merge-dominance gate.
 morph eval record <file>                       # ingest precomputed metrics JSON
 morph eval from-output [--runner R] [--record] <file>  # parse captured stdout (use - for stdin)
 morph eval run -- <cmd...>                     # exec command, parse stdout, write Run linked to HEAD
-morph eval add-case <file_or_dir>...           # YAML / Cucumber → EvalCase, append to default suite
-morph eval suite-from-specs <dir>              # rebuild the default suite from a directory tree
-morph eval suite-show [--suite <hash>] [--json]   # print the cases in a suite
+morph eval add <file_or_dir>...                # YAML / Cucumber → EvalCase, append to default suite
+morph eval rebuild <dir>                       # rebuild the default suite from a directory tree
+morph eval show [--suite <hash>] [--json]      # print the cases in a suite
 morph eval gaps [--json] [--fail-on-gap]       # report missing behavioral evidence
 ```
+
+The flat `add` / `show` / `rebuild` spellings landed in Phase 4.1 (v0.46+).
+The older `add-case` / `suite-show` / `suite-from-specs` continue to work
+through v0.47 with a deprecation notice and are removed in v0.48.
 
 - `record` — Ingests a `{"metrics": {...}}` JSON file. Used when an
   external CI run already produced canonical scores. Does not run any
@@ -728,12 +741,11 @@ morph eval gaps [--json] [--fail-on-gap]       # report missing behavioral evide
   can optionally write a `Run` object linked to HEAD so a subsequent
   `morph commit --from-run <hash>` inherits the metrics as
   `observed_metrics`.
-- `add-case` / `suite-from-specs` — Convert YAML specs and Cucumber
-  `.feature` files into `EvalCase` objects. The first ingestion writes
-  a fresh `EvalSuite` and stores its hash under
-  `policy.default_eval_suite`; subsequent ingestions extend the same
-  suite (deduping by case id).
-- `suite-show` — Inspect the registered default suite (or any suite by
+- `add` / `rebuild` — Convert YAML specs and Cucumber `.feature` files
+  into `EvalCase` objects. The first ingestion writes a fresh
+  `EvalSuite` and stores its hash under `policy.default_eval_suite`;
+  subsequent ingestions extend the same suite (deduping by case id).
+- `show` — Inspect the registered default suite (or any suite by
   hash). `--json` is provided for tooling.
 - `gaps` — Returns a structured list of unaddressed evidence gaps:
   `empty_head_metrics`, `empty_default_suite`, `no_recent_run`, and
@@ -1080,7 +1092,7 @@ Fields:
 - **required_metrics**: Metric names that must be present on every commit (commit-time gate). `morph init` writes `["tests_total", "tests_passed"]` by default so commits without test results fail loudly. `morph commit --allow-empty-metrics` (or `morph_commit { allow_empty_metrics: true }`) bypasses the gate. `morph policy require-metrics <name>...` sets or clears the list (pass no names to disable).
 - **thresholds**: Minimum values per metric (direction-aware).
 - **directions**: Override direction per metric ("maximize" default, or "minimize").
-- **default_eval_suite**: Hash of the default eval suite for certification. Set automatically by `morph eval add-case` / `morph eval suite-from-specs` unless `--no-set-default` is passed.
+- **default_eval_suite**: Hash of the default eval suite for certification. Set automatically by `morph eval add` / `morph eval rebuild` (was `add-case` / `suite-from-specs` pre-v0.46) unless `--no-set-default` is passed.
 - **merge_policy**: `"dominance"` (default) requires behavioral dominance at merge. Setting it to `"none"` opts out of the dominance gate — useful during rapid prototyping when behavioral evidence has not caught up to the structural change. Both `morph-core::merge::execute_merge` and `morph-core::merge_flow::continue_merge` honor this setting.
 - **ci_defaults**: Default CI runner metadata.
 - **push_gated_branches**: Branch-name globs (`*` / `?` / literal) that must pass `gate_check` before a bare server accepts a `RefWrite` over SSH. Empty list (default) gates nothing.

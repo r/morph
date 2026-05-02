@@ -47,11 +47,11 @@ on_create = [
   "morph add . && morph commit -m \"aoe-create: ${AOE_INSTANCE_ID:-unknown}\" --allow-empty-metrics 2>/dev/null || true",
 ]
 on_launch = [
-  "morph run record-session --prompt \"aoe-launch instance=${AOE_INSTANCE_ID:-unknown} branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)\" --response \"\" --model-name aoe --agent-id aoe 2>/dev/null || true",
+  "morph session record --prompt \"aoe-launch instance=${AOE_INSTANCE_ID:-unknown} branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)\" --response \"\" --model-name aoe --agent-id aoe 2>/dev/null || true",
 ]
 on_destroy = [
   "morph add . && morph commit -m \"aoe-destroy: ${AOE_INSTANCE_ID:-unknown}\" --allow-empty-metrics 2>/dev/null || true",
-  "morph run record-session --prompt \"aoe-destroy instance=${AOE_INSTANCE_ID:-unknown}\" --response \"\" --model-name aoe --agent-id aoe 2>/dev/null || true",
+  "morph session record --prompt \"aoe-destroy instance=${AOE_INSTANCE_ID:-unknown}\" --response \"\" --model-name aoe --agent-id aoe 2>/dev/null || true",
 ]
 ```
 
@@ -162,10 +162,10 @@ This repo has unreviewed hooks. Trust them?
     morph init --quiet 2>/dev/null || true
     morph add . && morph commit -m "aoe-create: ..." ...
   on_launch:
-    morph run record-session --prompt "aoe-launch ..." ...
+    morph session record --prompt "aoe-launch ..." ...
   on_destroy:
     morph add . && morph commit -m "aoe-destroy: ..." ...
-    morph run record-session --prompt "aoe-destroy ..." ...
+    morph session record --prompt "aoe-destroy ..." ...
 [T]rust / [r]eject?
 ```
 
@@ -188,9 +188,9 @@ After `morph setup aoe` and `aoe add .`:
 morph log --limit 5
 # Expect to see "aoe-create: <instance-id>" in the latest commit.
 
-# Confirm at least one Run was recorded on launch:
-morph run list | head
-# Expect a recent Run with prompt starting "aoe-launch instance=...".
+# Confirm at least one session was recorded on launch:
+morph session list | head
+# Expect a recent session with prompt starting "aoe-launch instance=...".
 
 # When you tear the session down with `aoe rm`, expect another commit
 # ("aoe-destroy: ...") followed by an "aoe-destroy" Run.

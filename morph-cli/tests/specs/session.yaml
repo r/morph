@@ -1,0 +1,90 @@
+# Phase 4.1 (v0.46): the `morph session` namespace introduces a
+# user-facing noun for what's currently called Run+Trace internally.
+# Subcommand mapping:
+#
+#   morph session list              (was: morph run list)
+#   morph session show <hash>       (was: morph run show)
+#   morph session record [...]      (was: morph run record-session)
+#   morph session export [...]      (was: morph inspect export)
+#
+# The old commands continue to work in v0.46 with a one-line stderr
+# deprecation notice; they're removed in v0.48.
+
+- name: session_record_inline_returns_run_hash
+  steps:
+    - morph: [session, record, --prompt, "Build the feature", --response, "Done"]
+      capture: run_hash
+      assert_hash: true
+    - morph: [show, "${run_hash}"]
+      stdout_contains:
+        - '"type": "run"'
+
+- name: session_list_shows_recorded_session
+  steps:
+    - morph: [session, record, --prompt, "p", --response, "r", --model-name, gpt-4o, --agent-id, cursor]
+      capture: run_hash
+      assert_hash: true
+    - morph: [session, list]
+      stdout_contains:
+        - "${run_hash}"
+
+- name: session_list_json_envelope
+  steps:
+    - morph: [session, record, --prompt, "p", --response, "r", --model-name, gpt-4o, --agent-id, cursor]
+      capture: run_hash
+      assert_hash: true
+    - morph: [session, list, --json]
+      stdout_contains:
+        - '"runs"'
+        - '"count"'
+
+- name: session_show_displays_run_metadata
+  steps:
+    - morph: [session, record, --prompt, "Explain recursion", --response, "Self-reference", --model-name, gpt-4o, --agent-id, cursor]
+      capture: run_hash
+      assert_hash: true
+    - morph: [session, show, "${run_hash}"]
+      stdout_contains:
+        - "run    "
+        - "trace  "
+        - "agent  cursor"
+
+- name: session_show_with_trace_prints_events
+  steps:
+    - morph: [session, record, --prompt, "Build the feature", --response, "Feature built"]
+      capture: run_hash
+      assert_hash: true
+    - morph: [session, show, "${run_hash}", --with-trace]
+      stdout_contains:
+        - "Build the feature"
+        - "Feature built"
+
+- name: session_show_json
+  steps:
+    - morph: [session, record, --prompt, "p", --response, "r"]
+      capture: run_hash
+      assert_hash: true
+    - morph: [session, show, "${run_hash}", --json]
+      stdout_contains:
+        - '"trace"'
+        - '"agent"'
+
+- name: session_export_returns_eval_cases
+  steps:
+    - morph: [session, record, --prompt, "Write hello", --response, "print('hello')", --model-name, gpt-4o, --agent-id, test]
+      capture: run_hash
+      assert_hash: true
+    - morph: [session, export, --mode, prompt-only]
+      stdout_contains:
+        - "Write hello"
+        - "print('hello')"
+
+- name: session_record_messages_form
+  steps:
+    - morph: [session, record, --messages, '[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"}]', --model-name, gpt-4o, --agent-id, test]
+      capture: run_hash
+      assert_hash: true
+    - morph: [session, show, "${run_hash}", --with-trace]
+      stdout_contains:
+        - "hi"
+        - "hello"

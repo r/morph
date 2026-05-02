@@ -50,7 +50,7 @@ If the merge is rejected because metrics regressed:
 
 1. Identify which metrics dropped below the parent thresholds.
 2. Fix the regression — improve the code, add missing acceptance cases via
-   `morph eval add-case`, optimize performance.
+   `morph eval add`, optimize performance.
 3. Re-run the eval suite (`morph eval run`), commit from the new run, and
    retry the merge.
 
@@ -60,6 +60,6 @@ failure mode — Morph prevents it.
 ## Creating branches
 
 When branching for experimental work, write the acceptance cases that
-define "done" *first*, register them with `morph eval add-case`, and let
+define "done" *first*, register them with `morph eval add`, and let
 the merge gate enforce them. This sets explicit expectations and gives the
 eventual merge real evidence to evaluate.

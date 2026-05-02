@@ -31,7 +31,7 @@ implementation detail. Every behavioral change must:
 1. **Start as an acceptance case** — a YAML spec (one case per top-level
    entry) or a cucumber `.feature` (one case per `Scenario:`). The case
    describes user-visible behavior, not implementation.
-2. **Be registered in the suite** with `morph eval add-case <file>` (or
+2. **Be registered in the suite** with `morph eval add <file>` (or
    `morph_add_eval_case` via MCP). The first call also wires
    `policy.default_eval_suite`, so subsequent commits inherit it.
 3. **Fail before you implement.** Run `morph eval run -- <test command>`

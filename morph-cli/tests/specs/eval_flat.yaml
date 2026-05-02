@@ -1,0 +1,67 @@
+# Phase 4.1 (v0.46): the `morph eval` surface flattens. Users no
+# longer need to distinguish "Suite" from "Case" in the CLI:
+#
+#   morph eval add <files>            (was: morph eval add-case)
+#   morph eval show [--suite H]       (was: morph eval suite-show)
+#   morph eval rebuild <dirs>         (was: morph eval suite-from-specs)
+#
+# The old commands continue to work in v0.46 with a one-line stderr
+# deprecation notice; they're removed in v0.48.
+
+- name: eval_add_ingests_yaml_spec
+  files:
+    spec.yaml: |
+      - name: dummy_passes
+        steps:
+          - morph: [status]
+  steps:
+    - morph: [eval, add, spec.yaml]
+      capture: suite_hash
+      assert_hash: true
+
+- name: eval_show_lists_default_suite_cases
+  files:
+    spec.yaml: |
+      - name: case_alpha
+        steps:
+          - morph: [status]
+      - name: case_beta
+        steps:
+          - morph: [status]
+  steps:
+    - morph: [eval, add, spec.yaml]
+    - morph: [eval, show]
+      stdout_contains:
+        - "case_alpha"
+        - "case_beta"
+
+- name: eval_show_json
+  files:
+    spec.yaml: |
+      - name: only_case
+        steps:
+          - morph: [status]
+  steps:
+    - morph: [eval, add, spec.yaml]
+    - morph: [eval, show, --json]
+      stdout_contains:
+        - "only_case"
+
+- name: eval_rebuild_replaces_default_suite
+  files:
+    specs/a.yaml: |
+      - name: case_a
+        steps:
+          - morph: [status]
+    specs/b.yaml: |
+      - name: case_b
+        steps:
+          - morph: [status]
+  steps:
+    - morph: [eval, rebuild, specs]
+      capture: rebuild_hash
+      assert_hash: true
+    - morph: [eval, show]
+      stdout_contains:
+        - "case_a"
+        - "case_b"

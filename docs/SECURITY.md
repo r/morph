@@ -285,7 +285,7 @@ do I do?"
 
 ```
 # 1. find the run/trace that holds the secret:
-morph run list                       # newest runs first; copy a hash
+morph session list                   # newest sessions first; copy a hash
 morph inspect show <run-hash>        # see the prompts/tool calls/files in that run
 
 # 2. forget it locally and queue for the team remote:

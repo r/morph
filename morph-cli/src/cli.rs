@@ -37,8 +37,8 @@ COMMANDS BY GROUP:
   ESSENTIAL:        init, status, add, commit, log, diff, branch, checkout, merge
   REMOTES:          clone, remote, push, fetch, pull, sync
   EVALS & METRICS:  eval, certify, gate, policy, merge-plan
-  INSPECT:          inspect, show, head, identify, refs, annotate, annotations
-  ADVANCED:         prompt, pipeline, run, hash-object, rollup, files, config, tag, stash,
+  SESSIONS:         session, inspect, show, head, identify, refs, annotate, annotations
+  ADVANCED:         prompt, pipeline, hash-object, rollup, files, config, tag, stash,
                     revert, install-hooks, reference-sync, upgrade, gc, forget, version
   INTEGRATIONS:     setup, visualize, serve
 
@@ -337,7 +337,19 @@ pub enum Command {
     },
     /// Switch branch or detach to a commit
     Checkout { ref_name: String },
-    /// Ingest a run (execution receipt)
+    /// Record and inspect agent sessions (Phase 4.1, v0.46+:
+    /// user-facing namespace for what's stored internally as a Run
+    /// pointing at a Trace; folds in the most common `morph run`
+    /// subcommands plus `morph inspect export`). The old
+    /// `morph run` namespace remains as a deprecated alias through
+    /// v0.47 and is removed in v0.48.
+    Session {
+        #[command(subcommand)]
+        sub: SessionCmd,
+    },
+    /// [DEPRECATED v0.46+] Ingest a run (execution receipt). Use
+    /// `morph session` instead. Removed in v0.48.
+    #[command(hide = true)]
     Run {
         #[command(subcommand)]
         sub: RunCmd,
@@ -1015,6 +1027,66 @@ pub enum RunCmd {
     },
 }
 
+/// Phase 4.1 (v0.46+): user-facing wrapper around what the storage
+/// layer calls a Run+Trace pair. Subsumes the most common
+/// `morph run` and `morph inspect export` operations under a single
+/// `morph session` namespace.
+#[derive(clap::Subcommand)]
+pub enum SessionCmd {
+    /// List recorded sessions (was `morph run list`).
+    List {
+        /// Emit a JSON envelope listing every session hash.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show one session's metadata (was `morph run show`). Pass
+    /// `--with-trace` to also print the recorded prompt/response
+    /// events.
+    Show {
+        hash: String,
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        with_trace: bool,
+    },
+    /// Record an agent session inline (was `morph run
+    /// record-session`). Provide either `--prompt` and `--response`
+    /// or a JSON array via `--messages`. Prints the run hash on
+    /// stdout so it composes with `morph commit --from-run <hash>`.
+    Record {
+        #[arg(long, required_unless_present = "messages")]
+        prompt: Option<String>,
+        #[arg(long, required_unless_present = "messages")]
+        response: Option<String>,
+        /// JSON array of messages: [{"role":"user","content":"..."},{"role":"assistant","content":"..."},...]
+        #[arg(long, conflicts_with_all = ["prompt", "response"])]
+        messages: Option<String>,
+        #[arg(long)]
+        model_name: Option<String>,
+        #[arg(long)]
+        agent_id: Option<String>,
+    },
+    /// Export recorded sessions as evaluation cases (was
+    /// `morph inspect export`).
+    Export {
+        /// Export mode: prompt-only, with-context, agentic
+        #[arg(long, default_value = "with-context")]
+        mode: String,
+        /// Output file (default: stdout)
+        #[arg(short, long)]
+        output: Option<std::path::PathBuf>,
+        /// Filter by model name (substring match)
+        #[arg(long)]
+        model: Option<String>,
+        /// Filter by agent id (substring match)
+        #[arg(long)]
+        agent: Option<String>,
+        /// Minimum number of steps required
+        #[arg(long, default_value_t = 0)]
+        min_steps: usize,
+    },
+}
+
 #[derive(clap::Subcommand)]
 pub enum EvalCmd {
     /// Record a metrics JSON file as an eval-result blob plus a Run.
@@ -1055,14 +1127,16 @@ pub enum EvalCmd {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         command: Vec<String>,
     },
-    /// Phase 4b: ingest one or more YAML specs / cucumber `.feature`
-    /// files as acceptance cases. Updates the repo's default suite
-    /// (or `--suite <hash>`) by appending and deduping by case id.
+    /// Phase 4.1 (v0.46+): ingest one or more YAML specs / cucumber
+    /// `.feature` files as acceptance cases. Updates the repo's
+    /// default suite (or `--suite <hash>`) by appending and deduping
+    /// by case id.
     ///
-    /// Print the new suite hash on stdout so callers can pipe into
+    /// Replaces the older `morph eval add-case`. Prints the new suite
+    /// hash on stdout so callers can pipe into
     /// `morph commit --eval-suite <hash>` if they don't want to use
     /// the policy default.
-    AddCase {
+    Add {
         /// Files or directories to ingest. Directories are walked
         /// one level deep.
         paths: Vec<PathBuf>,
@@ -1081,24 +1155,55 @@ pub enum EvalCmd {
         #[arg(long)]
         no_set_default: bool,
     },
-    /// Convenience wrapper for `morph eval add-case`: walks the
-    /// supplied directories, ingests every `*.yaml`/`*.yml`/`*.feature`,
-    /// and replaces the default suite with the result.
-    SuiteFromSpecs {
+    /// Print the contents of the default suite (or `--suite <hash>`)
+    /// in human-readable form. Phase 4.1 (v0.46+) replaces the older
+    /// `morph eval suite-show`.
+    Show {
+        /// Suite hash to inspect. Defaults to
+        /// `policy.default_eval_suite`.
+        #[arg(long)]
+        suite: Option<String>,
+        /// Emit JSON instead of the human summary.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Walk the supplied directories, ingest every
+    /// `*.yaml`/`*.yml`/`*.feature`, and replace the default suite
+    /// with the result. Phase 4.1 (v0.46+) replaces the older
+    /// `morph eval suite-from-specs`.
+    Rebuild {
         /// One or more directories (or files) to ingest.
         paths: Vec<PathBuf>,
         /// Skip updating `policy.default_eval_suite`.
         #[arg(long)]
         no_set_default: bool,
     },
-    /// Print the contents of the default suite (or `--suite <hash>`)
-    /// in human-readable form.
-    SuiteShow {
-        /// Suite hash to inspect. Defaults to
-        /// `policy.default_eval_suite`.
+    /// [DEPRECATED v0.46+] Use `morph eval add` instead.
+    /// Removed in v0.48.
+    #[command(hide = true)]
+    AddCase {
+        paths: Vec<PathBuf>,
         #[arg(long)]
         suite: Option<String>,
-        /// Emit JSON instead of the human summary.
+        #[arg(long)]
+        no_default: bool,
+        #[arg(long)]
+        no_set_default: bool,
+    },
+    /// [DEPRECATED v0.46+] Use `morph eval rebuild` instead.
+    /// Removed in v0.48.
+    #[command(hide = true)]
+    SuiteFromSpecs {
+        paths: Vec<PathBuf>,
+        #[arg(long)]
+        no_set_default: bool,
+    },
+    /// [DEPRECATED v0.46+] Use `morph eval show` instead.
+    /// Removed in v0.48.
+    #[command(hide = true)]
+    SuiteShow {
+        #[arg(long)]
+        suite: Option<String>,
         #[arg(long)]
         json: bool,
     },

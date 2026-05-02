@@ -470,7 +470,7 @@ async function recordConversation(
 
   const messagesJson = JSON.stringify(messages)
   const model = modelName || "unknown"
-  await $`morph run record-session --messages ${messagesJson} --model-name ${model} --agent-id opencode`
+  await $`morph session record --messages ${messagesJson} --model-name ${model} --agent-id opencode`
     .cwd(directory)
     .quiet()
 

@@ -35,9 +35,9 @@ fixture you would hand to a reviewer.
 Run *before* implementing:
 
 ```bash
-morph eval add-case morph-cli/tests/specs/<feature>.yaml
+morph eval add morph-cli/tests/specs/<feature>.yaml
 # or, for a cucumber feature:
-morph eval add-case morph-e2e/features/<flow>.feature
+morph eval add morph-e2e/features/<flow>.feature
 ```
 
 This appends an `EvalCase` to the default `EvalSuite` (creating one if none
@@ -47,8 +47,11 @@ the contract every future commit must satisfy.
 Sanity-check the suite:
 
 ```bash
-morph eval suite-show
+morph eval show
 ```
+
+> The older spellings `morph eval add-case` and `morph eval suite-show` keep
+> working through v0.47 with a stderr deprecation notice.
 
 ### 3. Watch the case fail
 
@@ -131,7 +134,7 @@ possible.
 ## Checklist before you say "done"
 
 - [ ] Acceptance case written (YAML or `.feature`) covering the change
-- [ ] `morph eval add-case` run; case visible in `morph eval suite-show`
+- [ ] `morph eval add` run; case visible in `morph eval show`
 - [ ] `morph eval run -- <test command>` produced a run with full metrics
 - [ ] `morph_eval_gaps` reports zero gaps
 - [ ] `morph commit --from-run <hash> --new-cases <ids>` recorded

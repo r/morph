@@ -60,7 +60,7 @@ Example (`specs/login.yaml`):
 ## 2. Register the case in the eval suite
 
 ```bash
-morph eval add-case specs/login.yaml
+morph eval add specs/login.yaml
 ```
 
 The first call creates a fresh `EvalSuite`, appends the case, and wires
@@ -70,19 +70,23 @@ the same suite (deduping by case `id`).
 For bulk ingestion of an entire directory tree (mixed YAML + cucumber):
 
 ```bash
-morph eval suite-from-specs specs/
+morph eval rebuild specs/
 ```
 
-`suite-from-specs` rebuilds the suite from scratch — useful when the
-canonical spec lives in version control and you want the suite to track
-it exactly.
+`rebuild` rebuilds the suite from scratch — useful when the canonical
+spec lives in version control and you want the suite to track it
+exactly.
 
 Sanity-check the suite at any time:
 
 ```bash
-morph eval suite-show          # human-readable
-morph eval suite-show --json   # structured for tooling
+morph eval show          # human-readable
+morph eval show --json   # structured for tooling
 ```
+
+> The older spellings `morph eval add-case`, `morph eval suite-from-specs`,
+> and `morph eval suite-show` continue to work in v0.46 and v0.47 with a
+> stderr deprecation notice; they're removed in v0.48.
 
 ## 3. Watch the case fail
 
@@ -260,9 +264,9 @@ analogous to a text conflict in Git, but at the semantic level.
 
 | CLI | MCP tool | Purpose |
 |-----|----------|---------|
-| `morph eval add-case <file>...` | `morph_add_eval_case` | Add YAML/cucumber cases to the default suite. |
-| `morph eval suite-from-specs <dir>` | `morph_eval_suite_from_specs` | Rebuild the default suite from a directory. |
-| `morph eval suite-show [--suite H] [--json]` | `morph_eval_suite_show` | Print the cases in a suite. |
+| `morph eval add <file>...` | `morph_add_eval_case` | Add YAML/cucumber cases to the default suite (was `eval add-case`). |
+| `morph eval rebuild <dir>` | `morph_eval_suite_from_specs` | Rebuild the default suite from a directory (was `eval suite-from-specs`). |
+| `morph eval show [--suite H] [--json]` | `morph_eval_suite_show` | Print the cases in a suite (was `eval suite-show`). |
 | `morph eval run -- <cmd>` | `morph_eval_run` | Run a test command and record a metric-bearing `Run`. |
 | `morph eval from-output [--runner R] [--record] <file>` | `morph_eval_from_output` | Parse captured stdout into metrics; optional `--record` writes a `Run`. |
 | `morph eval record <file.json>` | `morph_record_eval` | Ingest precomputed `{"metrics": {...}}` JSON. |

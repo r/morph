@@ -123,7 +123,7 @@ acceptance cases from prompts and check them into the eval suite.
 Only possible if the prompt is stored.
 
 ```
-$ morph eval add-case --from-trace abc123 --case-id auth_retry_on_5xx
+$ morph eval add --from-trace abc123 --case-id auth_retry_on_5xx
 ```
 
 The case captures the prompt as the intent, the test command as the

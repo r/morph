@@ -187,6 +187,294 @@ fn print_policy_summary(policy: &morph_core::RepoPolicy) {
     }
 }
 
+/// Phase 4.1 (v0.46+): shared body for `morph eval add` (the new flat
+/// spelling) and the deprecated `morph eval add-case`. Ingests one or
+/// more spec files / directories of specs as acceptance cases and
+/// either extends the policy default suite or builds a fresh one.
+fn do_eval_add(
+    verbose: bool,
+    paths: Vec<PathBuf>,
+    suite: Option<String>,
+    no_default: bool,
+    no_set_default: bool,
+) -> anyhow::Result<()> {
+    if paths.is_empty() {
+        return Err(anyhow::anyhow!(
+            "no paths supplied. Usage: morph eval add <file_or_dir>..."
+        ));
+    }
+    let (repo_root, store) = get_store(verbose)?;
+    let cases = morph_core::add_cases_from_paths(&paths)?;
+    if cases.is_empty() {
+        return Err(anyhow::anyhow!(
+            "no acceptance cases found in: {}",
+            paths
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    let morph_dir = repo_root.join(".morph");
+    let policy = morph_core::read_policy(&morph_dir)?;
+    let prev: Option<morph_core::Hash> = if no_default {
+        None
+    } else if let Some(s) = suite.as_deref() {
+        let resolved = resolve_obj_hash(store.as_ref(), s)?;
+        Some(resolved)
+    } else {
+        match policy.default_eval_suite.as_deref() {
+            Some(h) => Some(morph_core::Hash::from_hex(h)?),
+            None => None,
+        }
+    };
+    let new_hash = morph_core::build_or_extend_suite(store.as_ref(), prev, &cases)?;
+    if !no_set_default {
+        let mut updated = policy.clone();
+        updated.default_eval_suite = Some(new_hash.to_string());
+        morph_core::write_policy(&morph_dir, &updated)?;
+    }
+    eprintln!(
+        "Added {} case{} to suite {}",
+        cases.len(),
+        if cases.len() == 1 { "" } else { "s" },
+        new_hash
+    );
+    println!("{}", new_hash);
+    Ok(())
+}
+
+/// Phase 4.1 (v0.46+): shared body for `morph eval rebuild` and the
+/// deprecated `morph eval suite-from-specs`. Walks the supplied
+/// directories, ingests every `*.yaml` / `*.yml` / `*.feature`, and
+/// replaces the default suite with the result.
+fn do_eval_rebuild(verbose: bool, paths: Vec<PathBuf>, no_set_default: bool) -> anyhow::Result<()> {
+    if paths.is_empty() {
+        return Err(anyhow::anyhow!(
+            "no paths supplied. Usage: morph eval rebuild <dir>..."
+        ));
+    }
+    let (repo_root, store) = get_store(verbose)?;
+    let cases = morph_core::add_cases_from_paths(&paths)?;
+    if cases.is_empty() {
+        return Err(anyhow::anyhow!(
+            "no acceptance cases found in: {}",
+            paths
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    let new_hash = morph_core::build_or_extend_suite(store.as_ref(), None, &cases)?;
+    let morph_dir = repo_root.join(".morph");
+    if !no_set_default {
+        let mut policy = morph_core::read_policy(&morph_dir)?;
+        policy.default_eval_suite = Some(new_hash.to_string());
+        morph_core::write_policy(&morph_dir, &policy)?;
+    }
+    eprintln!(
+        "Built fresh suite with {} case{}: {}",
+        cases.len(),
+        if cases.len() == 1 { "" } else { "s" },
+        new_hash
+    );
+    println!("{}", new_hash);
+    Ok(())
+}
+
+/// Phase 4.1 (v0.46+): shared body for `morph eval show` and the
+/// deprecated `morph eval suite-show`. Prints the contents of the
+/// default suite (or `--suite <hash>`) in human-readable form, or as
+/// JSON when `--json` is set.
+fn do_eval_show(verbose: bool, suite: Option<String>, json: bool) -> anyhow::Result<()> {
+    let (repo_root, store) = get_store(verbose)?;
+    let morph_dir = repo_root.join(".morph");
+    let policy = morph_core::read_policy(&morph_dir)?;
+    let target_hash: morph_core::Hash = match suite.as_deref() {
+        Some(s) => resolve_obj_hash(store.as_ref(), s)?,
+        None => match policy.default_eval_suite.as_deref() {
+            Some(h) => morph_core::Hash::from_hex(h)?,
+            None => {
+                return Err(anyhow::anyhow!(
+                    "no suite hash supplied and policy.default_eval_suite is unset. \
+                     Run `morph eval add <spec>` first or pass `--suite <hash>`."
+                ));
+            }
+        },
+    };
+    let obj = store.get(&target_hash)?;
+    let suite_obj = match obj {
+        morph_core::MorphObject::EvalSuite(s) => s,
+        _ => {
+            return Err(anyhow::anyhow!(
+                "object {} is not an EvalSuite",
+                target_hash
+            ));
+        }
+    };
+    if json {
+        println!("{}", serde_json::to_string_pretty(&suite_obj)?);
+    } else {
+        println!("Suite {}", target_hash);
+        println!("  cases:    {}", suite_obj.cases.len());
+        println!("  metrics:  {}", suite_obj.metrics.len());
+        for c in &suite_obj.cases {
+            let kind = c.input.get("kind").and_then(|v| v.as_str()).unwrap_or("?");
+            println!("    - {}  [{}]  metric={}", c.id, kind, c.metric);
+        }
+        for m in &suite_obj.metrics {
+            println!(
+                "    metric: {} agg={} threshold={} dir={}",
+                m.name, m.aggregation, m.threshold, m.direction
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Phase 4.1 (v0.46+): shared body for the four `morph session`
+/// subcommands and the deprecated `morph run *` aliases. Dispatches
+/// to the existing record/list/show/export plumbing in `morph_core`
+/// and `inspect`.
+fn do_session_dispatch(verbose: bool, sub: SessionCmd) -> anyhow::Result<()> {
+    match sub {
+        SessionCmd::List { json } => do_session_list(verbose, json),
+        SessionCmd::Show {
+            hash,
+            json,
+            with_trace,
+        } => do_session_show(verbose, hash, json, with_trace),
+        SessionCmd::Record {
+            prompt,
+            response,
+            messages,
+            model_name,
+            agent_id,
+        } => do_session_record(verbose, prompt, response, messages, model_name, agent_id),
+        SessionCmd::Export {
+            mode,
+            output,
+            model,
+            agent,
+            min_steps,
+        } => inspect::run_export(
+            verbose,
+            &mode,
+            output.as_deref(),
+            model,
+            agent,
+            Some(min_steps),
+        ),
+    }
+}
+
+fn do_session_list(verbose: bool, json: bool) -> anyhow::Result<()> {
+    let (_repo_root, store) = get_store(verbose)?;
+    let runs = store.list(ObjectType::Run)?;
+    if json {
+        let entries: Vec<_> = runs
+            .iter()
+            .map(|h| {
+                let h_str = h.to_string();
+                let mut entry = serde_json::json!({
+                    "hash": h_str,
+                    "short": short_hash_str(&h_str),
+                });
+                if let Ok(MorphObject::Run(r)) = store.get(h) {
+                    entry["agent_id"] = serde_json::Value::String(r.agent.id.clone());
+                    entry["agent_version"] = serde_json::Value::String(r.agent.version.clone());
+                    entry["model"] = serde_json::Value::String(r.environment.model.clone());
+                    entry["pipeline"] = serde_json::Value::String(r.pipeline.clone());
+                    if let Some(c) = &r.commit {
+                        entry["commit"] = serde_json::Value::String(c.clone());
+                    }
+                    entry["has_metrics"] = serde_json::Value::Bool(!r.metrics.is_empty());
+                    if !r.metrics.is_empty() {
+                        if let Ok(m) = serde_json::to_value(&r.metrics) {
+                            entry["metrics"] = m;
+                        }
+                    }
+                }
+                entry
+            })
+            .collect();
+        let body = serde_json::json!({ "runs": entries, "count": runs.len() });
+        println!("{}", serde_json::to_string_pretty(&body)?);
+    } else {
+        for h in runs {
+            println!("{}", h);
+        }
+    }
+    Ok(())
+}
+
+fn do_session_show(
+    verbose: bool,
+    hash: String,
+    json: bool,
+    with_trace: bool,
+) -> anyhow::Result<()> {
+    let (_repo_root, store) = get_store(verbose)?;
+    let hash = resolve_obj_hash(store.as_ref(), &hash)?;
+    let obj = store.get(&hash)?;
+    match &obj {
+        MorphObject::Run(run) => {
+            if json {
+                println!("{}", serde_json::to_string_pretty(run)?);
+            } else {
+                println!(
+                    "run    {}\ntrace  {}\npipeline {}\nagent  {} {}",
+                    hash, run.trace, run.pipeline, run.agent.id, run.agent.version
+                );
+                if let Some(ref c) = run.commit {
+                    println!("commit {}", c);
+                }
+                if !run.metrics.is_empty() {
+                    println!("metrics {:?}", run.metrics);
+                }
+            }
+            if with_trace {
+                let trace_obj = store.get(&parse_hash(&run.trace)?)?;
+                if let MorphObject::Trace(t) = &trace_obj {
+                    println!();
+                    inspect::print_trace_events(t);
+                } else {
+                    anyhow::bail!("object {} is not a trace", run.trace);
+                }
+            }
+        }
+        _ => anyhow::bail!("object {} is not a run", hash),
+    }
+    Ok(())
+}
+
+fn do_session_record(
+    verbose: bool,
+    prompt: Option<String>,
+    response: Option<String>,
+    messages: Option<String>,
+    model_name: Option<String>,
+    agent_id: Option<String>,
+) -> anyhow::Result<()> {
+    let (_repo_root, store) = get_store(verbose)?;
+    let hash = if let Some(ref json) = messages {
+        let msgs: Vec<morph_core::ConversationMessage> = serde_json::from_str(json)
+            .map_err(|e| anyhow::anyhow!("invalid --messages JSON: {}", e))?;
+        morph_core::record_conversation(&store, &msgs, model_name.as_deref(), agent_id.as_deref())?
+    } else {
+        morph_core::record_session(
+            &store,
+            prompt.as_deref().unwrap_or(""),
+            response.as_deref().unwrap_or(""),
+            model_name.as_deref(),
+            agent_id.as_deref(),
+        )?
+    };
+    println!("{}", hash);
+    Ok(())
+}
+
 /// Dispatch a git-hook event into the right per-event handler. Called
 /// from `morph hook <event>`, which is what every installed
 /// reference-mode hook stub `exec`s. Errors out loudly when:
@@ -3415,90 +3703,30 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
+        Command::Session { sub } => do_session_dispatch(verbose, sub)?,
+
         Command::Run { sub } => match sub {
             RunCmd::List { json } => {
-                let (_repo_root, store) = get_store(verbose)?;
-                let runs = store.list(ObjectType::Run)?;
-                if json {
-                    let entries: Vec<_> = runs
-                        .iter()
-                        .map(|h| {
-                            let h_str = h.to_string();
-                            let mut entry = serde_json::json!({
-                                "hash": h_str,
-                                "short": short_hash_str(&h_str),
-                            });
-                            if let Ok(MorphObject::Run(r)) = store.get(h) {
-                                entry["agent_id"] = serde_json::Value::String(r.agent.id.clone());
-                                entry["agent_version"] =
-                                    serde_json::Value::String(r.agent.version.clone());
-                                entry["model"] =
-                                    serde_json::Value::String(r.environment.model.clone());
-                                entry["pipeline"] = serde_json::Value::String(r.pipeline.clone());
-                                if let Some(c) = &r.commit {
-                                    entry["commit"] = serde_json::Value::String(c.clone());
-                                }
-                                entry["has_metrics"] =
-                                    serde_json::Value::Bool(!r.metrics.is_empty());
-                                if !r.metrics.is_empty() {
-                                    if let Ok(m) = serde_json::to_value(&r.metrics) {
-                                        entry["metrics"] = m;
-                                    }
-                                }
-                            }
-                            entry
-                        })
-                        .collect();
-                    let body = serde_json::json!({ "runs": entries, "count": runs.len() });
-                    println!("{}", serde_json::to_string_pretty(&body)?);
-                } else {
-                    for h in runs {
-                        println!("{}", h);
-                    }
-                }
+                inspect::deprecation_notice("morph run list", "morph session list");
+                do_session_list(verbose, json)?;
             }
             RunCmd::Show {
                 hash,
                 json,
                 with_trace,
             } => {
-                let (_repo_root, store) = get_store(verbose)?;
-                let hash = resolve_obj_hash(store.as_ref(), &hash)?;
-                let obj = store.get(&hash)?;
-                match &obj {
-                    MorphObject::Run(run) => {
-                        if json {
-                            println!("{}", serde_json::to_string_pretty(run)?);
-                        } else {
-                            println!(
-                                "run    {}\ntrace  {}\npipeline {}\nagent  {} {}",
-                                hash, run.trace, run.pipeline, run.agent.id, run.agent.version
-                            );
-                            if let Some(ref c) = run.commit {
-                                println!("commit {}", c);
-                            }
-                            if !run.metrics.is_empty() {
-                                println!("metrics {:?}", run.metrics);
-                            }
-                        }
-                        if with_trace {
-                            let trace_obj = store.get(&parse_hash(&run.trace)?)?;
-                            if let MorphObject::Trace(t) = &trace_obj {
-                                println!();
-                                inspect::print_trace_events(t);
-                            } else {
-                                anyhow::bail!("object {} is not a trace", run.trace);
-                            }
-                        }
-                    }
-                    _ => anyhow::bail!("object {} is not a run", hash),
-                }
+                inspect::deprecation_notice("morph run show", "morph session show");
+                do_session_show(verbose, hash, json, with_trace)?;
             }
             RunCmd::Record {
                 run_file,
                 trace,
                 artifact,
             } => {
+                inspect::deprecation_notice(
+                    "morph run record",
+                    "morph session record (inline) or `morph_run_record` MCP for JSON ingest",
+                );
                 let (repo_root, store) = get_store(verbose)?;
                 let full_run = if run_file.is_absolute() {
                     run_file
@@ -3535,26 +3763,8 @@ fn main() -> anyhow::Result<()> {
                 model_name,
                 agent_id,
             } => {
-                let (_repo_root, store) = get_store(verbose)?;
-                let hash = if let Some(ref json) = messages {
-                    let msgs: Vec<morph_core::ConversationMessage> = serde_json::from_str(json)
-                        .map_err(|e| anyhow::anyhow!("invalid --messages JSON: {}", e))?;
-                    morph_core::record_conversation(
-                        &store,
-                        &msgs,
-                        model_name.as_deref(),
-                        agent_id.as_deref(),
-                    )?
-                } else {
-                    morph_core::record_session(
-                        &store,
-                        prompt.as_deref().unwrap_or(""),
-                        response.as_deref().unwrap_or(""),
-                        model_name.as_deref(),
-                        agent_id.as_deref(),
-                    )?
-                };
-                println!("{}", hash);
+                inspect::deprecation_notice("morph run record-session", "morph session record");
+                do_session_record(verbose, prompt, response, messages, model_name, agent_id)?;
             }
         },
 
@@ -3652,135 +3862,42 @@ fn main() -> anyhow::Result<()> {
                     println!("{}", serde_json::to_string_pretty(&metrics)?);
                 }
             }
+            EvalCmd::Add {
+                paths,
+                suite,
+                no_default,
+                no_set_default,
+            } => {
+                do_eval_add(verbose, paths, suite, no_default, no_set_default)?;
+            }
             EvalCmd::AddCase {
                 paths,
                 suite,
                 no_default,
                 no_set_default,
             } => {
-                if paths.is_empty() {
-                    return Err(anyhow::anyhow!(
-                        "no paths supplied. Usage: morph eval add-case <file_or_dir>..."
-                    ));
-                }
-                let (repo_root, store) = get_store(verbose)?;
-                let cases = morph_core::add_cases_from_paths(&paths)?;
-                if cases.is_empty() {
-                    return Err(anyhow::anyhow!(
-                        "no acceptance cases found in: {}",
-                        paths
-                            .iter()
-                            .map(|p| p.display().to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ));
-                }
-                let morph_dir = repo_root.join(".morph");
-                let policy = morph_core::read_policy(&morph_dir)?;
-                let prev: Option<morph_core::Hash> = if no_default {
-                    None
-                } else if let Some(s) = suite.as_deref() {
-                    let resolved = resolve_obj_hash(store.as_ref(), s)?;
-                    Some(resolved)
-                } else {
-                    match policy.default_eval_suite.as_deref() {
-                        Some(h) => Some(morph_core::Hash::from_hex(h)?),
-                        None => None,
-                    }
-                };
-                let new_hash = morph_core::build_or_extend_suite(store.as_ref(), prev, &cases)?;
-                if !no_set_default {
-                    let mut updated = policy.clone();
-                    updated.default_eval_suite = Some(new_hash.to_string());
-                    morph_core::write_policy(&morph_dir, &updated)?;
-                }
-                eprintln!(
-                    "Added {} case{} to suite {}",
-                    cases.len(),
-                    if cases.len() == 1 { "" } else { "s" },
-                    new_hash
-                );
-                println!("{}", new_hash);
+                inspect::deprecation_notice("morph eval add-case", "morph eval add");
+                do_eval_add(verbose, paths, suite, no_default, no_set_default)?;
+            }
+            EvalCmd::Rebuild {
+                paths,
+                no_set_default,
+            } => {
+                do_eval_rebuild(verbose, paths, no_set_default)?;
             }
             EvalCmd::SuiteFromSpecs {
                 paths,
                 no_set_default,
             } => {
-                if paths.is_empty() {
-                    return Err(anyhow::anyhow!(
-                        "no paths supplied. Usage: morph eval suite-from-specs <dir>..."
-                    ));
-                }
-                let (repo_root, store) = get_store(verbose)?;
-                let cases = morph_core::add_cases_from_paths(&paths)?;
-                if cases.is_empty() {
-                    return Err(anyhow::anyhow!(
-                        "no acceptance cases found in: {}",
-                        paths
-                            .iter()
-                            .map(|p| p.display().to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ));
-                }
-                let new_hash = morph_core::build_or_extend_suite(store.as_ref(), None, &cases)?;
-                let morph_dir = repo_root.join(".morph");
-                if !no_set_default {
-                    let mut policy = morph_core::read_policy(&morph_dir)?;
-                    policy.default_eval_suite = Some(new_hash.to_string());
-                    morph_core::write_policy(&morph_dir, &policy)?;
-                }
-                eprintln!(
-                    "Built fresh suite with {} case{}: {}",
-                    cases.len(),
-                    if cases.len() == 1 { "" } else { "s" },
-                    new_hash
-                );
-                println!("{}", new_hash);
+                inspect::deprecation_notice("morph eval suite-from-specs", "morph eval rebuild");
+                do_eval_rebuild(verbose, paths, no_set_default)?;
+            }
+            EvalCmd::Show { suite, json } => {
+                do_eval_show(verbose, suite, json)?;
             }
             EvalCmd::SuiteShow { suite, json } => {
-                let (repo_root, store) = get_store(verbose)?;
-                let morph_dir = repo_root.join(".morph");
-                let policy = morph_core::read_policy(&morph_dir)?;
-                let target_hash: morph_core::Hash = match suite.as_deref() {
-                    Some(s) => resolve_obj_hash(store.as_ref(), s)?,
-                    None => match policy.default_eval_suite.as_deref() {
-                        Some(h) => morph_core::Hash::from_hex(h)?,
-                        None => {
-                            return Err(anyhow::anyhow!(
-                                "no suite hash supplied and policy.default_eval_suite is unset. \
-                                 Run `morph eval add-case <spec>` first or pass `--suite <hash>`."
-                            ));
-                        }
-                    },
-                };
-                let obj = store.get(&target_hash)?;
-                let suite_obj = match obj {
-                    morph_core::MorphObject::EvalSuite(s) => s,
-                    _ => {
-                        return Err(anyhow::anyhow!(
-                            "object {} is not an EvalSuite",
-                            target_hash
-                        ));
-                    }
-                };
-                if json {
-                    println!("{}", serde_json::to_string_pretty(&suite_obj)?);
-                } else {
-                    println!("Suite {}", target_hash);
-                    println!("  cases:    {}", suite_obj.cases.len());
-                    println!("  metrics:  {}", suite_obj.metrics.len());
-                    for c in &suite_obj.cases {
-                        let kind = c.input.get("kind").and_then(|v| v.as_str()).unwrap_or("?");
-                        println!("    - {}  [{}]  metric={}", c.id, kind, c.metric);
-                    }
-                    for m in &suite_obj.metrics {
-                        println!(
-                            "    metric: {} agg={} threshold={} dir={}",
-                            m.name, m.aggregation, m.threshold, m.direction
-                        );
-                    }
-                }
+                inspect::deprecation_notice("morph eval suite-show", "morph eval show");
+                do_eval_show(verbose, suite, json)?;
             }
             EvalCmd::Gaps { json, fail_on_gap } => {
                 let (repo_root, store) = get_store(verbose)?;

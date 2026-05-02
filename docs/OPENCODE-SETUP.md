@@ -76,7 +76,7 @@ To reference it from `opencode.json`, ensure the instructions array includes it:
 OpenCode supports [plugins](https://open-code.ai/docs/en/plugins) that hook into session lifecycle events. `morph setup opencode` installs a plugin at `.opencode/plugins/morph-record.ts` that:
 
 - Tracks prompts and responses via `message.updated` events
-- On `session.idle`, calls `morph run record-session` to persist the turn as a Morph Run + Trace
+- On `session.idle`, calls `morph session record` to persist the turn as a Morph Run + Trace (was `morph run record-session` pre-v0.46)
 
 This is **best-effort** supplementary recording. The primary recording path is agent-driven (the agent calls `morph_record_session` via MCP as instructed in `AGENTS.md`). The plugin catches turns where the agent doesn't call the tool.
 
@@ -143,7 +143,7 @@ If OpenCode detects the MCP server but `.morph/runs/` stays empty after a prompt
 
 2. **Test recording manually from the project root:**
    ```bash
-   morph run record-session --prompt "test" --response "test"
+   morph session record --prompt "test" --response "test"
    ```
    This should print a 64-character hash. If it errors, fix the reported issue first (usually a missing `.morph/` directory or `morph` not on PATH).
 

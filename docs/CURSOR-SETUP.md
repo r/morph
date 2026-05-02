@@ -151,7 +151,7 @@ morph commit -m "implement feature" --from-run <run_hash> --new-cases spec:my_ca
 
 For commits that genuinely have no test results (rebases, content-only changes), pass `--allow-empty-metrics` (or `morph_commit { allow_empty_metrics: true }`). The flag is audited in the trace.
 
-`--pipeline` and `--eval-suite` remain optional. When no eval suite is supplied, Morph picks up `policy.default_eval_suite` so the suite registered by `morph eval add-case` flows into every commit automatically.
+`--pipeline` and `--eval-suite` remain optional. When no eval suite is supplied, Morph picks up `policy.default_eval_suite` so the suite registered by `morph eval add` (was `morph eval add-case` pre-v0.46) flows into every commit automatically.
 
 ---
 
