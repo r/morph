@@ -85,8 +85,8 @@ morph eval show --json   # structured for tooling
 ```
 
 > The older spellings `morph eval add-case`, `morph eval suite-from-specs`,
-> and `morph eval suite-show` continue to work in v0.46 and v0.47 with a
-> stderr deprecation notice; they're removed in v0.48.
+> and `morph eval suite-show` were removed in v0.48; only the flat
+> `morph eval add` / `morph eval show` / `morph eval rebuild` work now.
 
 ## 3. Watch the case fail
 

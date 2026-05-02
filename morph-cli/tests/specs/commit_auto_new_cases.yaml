@@ -24,7 +24,7 @@
     foo.txt: "seed"
     bar.txt: "seed"
   steps:
-    - morph: [eval, add-case, specs/alpha.yaml]
+    - morph: [eval, add, specs/alpha.yaml]
     - morph: [add, foo.txt]
     - morph: [commit, -m, "introduce alpha", --metrics, '{"tests_passed":1}', --json]
       capture_json_field:
@@ -33,7 +33,7 @@
 
     # Add beta to the default suite; subsequent commit must annotate
     # itself with [beta] only — alpha is shared history.
-    - morph: [eval, add-case, specs/beta.yaml]
+    - morph: [eval, add, specs/beta.yaml]
     - morph: [add, bar.txt]
     - morph: [commit, -m, "introduce beta", --metrics, '{"tests_passed":1}', --json]
       capture_json_field:
@@ -62,10 +62,10 @@
     foo.txt: "seed"
     bar.txt: "seed"
   steps:
-    - morph: [eval, add-case, specs/alpha.yaml]
+    - morph: [eval, add, specs/alpha.yaml]
     - morph: [add, foo.txt]
     - morph: [commit, -m, "alpha", --metrics, '{"tests_passed":1}']
-    - morph: [eval, add-case, specs/beta.yaml]
+    - morph: [eval, add, specs/beta.yaml]
     - morph: [add, bar.txt]
     - morph: [commit, -m, "beta-explicit", --metrics, '{"tests_passed":1}', --new-cases, "manual:override", --json]
       capture_json_field:
@@ -92,10 +92,10 @@
     foo.txt: "seed"
     bar.txt: "seed"
   steps:
-    - morph: [eval, add-case, specs/alpha.yaml]
+    - morph: [eval, add, specs/alpha.yaml]
     - morph: [add, foo.txt]
     - morph: [commit, -m, "alpha", --metrics, '{"tests_passed":1}']
-    - morph: [eval, add-case, specs/beta.yaml]
+    - morph: [eval, add, specs/beta.yaml]
     - morph: [add, bar.txt]
     - morph: [commit, -m, "beta-suppressed", --metrics, '{"tests_passed":1}', --new-cases, "", --json]
       capture_json_field:
@@ -117,7 +117,7 @@
     foo.txt: "seed"
     bar.txt: "seed"
   steps:
-    - morph: [eval, add-case, specs/alpha.yaml]
+    - morph: [eval, add, specs/alpha.yaml]
     - morph: [add, foo.txt]
     - morph: [commit, -m, "alpha", --metrics, '{"tests_passed":1}']
     - morph: [add, bar.txt]

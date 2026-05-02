@@ -321,7 +321,117 @@
 
     <article class="release">
       <header>
-        <span class="version">0.47.0 <span class="latest">Latest</span></span>
+        <span class="version">0.48.0 <span class="latest">Latest</span></span>
+        <span class="date">2026-05-02</span>
+      </header>
+      <p class="summary">
+        <strong>Vocabulary unification, part 3 (final).</strong> Sixth
+        and final release of the &ldquo;make morph intuitive&rdquo;
+        effort. The v0.46-deprecated <code>morph run</code> namespace
+        and the nested <code>morph eval add-case</code> /
+        <code>morph eval suite-show</code> /
+        <code>morph eval suite-from-specs</code> aliases are
+        <em>removed</em>. The JSON-ingest path that used to be
+        <code>morph run record &lt;file&gt;</code> lives on as
+        <code>morph session import</code> &mdash; the only piece of
+        the old <code>run</code> namespace that did something
+        <code>morph session record</code> couldn't already cover. No
+        on-disk format changes.
+      </p>
+
+      <h3 class="added"><span class="marker"></span>Added</h3>
+      <ul>
+        <li><strong><code>morph session import &lt;run.json&gt;
+          [--trace &lt;file&gt;] [--artifact &lt;file&gt;...]</code></strong>
+          ingests a pre-built Run JSON (and optional Trace JSON /
+          artifact list) into the store. Used by automation that
+          builds Run objects out of band &mdash; CI pipelines, MCP
+          bridges, the <code>morph_run_record</code> MCP tool, and
+          the <code>claude-code</code> / <code>cursor</code> hook
+          scripts. Replaces the v0.46-removed <code>morph run
+          record &lt;file&gt;</code>. The <code>morph_run_record</code>
+          MCP tool itself is unchanged.</li>
+        <li>New spec <code>removed_session_eval_aliases.yaml</code>
+          (7 cases) pins that every removed spelling now exits with
+          code 2 and &ldquo;unrecognized subcommand&rdquo;, and that
+          <code>morph session import --help</code> is reachable.</li>
+      </ul>
+
+      <h3 class="removed"><span class="marker"></span>Removed</h3>
+      <ul>
+        <li><code>morph run</code> namespace, in full &mdash;
+          <code>morph run list</code>, <code>morph run show</code>,
+          <code>morph run record-session</code>, and
+          <code>morph run record</code>. Use the corresponding
+          <code>morph session</code> subcommand
+          (<code>list</code> / <code>show</code> / <code>record</code>
+          / <code>import</code>). The v0.46 deprecation notice warned
+          every invocation through v0.47. The companion
+          <code>RunCmd</code> enum and <code>Command::Run</code>
+          dispatch arm are gone.</li>
+        <li><code>morph eval add-case</code>,
+          <code>morph eval suite-show</code>, and
+          <code>morph eval suite-from-specs</code> &mdash; use the
+          flat <code>morph eval add</code> /
+          <code>morph eval show</code> / <code>morph eval rebuild</code>
+          spellings introduced in v0.46.</li>
+        <li><code>inspect::deprecation_notice</code> helper in
+          <code>morph-cli/src/inspect.rs</code>. Nothing dispatches
+          to it anymore now that the v0.46 aliases are gone.</li>
+      </ul>
+
+      <h3 class="changed"><span class="marker"></span>Changed</h3>
+      <ul>
+        <li><strong>Hook scripts and asset templates</strong>
+          (<code>claude-code/hooks/morph-record-stop.sh</code>,
+          <code>cursor/morph-record-{stop,response}.sh</code>,
+          <code>.cursor/morph-record-{stop,response}.sh</code>, and
+          their deployable copies under
+          <code>morph-cli/assets/</code>) call
+          <code>morph session import</code> instead of the removed
+          <code>morph run record</code>.</li>
+        <li><code>morph setup aoe</code> writes
+          <code>morph session record</code> into the
+          <code>on_launch</code> and <code>on_destroy</code> hooks of
+          <code>.agent-of-empires/config.toml</code>. The pre-v0.48
+          spelling stays in the cleanup-prefix list so re-running
+          <code>morph setup aoe</code> against an older config scrubs
+          the legacy lines before emitting the new block.</li>
+        <li><strong>Cucumber step definitions</strong> that used to
+          shell out to <code>morph run record-session</code> now
+          shell out to <code>morph session record</code>. The
+          user-facing Gherkin step name is unchanged.</li>
+        <li><strong>Doc + site sweep.</strong> Every
+          <code>morph run record</code> /
+          <code>morph run record-session</code> /
+          <code>morph eval add-case</code> /
+          <code>morph eval suite-show</code> /
+          <code>morph eval suite-from-specs</code> mention in
+          <code>README.md</code>, <code>docs/v0-spec.md</code>,
+          <code>docs/EVAL-DRIVEN.md</code>,
+          <code>docs/CURSOR-SETUP.md</code>,
+          <code>docs/OPENCODE-SETUP.md</code>,
+          <code>docs/CLAUDE-CODE-SETUP.md</code>,
+          <code>docs/MULTI-MACHINE.md</code>,
+          <code>docs/README.md</code>, and the cursor /
+          opencode rule files now refers to the v0.46/v0.48
+          replacement, with a parenthetical noting the prior
+          spelling and the version that removed it. Architectural
+          prose (&ldquo;run = recorded execution&rdquo;) is left
+          alone per the dual-vocabulary rule.</li>
+      </ul>
+
+      <h3 class="tests"><span class="marker"></span>Tests</h3>
+      <ul>
+        <li>Workspace <strong>426 / 426 spec tests passing</strong>;
+          unit tests across the workspace are green.
+          Cucumber 34 / 37 (3 skipped, 0 failed) &mdash; no change.</li>
+      </ul>
+    </article>
+
+    <article class="release">
+      <header>
+        <span class="version">0.47.0</span>
         <span class="date">2026-05-02</span>
       </header>
       <p class="summary">
@@ -506,93 +616,6 @@
         <li>Workspace <strong>1244 / 1244 passing</strong> (1226
           baseline + 18 new acceptance cases). Cucumber 34 / 37
           (3 skipped, 0 failed) &mdash; no change.</li>
-      </ul>
-    </article>
-
-    <article class="release">
-      <header>
-        <span class="version">0.45.0</span>
-        <span class="date">2026-05-02</span>
-      </header>
-      <p class="summary">
-        <strong>Inspection collapse.</strong> Third release of the
-        &ldquo;make morph intuitive&rdquo; effort. Three
-        near-synonymous CLIs (<code>morph trace</code>,
-        <code>morph tap</code>, <code>morph traces</code>) become
-        one coherent <code>morph inspect</code> namespace with
-        twelve subcommands &mdash; <code>summary</code>,
-        <code>recent</code>, <code>show</code>,
-        <code>diagnose</code>, <code>export</code>,
-        <code>stats</code>, <code>preview</code>,
-        <code>task</code>, <code>target</code>,
-        <code>artifact</code>, <code>semantics</code>,
-        <code>verification</code>. The new
-        <code>inspect show &lt;hash&gt;</code> auto-detects whether
-        the hash points at a Trace (raw events) or a Run (structured
-        task), collapsing two old commands into one. The old
-        commands continue to work in v0.45 and v0.46 with a one-line
-        stderr deprecation notice; they're removed in v0.47.
-      </p>
-
-      <h3 class="added"><span class="marker"></span>Added</h3>
-      <ul>
-        <li><code>morph inspect</code> namespace with twelve
-          subcommands consolidating the older
-          <code>morph trace</code>, <code>morph tap</code>, and
-          <code>morph traces</code>. New module
-          <code>morph-cli/src/inspect.rs</code> factors the handlers
-          out of <code>main.rs</code> so the new namespace and the
-          deprecated aliases share one set of entry points. Spec
-          coverage:
-          <code>inspect.yaml</code>,
-          <code>inspect_deprecated_aliases.yaml</code>.</li>
-        <li><code>morph inspect show &lt;hash&gt;</code> auto-detects
-          Trace vs Run on the hash so users don't have to remember
-          which old subcommand applied. <code>all</code> still
-          iterates every Run.</li>
-      </ul>
-
-      <h3 class="changed"><span class="marker"></span>Changed</h3>
-      <ul>
-        <li><strong><code>morph --help</code> INSPECT group leads
-          with <code>inspect</code></strong>; the deprecated
-          <code>trace</code>, <code>tap</code>, <code>traces</code>
-          are hidden from the help output (they still work on the
-          command line) so new readers see the right spelling
-          first.</li>
-        <li><strong>Doc + site sweep.</strong> Every
-          <code>morph tap</code> / <code>morph trace</code> /
-          <code>morph traces</code> mention in
-          <code>README.md</code>, <code>docs/v0-spec.md</code>,
-          <code>docs/SECURITY.md</code>,
-          <code>docs/SESSION-TRACKING.md</code>, and the three
-          public site pages (<code>index.html</code>,
-          <code>tutorials/getting-started.html</code>,
-          <code>tutorials/adding-to-git-project.html</code>)
-          rewritten to use <code>morph inspect ...</code>.
-          Architectural prose (&ldquo;morph traces live in the
-          commit graph&rdquo;) is left alone.</li>
-      </ul>
-
-      <h3 class="removed"><span class="marker"></span>Deprecated</h3>
-      <ul>
-        <li><code>morph trace show</code>,
-          <code>morph tap {summary, inspect, diagnose, export, trace-stats, preview}</code>,
-          <code>morph traces {summary, task-structure, target-context, final-artifact, semantics, verification}</code>
-          &mdash; use the corresponding <code>morph inspect</code>
-          subcommand. Each invocation prints a one-line
-          <code>git</code>-style stderr notice
-          (<em>warning: `morph tap summary` is deprecated; use `morph
-          inspect summary` instead (removed in v0.47).</em>).
-          Removed in v0.47.</li>
-      </ul>
-
-      <h3 class="tests"><span class="marker"></span>Tests</h3>
-      <ul>
-        <li>Workspace <strong>1226 / 1226 passing</strong> (1203
-          baseline + 22 new acceptance cases plus one extra
-          registration). Cucumber 34 / 37 (3 skipped, 0 failed)
-          &mdash; no change.</li>
       </ul>
     </article>
 

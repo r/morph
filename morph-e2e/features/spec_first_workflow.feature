@@ -2,18 +2,19 @@ Feature: Spec-first eval-driven workflow (Phase 6c)
 
   # End-to-end flow that the new prompts encourage:
   #   1. Write the acceptance case (YAML).
-  #   2. Register it via `morph eval add-case`.
+  #   2. Register it via `morph eval add` (Phase 4.3 (v0.48+) flat
+  #      replacement for the v0.46-removed `morph eval add-case`).
   #   3. Stage + commit the implementation with metrics, stamping
   #      `--new-cases` so merge plans surface case provenance.
   #   4. `morph eval gaps` reports zero outstanding gaps.
-  #   5. `morph eval suite-show` confirms the suite has the case.
+  #   5. `morph eval show` confirms the suite has the case.
 
   Scenario: Spec → register → implement → commit → zero gaps
     Given a morph repo
     And a file "specs/login.yaml" with content "[{name: alpha}]"
-    When I run "morph eval add-case specs/login.yaml"
+    When I run "morph eval add specs/login.yaml"
     Then the last command succeeded
-    When I run "morph eval suite-show"
+    When I run "morph eval show"
     Then the last command succeeded
     And stdout contains "alpha"
     Given a file "src/feature.rs" with content "pub fn alpha() -> bool { true }"

@@ -3,23 +3,23 @@
 
 - name: run_show_accepts_8char_prefix
   steps:
-    - morph: [run, record-session, --prompt, "hi", --response, "hello"]
+    - morph: [session, record, --prompt, "hi", --response, "hello"]
       capture: run_hash
       assert_hash: true
-    - morph: [run, show, "${run_hash:.8}"]
+    - morph: [session, show, "${run_hash:.8}"]
       stdout_contains:
         - "run"
         - "trace"
-    - morph: [run, show, "${run_hash:.12}"]
+    - morph: [session, show, "${run_hash:.12}"]
       stdout_contains:
         - "run"
 
 - name: run_show_accepts_40char_prefix
   steps:
-    - morph: [run, record-session, --prompt, "a", --response, "b"]
+    - morph: [session, record, --prompt, "a", --response, "b"]
       capture: run_hash
       assert_hash: true
-    - morph: [run, show, "${run_hash:.40}"]
+    - morph: [session, show, "${run_hash:.40}"]
       stdout_contains:
         - "run"
         - "trace"
@@ -40,7 +40,7 @@
 
 - name: show_accepts_prefix
   steps:
-    - morph: [run, record-session, --prompt, "show me", --response, "shown"]
+    - morph: [session, record, --prompt, "show me", --response, "shown"]
       capture: run_hash
       assert_hash: true
     - morph: [show, "${run_hash:.10}"]
@@ -50,21 +50,21 @@
 
 - name: prefix_too_short_errors
   steps:
-    - morph: [run, record-session, --prompt, "x", --response, "y"]
-    - morph: [run, show, "abc"]
+    - morph: [session, record, --prompt, "x", --response, "y"]
+    - morph: [session, show, "abc"]
       expect_exit: 1
       stderr_contains: "invalid hash prefix"
 
 - name: prefix_no_match_errors
   steps:
-    - morph: [run, record-session, --prompt, "x", --response, "y"]
-    - morph: [run, show, "deadbeef"]
+    - morph: [session, record, --prompt, "x", --response, "y"]
+    - morph: [session, show, "deadbeef"]
       expect_exit: 1
       stderr_contains: "no object matches prefix"
 
 - name: prefix_nonhex_errors
   steps:
-    - morph: [run, record-session, --prompt, "x", --response, "y"]
-    - morph: [run, show, "not-a-hash"]
+    - morph: [session, record, --prompt, "x", --response, "y"]
+    - morph: [session, show, "not-a-hash"]
       expect_exit: 1
       stderr_contains: "invalid hash prefix"

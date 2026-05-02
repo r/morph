@@ -120,7 +120,7 @@ In **`.claude/settings.json`** (or `~/.claude/settings.json`), add a `hooks` sec
 If you already have other hooks, merge these entries into the existing `UserPromptSubmit` and `Stop` arrays.
 
 - **UserPromptSubmit** appends the prompt to `.morph/hooks/pending-<session_id>.jsonl`.
-- **Stop** reads that file, parses structured events from the payload, builds a Run + Trace, runs `morph run record`, then deletes the pending file.
+- **Stop** reads that file, parses structured events from the payload, builds a Run + Trace, runs `morph session import` (was `morph run record` pre-v0.48), then deletes the pending file.
 
 Hook output and logs go under `.morph/hooks/logs/` and `.morph/hooks/debug/` (see [Debugging](#debugging) below).
 

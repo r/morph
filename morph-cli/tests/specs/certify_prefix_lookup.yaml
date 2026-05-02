@@ -24,17 +24,17 @@
         field: hash
     # Generate a bunch of additional objects (commits + runs + traces +
     # blobs) so the prefix lookup has real surface area to cover.
-    - morph: [run, record-session, --prompt, "p1", --response, "r1"]
-    - morph: [run, record-session, --prompt, "p2", --response, "r2"]
-    - morph: [run, record-session, --prompt, "p3", --response, "r3"]
+    - morph: [session, record, --prompt, "p1", --response, "r1"]
+    - morph: [session, record, --prompt, "p2", --response, "r2"]
+    - morph: [session, record, --prompt, "p3", --response, "r3"]
     - write_file: { path: a.txt, content: "v2" }
     - morph: [add, a.txt]
     - morph: [commit, -m, "c2", --allow-empty-metrics]
     - write_file: { path: a.txt, content: "v3" }
     - morph: [add, a.txt]
     - morph: [commit, -m, "c3", --allow-empty-metrics]
-    - morph: [run, record-session, --prompt, "p4", --response, "r4"]
-    - morph: [run, record-session, --prompt, "p5", --response, "r5"]
+    - morph: [session, record, --prompt, "p4", --response, "r4"]
+    - morph: [session, record, --prompt, "p5", --response, "r5"]
     # Certify the original commit by an 8-char prefix. This must succeed
     # without scanning the whole store.
     - morph: [certify, --metrics-file, metrics.json, --commit, "${target_hash:.8}"]
@@ -50,7 +50,7 @@
       capture_json_field:
         var: commit_hash
         field: hash
-    - morph: [run, record-session, --prompt, "x", --response, "y"]
-    - morph: [run, record-session, --prompt, "x2", --response, "y2"]
+    - morph: [session, record, --prompt, "x", --response, "y"]
+    - morph: [session, record, --prompt, "x2", --response, "y2"]
     - morph: [certify, --metrics-file, metrics.json, --commit, "${commit_hash:.12}"]
       stdout_contains: "PASS"

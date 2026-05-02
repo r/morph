@@ -697,7 +697,7 @@ graph without requiring changes to core object types.
 tool execution, and test runs happen in external tools---Cursor, Claude Code,
 your CI system. \textsc{Morph} just stores what they report: permanent
 content-addressed objects, execution receipts, scores, and the record of what
-happened at every merge. Commands like \texttt{morph run record} and
+happened at every merge. Commands like \texttt{morph session import} and
 \texttt{morph eval record} \emph{ingest} results; they do not run anything.
 The VCS layer stays thin and out of the way.
 
@@ -756,10 +756,10 @@ The CLI mirrors Git where possible:
 \texttt{morph add .} & Stage working-space changes \\
 \texttt{morph commit -m "msg"} & Commit with eval contract \\
 \texttt{morph merge <branch>} & Merge with score recording \\
-\texttt{morph run record <file>} & Ingest execution receipt \\
+\texttt{morph session import <file>} & Ingest execution receipt \\
 \texttt{morph eval run -- <cmd>} & Run tests, parse, and record evidence \\
 \texttt{morph eval record <file>} & Ingest evaluation results \\
-\texttt{morph eval add-case <path>} & Register acceptance case in default suite \\
+\texttt{morph eval add <path>} & Register acceptance case in default suite \\
 \texttt{morph annotate <hash>} & Attach metadata \\
 \texttt{morph log} / \texttt{status} & Inspect history and state \\
 \texttt{morph push <remote> <branch>} & Send commits + evidence to a remote \\
@@ -792,7 +792,7 @@ at, identical to what \texttt{--from-run <hash>} would have produced.
 \texttt{morph commit} is run without an explicit \texttt{--new-cases} flag, it
 diffs the about-to-commit eval suite against HEAD's suite and records any
 case ids present in the new suite but absent in the parent's---typically the
-acceptance cases the user just registered with \texttt{morph eval add-case}.
+acceptance cases the user just registered with \texttt{morph eval add}.
 Pass \texttt{--new-cases ""} to suppress the diff, or
 \texttt{--new-cases "id1,id2"} to override it with a manual list. The
 annotation feeds merge planning's case provenance summary unchanged.

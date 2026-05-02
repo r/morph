@@ -53,7 +53,7 @@
     # Lifecycle records a session trace event.
     - kind: file_contains
       path: .agent-of-empires/config.toml
-      contents: "morph run record-session"
+      contents: "morph session record"
 
 - name: setup_aoe_config_has_sandbox_env_and_volumes
   init: false

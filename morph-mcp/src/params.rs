@@ -147,7 +147,9 @@ pub struct EvalRunParams {
 }
 
 /// Phase 4b: extend (or build) an EvalSuite from one or more YAML
-/// specs / cucumber `.feature` files. Mirrors `morph eval add-case`.
+/// specs / cucumber `.feature` files. Mirrors `morph eval add`
+/// (Phase 4.3 (v0.48+) flat replacement for the v0.46-removed
+/// `morph eval add-case`).
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct AddEvalCaseParams {
     /// Files or directories to ingest (paths relative to the repo
@@ -169,7 +171,8 @@ pub struct AddEvalCaseParams {
 
 /// Phase 4b: bulk-ingest a directory tree into a fresh suite and
 /// (by default) make it the policy's default. Mirrors
-/// `morph eval suite-from-specs`.
+/// `morph eval rebuild` (Phase 4.3 (v0.48+) flat replacement for the
+/// v0.46-removed `morph eval suite-from-specs`).
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct EvalSuiteFromSpecsParams {
     /// Files or directories to ingest.

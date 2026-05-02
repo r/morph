@@ -18,7 +18,7 @@
           - morph: [status]
     foo.txt: "hello"
   steps:
-    - morph: [eval, add-case, specs/spec.yaml]
+    - morph: [eval, add, specs/spec.yaml]
       capture_first_line: suite_hash
       assert_hash: true
     - morph: [add, "."]

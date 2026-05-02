@@ -187,10 +187,11 @@ fn print_policy_summary(policy: &morph_core::RepoPolicy) {
     }
 }
 
-/// Phase 4.1 (v0.46+): shared body for `morph eval add` (the new flat
-/// spelling) and the deprecated `morph eval add-case`. Ingests one or
-/// more spec files / directories of specs as acceptance cases and
-/// either extends the policy default suite or builds a fresh one.
+/// Phase 4.1 (v0.46+): handler for `morph eval add` (the flat
+/// spelling that replaced the v0.46-deprecated, v0.48-removed
+/// `morph eval add-case`). Ingests one or more spec files /
+/// directories of specs as acceptance cases and either extends the
+/// policy default suite or builds a fresh one.
 fn do_eval_add(
     verbose: bool,
     paths: Vec<PathBuf>,
@@ -244,10 +245,11 @@ fn do_eval_add(
     Ok(())
 }
 
-/// Phase 4.1 (v0.46+): shared body for `morph eval rebuild` and the
-/// deprecated `morph eval suite-from-specs`. Walks the supplied
-/// directories, ingests every `*.yaml` / `*.yml` / `*.feature`, and
-/// replaces the default suite with the result.
+/// Phase 4.1 (v0.46+): handler for `morph eval rebuild` (the flat
+/// spelling that replaced the v0.46-deprecated, v0.48-removed
+/// `morph eval suite-from-specs`). Walks the supplied directories,
+/// ingests every `*.yaml` / `*.yml` / `*.feature`, and replaces the
+/// default suite with the result.
 fn do_eval_rebuild(verbose: bool, paths: Vec<PathBuf>, no_set_default: bool) -> anyhow::Result<()> {
     if paths.is_empty() {
         return Err(anyhow::anyhow!(
@@ -283,10 +285,11 @@ fn do_eval_rebuild(verbose: bool, paths: Vec<PathBuf>, no_set_default: bool) -> 
     Ok(())
 }
 
-/// Phase 4.1 (v0.46+): shared body for `morph eval show` and the
-/// deprecated `morph eval suite-show`. Prints the contents of the
-/// default suite (or `--suite <hash>`) in human-readable form, or as
-/// JSON when `--json` is set.
+/// Phase 4.1 (v0.46+): handler for `morph eval show` (the flat
+/// spelling that replaced the v0.46-deprecated, v0.48-removed
+/// `morph eval suite-show`). Prints the contents of the default
+/// suite (or `--suite <hash>`) in human-readable form, or as JSON
+/// when `--json` is set.
 fn do_eval_show(verbose: bool, suite: Option<String>, json: bool) -> anyhow::Result<()> {
     let (repo_root, store) = get_store(verbose)?;
     let morph_dir = repo_root.join(".morph");
@@ -352,6 +355,11 @@ fn do_session_dispatch(verbose: bool, sub: SessionCmd) -> anyhow::Result<()> {
             model_name,
             agent_id,
         } => do_session_record(verbose, prompt, response, messages, model_name, agent_id),
+        SessionCmd::Import {
+            run_file,
+            trace,
+            artifact,
+        } => do_session_import(verbose, run_file, trace, artifact),
         SessionCmd::Export {
             mode,
             output,
@@ -367,6 +375,48 @@ fn do_session_dispatch(verbose: bool, sub: SessionCmd) -> anyhow::Result<()> {
             Some(min_steps),
         ),
     }
+}
+
+/// Phase 4.3 (v0.48+): JSON-ingest path for a pre-built Run object.
+/// Folded under `morph session import` from the now-removed
+/// `morph run record <run.json>`. Used by automation that builds Run
+/// objects out of band — CI pipelines, MCP bridges, and the
+/// `morph_run_record` MCP tool.
+fn do_session_import(
+    verbose: bool,
+    run_file: PathBuf,
+    trace: Option<PathBuf>,
+    artifact: Vec<PathBuf>,
+) -> anyhow::Result<()> {
+    let (repo_root, store) = get_store(verbose)?;
+    let full_run = if run_file.is_absolute() {
+        run_file
+    } else {
+        repo_root.join(&run_file)
+    };
+    let trace_opt = trace.map(|t| {
+        if t.is_absolute() {
+            t
+        } else {
+            repo_root.join(&t)
+        }
+    });
+    let artifact_paths: Vec<_> = artifact
+        .iter()
+        .map(|a| {
+            if a.is_absolute() {
+                a.clone()
+            } else {
+                repo_root.join(a)
+            }
+        })
+        .collect();
+    let refs: Vec<_> = artifact_paths.iter().map(|p| p.as_path()).collect();
+    println!(
+        "{}",
+        morph_core::record_run(&store, &full_run, trace_opt.as_deref(), &refs)?
+    );
+    Ok(())
 }
 
 fn do_session_list(verbose: bool, json: bool) -> anyhow::Result<()> {
@@ -3705,69 +3755,6 @@ fn main() -> anyhow::Result<()> {
 
         Command::Session { sub } => do_session_dispatch(verbose, sub)?,
 
-        Command::Run { sub } => match sub {
-            RunCmd::List { json } => {
-                inspect::deprecation_notice("morph run list", "morph session list");
-                do_session_list(verbose, json)?;
-            }
-            RunCmd::Show {
-                hash,
-                json,
-                with_trace,
-            } => {
-                inspect::deprecation_notice("morph run show", "morph session show");
-                do_session_show(verbose, hash, json, with_trace)?;
-            }
-            RunCmd::Record {
-                run_file,
-                trace,
-                artifact,
-            } => {
-                inspect::deprecation_notice(
-                    "morph run record",
-                    "morph session record (inline) or `morph_run_record` MCP for JSON ingest",
-                );
-                let (repo_root, store) = get_store(verbose)?;
-                let full_run = if run_file.is_absolute() {
-                    run_file
-                } else {
-                    repo_root.join(&run_file)
-                };
-                let trace_opt = trace.map(|t| {
-                    if t.is_absolute() {
-                        t
-                    } else {
-                        repo_root.join(&t)
-                    }
-                });
-                let artifact_paths: Vec<_> = artifact
-                    .iter()
-                    .map(|a| {
-                        if a.is_absolute() {
-                            a.clone()
-                        } else {
-                            repo_root.join(a)
-                        }
-                    })
-                    .collect();
-                let refs: Vec<_> = artifact_paths.iter().map(|p| p.as_path()).collect();
-                println!(
-                    "{}",
-                    morph_core::record_run(&store, &full_run, trace_opt.as_deref(), &refs)?
-                );
-            }
-            RunCmd::RecordSession {
-                prompt,
-                response,
-                messages,
-                model_name,
-                agent_id,
-            } => {
-                inspect::deprecation_notice("morph run record-session", "morph session record");
-                do_session_record(verbose, prompt, response, messages, model_name, agent_id)?;
-            }
-        },
-
         Command::Inspect { sub } => inspect::run_inspect(verbose, sub)?,
 
         Command::Eval { sub } => match sub {
@@ -3828,33 +3815,13 @@ fn main() -> anyhow::Result<()> {
             } => {
                 do_eval_add(verbose, paths, suite, no_default, no_set_default)?;
             }
-            EvalCmd::AddCase {
-                paths,
-                suite,
-                no_default,
-                no_set_default,
-            } => {
-                inspect::deprecation_notice("morph eval add-case", "morph eval add");
-                do_eval_add(verbose, paths, suite, no_default, no_set_default)?;
-            }
             EvalCmd::Rebuild {
                 paths,
                 no_set_default,
             } => {
                 do_eval_rebuild(verbose, paths, no_set_default)?;
             }
-            EvalCmd::SuiteFromSpecs {
-                paths,
-                no_set_default,
-            } => {
-                inspect::deprecation_notice("morph eval suite-from-specs", "morph eval rebuild");
-                do_eval_rebuild(verbose, paths, no_set_default)?;
-            }
             EvalCmd::Show { suite, json } => {
-                do_eval_show(verbose, suite, json)?;
-            }
-            EvalCmd::SuiteShow { suite, json } => {
-                inspect::deprecation_notice("morph eval suite-show", "morph eval show");
                 do_eval_show(verbose, suite, json)?;
             }
             EvalCmd::Gaps { json, fail_on_gap } => {

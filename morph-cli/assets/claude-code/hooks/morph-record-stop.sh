@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Claude Code hook: Stop. If .morph/hooks/pending-<session_id>.jsonl exists, build Trace+Run with
-# last_assistant_message and run `morph run record`.
+# last_assistant_message and run `morph session import`.
 # Checks for `transcript_path` or `conversation` in payload for structured events.
 # Logs: .morph/hooks/logs/claude-invoke.log, .morph/hooks/logs/morph-record.log, .morph/hooks/debug/last-Stop.json
 set -e
@@ -296,13 +296,13 @@ with open(run_path, "w") as f:
     json.dump(run_obj, f, indent=2)
 
 result = subprocess.run(
-    ["morph", "run", "record", str(run_path), "--trace", str(trace_path)],
+    ["morph", "session", "import", str(run_path), "--trace", str(trace_path)],
     cwd=repo,
     capture_output=True,
     text=True,
 )
 if result.returncode != 0:
-    sys.stderr.write(f"morph run record failed: {result.stderr}\n")
+    sys.stderr.write(f"morph session import failed: {result.stderr}\n")
     sys.exit(1)
 run_hash = result.stdout.strip()
 log_morph_record(morph_dir, session_id, run_hash)

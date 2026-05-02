@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cursor hook: stop. If .morph/hooks/pending-<conversation_id>.jsonl exists, build Trace+Run and run `morph run record`.
+# Cursor hook: stop. If .morph/hooks/pending-<conversation_id>.jsonl exists, build Trace+Run and run `morph session import`.
 # Logs: .morph/hooks/logs/cursor-invoke.log (Cursor called us), .morph/hooks/logs/morph-record.log (Morph accepted the run), .morph/hooks/debug/last-stop.json (payload).
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -121,13 +121,13 @@ for root in roots:
         json.dump(run_obj, f, indent=2)
 
     result = subprocess.run(
-        ["morph", "run", "record", str(run_path), "--trace", str(trace_path)],
+        ["morph", "session", "import", str(run_path), "--trace", str(trace_path)],
         cwd=repo,
         capture_output=True,
         text=True,
     )
     if result.returncode != 0:
-        sys.stderr.write(f"morph run record failed: {result.stderr}\n")
+        sys.stderr.write(f"morph session import failed: {result.stderr}\n")
         continue
     run_hash = result.stdout.strip()
     log_morph_record(morph_dir, conversation_id, run_hash)

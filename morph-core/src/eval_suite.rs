@@ -65,7 +65,7 @@ pub fn compute_eval_gaps(
     if suite_empty {
         gaps.push(json!({
             "kind": "empty_default_suite",
-            "hint": "Add YAML/cucumber acceptance cases via `morph eval add-case <file>`.",
+            "hint": "Add YAML/cucumber acceptance cases via `morph eval add <file>`.",
         }));
     }
     let runs = store.list(crate::store::ObjectType::Run)?;

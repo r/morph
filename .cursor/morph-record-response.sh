@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Cursor hook: afterAgentResponse. Payload includes "text" (full agent response).
-# If .morph/hooks/pending-<conversation_id>.jsonl exists, build Trace+Run with real response text and run `morph run record`.
+# If .morph/hooks/pending-<conversation_id>.jsonl exists, build Trace+Run with real response text and run `morph session import`.
 # Logs: .morph/hooks/logs/cursor-invoke.log, .morph/hooks/logs/morph-record.log, .morph/hooks/debug/last-afterAgentResponse.json (payload, text truncated).
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -126,13 +126,13 @@ for root in roots:
         json.dump(run_obj, f, indent=2)
 
     result = subprocess.run(
-        ["morph", "run", "record", str(run_path), "--trace", str(trace_path)],
+        ["morph", "session", "import", str(run_path), "--trace", str(trace_path)],
         cwd=repo,
         capture_output=True,
         text=True,
     )
     if result.returncode != 0:
-        sys.stderr.write(f"morph run record failed: {result.stderr}\n")
+        sys.stderr.write(f"morph session import failed: {result.stderr}\n")
         continue
     run_hash = result.stdout.strip()
     log_morph_record(morph_dir, conversation_id, run_hash)

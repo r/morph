@@ -107,7 +107,7 @@
     - morph: [init, --git-init, "${repo}/remote"]
 
     # Record a session in local
-    - morph: [run, record-session, --prompt, "fix bug", --response, "done"]
+    - morph: [session, record, --prompt, "fix bug", --response, "done"]
       cwd: local
       capture: run_hash
       assert_hash: true

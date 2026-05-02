@@ -428,10 +428,14 @@ pub fn setup_aoe(project_root: &Path, opts: &AoeSetupOpts) -> anyhow::Result<Aoe
 /// Substring patterns identifying a hook command morph owns. Anything in
 /// the user's existing `config.toml` matching one of these is removed
 /// before we re-emit the canonical morph block, so re-runs don't
-/// accumulate duplicate hook lines.
+/// accumulate duplicate hook lines. We keep the pre-v0.48 spelling
+/// (`morph run record-session`) in the cleanup list so re-running
+/// `morph setup aoe` against an older config still scrubs the legacy
+/// lines before emitting the new `morph session record` block.
 const MORPH_HOOK_PREFIXES: &[&str] = &[
     "morph init --quiet",
     "morph add . && morph commit -m \"aoe-",
+    "morph session record --prompt \"aoe-",
     "morph run record-session --prompt \"aoe-",
 ];
 
@@ -519,14 +523,14 @@ fn merge_aoe_config_toml(aoe_dir: &Path, bind_mount: bool) -> anyhow::Result<boo
         (
             "on_launch",
             &[
-                "morph run record-session --prompt \"aoe-launch instance=${AOE_INSTANCE_ID:-unknown} branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)\" --response \"\" --model-name aoe --agent-id aoe 2>/dev/null || true",
+                "morph session record --prompt \"aoe-launch instance=${AOE_INSTANCE_ID:-unknown} branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)\" --response \"\" --model-name aoe --agent-id aoe 2>/dev/null || true",
             ],
         ),
         (
             "on_destroy",
             &[
                 "morph add . && morph commit -m \"aoe-destroy: ${AOE_INSTANCE_ID:-unknown}\" --allow-empty-metrics 2>/dev/null || true",
-                "morph run record-session --prompt \"aoe-destroy instance=${AOE_INSTANCE_ID:-unknown}\" --response \"\" --model-name aoe --agent-id aoe 2>/dev/null || true",
+                "morph session record --prompt \"aoe-destroy instance=${AOE_INSTANCE_ID:-unknown}\" --response \"\" --model-name aoe --agent-id aoe 2>/dev/null || true",
             ],
         ),
     ];
@@ -1354,7 +1358,7 @@ mod tests {
             "morph commit",
             "aoe-create",
             "aoe-destroy",
-            "morph run record-session",
+            "morph session record",
         ] {
             assert!(
                 cfg.contains(needle),

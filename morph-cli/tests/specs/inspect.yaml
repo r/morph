@@ -30,7 +30,7 @@
 
 - name: inspect_summary_with_runs
   steps:
-    - morph: [run, record-session, --prompt, "Fix the bug", --response, "Bug fixed", --model-name, gpt-4o, --agent-id, cursor]
+    - morph: [session, record, --prompt, "Fix the bug", --response, "Bug fixed", --model-name, gpt-4o, --agent-id, cursor]
       capture: run_hash
       assert_hash: true
     - morph: [inspect, summary]
@@ -40,7 +40,7 @@
 
 - name: inspect_summary_json
   steps:
-    - morph: [run, record-session, --prompt, "p", --response, "r", --model-name, gpt-4o, --agent-id, cursor]
+    - morph: [session, record, --prompt, "p", --response, "r", --model-name, gpt-4o, --agent-id, cursor]
       capture: run_hash
       assert_hash: true
     - morph: [inspect, summary, --json]
@@ -50,10 +50,10 @@
 
 - name: inspect_show_trace_hash_prints_events
   steps:
-    - morph: [run, record-session, --prompt, "Build the feature", --response, "Feature built successfully"]
+    - morph: [session, record, --prompt, "Build the feature", --response, "Feature built successfully"]
       capture: run_hash
       assert_hash: true
-    - morph: [run, show, "${run_hash}", --json]
+    - morph: [session, show, "${run_hash}", --json]
       capture_json_field:
         var: trace_hash
         field: trace
@@ -64,7 +64,7 @@
 
 - name: inspect_show_run_hash_prints_extracted_task
   steps:
-    - morph: [run, record-session, --prompt, "Explain recursion", --response, "Recursion is self-reference", --model-name, gpt-4o, --agent-id, test]
+    - morph: [session, record, --prompt, "Explain recursion", --response, "Recursion is self-reference", --model-name, gpt-4o, --agent-id, test]
       capture: run_hash
       assert_hash: true
     - morph: [inspect, show, "${run_hash}"]
@@ -74,10 +74,10 @@
 
 - name: inspect_show_all_iterates_runs
   steps:
-    - morph: [run, record-session, --prompt, "Task 1", --response, "Done 1", --model-name, gpt-4o, --agent-id, test]
+    - morph: [session, record, --prompt, "Task 1", --response, "Done 1", --model-name, gpt-4o, --agent-id, test]
       capture: h1
       assert_hash: true
-    - morph: [run, record-session, --prompt, "Task 2", --response, "Done 2", --model-name, claude-4, --agent-id, test]
+    - morph: [session, record, --prompt, "Task 2", --response, "Done 2", --model-name, claude-4, --agent-id, test]
       capture: h2
       assert_hash: true
     - morph: [inspect, show, all]
@@ -87,7 +87,7 @@
 
 - name: inspect_diagnose_single_run
   steps:
-    - morph: [run, record-session, --prompt, "Do stuff", --response, "Stuff done", --model-name, cursor, --agent-id, cursor]
+    - morph: [session, record, --prompt, "Do stuff", --response, "Stuff done", --model-name, cursor, --agent-id, cursor]
       capture: run_hash
       assert_hash: true
     - morph: [inspect, diagnose, "${run_hash}"]
@@ -98,7 +98,7 @@
 
 - name: inspect_diagnose_all_default
   steps:
-    - morph: [run, record-session, --prompt, "A", --response, "B", --model-name, cursor, --agent-id, cursor]
+    - morph: [session, record, --prompt, "A", --response, "B", --model-name, cursor, --agent-id, cursor]
       capture: h1
       assert_hash: true
     - morph: [inspect, diagnose]
@@ -108,7 +108,7 @@
 
 - name: inspect_export_prompt_only
   steps:
-    - morph: [run, record-session, --prompt, "Write a hello world", --response, "Here is hello world", --model-name, gpt-4o, --agent-id, test]
+    - morph: [session, record, --prompt, "Write a hello world", --response, "Here is hello world", --model-name, gpt-4o, --agent-id, test]
       capture: run_hash
       assert_hash: true
     - morph: [inspect, export, --mode, prompt-only]
@@ -118,22 +118,22 @@
 
 - name: inspect_recent_lists_traces_newest_first
   steps:
-    - morph: [run, record-session, --prompt, "First task", --response, "Done", --model-name, gpt-4o, --agent-id, test]
-    - morph: [run, record-session, --prompt, "Second task", --response, "Done", --model-name, gpt-4o, --agent-id, test]
+    - morph: [session, record, --prompt, "First task", --response, "Done", --model-name, gpt-4o, --agent-id, test]
+    - morph: [session, record, --prompt, "Second task", --response, "Done", --model-name, gpt-4o, --agent-id, test]
     - morph: [inspect, recent]
       stdout_contains:
         - "Recent Traces"
 
 - name: inspect_recent_with_limit
   steps:
-    - morph: [run, record-session, --prompt, "p", --response, "r", --model-name, gpt-4o, --agent-id, test]
+    - morph: [session, record, --prompt, "p", --response, "r", --model-name, gpt-4o, --agent-id, test]
     - morph: [inspect, recent, --limit, "5"]
       stdout_contains:
         - "Recent Traces"
 
 - name: inspect_task_structure_for_run
   steps:
-    - morph: [run, record-session, --prompt, "Add a function foo() to file bar.py", --response, "Done", --model-name, gpt-4o, --agent-id, cursor]
+    - morph: [session, record, --prompt, "Add a function foo() to file bar.py", --response, "Done", --model-name, gpt-4o, --agent-id, cursor]
       capture: run_hash
       assert_hash: true
     - morph: [inspect, task, "${run_hash}"]
@@ -143,7 +143,7 @@
 
 - name: inspect_target_context_for_run
   steps:
-    - morph: [run, record-session, --prompt, "Edit foo.py", --response, "Done", --model-name, gpt-4o, --agent-id, cursor]
+    - morph: [session, record, --prompt, "Edit foo.py", --response, "Done", --model-name, gpt-4o, --agent-id, cursor]
       capture: run_hash
       assert_hash: true
     - morph: [inspect, target, "${run_hash}"]
@@ -152,7 +152,7 @@
 
 - name: inspect_artifact_for_run
   steps:
-    - morph: [run, record-session, --prompt, "Print hello", --response, "print('hello')", --model-name, gpt-4o, --agent-id, cursor]
+    - morph: [session, record, --prompt, "Print hello", --response, "print('hello')", --model-name, gpt-4o, --agent-id, cursor]
       capture: run_hash
       assert_hash: true
     - morph: [inspect, artifact, "${run_hash}"]
@@ -161,7 +161,7 @@
 
 - name: inspect_semantics_for_run
   steps:
-    - morph: [run, record-session, --prompt, "Refactor the loop", --response, "Loop refactored to a list comprehension", --model-name, gpt-4o, --agent-id, cursor]
+    - morph: [session, record, --prompt, "Refactor the loop", --response, "Loop refactored to a list comprehension", --model-name, gpt-4o, --agent-id, cursor]
       capture: run_hash
       assert_hash: true
     - morph: [inspect, semantics, "${run_hash}"]
@@ -170,7 +170,7 @@
 
 - name: inspect_verification_for_run
   steps:
-    - morph: [run, record-session, --prompt, "Add a test", --response, "Run pytest to verify", --model-name, gpt-4o, --agent-id, cursor]
+    - morph: [session, record, --prompt, "Add a test", --response, "Run pytest to verify", --model-name, gpt-4o, --agent-id, cursor]
       capture: run_hash
       assert_hash: true
     - morph: [inspect, verification, "${run_hash}"]

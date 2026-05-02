@@ -9,7 +9,7 @@ Hook scripts for recording Morph sessions from Claude Code lifecycle events.
 | File | Event | Purpose |
 |------|--------|---------|
 | `hooks/morph-record-prompt.sh` | `UserPromptSubmit` | Appends prompt to `.morph/hooks/pending-<session_id>.jsonl` |
-| `hooks/morph-record-stop.sh` | `Stop` | Parses structured data from the payload (transcript_path or conversation array), builds Run + Trace, runs `morph run record` |
+| `hooks/morph-record-stop.sh` | `Stop` | Parses structured data from the payload (transcript_path or conversation array), builds Run + Trace, runs `morph session import` |
 
 ## What the hooks record
 

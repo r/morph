@@ -339,20 +339,14 @@ pub enum Command {
     Checkout { ref_name: String },
     /// Record and inspect agent sessions (Phase 4.1, v0.46+:
     /// user-facing namespace for what's stored internally as a Run
-    /// pointing at a Trace; folds in the most common `morph run`
-    /// subcommands plus `morph inspect export`). The old
-    /// `morph run` namespace remains as a deprecated alias through
-    /// v0.47 and is removed in v0.48.
+    /// pointing at a Trace). Folds in `list`, `show`, `record`,
+    /// `import`, and `export` operations. Phase 4.3 (v0.48+) removed
+    /// the old `morph run` namespace; the JSON-ingest path that used
+    /// to be `morph run record <run.json>` lives on as
+    /// `morph session import`.
     Session {
         #[command(subcommand)]
         sub: SessionCmd,
-    },
-    /// [DEPRECATED v0.46+] Ingest a run (execution receipt). Use
-    /// `morph session` instead. Removed in v0.48.
-    #[command(hide = true)]
-    Run {
-        #[command(subcommand)]
-        sub: RunCmd,
     },
     /// Ingest evaluation results
     Eval {
@@ -871,43 +865,6 @@ pub enum SetupCmd {
     },
 }
 
-#[derive(clap::Subcommand)]
-pub enum RunCmd {
-    /// List recorded runs.
-    List {
-        /// Emit a JSON envelope listing every run hash.
-        #[arg(long)]
-        json: bool,
-    },
-    Show {
-        hash: String,
-        #[arg(long)]
-        json: bool,
-        #[arg(long)]
-        with_trace: bool,
-    },
-    Record {
-        run_file: PathBuf,
-        #[arg(long)]
-        trace: Option<PathBuf>,
-        #[arg(long)]
-        artifact: Vec<PathBuf>,
-    },
-    RecordSession {
-        #[arg(long, required_unless_present = "messages")]
-        prompt: Option<String>,
-        #[arg(long, required_unless_present = "messages")]
-        response: Option<String>,
-        /// JSON array of messages: [{"role":"user","content":"..."},{"role":"assistant","content":"..."},...]
-        #[arg(long, conflicts_with_all = ["prompt", "response"])]
-        messages: Option<String>,
-        #[arg(long)]
-        model_name: Option<String>,
-        #[arg(long)]
-        agent_id: Option<String>,
-    },
-}
-
 /// Phase 4.1 (v0.46+): user-facing wrapper around what the storage
 /// layer calls a Run+Trace pair. Subsumes the most common
 /// `morph run` and `morph inspect export` operations under a single
@@ -946,6 +903,21 @@ pub enum SessionCmd {
         model_name: Option<String>,
         #[arg(long)]
         agent_id: Option<String>,
+    },
+    /// Import a pre-built Run JSON (and optional Trace JSON /
+    /// artifact list) into the store. Phase 4.3 (v0.48+) replaces
+    /// the older `morph run record <run.json>` JSON-ingest path.
+    /// Used by automation that builds Run objects out-of-band (CI
+    /// pipelines, MCP bridges).
+    Import {
+        /// Path to a Run JSON file matching the on-disk schema.
+        run_file: PathBuf,
+        /// Optional Trace JSON file referenced by the Run.
+        #[arg(long)]
+        trace: Option<PathBuf>,
+        /// Zero or more output artifacts to ingest as blobs.
+        #[arg(long)]
+        artifact: Vec<PathBuf>,
     },
     /// Export recorded sessions as evaluation cases (was
     /// `morph inspect export`).
@@ -1058,35 +1030,6 @@ pub enum EvalCmd {
         /// Skip updating `policy.default_eval_suite`.
         #[arg(long)]
         no_set_default: bool,
-    },
-    /// [DEPRECATED v0.46+] Use `morph eval add` instead.
-    /// Removed in v0.48.
-    #[command(hide = true)]
-    AddCase {
-        paths: Vec<PathBuf>,
-        #[arg(long)]
-        suite: Option<String>,
-        #[arg(long)]
-        no_default: bool,
-        #[arg(long)]
-        no_set_default: bool,
-    },
-    /// [DEPRECATED v0.46+] Use `morph eval rebuild` instead.
-    /// Removed in v0.48.
-    #[command(hide = true)]
-    SuiteFromSpecs {
-        paths: Vec<PathBuf>,
-        #[arg(long)]
-        no_set_default: bool,
-    },
-    /// [DEPRECATED v0.46+] Use `morph eval show` instead.
-    /// Removed in v0.48.
-    #[command(hide = true)]
-    SuiteShow {
-        #[arg(long)]
-        suite: Option<String>,
-        #[arg(long)]
-        json: bool,
     },
     /// Phase 5b: report behavioral evidence gaps in this repo, in
     /// the same form as the `morph_eval_gaps` MCP tool. Use this in

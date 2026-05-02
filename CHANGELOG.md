@@ -16,6 +16,85 @@ metrics — see `.cursor/rules/behavioral-commits.mdc`.
 
 ## [Unreleased]
 
+## [0.48.0] — 2026-05-02
+
+Vocabulary unification, part 3 (final): remove the v0.46-deprecated
+`morph run` namespace and the nested `morph eval add-case` /
+`morph eval suite-show` / `morph eval suite-from-specs` aliases. Adds
+`morph session import` as the v0.48 spelling for the JSON-ingest path
+that used to be `morph run record <file>`. Sixth and final release of
+the multi-phase "make morph intuitive" effort. The on-disk object
+format is unchanged; existing `.morph/` directories keep deserializing
+without migration.
+
+### Added
+
+- **`morph session import <run.json> [--trace <file>] [--artifact <file>...]`** —
+  ingest a pre-built Run JSON (and optional Trace JSON / artifact list)
+  into the store. Used by automation that builds Run objects out of
+  band — CI pipelines, MCP bridges, the `morph_run_record` MCP tool,
+  and the `claude-code` / `cursor` hook scripts. Replaces the
+  v0.46-removed `morph run record <file>`. The `morph_run_record` MCP
+  tool itself is unchanged.
+- **`removed_session_eval_aliases.yaml`** spec proves every removed
+  spelling now exits with `unrecognized subcommand` and that
+  `morph session import --help` is reachable.
+
+### Removed
+
+- **`morph run` namespace, in full.** `morph run list`, `morph run show`,
+  `morph run record-session`, and `morph run record` are gone. Use
+  `morph session list`, `morph session show`, `morph session record`,
+  and `morph session import` respectively. The v0.46 deprecation notice
+  warned every invocation through v0.47.
+- **`morph eval add-case`**, **`morph eval suite-show`**, and
+  **`morph eval suite-from-specs`** subcommands. Use the flat
+  `morph eval add` / `morph eval show` / `morph eval rebuild`
+  spellings introduced in v0.46.
+- **`inspect::deprecation_notice` helper** in `morph-cli/src/inspect.rs`.
+  Nothing dispatches to it anymore now that the v0.46 aliases are gone.
+- **`RunCmd` enum** in `morph-cli/src/cli.rs` and its `Command::Run`
+  dispatch arm in `morph-cli/src/main.rs`. Removed alongside the
+  deprecated `EvalCmd::AddCase` / `SuiteShow` / `SuiteFromSpecs`
+  variants.
+
+### Changed
+
+- **Cucumber step definitions** that internally invoked
+  `morph run record-session` now invoke `morph session record`
+  (`morph-e2e/tests/cucumber.rs`). The user-facing Gherkin step name
+  ("When I run record-session with prompt …") is unchanged.
+- **`morph setup aoe`** writes `morph session record` into the
+  `on_launch` and `on_destroy` hooks of `.agent-of-empires/config.toml`
+  instead of `morph run record-session`. The legacy spelling stays in
+  the cleanup-prefix list so re-running `morph setup aoe` against an
+  older config scrubs the old lines before emitting the new block.
+- **Hook scripts** (`claude-code/hooks/morph-record-stop.sh`,
+  `cursor/morph-record-stop.sh`,
+  `cursor/morph-record-response.sh`,
+  `.cursor/morph-record-stop.sh`,
+  `.cursor/morph-record-response.sh`,
+  and the deployable copies under `morph-cli/assets/`) call
+  `morph session import` instead of `morph run record`.
+- **Doc + site sweep**: every `morph run record` /
+  `morph run record-session` / `morph eval add-case` /
+  `morph eval suite-show` / `morph eval suite-from-specs` mention in
+  `README.md`, `docs/v0-spec.md`, `docs/EVAL-DRIVEN.md`,
+  `docs/CURSOR-SETUP.md`, `docs/OPENCODE-SETUP.md`,
+  `docs/CLAUDE-CODE-SETUP.md`, `docs/MULTI-MACHINE.md`,
+  `docs/README.md`, and the `.cursor/rules/eval-driven-development.mdc`
+  /  `morph-cli/assets/cursor/rules/eval-driven-development.mdc` rule
+  files now refers to the v0.46/v0.48 replacement, with a
+  parenthetical noting the prior spelling and the version that
+  removed it.
+
+### Tests
+
+- All 426 spec tests pass; cucumber 34/37 (3 skipped).
+- `cargo build --workspace`, `cargo clippy --workspace --all-targets
+  --all-features -- -D warnings`, and `cargo fmt --all -- --check`
+  are clean.
+
 ## [0.47.0] — 2026-05-02
 
 Vocabulary unification, part 2: remove the v0.45-deprecated
@@ -1415,7 +1494,8 @@ Three coordinated changes to repo setup, adoption, and migration.
 - 15 new YAML acceptance spec cases in the default eval suite:
   `init_at_latest:*` ×4, `init_in_git_dir:*` ×6, `upgrade:*` ×5.
 
-[Unreleased]: https://github.com/r/morph/compare/v0.47.0...HEAD
+[Unreleased]: https://github.com/r/morph/compare/v0.48.0...HEAD
+[0.48.0]: https://github.com/r/morph/compare/v0.47.0...v0.48.0
 [0.47.0]: https://github.com/r/morph/compare/v0.46.0...v0.47.0
 [0.46.0]: https://github.com/r/morph/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/r/morph/compare/v0.44.0...v0.45.0

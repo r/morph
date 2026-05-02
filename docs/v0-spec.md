@@ -56,7 +56,7 @@ CI). Morph's role is to:
 - **Version** pipelines with behavioral contracts (commits)
 - **Gate** merges on metric dominance
 
-Most ingestion commands (`morph run record`, `morph eval record`,
+Most ingestion commands (`morph session import`, `morph eval record`,
 `morph eval from-output`) take pre-captured results and store
 them. The one exception is `morph eval run -- <test command>`,
 which is a thin convenience wrapper: it shells out to the user's
@@ -643,7 +643,7 @@ Pipeline manifests are created via `morph pipeline create <file>` and exist only
 
 `morph pipeline identity-hash` prints the hash of the identity pipeline (creating it in the store if needed). Useful for hook scripts and automation.
 
-`morph pipeline extract --from-run <run_hash>` extracts a Pipeline from a recorded Run. For session-backed Runs (created by `morph session record`, was `morph run record-session` pre-v0.46), this produces a deterministic minimal graph: a `generate` (prompt_call) node flowing into a `review` node. The extracted Pipeline includes provenance (`derived_from_run`, `derived_from_trace`, `derived_from_event`, `method: "extracted"`), attribution derived from the Run's agent and contributors, and a prompt blob reference. The extracted Pipeline is a first-class object reusable anywhere a Pipeline hash is accepted (e.g., `morph commit --pipeline <hash>`).
+`morph pipeline extract --from-run <run_hash>` extracts a Pipeline from a recorded Run. For session-backed Runs (created by `morph session record`, was `morph run record-session` pre-v0.46 and removed in v0.48), this produces a deterministic minimal graph: a `generate` (prompt_call) node flowing into a `review` node. The extracted Pipeline includes provenance (`derived_from_run`, `derived_from_trace`, `derived_from_event`, `method: "extracted"`), attribution derived from the Run's agent and contributors, and a prompt blob reference. The extracted Pipeline is a first-class object reusable anywhere a Pipeline hash is accepted (e.g., `morph commit --pipeline <hash>`).
 
 ## 6.4 Commit Workflow
 
@@ -690,25 +690,25 @@ morph checkout <name|hash>
 
 `morph branch` without arguments lists all branches. With a name, it creates a new branch at HEAD. Branches are pointers to commits. `morph checkout` accepts a branch name or a 64-char commit hash (detached HEAD). If the commit has a tree, the working directory is restored from it.
 
-## 6.6 Session / Run ingestion
+## 6.6 Session ingestion
 
 ```
 morph session record [--prompt <text> --response <text> | --messages <json>] [--model-name <name>] [--agent-id <id>]
-morph run record <file> [--trace <file>] [--artifact <file>...]
+morph session import <file> [--trace <file>] [--artifact <file>...]
 ```
 
 `morph session record` (Phase 4.1, v0.46+) is the primary user-facing
 command for recording an agent session as a Run + Trace pair from a
 single prompt/response or a structured message array. Used by hook
 scripts and automation to record IDE sessions without constructing the
-full Run JSON. Replaces `morph run record-session`, which remains as a
-deprecated alias through v0.47.
+full Run JSON. Replaced `morph run record-session`, which was removed
+in Phase 4.3 (v0.48).
 
-`morph run record` **ingests** a Run object (JSON). Does not execute
-any pipeline. External tools (IDE, agent, CI) produce the run and
-report it. Morph stores the Run, its Trace, and Artifacts. The whole
-`morph run` namespace is deprecated in v0.46+; the JSON-ingest path
-will be folded into `morph session import` in v0.48.
+`morph session import` (Phase 4.3, v0.48+) **ingests** a pre-built Run
+object (JSON). Does not execute any pipeline. External tools (IDE,
+agent, CI) produce the run and report it. Morph stores the Run, its
+Trace, and Artifacts. Replaced `morph run record`, which was removed in
+v0.48 along with the rest of the `morph run` namespace.
 
 ## 6.7 Eval ingestion
 

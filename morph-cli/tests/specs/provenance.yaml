@@ -4,7 +4,7 @@
   files:
     code.txt: "fn main() {}"
   steps:
-    - morph: [run, record-session, --prompt, "Fix the bug", --response, "Done."]
+    - morph: [session, record, --prompt, "Fix the bug", --response, "Done."]
       capture: run_hash
       assert_hash: true
 
@@ -36,7 +36,7 @@
         path: run.json
         content: '{"type":"run","pipeline":"0000000000000000000000000000000000000000000000000000000000000000","commit":null,"environment":{"model":"claude-4","version":"2025-06-01","parameters":{"temperature":0.5},"toolchain":{"rust":"1.80"}},"input_state_hash":"0000000000000000000000000000000000000000000000000000000000000000","output_artifacts":[],"metrics":{},"trace":"${trace_hash}","agent":{"id":"primary-agent","version":"1.0","policy":null},"contributors":[{"id":"review-agent","version":"2.0","role":"review"},{"id":"retrieval-agent","version":"1.5","role":"retrieval"}]}'
 
-    - morph: [run, record, run.json, --trace, trace.json]
+    - morph: [session, import, run.json, --trace, trace.json]
       capture: run_hash
       assert_hash: true
 

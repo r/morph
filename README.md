@@ -191,9 +191,10 @@ The IDE hooks parse the agent's full transcript (tool calls, file reads/edits, s
 - `morph inspect summary` — repo-level overview of recorded runs.
 - `morph inspect show <run-hash>` — grouped steps for one run (or pass a trace hash for raw events).
 - `morph inspect recent` / `morph inspect task <ref>` / `morph inspect artifact <ref>` — structured task views for replay or eval generation.
-- `morph session record --prompt "..." --response "..."` — record a session manually (v0.46+; was `morph run record-session`).
+- `morph session record --prompt "..." --response "..."` — record a session manually (v0.46+; replaces the now-removed `morph run record-session`).
+- `morph session import <run.json> --trace <trace.json>` — ingest a pre-built Run JSON (v0.48+; replaces the now-removed `morph run record <file>`).
 
-The older `morph trace` / `morph tap` / `morph traces` spellings were removed in v0.47 — only `morph inspect` works now. The v0.46-deprecated `morph run` / `morph eval add-case` / `morph eval suite-show` / `morph eval suite-from-specs` still work through v0.47 with a deprecation notice and are removed in v0.48; new code should use `morph session` and the flat `morph eval add` / `show` / `rebuild`.
+The older `morph trace` / `morph tap` / `morph traces` spellings were removed in v0.47 — only `morph inspect` works now. The v0.46-deprecated `morph run` namespace and the nested `morph eval add-case` / `morph eval suite-show` / `morph eval suite-from-specs` were removed in v0.48 — use `morph session` (with `import` for the JSON-ingest path) and the flat `morph eval add` / `show` / `rebuild` instead.
 
 See [docs/SESSION-TRACKING.md](docs/SESSION-TRACKING.md).
 

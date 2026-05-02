@@ -107,8 +107,8 @@
 
 - name: run_list_json
   steps:
-    - morph: [run, record-session, --prompt, "Fix", --response, "Fixed"]
-    - morph: [run, list, --json]
+    - morph: [session, record, --prompt, "Fix", --response, "Fixed"]
+    - morph: [session, list, --json]
       stdout_contains:
         - '"runs":'
         - '"hash":'

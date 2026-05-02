@@ -1,0 +1,50 @@
+# Phase 4.3 (v0.48+): the v0.46-deprecated `morph run` namespace and
+# the nested `morph eval add-case` / `eval suite-show` /
+# `eval suite-from-specs` commands are GONE. Clap should reject every
+# one of them with an "unrecognized subcommand" error. Anyone still
+# scripting these gets a hard fail (no silent fallback) so they
+# notice and migrate.
+
+- name: morph_run_root_is_removed
+  steps:
+    - morph: [run, list]
+      expect_exit: 2
+      stderr_contains: "unrecognized subcommand"
+
+- name: morph_run_record_session_is_removed
+  steps:
+    - morph: [run, record-session, --prompt, hi, --response, hello]
+      expect_exit: 2
+      stderr_contains: "unrecognized subcommand"
+
+- name: morph_run_record_json_is_removed
+  steps:
+    - morph: [run, record, run.json]
+      expect_exit: 2
+      stderr_contains: "unrecognized subcommand"
+
+- name: morph_eval_add_case_is_removed
+  files:
+    spec.yaml: "[]\n"
+  steps:
+    - morph: [eval, add-case, spec.yaml]
+      expect_exit: 2
+      stderr_contains: "unrecognized subcommand"
+
+- name: morph_eval_suite_show_is_removed
+  steps:
+    - morph: [eval, suite-show]
+      expect_exit: 2
+      stderr_contains: "unrecognized subcommand"
+
+- name: morph_eval_suite_from_specs_is_removed
+  steps:
+    - morph: [eval, suite-from-specs, ./]
+      expect_exit: 2
+      stderr_contains: "unrecognized subcommand"
+
+# The v0.48 replacement for the JSON-ingest path.
+- name: morph_session_import_help_is_visible
+  steps:
+    - morph: [session, import, --help]
+      stdout_contains: "Import a pre-built Run JSON"

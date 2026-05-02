@@ -28,7 +28,7 @@
     .morph/config.json: '{"repo_version":"0.0","policy":{"required_metrics":[]},"user":{"name":"Raffi","email":"r@example.com"}}'
     code.txt: "fn main() {}"
   steps:
-    - morph: [run, record-session, --prompt, "write a stub", --response, "ok"]
+    - morph: [session, record, --prompt, "write a stub", --response, "ok"]
       capture: run_hash
       assert_hash: true
 
@@ -75,7 +75,7 @@
         path: run.json
         content: '{"type":"run","pipeline":"0000000000000000000000000000000000000000000000000000000000000000","commit":null,"environment":{"model":"claude-opus-4","version":"1","parameters":{},"toolchain":{}},"input_state_hash":"0000000000000000000000000000000000000000000000000000000000000000","output_artifacts":[],"metrics":{},"trace":"${trace_hash}","agent":{"id":"cursor","version":"1.0","policy":null}}'
 
-    - morph: [run, record, run.json, --trace, trace.json]
+    - morph: [session, import, run.json, --trace, trace.json]
       capture: run_hash
       assert_hash: true
 
@@ -110,7 +110,7 @@
         path: run.json
         content: '{"type":"run","pipeline":"0000000000000000000000000000000000000000000000000000000000000000","commit":null,"environment":{"model":"claude-opus-4","version":"1","parameters":{},"toolchain":{}},"input_state_hash":"0000000000000000000000000000000000000000000000000000000000000000","output_artifacts":[],"metrics":{},"trace":"${trace_hash}","agent":{"id":"cursor","version":"1.0","policy":null}}'
 
-    - morph: [run, record, run.json, --trace, trace.json]
+    - morph: [session, import, run.json, --trace, trace.json]
       capture: run_hash
       assert_hash: true
 

@@ -76,7 +76,7 @@ To reference it from `opencode.json`, ensure the instructions array includes it:
 OpenCode supports [plugins](https://open-code.ai/docs/en/plugins) that hook into session lifecycle events. `morph setup opencode` installs a plugin at `.opencode/plugins/morph-record.ts` that:
 
 - Tracks prompts and responses via `message.updated` events
-- On `session.idle`, calls `morph session record` to persist the turn as a Morph Run + Trace (was `morph run record-session` pre-v0.46)
+- On `session.idle`, calls `morph session record` to persist the turn as a Morph Run + Trace (was `morph run record-session` pre-v0.46; the v0.46 alias was removed in v0.48)
 
 This is **best-effort** supplementary recording. The primary recording path is agent-driven (the agent calls `morph_record_session` via MCP as instructed in `AGENTS.md`). The plugin catches turns where the agent doesn't call the tool.
 

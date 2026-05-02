@@ -9,7 +9,7 @@ Hook scripts for recording Morph sessions from Cursor lifecycle events. **Canoni
 | File | Referenced by | Purpose |
 |------|--------------|---------|
 | `morph-record-prompt.sh` | `.cursor/hooks.json` (`beforeSubmitPrompt`) | Saves prompt + composer mode to `.morph/hooks/pending-<conversation_id>.jsonl` |
-| `morph-record-response.sh` | `.cursor/hooks.json` (`afterAgentResponse`) | Parses the agent transcript for structured events (tool calls, file reads/edits, shell commands), builds Run + Trace, calls `morph run record` |
+| `morph-record-response.sh` | `.cursor/hooks.json` (`afterAgentResponse`) | Parses the agent transcript for structured events (tool calls, file reads/edits, shell commands), builds Run + Trace, calls `morph session import` |
 | `morph-record-stop.sh` | `.cursor/hooks.json` (`stop`) | Fallback: same structured parsing as response hook; fires if `afterAgentResponse` didn't |
 
 The copies in this `cursor/` directory mirror `morph-cli/assets/cursor/hooks/` and are kept for reference when developing Morph.

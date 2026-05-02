@@ -1,8 +1,8 @@
-# Phase 4b: `morph eval suite-from-specs` ingests a directory tree
-# of mixed YAML/.feature files and rebuilds the default suite from
-# scratch.
+# Phase 4.3 (v0.48+): `morph eval rebuild` walks a directory tree of
+# mixed YAML/.feature files and rebuilds the default suite from
+# scratch. Replaces the v0.46-removed `morph eval suite-from-specs`.
 
-- name: suite_from_specs_walks_directory
+- name: eval_rebuild_walks_directory
   files:
     spec/login.yaml: |
       - name: user_can_login
@@ -19,13 +19,13 @@
           Then I am redirected to /login
     spec/notes.txt: "ignored — not a spec\n"
   steps:
-    - morph: [eval, suite-from-specs, spec/]
+    - morph: [eval, rebuild, spec/]
       capture_first_line: suite_hash
       assert_hash: true
-    - morph: [eval, suite-show, --json]
+    - morph: [eval, show, --json]
       stdout_contains:
         - "user_can_login"
         - "graceful logout"
         - "forced logout"
-    - morph: [eval, suite-show]
+    - morph: [eval, show]
       stdout_not_contains: "ignored"

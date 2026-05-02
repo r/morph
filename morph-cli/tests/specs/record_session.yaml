@@ -1,8 +1,8 @@
 # Agent prompt+response recording on a fresh init (Cursor/MCP perspective).
-# Verifies filesystem and CLI: record-session, then sanity-check with status.
+# Verifies filesystem and CLI: session record, then sanity-check with status.
 - name: record_session_on_fresh_init
   steps:
-    - morph: [run, record-session, --prompt, "What is 2+2?", --response, "4"]
+    - morph: [session, record, --prompt, "What is 2+2?", --response, "4"]
       capture: run_hash
       assert_hash: true
     - morph: [status]
@@ -17,7 +17,7 @@
 
 - name: record_session_with_messages_json
   steps:
-    - morph: [run, record-session, --messages, '[{"role":"user","content":"Build it"},{"role":"assistant","content":"On it"},{"role":"tool_call","content":"write_file"},{"role":"assistant","content":"Done"}]']
+    - morph: [session, record, --messages, '[{"role":"user","content":"Build it"},{"role":"assistant","content":"On it"},{"role":"tool_call","content":"write_file"},{"role":"assistant","content":"Done"}]']
       capture: run_hash
       assert_hash: true
   assert:

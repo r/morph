@@ -11,7 +11,7 @@
         path: run.json
         content: '{"type":"run","pipeline":"0000000000000000000000000000000000000000000000000000000000000000","commit":null,"environment":{"model":"test","version":"0","parameters":{},"toolchain":{}},"input_state_hash":"0000000000000000000000000000000000000000000000000000000000000000","output_artifacts":[],"metrics":{},"trace":"${trace_hash}","agent":{"id":"cli","version":"0","policy":null}}'
 
-    - morph: [run, record, run.json, --trace, trace.json]
+    - morph: [session, import, run.json, --trace, trace.json]
       capture: run_hash
       assert_hash: true
 

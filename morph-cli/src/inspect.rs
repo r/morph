@@ -3,33 +3,16 @@
 //! exporting them as evaluation cases. Introduced in Phase 3 (v0.45)
 //! as a consolidation of the older `morph trace`, `morph tap`, and
 //! `morph traces` commands; the predecessors were removed in
-//! Phase 4.2 (v0.47).
-//!
-//! The factored handlers also back the v0.46-deprecated `morph run`
-//! aliases (which still ride along as deprecated commands, slated
-//! for removal in v0.48).
+//! Phase 4.2 (v0.47). The Phase 4.1 (v0.46) `morph run` and
+//! flat-`morph eval` aliases this module used to also back were
+//! removed in Phase 4.3 (v0.48), along with the deprecation-notice
+//! helper that pointed at them.
 
 use crate::cli::InspectCmd;
 use crate::resolve_obj_hash;
 use anyhow::Result;
 use morph_core::store::{ObjectType, Store};
 use morph_core::MorphObject;
-
-/// Print a one-line stderr deprecation notice for a v0.46-deprecated
-/// command, pointing the user at the new spelling. Called from the
-/// deprecated `Command::Run` / `EvalCmd::AddCase` / `EvalCmd::SuiteShow`
-/// / `EvalCmd::SuiteFromSpecs` arms in `main.rs`. Format chosen to
-/// match `git`'s own deprecation style (`warning: ...`):
-///
-/// ```text
-/// warning: `morph eval add-case` is deprecated; use `morph eval add` instead (removed in v0.48).
-/// ```
-pub(crate) fn deprecation_notice(old: &str, new: &str) {
-    eprintln!(
-        "warning: `{}` is deprecated; use `{}` instead (removed in v0.48).",
-        old, new
-    );
-}
 
 /// Top-level dispatch for `morph inspect <subcommand>`.
 pub(crate) fn run_inspect(verbose: bool, sub: InspectCmd) -> Result<()> {

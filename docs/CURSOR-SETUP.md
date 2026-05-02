@@ -85,7 +85,7 @@ Create or edit `.cursor/hooks.json` in your project (paths are relative to proje
 ```
 
 - **beforeSubmitPrompt** -- Saves the prompt and composer mode to `.morph/hooks/pending-<conversation_id>.jsonl`.
-- **afterAgentResponse** -- Parses the agent's full transcript (from `transcript_path` in the payload) for structured events: tool calls (`Shell`, `Task`, `CallMcpTool`), file reads (`Read`, `Grep`, `Glob`), file edits (`StrReplace`, `Write`), and text. Builds a Run + Trace with these rich events, captures token usage (`input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`), runs `morph run record`, then clears the pending file. Falls back to pending prompts + response text if the transcript is unavailable.
+- **afterAgentResponse** -- Parses the agent's full transcript (from `transcript_path` in the payload) for structured events: tool calls (`Shell`, `Task`, `CallMcpTool`), file reads (`Read`, `Grep`, `Glob`), file edits (`StrReplace`, `Write`), and text. Builds a Run + Trace with these rich events, captures token usage (`input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`), runs `morph session import` (was `morph run record` pre-v0.48), then clears the pending file. Falls back to pending prompts + response text if the transcript is unavailable.
 - **stop** -- Fallback: same structured transcript parsing as `afterAgentResponse`; fires if the response hook didn't. Also runs `morph-record-checks.sh`, which calls `morph eval gaps --json` and prints any unaddressed behavioral-evidence gaps to stderr so the next agent turn sees them.
 
 Hook scripts live under `.cursor/` (same as `hooks.json` and `mcp.json`), so the project root stays clean. Run `morph setup cursor` to install them, or copy the scripts from the Morph repo's `.cursor/` into your project's `.cursor/` and make them executable: `chmod +x .cursor/morph-record-*.sh`.
@@ -151,7 +151,7 @@ morph commit -m "implement feature" --from-run <run_hash> --new-cases spec:my_ca
 
 For commits that genuinely have no test results (rebases, content-only changes), pass `--allow-empty-metrics` (or `morph_commit { allow_empty_metrics: true }`). The flag is audited in the trace.
 
-`--pipeline` and `--eval-suite` remain optional. When no eval suite is supplied, Morph picks up `policy.default_eval_suite` so the suite registered by `morph eval add` (was `morph eval add-case` pre-v0.46) flows into every commit automatically.
+`--pipeline` and `--eval-suite` remain optional. When no eval suite is supplied, Morph picks up `policy.default_eval_suite` so the suite registered by `morph eval add` (was `morph eval add-case` pre-v0.46; the alias was removed in v0.48) flows into every commit automatically.
 
 ---
 

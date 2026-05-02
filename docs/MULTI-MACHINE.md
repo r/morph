@@ -195,7 +195,7 @@ Upgrade the older side. Both client and server need a Morph release whose `MORPH
 The server has policy gating this branch. Look at the message, certify the commit accordingly, and retry. See [SERVER-SETUP.md](SERVER-SETUP.md).
 
 **"NotFound: <hash>"** during a push
-The closure on your side is incomplete — usually because you're pushing a commit whose evidence references runs you haven't ingested. Run `morph run record …` (or `morph eval record …`) first.
+The closure on your side is incomplete — usually because you're pushing a commit whose evidence references runs you haven't ingested. Run `morph session import …` (or `morph eval record …`) first.
 
 **"failed to spawn ssh"**
 Either `ssh` isn't on `$PATH` or the SSH connection itself failed. Try the same SSH command by hand: `ssh user@host morph remote-helper --repo-root /abs/path/to/bare`. The hidden `remote-helper` subcommand is what Morph drives over the SSH session; if it doesn't exist on the server, you're running an older Morph release server-side.

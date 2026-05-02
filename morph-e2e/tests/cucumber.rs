@@ -389,8 +389,8 @@ fn when_run_record_session(w: &mut MorphWorld, prompt: String, response: String)
     let root = w.repo_root().to_path_buf();
     let output = morph_cmd()
         .args([
-            "run",
-            "record-session",
+            "session",
+            "record",
             "--prompt",
             &prompt,
             "--response",
@@ -632,8 +632,8 @@ fn when_agents_run_record_session_concurrently(w: &mut MorphWorld, n: u32) {
         let handle = std::thread::spawn(move || {
             let output = morph_cmd()
                 .args([
-                    "run",
-                    "record-session",
+                    "session",
+                    "record",
                     "--prompt",
                     &format!("agent {} prompt", i + 1),
                     "--response",
