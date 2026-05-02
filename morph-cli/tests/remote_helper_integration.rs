@@ -23,6 +23,26 @@ fn init_repo_at(path: &std::path::Path) {
         .success();
 }
 
+/// CI-safe `morph commit`. Reference-mode commits shell out to
+/// `git commit`, which refuses to run when the system lacks a
+/// global git identity (the GitHub-Actions / fresh-VM case).
+/// Stamping the standard `GIT_AUTHOR_*` / `GIT_COMMITTER_*`
+/// env vars per-invocation matches what the spec-test harness
+/// in `morph-cli/build.rs` already does for generated specs.
+fn morph_commit(repo: &std::path::Path, args: &[&str]) -> std::process::Output {
+    let mut cmd = cargo_bin_cmd!("morph");
+    cmd.current_dir(repo)
+        .env("GIT_AUTHOR_NAME", "morph-test")
+        .env("GIT_AUTHOR_EMAIL", "morph-test@example.com")
+        .env("GIT_COMMITTER_NAME", "morph-test")
+        .env("GIT_COMMITTER_EMAIL", "morph-test@example.com")
+        .arg("commit");
+    for a in args {
+        cmd.arg(a);
+    }
+    cmd.assert().success().get_output().clone()
+}
+
 /// Spawn `morph remote-helper --repo-root <path>` as a child
 /// process; `body` is written to stdin then stdin is closed; the
 /// returned String is whatever the helper wrote to stdout before
@@ -128,11 +148,7 @@ fn remote_helper_lists_branches() {
         .args(["add", "a.txt"])
         .status()
         .unwrap();
-    cargo_bin_cmd!("morph")
-        .current_dir(repo)
-        .args(["commit", "-m", "first"])
-        .assert()
-        .success();
+    morph_commit(repo, &["-m", "first"]);
     cargo_bin_cmd!("morph")
         .current_dir(repo)
         .args(["branch", "feature"])
@@ -168,14 +184,7 @@ fn remote_helper_ref_read_returns_hash_or_null() {
         .args(["add", "a.txt"])
         .status()
         .unwrap();
-    let out = cargo_bin_cmd!("morph")
-        .current_dir(repo)
-        .args(["commit", "-m", "first", "--json"])
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
+    let out = morph_commit(repo, &["-m", "first", "--json"]).stdout;
     let json_out: serde_json::Value =
         serde_json::from_slice(&out).expect("--json output");
     let head_hash = json_out["hash"].as_str().unwrap().to_string();
@@ -214,14 +223,7 @@ fn remote_helper_has_and_get_object() {
         .args(["add", "a.txt"])
         .status()
         .unwrap();
-    let out = cargo_bin_cmd!("morph")
-        .current_dir(repo)
-        .args(["commit", "-m", "first", "--json"])
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
+    let out = morph_commit(repo, &["-m", "first", "--json"]).stdout;
     let json_out: serde_json::Value = serde_json::from_slice(&out).unwrap();
     let head_hash = json_out["hash"].as_str().unwrap().to_string();
     let bogus = "0".repeat(64);

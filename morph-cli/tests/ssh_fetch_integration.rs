@@ -46,6 +46,15 @@ exec \"$@\"
 fn run_morph(repo: &std::path::Path, args: &[&str], env: &[(&str, &str)]) -> std::process::Output {
     let mut cmd = Command::new(morph_bin());
     cmd.current_dir(repo);
+    // Stamp git identity so reference-mode `morph commit` (which
+    // shells out to `git commit`) works on hosts without a global
+    // git config (GitHub-Actions runners, fresh VMs). Per-test
+    // env overrides via the `env` arg still win because
+    // `Command::env` is last-write-wins.
+    cmd.env("GIT_AUTHOR_NAME", "morph-test")
+        .env("GIT_AUTHOR_EMAIL", "morph-test@example.com")
+        .env("GIT_COMMITTER_NAME", "morph-test")
+        .env("GIT_COMMITTER_EMAIL", "morph-test@example.com");
     for a in args {
         cmd.arg(a);
     }

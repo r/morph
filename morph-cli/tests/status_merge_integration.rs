@@ -25,7 +25,19 @@ fn write(path: &std::path::Path, content: &str) {
 }
 
 fn morph(repo: &std::path::Path, args: &[&str]) -> assert_cmd::assert::Assert {
-    cargo_bin_cmd!("morph").current_dir(repo).args(args).assert()
+    // Stamp git identity per-invocation so reference-mode `morph
+    // commit` (which shells out to `git commit`) works on hosts
+    // without a global git config (GitHub-Actions runners,
+    // fresh VMs). Mirrors what the spec-test harness in
+    // `morph-cli/build.rs` already does.
+    cargo_bin_cmd!("morph")
+        .current_dir(repo)
+        .env("GIT_AUTHOR_NAME", "morph-test")
+        .env("GIT_AUTHOR_EMAIL", "morph-test@example.com")
+        .env("GIT_COMMITTER_NAME", "morph-test")
+        .env("GIT_COMMITTER_EMAIL", "morph-test@example.com")
+        .args(args)
+        .assert()
 }
 
 fn git_add(repo: &std::path::Path, path: &str) {
@@ -88,16 +100,9 @@ fn status_outside_merge_does_not_show_merge_hints() {
 
     write(&repo.join("hello.txt"), "world");
     git_add(repo, "hello.txt");
-    cargo_bin_cmd!("morph")
-        .current_dir(repo)
-        .args(["commit", "-m", "first"])
-        .assert()
-        .success();
+    morph(repo, &["commit", "-m", "first"]).success();
 
-    cargo_bin_cmd!("morph")
-        .current_dir(repo)
-        .arg("status")
-        .assert()
+    morph(repo, &["status"])
         .success()
         .stdout(predicate::str::contains("You have unmerged paths.").not())
         .stdout(predicate::str::contains("nothing to commit"));
