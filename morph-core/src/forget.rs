@@ -142,7 +142,7 @@ pub fn forget_local(
         MorphError::Other(format!(
             "refused: {} is a {}; morph forget only retires runs, traces, or prompt blobs",
             target,
-            obj.object_type_name()
+            obj.kind_str()
         ))
     })?;
 
@@ -218,28 +218,6 @@ pub const RETROACTIVE_NOTE: &str =
     "Note: tombstones do not reach copies that were already fetched \
      before the deletion. If a teammate previously pulled this hash, \
      ask them to fetch from the remote again or delete it by hand.";
-
-trait ObjectTypeName {
-    fn object_type_name(&self) -> &'static str;
-}
-
-impl ObjectTypeName for MorphObject {
-    fn object_type_name(&self) -> &'static str {
-        match self {
-            MorphObject::Blob(_) => "blob",
-            MorphObject::Tree(_) => "tree",
-            MorphObject::Pipeline(_) => "pipeline",
-            MorphObject::EvalSuite(_) => "eval_suite",
-            MorphObject::Commit(_) => "commit",
-            MorphObject::Run(_) => "run",
-            MorphObject::Artifact(_) => "artifact",
-            MorphObject::Trace(_) => "trace",
-            MorphObject::TraceRollup(_) => "trace_rollup",
-            MorphObject::Annotation(_) => "annotation",
-            MorphObject::Tombstone(_) => "tombstone",
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {

@@ -669,24 +669,6 @@ fn run_reference_commit(
 /// shape (additive only): release pipelines and downstream tooling
 /// rely on the field names below to verify the binary's identity
 /// without parsing the human-readable line.
-/// Compact, stable string label for a `MorphObject` variant. Used by
-/// `morph identify`, `morph head`, and JSON envelopes that need to
-/// surface object kinds without leaking the internal serde tag layout.
-fn morph_object_type_str(obj: &MorphObject) -> &'static str {
-    match obj {
-        MorphObject::Blob(_) => "blob",
-        MorphObject::Tree(_) => "tree",
-        MorphObject::Pipeline(_) => "pipeline",
-        MorphObject::EvalSuite(_) => "eval_suite",
-        MorphObject::Commit(_) => "commit",
-        MorphObject::Run(_) => "run",
-        MorphObject::Artifact(_) => "artifact",
-        MorphObject::Trace(_) => "trace",
-        MorphObject::TraceRollup(_) => "trace_rollup",
-        MorphObject::Annotation(_) => "annotation",
-        MorphObject::Tombstone(_) => "tombstone",
-    }
-}
 
 /// Build the JSON envelope returned by `morph status --json`. Stable
 /// shape: agents pin field names like `branch`, `head`, `working_tree`,
@@ -2757,7 +2739,7 @@ fn main() -> anyhow::Result<()> {
             let (_repo_root, store) = get_store(verbose)?;
             let resolved = resolve_obj_hash(store.as_ref(), &revision)?;
             let obj = store.get(&resolved)?;
-            let kind = morph_object_type_str(&obj);
+            let kind = obj.kind_str();
             let h_str = resolved.to_string();
             if json {
                 let mut body = serde_json::json!({

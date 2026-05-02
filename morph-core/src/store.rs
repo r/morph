@@ -89,6 +89,35 @@ pub enum ObjectType {
     Tombstone,
 }
 
+impl ObjectType {
+    /// Compact, stable lowercase label for the kind. Used in JSON
+    /// envelopes (`morph show`, `morph identify`, MCP responses) and
+    /// in user-facing error messages. The shape is the canonical
+    /// serde-tag form (snake_case for multi-word kinds) — e.g.
+    /// `"blob"`, `"eval_suite"`, `"trace_rollup"`, `"tombstone"`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ObjectType::Blob => "blob",
+            ObjectType::Tree => "tree",
+            ObjectType::Pipeline => "pipeline",
+            ObjectType::EvalSuite => "eval_suite",
+            ObjectType::Commit => "commit",
+            ObjectType::Run => "run",
+            ObjectType::Artifact => "artifact",
+            ObjectType::Trace => "trace",
+            ObjectType::TraceRollup => "trace_rollup",
+            ObjectType::Annotation => "annotation",
+            ObjectType::Tombstone => "tombstone",
+        }
+    }
+}
+
+impl std::fmt::Display for ObjectType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 impl MorphObject {
     pub fn object_type(&self) -> ObjectType {
         match self {
@@ -104,6 +133,12 @@ impl MorphObject {
             MorphObject::Annotation(_) => ObjectType::Annotation,
             MorphObject::Tombstone(_) => ObjectType::Tombstone,
         }
+    }
+
+    /// Compact, stable lowercase label for this object's variant.
+    /// Convenience for the common `obj.object_type().as_str()` chain.
+    pub fn kind_str(&self) -> &'static str {
+        self.object_type().as_str()
     }
 }
 

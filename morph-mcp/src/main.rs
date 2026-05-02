@@ -48,22 +48,6 @@ fn short_hash(h: &str) -> String {
     h.chars().take(8).collect()
 }
 
-fn morph_object_type_str(obj: &MorphObject) -> &'static str {
-    match obj {
-        MorphObject::Blob(_) => "blob",
-        MorphObject::Tree(_) => "tree",
-        MorphObject::Pipeline(_) => "pipeline",
-        MorphObject::Run(_) => "run",
-        MorphObject::Trace(_) => "trace",
-        MorphObject::Artifact(_) => "artifact",
-        MorphObject::EvalSuite(_) => "eval_suite",
-        MorphObject::Commit(_) => "commit",
-        MorphObject::Annotation(_) => "annotation",
-        MorphObject::TraceRollup(_) => "trace_rollup",
-        MorphObject::Tombstone(_) => "tombstone",
-    }
-}
-
 fn json_text(v: serde_json::Value) -> Content {
     Content::text(serde_json::to_string_pretty(&v).unwrap_or_default())
 }
@@ -558,7 +542,7 @@ impl MorphServer {
             "input": params.0.hash,
             "hash": hash.to_string(),
             "short": short_hash(&hash.to_string()),
-            "type": morph_object_type_str(&obj),
+            "type": obj.kind_str(),
             "object": obj,
         });
         Ok(CallToolResult::success(vec![json_text(body)]))
@@ -716,7 +700,7 @@ impl MorphServer {
         let (_repo_root, store) = self.repo_store(params.0.workspace_path.as_deref()).map_err(mcp_err)?;
         let resolved = resolve_rev(store.as_ref(), &params.0.revision)?;
         let obj = store.get(&resolved).map_err(mcp_err)?;
-        let kind = morph_object_type_str(&obj);
+        let kind = obj.kind_str();
         let h_str = resolved.to_string();
         let mut body = serde_json::json!({
             "input": params.0.revision,
