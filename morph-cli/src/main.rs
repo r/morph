@@ -1005,7 +1005,12 @@ fn run_reference_merge_abort(
         (true, true) => println!("Merge aborted; working tree restored."),
         (true, false) => println!("Merge breadcrumb cleared; git was already in a clean state."),
         (false, true) => println!("git merge --abort completed; no morph breadcrumb to clear."),
-        (false, false) => println!("Nothing to abort (no merge in progress)."),
+        // Match `git merge --abort` UX: refusing to abort when no
+        // merge is in progress is an error, not a no-op. Lets
+        // scripts notice the mistake instead of silently moving on.
+        (false, false) => {
+            anyhow::bail!("no merge in progress");
+        }
     }
     Ok(())
 }

@@ -127,16 +127,21 @@
     - shell: "test ! -f .git/MERGE_HEAD"
     - shell: "test ! -f .morph/MERGE_REF.json"
 
-# ── --abort tolerates a missing breadcrumb (manual git abort path) ──
+# ── --abort outside a merge errors (matches `git merge --abort` UX) ──
 
-- name: stateful_merge_abort_is_idempotent_when_no_merge_in_progress
+- name: stateful_merge_abort_errors_when_no_merge_in_progress
+  # v0.41.1: was previously asserting the lenient
+  # "Nothing to abort" exit-0 path. The current UX mirrors
+  # `git merge --abort`: exit 1 with `no merge in progress`
+  # so scripts notice the mistake.
   init: false
   steps:
     - shell: "git init -q -b main && git config user.email t@t && git config user.name t && git commit --allow-empty -q -m 'first'"
     - morph: [init, --git-init, "${repo}"]
     - morph: [reference-sync, --backfill]
     - morph: [merge, --abort]
-      stdout_contains: "Nothing to abort"
+      expect_exit: 1
+      stderr_contains: "no merge in progress"
 
 # ── Solo end-to-end smoke: clean → conflict → continue → certified ───
 #

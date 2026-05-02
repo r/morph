@@ -38,10 +38,6 @@ fn git_add(repo: &std::path::Path, path: &str) {
 }
 
 #[test]
-#[ignore = "v0.40+ reference-mode merge wraps `git merge`; the morph-internal \
-            structural merge state this test drives is no longer the user-facing \
-            merge path. Re-author once we have an end-to-end reference-mode merge \
-            spec."]
 fn status_during_textual_merge_lists_unmerged_paths_and_hint() {
     let dir = tempfile::tempdir().unwrap();
     let repo = dir.path();

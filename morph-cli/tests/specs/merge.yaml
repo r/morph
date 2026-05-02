@@ -169,11 +169,12 @@
       stderr_contains: "no merge in progress"
 
 - name: merge_abort_without_in_progress_errors
-  # PR1 v0.40+: in reference mode `morph merge --abort` is a no-op
-  # message ("Nothing to abort.") rather than an error — git's own
-  # `git merge --abort` semantics surface differently. Tracked for
-  # PR2 (CLI exit-code parity for `morph merge --abort`/`--continue`).
-  skip: "abort exit-code parity pending PR2"
+  # v0.41.1: `morph merge --abort` outside a merge is an error,
+  # mirroring `git merge --abort`'s own UX (which exits 128 with
+  # "fatal: There is no merge to abort"). Earlier reference-mode
+  # versions printed "Nothing to abort." with exit 0; that was
+  # too lenient — silent in scripts when the user mistyped a
+  # command they expected to fail.
   files:
     a.txt: "aaa"
   steps:
@@ -184,12 +185,14 @@
       stderr_contains: "no merge in progress"
 
 - name: merge_with_textual_conflict_drops_into_continue_flow
-  # PR1 v0.40+: textual-conflict flow now bottoms out in git's own
-  # `git merge` conflict state rather than morph's bespoke
-  # textual-conflict tracker. The morph-side `--continue` /
-  # `--abort` UX needs to be reconciled with git's conflict-state
-  # machine. Tracked for PR2.
-  skip: "git-driven conflict UX pending PR2"
+  # v0.41.1: textual-conflict flow now bottoms out in git's own
+  # `git merge` conflict state. `git merge` runs with `-q` and its
+  # stdout/stderr are captured; morph synthesises an equivalent
+  # message on stderr (`Auto-merging failed for N path; conflict
+  # markers written to disk.` + per-path `conflict: …` lines + a
+  # `morph merge --continue` / `morph merge --abort` hint), exits 1,
+  # and drops a `MERGE_REF.json` breadcrumb so `morph status`
+  # surfaces unmerged paths and aborting cleans up correctly.
   files:
     file.txt: "line1\nbase\nline3\n"
   steps:
@@ -210,14 +213,19 @@
     - morph: [checkout, main]
     - morph: [merge, feature]
       expect_exit: 1
-      stdout_contains:
-        - "CONFLICT"
+      # The conflict surface is morph's own message on stderr —
+      # git's `CONFLICT (content): …` lines are swallowed by
+      # `git merge -q`.
+      stderr_contains:
+        - "conflict: file.txt"
         - "morph merge --continue"
+        - "morph merge --abort"
     - morph: [status]
       stdout_contains:
         - "unmerged paths"
         - "morph merge --continue"
         - "morph merge --abort"
+        - "file.txt"
     - morph: [merge, --abort]
       stdout_contains: "Merge aborted"
     - morph: [status]

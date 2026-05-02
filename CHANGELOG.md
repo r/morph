@@ -16,6 +16,44 @@ metrics — see `.cursor/rules/behavioral-commits.mdc`.
 
 ## [Unreleased]
 
+## [0.41.1] — 2026-05-01
+
+Three reference-mode merge UX fixes triaged out of the v0.40 ignored
+spec backlog. Each spec was either passing (status integration) or
+asserting old structural-merge wording; this release closes the gap
+between v0.40+ behavior and the acceptance suite.
+
+### Fixed
+
+- **`morph status` surfaces an in-progress reference-mode merge.**
+  `merge_progress_summary` now also reads `.morph/MERGE_REF.json`
+  (the v0.40 ref-mode breadcrumb) and pulls unmerged paths from
+  `git ls-files --unmerged`, so the "You have unmerged paths." +
+  `morph merge --continue` / `--abort` hint banner appears mid-merge
+  instead of "nothing to commit". Legacy `.morph/MERGE_HEAD` still
+  works for any in-flight pre-v0.40 merge.
+- **`morph merge --abort` outside a merge errors instead of
+  no-op'ing.** Now exits non-zero with `Error: no merge in
+  progress`, matching `git merge --abort`'s `fatal: There is no
+  merge to abort` (exit 128). Earlier ref-mode versions printed
+  "Nothing to abort." with exit 0; that was too lenient — silent in
+  scripts when the user mistyped a command they expected to fail.
+
+### Tests
+
+- `merge_with_textual_conflict_drops_into_continue_flow` and
+  `merge_abort_without_in_progress_errors` (`morph-cli/tests/specs/merge.yaml`)
+  un-skipped and rewritten for the v0.40+ wording: morph's hints
+  arrive on stderr now (since `git merge -q` swallows git's own
+  `CONFLICT (content): …` lines), `--abort` is exit-1 with stderr
+  `no merge in progress`.
+- `status_during_textual_merge_lists_unmerged_paths_and_hint`
+  (`morph-cli/tests/status_merge_integration.rs`) un-`#[ignore]`'d.
+- 13 specs remain skipped — all sharing the same two roots
+  (eval-suite plumbing through the ref-mode merge rebuild path,
+  and mixed-authorship plumbing on the rebuild path) — and are
+  scheduled for v0.42.0 / v0.42.1.
+
 ## [0.41.0] — 2026-05-01
 
 `morph forget` lands. The "I leaked a secret into a trace; what
@@ -789,7 +827,8 @@ Three coordinated changes to repo setup, adoption, and migration.
 - 15 new YAML acceptance spec cases in the default eval suite:
   `init_at_latest:*` ×4, `init_in_git_dir:*` ×6, `upgrade:*` ×5.
 
-[Unreleased]: https://github.com/r/morph/compare/v0.41.0...HEAD
+[Unreleased]: https://github.com/r/morph/compare/v0.41.1...HEAD
+[0.41.1]: https://github.com/r/morph/compare/v0.41.0...v0.41.1
 [0.41.0]: https://github.com/r/morph/compare/v0.40.2...v0.41.0
 [0.40.2]: https://github.com/r/morph/compare/v0.40.1...v0.40.2
 [0.40.1]: https://github.com/r/morph/compare/v0.40.0...v0.40.1

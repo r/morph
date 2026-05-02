@@ -374,11 +374,44 @@ pub struct MergeProgress {
 /// Inspect on-disk merge state and return a [`MergeProgress`] when a
 /// merge is in progress, else `None`. Pure: never mutates anything,
 /// safe to call from `morph status`.
+///
+/// Two on-disk shapes are recognized:
+///
+/// 1. **Legacy structural merge** — `.morph/MERGE_HEAD` plus
+///    `.morph/index` unmerged entries, written by the pre-v0.40
+///    morph-internal merge engine. Still readable so an in-flight
+///    merge from before an upgrade resolves cleanly.
+/// 2. **v0.40+ reference-mode merge** — `.morph/MERGE_REF.json`
+///    breadcrumb written when `git merge` reports textual conflicts.
+///    Unmerged paths come from `git ls-files --unmerged`; pipeline
+///    conflicts are always empty (ref-mode delegates pipeline
+///    semantics to the rebuild path).
+///
+/// Either shape ⇒ `Some(MergeProgress)`; neither ⇒ `None`.
 pub fn merge_progress_summary(
     store: &dyn Store,
     repo_root: &Path,
 ) -> Result<Option<MergeProgress>, MorphError> {
     let morph_dir = repo_root.join(".morph");
+
+    // v0.40+ reference-mode breadcrumb takes precedence: a fresh
+    // `morph merge` writes this and never touches `.morph/MERGE_HEAD`.
+    if let Some(bc) = crate::reference::read_merge_breadcrumb(&morph_dir)? {
+        // Outside a real git checkout (some unit-test fixtures share
+        // `.morph/` without a sibling `.git/`), fall back to an empty
+        // list rather than failing status.
+        let unmerged_paths =
+            crate::reference::list_unmerged_paths(repo_root).unwrap_or_default();
+        let on_branch = crate::commit::current_branch(store)?;
+        return Ok(Some(MergeProgress {
+            merge_head: bc.other_git_sha,
+            orig_head: Some(bc.head_git_sha),
+            unmerged_paths,
+            pipeline_node_conflicts: vec![],
+            on_branch,
+        }));
+    }
+
     let merge_head = match crate::merge_state::read_merge_head(&morph_dir)? {
         Some(h) => h,
         None => return Ok(None),

@@ -321,7 +321,69 @@
 
     <article class="release">
       <header>
-        <span class="version">0.41.0 <span class="latest">Latest</span></span>
+        <span class="version">0.41.1 <span class="latest">Latest</span></span>
+        <span class="date">2026-05-01</span>
+      </header>
+      <p class="summary">
+        <strong>Reference-mode merge UX gets cleaned up.</strong>
+        Three fixes triaged out of the v0.40 ignored-spec backlog:
+        <code>morph status</code> now shows an in-progress
+        <code>git merge</code> conflict (it was reading the legacy
+        structural-merge state file and missing the new
+        <code>MERGE_REF.json</code> breadcrumb);
+        <code>morph merge --abort</code> outside a merge errors
+        with exit 1 instead of no-op'ing on exit 0, matching
+        <code>git merge --abort</code>'s own UX; and the conflict
+        message ("Auto-merging failed for N path; run
+        <code>morph merge --continue</code> or <code>--abort</code>")
+        is now exercised by an un-skipped acceptance spec. 13
+        ignored specs remain &mdash; all sharing two clear roots
+        (eval-suite plumbing through the ref-mode merge rebuild
+        path, mixed-authorship plumbing on the rebuild path)
+        &mdash; and are scheduled for v0.42.0 / v0.42.1.
+      </p>
+
+      <h3 class="fixed"><span class="marker"></span>Fixed</h3>
+      <ul>
+        <li><code>merge_progress_summary</code> in
+          <code>morph-core/src/merge_flow.rs</code> reads
+          <code>.morph/MERGE_REF.json</code> in addition to the
+          legacy <code>.morph/MERGE_HEAD</code>, so
+          <code>morph status</code> mid-conflict reports
+          <em>"You have unmerged paths"</em> with the
+          <code>--continue</code> / <code>--abort</code> hint
+          banner. Unmerged paths come from
+          <code>git ls-files --unmerged</code>.</li>
+        <li><code>morph merge --abort</code> outside a merge now
+          bails with <code>Error: no merge in progress</code>
+          (exit 1) instead of printing
+          <em>"Nothing to abort."</em> and returning success.
+          Mirrors <code>git merge --abort</code>'s
+          <code>fatal: There is no merge to abort</code> (exit
+          128). Earlier ref-mode versions were silent in scripts
+          when the user mistyped a command they expected to
+          fail.</li>
+      </ul>
+
+      <h3 class="tests"><span class="marker"></span>Tests</h3>
+      <ul>
+        <li><code>merge_with_textual_conflict_drops_into_continue_flow</code>
+          and <code>merge_abort_without_in_progress_errors</code>
+          in <code>morph-cli/tests/specs/merge.yaml</code>
+          un-skipped and rewritten for v0.40+ wording (morph's
+          hints are on stderr now since <code>git merge -q</code>
+          swallows git's own <code>CONFLICT (content): ...</code>
+          lines).
+          <code>status_during_textual_merge_lists_unmerged_paths_and_hint</code>
+          in <code>morph-cli/tests/status_merge_integration.rs</code>
+          un-<code>#[ignore]</code>'d. <code>version.yaml</code>
+          updated to expect <code>0.41.1</code>.</li>
+      </ul>
+    </article>
+
+    <article class="release">
+      <header>
+        <span class="version">0.41.0</span>
         <span class="date">2026-05-01</span>
       </header>
       <p class="summary">
