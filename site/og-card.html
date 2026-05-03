@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Morph — Open Graph card</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      width: 1200px;
+      height: 630px;
+      overflow: hidden;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+      color: #fafbfb;
+      background: #0c1a2a;
+      position: relative;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+
+    /* Soft teal radial glow in the lower-right quadrant. */
+    body::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 900px 700px at 95% 105%,
+          rgba(20, 184, 166, 0.30) 0%,
+          rgba(20, 184, 166, 0.12) 28%,
+          rgba(20, 184, 166, 0.04) 50%,
+          transparent 70%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* Faint upper-left sheen for depth. */
+    body::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(circle at 0% 0%,
+          rgba(255, 255, 255, 0.025) 0%,
+          transparent 40%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .layer {
+      position: absolute;
+      z-index: 1;
+    }
+
+    .top    { top: 64px;  left: 72px; right: 72px; }
+    .center { top: 232px; left: 72px; right: 72px; }
+    .bottom { top: 548px; left: 72px; right: 72px;
+              display: flex; justify-content: space-between; align-items: baseline; }
+
+    .wordmark {
+      font-size: 64px;
+      font-weight: 800;
+      letter-spacing: -0.045em;
+      line-height: 1;
+      color: #fafbfb;
+    }
+
+    .meta {
+      font-family: 'IBM Plex Mono', 'SF Mono', 'Menlo', monospace;
+      font-size: 16px;
+      font-weight: 500;
+      color: #5f7a8a;
+      margin-top: 14px;
+      letter-spacing: 0.02em;
+    }
+
+    .headline {
+      font-size: 78px;
+      font-weight: 800;
+      letter-spacing: -0.038em;
+      line-height: 1.04;
+      color: #fafbfb;
+      margin-bottom: 26px;
+    }
+
+    .headline .accent {
+      color: #5eead4;
+    }
+
+    .subtitle {
+      font-size: 24px;
+      font-weight: 400;
+      line-height: 1.45;
+      color: #9fb4b1;
+      max-width: 920px;
+    }
+
+    .tagline {
+      font-size: 16px;
+      font-weight: 500;
+      color: #5f7a8a;
+      letter-spacing: 0.02em;
+    }
+
+    .url {
+      font-family: 'IBM Plex Mono', 'SF Mono', 'Menlo', monospace;
+      font-size: 18px;
+      font-weight: 500;
+      color: #5eead4;
+      letter-spacing: 0.01em;
+    }
+  </style>
+</head>
+<body>
+  <div class="layer top">
+    <div class="wordmark">morph</div>
+    <div class="meta">v0.48 · alpha · open research prototype</div>
+  </div>
+
+  <div class="layer center">
+    <div class="headline">Refuses merges<br>that make the code <span class="accent">worse</span>.</div>
+    <div class="subtitle">
+      Version control for AI-assisted development. Records every agent session,
+      attaches test results to every commit.
+    </div>
+  </div>
+
+  <div class="layer bottom">
+    <div class="tagline">Cursor · Claude Code · OpenCode · Agent of Empires</div>
+    <div class="url">r.github.io/morph</div>
+  </div>
+</body>
+</html>
