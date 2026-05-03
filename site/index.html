@@ -4,7 +4,22 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Morph — Git for AI-assisted development</title>
-  <meta name="description" content="Morph is a version control system that records every agent session, attaches evaluation scores to commits, and gates merges on behavioral dominance. Built for Cursor, Claude Code, OpenCode, and Agent of Empires.">
+  <meta name="description" content="When an agent writes your code, git only sees the diff. Morph records every agent session, attaches test results to every commit, and refuses merges that make the code worse. Cursor, Claude Code, OpenCode, Agent of Empires.">
+  <link rel="canonical" href="https://r.github.io/morph/">
+
+  <!-- Open Graph / Facebook / Slack / Discord / LinkedIn -->
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://r.github.io/morph/">
+  <meta property="og:site_name" content="Morph">
+  <meta property="og:title" content="Morph — Git for AI-assisted development">
+  <meta property="og:description" content="When an agent writes your code, git only sees the diff. Morph records every agent session, attaches test results to every commit, and refuses merges that make the code worse.">
+
+  <!-- Twitter / X -->
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:url" content="https://r.github.io/morph/">
+  <meta name="twitter:title" content="Morph — Git for AI-assisted development">
+  <meta name="twitter:description" content="When an agent writes your code, git only sees the diff. Morph records every agent session, attaches test results to every commit, and refuses merges that make the code worse.">
+
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -177,6 +192,26 @@
       gap: 1rem;
       justify-content: center;
       flex-wrap: wrap;
+    }
+
+    .hero .hero-meta {
+      margin-top: 1.75rem;
+      font-size: 0.85rem;
+      color: var(--fg-subtle);
+      max-width: 560px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .hero .hero-meta a {
+      color: var(--fg-muted);
+      text-decoration: underline;
+      text-underline-offset: 3px;
+      font-weight: 500;
+    }
+
+    .hero .hero-meta a:hover {
+      color: var(--accent);
     }
 
     .btn {
@@ -971,11 +1006,11 @@
     <span class="badge">Alpha &middot; v0.48.0 &middot; Research prototype</span>
     <h1>Git for <em>AI-assisted</em> development</h1>
     <p class="subtitle">
-      Morph is a version control system that records every agent session as an immutable
-      <em>Run</em> with a full <em>Trace</em>, attaches evaluation scores to commits, and
-      gates merges on <em>behavioral dominance</em> &mdash; not just a clean text diff.
-      It's an open research prototype. <strong style="color: var(--fg);">We're building it in
-      the open and we want your help.</strong>
+      When an agent writes half your code, git only sees the file diff. It can't tell you
+      which prompt produced a function, whether the tests still pass, or whether a clean
+      merge just silently regressed something both branches got right.
+      <strong style="color: var(--fg);">Morph records every agent session on the commit,
+      attaches test results to every commit, and refuses merges that make the code worse.</strong>
     </p>
 
     <div class="hero-install" id="hero-install">
@@ -995,6 +1030,10 @@
         GitHub
       </a>
     </div>
+    <p class="hero-meta">
+      Open research prototype, built in public.
+      <a href="#solution">Read the thesis</a> or <a href="#help">help build it</a>.
+    </p>
   </div>
 
   <!-- Problem -->
