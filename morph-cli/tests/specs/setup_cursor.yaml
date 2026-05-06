@@ -1,0 +1,127 @@
+# Acceptance cases for `morph setup cursor`.
+#
+# These specs codify the contract a fresh `morph setup cursor` run must
+# meet so that, after the user's next Cursor restart, the morph MCP
+# server actually starts and exposes `morph_record_session` (et al.) to
+# the agent.
+#
+# The historical bug this suite locks down: `mcp.json` was written with
+# `command: "morph-mcp"` (a bare command name). Cursor on macOS is a
+# GUI-launched app that does NOT inherit the user's shell PATH, so
+# `/opt/homebrew/bin/morph-mcp` (Apple Silicon Homebrew) was invisible
+# and the server failed to start. The agent saw the `morph-record.mdc`
+# rule but had no tool to call — matching the user-reported symptom of
+# "the MCP tool isn't exposed in this Cursor session's toolset".
+#
+# The fix: resolve `morph-mcp` to an absolute path at setup time and
+# write that into `.cursor/mcp.json`. The cargo-integration-test harness
+# runs `morph` from `target/debug/morph`, so `morph-mcp` is built next
+# to it as a workspace member — `resolve_mcp_command()` finds it via
+# `current_exe()`. We assert the resulting JSON references that
+# absolute path, not the bare name.
+
+- name: setup_cursor_creates_mcp_json
+  init: false
+  steps:
+    - morph: [init, --git-init, "${repo}"]
+    - morph: [setup, cursor, --path, "${repo}"]
+      stdout_contains: "Cursor integration installed"
+  assert:
+    - kind: file_exists
+      path: .cursor/mcp.json
+    - kind: file_exists
+      path: .cursor/hooks.json
+    - kind: file_exists
+      path: .cursor/morph-record-prompt.sh
+    - kind: file_exists
+      path: .cursor/morph-record-response.sh
+    - kind: file_exists
+      path: .cursor/morph-record-stop.sh
+    - kind: file_exists
+      path: .cursor/morph-record-checks.sh
+    - kind: dir_exists
+      path: .cursor/rules
+
+- name: setup_cursor_mcp_json_uses_absolute_morph_mcp_path
+  init: false
+  steps:
+    - morph: [init, --git-init, "${repo}"]
+    - morph: [setup, cursor, --path, "${repo}"]
+  assert:
+    # The morph MCP server entry exists under mcpServers.morph
+    - kind: file_contains
+      path: .cursor/mcp.json
+      contents: '"morph"'
+    # And critically, the command is an absolute path that ends in
+    # `morph-mcp` — Cursor on macOS is a GUI app that doesn't inherit
+    # the shell PATH, so a bare `"morph-mcp"` command silently fails
+    # to spawn and the agent loses access to `morph_record_session`.
+    # The cargo test harness builds `morph-mcp` next to `morph` in
+    # `target/debug/`, and the resolver picks that up via current_exe().
+    - kind: file_contains
+      path: .cursor/mcp.json
+      contents: '/morph-mcp"'
+    # MORPH_WORKSPACE env entry remains so the server lands in the
+    # correct repo regardless of the cwd Cursor launches it with.
+    - kind: file_contains
+      path: .cursor/mcp.json
+      contents: 'MORPH_WORKSPACE'
+
+- name: setup_cursor_prints_resolved_mcp_command
+  init: false
+  steps:
+    - morph: [init, --git-init, "${repo}"]
+    - morph: [setup, cursor, --path, "${repo}"]
+      # Surface the resolved binary path in the CLI summary so the user
+      # can immediately see — and verify — what got written.
+      stdout_contains:
+        - "morph-mcp:"
+        - "/morph-mcp"
+
+- name: setup_cursor_idempotent
+  init: false
+  steps:
+    - morph: [init, --git-init, "${repo}"]
+    - morph: [setup, cursor, --path, "${repo}"]
+    - morph: [setup, cursor, --path, "${repo}"]
+      stdout_contains: "Cursor integration installed"
+  assert:
+    - kind: file_exists
+      path: .cursor/mcp.json
+    - kind: file_exists
+      path: .cursor/hooks.json
+
+- name: setup_cursor_preserves_existing_mcp_servers
+  init: false
+  files:
+    .cursor/mcp.json: |
+      {
+        "mcpServers": {
+          "other-server": {
+            "command": "other-mcp"
+          }
+        }
+      }
+  steps:
+    - morph: [init, --git-init, "${repo}"]
+    - morph: [setup, cursor, --path, "${repo}"]
+  assert:
+    - kind: file_contains
+      path: .cursor/mcp.json
+      contents: 'other-server'
+    - kind: file_contains
+      path: .cursor/mcp.json
+      contents: 'other-mcp'
+    - kind: file_contains
+      path: .cursor/mcp.json
+      contents: '"morph"'
+    - kind: file_contains
+      path: .cursor/mcp.json
+      contents: '/morph-mcp"'
+
+- name: setup_cursor_requires_morph_init
+  init: false
+  steps:
+    - morph: [setup, cursor, --path, "${repo}"]
+      expect_exit: 1
+      stderr_contains: ".morph"

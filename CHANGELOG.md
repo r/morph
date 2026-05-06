@@ -16,6 +16,62 @@ metrics — see `.cursor/rules/behavioral-commits.mdc`.
 
 ## [Unreleased]
 
+## [0.48.2] — 2026-05-06
+
+User-visible bug fix: `morph setup cursor` (and the
+`claude-code` / `opencode` siblings, and the `aoe` delegator
+that calls them) now resolve `morph-mcp` to an **absolute path**
+before writing the IDE integration JSON. Cursor on macOS is a
+GUI-launched app that does not inherit the user's shell PATH,
+so the previous `command: "morph-mcp"` entry silently failed to
+spawn for Homebrew users on `/opt/homebrew/bin` — the agent saw
+the `morph-record.mdc` rule but had no `morph_record_session`
+tool to call. This release closes that gap.
+
+### Fixed
+
+- **`morph-cli/src/setup.rs`**: new `resolve_mcp_command()`
+  helper writes an absolute path to `morph-mcp` into
+  `.cursor/mcp.json`, `.claude/settings.json`, and
+  `opencode.json`. Resolution order: `MORPH_MCP_PATH` env var
+  (escape hatch for non-standard installs) → `morph-mcp`
+  sibling of the running `morph` binary via
+  `current_exe()` (the common case for Homebrew, `cargo
+  install`, AUR, etc.) → manual `PATH` walk → bare-name
+  fallback. The bare-name fallback emits a stderr warning so
+  the user can fix it manually.
+- **`SetupReport` / `OpenCodeSetupReport` /
+  `ClaudeCodeSetupReport`** now carry the resolved
+  `mcp_command` string, and the `morph setup …` CLI summary
+  prints it as `morph-mcp: <resolved path>` so a fresh setup
+  immediately shows what got written into the IDE config.
+
+### Tests
+
+- **New spec:** `morph-cli/tests/specs/setup_cursor.yaml`
+  covers `setup cursor`'s contract end-to-end: `.cursor/mcp.json`
+  + `.cursor/hooks.json` + the four hook scripts get written,
+  the resolved command is an absolute path ending in
+  `/morph-mcp`, the CLI prints the path, the operation is
+  idempotent, existing user MCP servers are preserved, and a
+  missing `.morph/` errors out cleanly. 6 cases, all passing.
+- **New unit tests:** `resolve_mcp_command_honours_env_override`
+  and `resolve_mcp_command_ignores_env_when_path_does_not_exist`
+  pin the env-var contract and the resolver's fallback
+  behaviour against bogus overrides.
+- Existing `mcp_json_created`, `claude_code_settings_json_created`,
+  and `opencode_json_created` tests now accept either the bare
+  `morph-mcp` name or any absolute path ending in `morph-mcp`,
+  matching the new resolver semantics. The setup_claude_code
+  spec relaxes its `'"morph-mcp"'` assertion to `'morph-mcp"'`
+  for the same reason.
+
+### Total
+
+493 morph-cli tests passing (41 doc + 8 setup + 432 spec +
+10 status + 2 status-merge). No other crate's behaviour
+changed.
+
 ## [0.48.1] — 2026-05-02
 
 Senior-engineer cleanup pass — small reliability + readability
@@ -1592,7 +1648,8 @@ Three coordinated changes to repo setup, adoption, and migration.
 - 15 new YAML acceptance spec cases in the default eval suite:
   `init_at_latest:*` ×4, `init_in_git_dir:*` ×6, `upgrade:*` ×5.
 
-[Unreleased]: https://github.com/r/morph/compare/v0.48.1...HEAD
+[Unreleased]: https://github.com/r/morph/compare/v0.48.2...HEAD
+[0.48.2]: https://github.com/r/morph/compare/v0.48.1...v0.48.2
 [0.48.1]: https://github.com/r/morph/compare/v0.48.0...v0.48.1
 [0.48.0]: https://github.com/r/morph/compare/v0.47.0...v0.48.0
 [0.47.0]: https://github.com/r/morph/compare/v0.46.0...v0.47.0

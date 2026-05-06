@@ -2275,6 +2275,14 @@ fn main() -> anyhow::Result<()> {
                         "unchanged"
                     }
                 );
+                println!("  morph-mcp: {}", report.mcp_command);
+                if !report.mcp_command.contains('/')
+                    && !report.mcp_command.contains('\\')
+                {
+                    eprintln!(
+                        "warning: could not locate `morph-mcp` on disk; wrote bare command name into mcp.json. Cursor on macOS doesn't inherit shell PATH, so the MCP server may fail to start. Set MORPH_MCP_PATH or edit .cursor/mcp.json with the absolute path."
+                    );
+                }
             }
             SetupCmd::Opencode { path } => {
                 let root = std::path::Path::new(&path)
@@ -2310,6 +2318,7 @@ fn main() -> anyhow::Result<()> {
                         "unchanged"
                     }
                 );
+                println!("  morph-mcp: {}", report.mcp_command);
             }
             SetupCmd::ClaudeCode { path } => {
                 let root = std::path::Path::new(&path)
@@ -2330,6 +2339,7 @@ fn main() -> anyhow::Result<()> {
                         "unchanged"
                     }
                 );
+                println!("  morph-mcp: {}", report.mcp_command);
             }
             SetupCmd::Aoe {
                 path,

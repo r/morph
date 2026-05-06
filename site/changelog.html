@@ -343,7 +343,69 @@
 
     <article class="release">
       <header>
-        <span class="version">0.48.1 <span class="latest">Latest</span></span>
+        <span class="version">0.48.2 <span class="latest">Latest</span></span>
+        <span class="date">2026-05-06</span>
+      </header>
+      <p class="summary">
+        <strong>Fix: <code>morph setup cursor</code> now writes an
+        absolute path to <code>morph-mcp</code>.</strong> Cursor on
+        macOS is a GUI-launched app and does <em>not</em> inherit the
+        user&rsquo;s shell PATH, so the previous bare
+        <code>command: &ldquo;morph-mcp&rdquo;</code> entry in
+        <code>.cursor/mcp.json</code> silently failed to spawn for
+        Homebrew users on <code>/opt/homebrew/bin</code>. The agent
+        saw the <code>morph-record.mdc</code> rule but had no
+        <code>morph_record_session</code> tool to call. This release
+        closes that gap for Cursor, Claude Code, and OpenCode.
+      </p>
+
+      <h3 class="changed"><span class="marker"></span>Fixed</h3>
+      <ul>
+        <li><strong><code>morph-cli/src/setup.rs</code></strong>: new
+          <code>resolve_mcp_command()</code> helper writes an absolute
+          path to <code>morph-mcp</code> into
+          <code>.cursor/mcp.json</code>,
+          <code>.claude/settings.json</code>, and
+          <code>opencode.json</code>. Resolution order:
+          <code>MORPH_MCP_PATH</code> env var (escape hatch) &rarr;
+          <code>morph-mcp</code> sibling of the running
+          <code>morph</code> binary via <code>current_exe()</code>
+          (the common case for Homebrew, <code>cargo install</code>,
+          AUR, etc.) &rarr; manual <code>PATH</code> walk &rarr;
+          bare-name fallback. The bare-name fallback emits a stderr
+          warning so the user can fix it manually.</li>
+        <li><strong><code>SetupReport</code></strong> /
+          <code>OpenCodeSetupReport</code> /
+          <code>ClaudeCodeSetupReport</code> now carry the resolved
+          <code>mcp_command</code> string, and the
+          <code>morph setup &hellip;</code> CLI summary prints it as
+          <code>morph-mcp: &lt;resolved path&gt;</code> so a fresh
+          setup immediately shows what got written into the IDE
+          config.</li>
+      </ul>
+
+      <h3 class="tests"><span class="marker"></span>Tests</h3>
+      <ul>
+        <li>New spec
+          <code>morph-cli/tests/specs/setup_cursor.yaml</code>
+          covers <code>setup cursor</code>&rsquo;s contract end-to-end
+          (6 cases: file emission, absolute-path command, CLI summary,
+          idempotency, existing-config preservation, missing
+          <code>.morph/</code> error). Two new unit tests pin the
+          <code>MORPH_MCP_PATH</code> env-override contract and the
+          resolver&rsquo;s fallback behaviour against bogus overrides.
+          Existing <code>setup_claude_code</code> spec relaxes its
+          <code>'&quot;morph-mcp&quot;'</code> assertion to
+          <code>'morph-mcp&quot;'</code>.</li>
+        <li><strong>493 morph-cli tests passing</strong>
+          (41 + 8 + 432 + 10 + 2). No other crate&rsquo;s behaviour
+          changed.</li>
+      </ul>
+    </article>
+
+    <article class="release">
+      <header>
+        <span class="version">0.48.1</span>
         <span class="date">2026-05-02</span>
       </header>
       <p class="summary">
@@ -544,98 +606,6 @@
         <li>Workspace <strong>426 / 426 spec tests passing</strong>;
           unit tests across the workspace are green.
           Cucumber 34 / 37 (3 skipped, 0 failed) &mdash; no change.</li>
-      </ul>
-    </article>
-
-    <article class="release">
-      <header>
-        <span class="version">0.47.0</span>
-        <span class="date">2026-05-02</span>
-      </header>
-      <p class="summary">
-        <strong>Vocabulary unification, part 2.</strong> Fifth
-        release of the &ldquo;make morph intuitive&rdquo; effort.
-        The v0.45-deprecated <code>morph trace</code>,
-        <code>morph tap</code>, and <code>morph traces</code>
-        namespaces are <em>removed</em>; <code>morph inspect</code>
-        is the only spelling. New Rust-level type aliases
-        (<code>Session</code>, <code>SessionTrace</code>,
-        <code>SessionEvent</code>, <code>Eval</code>,
-        <code>EvalItem</code>) let newer call sites match the user
-        vocabulary without renaming the storage-layer structs &mdash;
-        on-disk objects stay byte-for-byte unchanged. The
-        v0.46-deprecated <code>morph run</code> and old
-        <code>morph eval</code> spellings continue to work through
-        v0.47 with their stderr deprecation notice.
-      </p>
-
-      <h3 class="added"><span class="marker"></span>Added</h3>
-      <ul>
-        <li>Rust type aliases in
-          <code>morph-core/src/objects.rs</code> and re-exported
-          from <code>morph_core</code>:
-          <code>pub type Session = Run;</code>,
-          <code>pub type SessionTrace = Trace;</code>,
-          <code>pub type SessionEvent = TraceEvent;</code>,
-          <code>pub type Eval = EvalSuite;</code>,
-          <code>pub type EvalItem = EvalCase;</code>. Pure type
-          renames; serialization, hashing, and
-          <code>MorphObject</code> dispatch all go through the
-          underlying struct.</li>
-        <li>New spec
-          <code>removed_inspect_aliases.yaml</code> (3 cases) pins
-          that <code>morph trace</code>, <code>morph tap</code>,
-          and <code>morph traces</code> exit with code 2 and
-          &ldquo;unrecognized subcommand&rdquo; after removal &mdash;
-          so a future re-introduction is intentional, not
-          accidental.</li>
-      </ul>
-
-      <h3 class="removed"><span class="marker"></span>Removed</h3>
-      <ul>
-        <li><code>morph trace show</code>,
-          <code>morph tap {summary, inspect, diagnose, export, trace-stats, preview}</code>,
-          <code>morph traces {summary, task-structure, target-context, final-artifact, semantics, verification}</code>
-          &mdash; use the corresponding <code>morph inspect</code>
-          subcommand. The companion <code>TraceCmd</code>,
-          <code>TapCmd</code>, <code>TracesCmd</code> enums and
-          dispatch arms in
-          <code>morph-cli/src/cli.rs</code> and
-          <code>morph-cli/src/main.rs</code> are gone.</li>
-        <li>Spec files <code>tap.yaml</code>,
-          <code>traces.yaml</code>, and
-          <code>inspect_deprecated_aliases.yaml</code> deleted; the
-          unified <code>inspect.yaml</code> covers every
-          subcommand.</li>
-      </ul>
-
-      <h3 class="changed"><span class="marker"></span>Changed</h3>
-      <ul>
-        <li><code>morph --help</code> Inspect docstring no longer
-          mentions the removed fall-back commands.</li>
-        <li>Doc + site sweep for the v0.45 removal:
-          <code>README.md</code>, <code>docs/v0-spec.md</code>,
-          and stale internal doc-comments in
-          <code>morph-core/src/store.rs</code> and
-          <code>structured.rs</code> rewritten to point at
-          <code>morph inspect</code>. Architectural prose
-          (&ldquo;the morph trace contract&rdquo;, &ldquo;morph
-          traces live in the commit graph&rdquo;) is left alone
-          per the dual-vocabulary rule for
-          <code>v0-spec.md</code>, <code>THEORY.md</code>, and
-          <code>morph-paper.tex</code>.</li>
-        <li>The <code>inspect::deprecation_notice</code> helper
-          now points at v0.48 so the v0.46-deprecated
-          <code>morph run</code> / <code>eval add-case</code>
-          aliases emit the right wording.</li>
-      </ul>
-
-      <h3 class="tests"><span class="marker"></span>Tests</h3>
-      <ul>
-        <li>Workspace <strong>1217 / 1217 passing</strong> (1244
-          minus 30 cases in the three deleted spec files plus 3
-          new removal-proof cases). Cucumber 34 / 37 (3 skipped,
-          0 failed) &mdash; no change.</li>
       </ul>
     </article>
 

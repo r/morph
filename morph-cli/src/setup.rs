@@ -1,6 +1,6 @@
 //! `morph setup cursor` / `morph setup opencode` — install IDE integration into a project.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Embedded asset contents (compiled into the binary).
 mod assets {
@@ -63,6 +63,12 @@ pub struct SetupReport {
     pub rules_written: Vec<String>,
     pub hooks_json_updated: bool,
     pub mcp_json_updated: bool,
+    /// The exact `command` string written to `.cursor/mcp.json` —
+    /// either an absolute path to `morph-mcp` (preferred) or the
+    /// bare name `morph-mcp` if the resolver couldn't find one.
+    /// Surfaced in the CLI summary so the user can verify which
+    /// binary Cursor will actually launch.
+    pub mcp_command: String,
 }
 
 /// Install Cursor hooks, MCP config, and rules into `project_root`.
@@ -79,9 +85,10 @@ pub fn setup_cursor(project_root: &Path) -> anyhow::Result<SetupReport> {
     let cursor_dir = project_root.join(".cursor");
     std::fs::create_dir_all(&cursor_dir)?;
 
+    let mcp_command = resolve_mcp_command();
     let hooks_written = write_hook_scripts(project_root)?;
     let hooks_json_updated = merge_hooks_json(&cursor_dir)?;
-    let mcp_json_updated = merge_mcp_json(&cursor_dir, project_root)?;
+    let mcp_json_updated = merge_mcp_json(&cursor_dir, project_root, &mcp_command)?;
     let rules_written = write_rules(&cursor_dir)?;
 
     Ok(SetupReport {
@@ -89,6 +96,7 @@ pub fn setup_cursor(project_root: &Path) -> anyhow::Result<SetupReport> {
         rules_written,
         hooks_json_updated,
         mcp_json_updated,
+        mcp_command,
     })
 }
 
@@ -97,6 +105,9 @@ pub struct OpenCodeSetupReport {
     pub opencode_json_updated: bool,
     pub agents_md_written: bool,
     pub plugin_written: bool,
+    /// Absolute path written into `opencode.json`'s `mcp.morph.command`
+    /// (or the bare `morph-mcp` fallback). See [`SetupReport::mcp_command`].
+    pub mcp_command: String,
 }
 
 /// Install OpenCode MCP config, AGENTS.md, and plugin into `project_root`.
@@ -110,7 +121,8 @@ pub fn setup_opencode(project_root: &Path) -> anyhow::Result<OpenCodeSetupReport
         );
     }
 
-    let opencode_json_updated = merge_opencode_json(project_root)?;
+    let mcp_command = resolve_mcp_command();
+    let opencode_json_updated = merge_opencode_json(project_root, &mcp_command)?;
     let agents_md_written = write_agents_md(project_root)?;
     let plugin_written = write_opencode_plugin(project_root)?;
 
@@ -118,6 +130,7 @@ pub fn setup_opencode(project_root: &Path) -> anyhow::Result<OpenCodeSetupReport
         opencode_json_updated,
         agents_md_written,
         plugin_written,
+        mcp_command,
     })
 }
 
@@ -125,6 +138,10 @@ pub fn setup_opencode(project_root: &Path) -> anyhow::Result<OpenCodeSetupReport
 pub struct ClaudeCodeSetupReport {
     pub settings_json_updated: bool,
     pub hooks_written: Vec<String>,
+    /// Absolute path written into `.claude/settings.json`'s
+    /// `mcpServers.morph.command` (or the bare `morph-mcp` fallback).
+    /// See [`SetupReport::mcp_command`].
+    pub mcp_command: String,
 }
 
 /// Install Claude Code MCP config + hooks into `project_root`.
@@ -147,12 +164,15 @@ pub fn setup_claude_code(project_root: &Path) -> anyhow::Result<ClaudeCodeSetupR
     let claude_dir = project_root.join(".claude");
     std::fs::create_dir_all(&claude_dir)?;
 
+    let mcp_command = resolve_mcp_command();
     let hooks_written = write_claude_hook_scripts(&claude_dir)?;
-    let settings_json_updated = merge_claude_settings_json(&claude_dir, project_root)?;
+    let settings_json_updated =
+        merge_claude_settings_json(&claude_dir, project_root, &mcp_command)?;
 
     Ok(ClaudeCodeSetupReport {
         settings_json_updated,
         hooks_written,
+        mcp_command,
     })
 }
 
@@ -228,15 +248,93 @@ fn project_path_string(project_root: &Path) -> String {
 /// Build the `mcpServers.morph` JSON value used by Cursor and
 /// Claude Code. OpenCode uses a different shape (see
 /// `merge_opencode_json`).
-fn morph_mcp_server_value(project_path: &str) -> serde_json::Value {
+///
+/// `mcp_command` should be the output of [`resolve_mcp_command`] — an
+/// absolute path to `morph-mcp` whenever we can find one, falling back
+/// to the bare name. The absolute path matters because Cursor on macOS
+/// is a GUI-launched app and does NOT inherit the user's shell PATH, so
+/// `command: "morph-mcp"` silently fails to spawn for Homebrew users on
+/// `/opt/homebrew/bin`.
+fn morph_mcp_server_value(project_path: &str, mcp_command: &str) -> serde_json::Value {
     serde_json::json!({
-        "command": "morph-mcp",
+        "command": mcp_command,
         "args": [],
         "env": { "MORPH_WORKSPACE": project_path }
     })
 }
 
-fn merge_claude_settings_json(claude_dir: &Path, project_root: &Path) -> anyhow::Result<bool> {
+/// Resolve the absolute path of `morph-mcp` to write into IDE
+/// integration JSON files. Cursor (and Claude Code Desktop, and many
+/// other GUI-launched apps on macOS) inherit only the system PATH —
+/// not the user's shell PATH — so a bare `command: "morph-mcp"` in
+/// `.cursor/mcp.json` fails silently when the binary lives in
+/// `/opt/homebrew/bin` (Apple Silicon Homebrew) or any other dir not
+/// on the system PATH.
+///
+/// Resolution order, first match wins:
+/// 1. `MORPH_MCP_PATH` env var, if set and points to an existing file.
+///    Documented escape hatch for non-standard installs.
+/// 2. A `morph-mcp` (or `morph-mcp.exe` on Windows) sibling of the
+///    currently running `morph` binary, via `std::env::current_exe()`.
+///    This is the common case: Homebrew, `cargo install`, AUR, etc.
+///    all install the two binaries together, and this lookup gives us
+///    a fully-resolved absolute path that survives symlinks.
+/// 3. Walk `PATH` for `morph-mcp`. Last-resort heuristic in case the
+///    binaries got separated.
+/// 4. Fall back to the bare name `morph-mcp`. Same behaviour we had
+///    before this change — documented in the CLI summary so the user
+///    can see they may need to set `command` manually.
+pub(crate) fn resolve_mcp_command() -> String {
+    let exe_name = if cfg!(target_os = "windows") {
+        "morph-mcp.exe"
+    } else {
+        "morph-mcp"
+    };
+
+    if let Some(p) = std::env::var_os("MORPH_MCP_PATH") {
+        let pb = PathBuf::from(&p);
+        if pb.is_file() {
+            return pb.to_string_lossy().into_owned();
+        }
+    }
+
+    if let Ok(current) = std::env::current_exe() {
+        if let Some(parent) = current.parent() {
+            let candidate = parent.join(exe_name);
+            if candidate.is_file() {
+                return candidate.to_string_lossy().into_owned();
+            }
+        }
+    }
+
+    if let Some(found) = which_in_path(exe_name) {
+        return found.to_string_lossy().into_owned();
+    }
+
+    exe_name.to_string()
+}
+
+/// Manual `which`. Avoids pulling in the `which` crate for one
+/// fallback path — Morph's PATH layout is the simple Unix one.
+/// On Windows we'd want to also try the `PATHEXT`-suffixed candidates,
+/// but `morph-mcp.exe` is already the explicit name so a single
+/// lookup suffices here.
+fn which_in_path(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path) {
+        let candidate = dir.join(name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn merge_claude_settings_json(
+    claude_dir: &Path,
+    project_root: &Path,
+    mcp_command: &str,
+) -> anyhow::Result<bool> {
     let project_path = project_path_string(project_root);
     let claude_hooks: &[(&str, &str)] = &[
         ("UserPromptSubmit", ".claude/hooks/morph-record-prompt.sh"),
@@ -256,7 +354,10 @@ fn merge_claude_settings_json(claude_dir: &Path, project_root: &Path) -> anyhow:
                 .ok_or_else(|| {
                     anyhow::anyhow!(".claude/settings.json mcpServers is not an object")
                 })?;
-            mcp_servers.insert("morph".to_string(), morph_mcp_server_value(&project_path));
+            mcp_servers.insert(
+                "morph".to_string(),
+                morph_mcp_server_value(&project_path, mcp_command),
+            );
 
             // 2. hooks.UserPromptSubmit + hooks.Stop. Claude Code's hook schema
             //    is `{event: [{matcher?, hooks: [{type, command}]}]}`. Morph
@@ -583,7 +684,7 @@ fn write_aoe_dockerfile(aoe_dir: &Path) -> anyhow::Result<bool> {
 
 // === OpenCode ===============================================================
 
-fn merge_opencode_json(project_root: &Path) -> anyhow::Result<bool> {
+fn merge_opencode_json(project_root: &Path, mcp_command: &str) -> anyhow::Result<bool> {
     let project_path = project_path_string(project_root);
     merge_json_object(
         &project_root.join("opencode.json"),
@@ -599,7 +700,7 @@ fn merge_opencode_json(project_root: &Path) -> anyhow::Result<bool> {
                 "morph".to_string(),
                 serde_json::json!({
                     "type": "local",
-                    "command": ["morph-mcp"],
+                    "command": [mcp_command],
                     "environment": {
                         "MORPH_WORKSPACE": project_path,
                     }
@@ -718,7 +819,11 @@ fn merge_hooks_json(cursor_dir: &Path) -> anyhow::Result<bool> {
     )
 }
 
-fn merge_mcp_json(cursor_dir: &Path, project_root: &Path) -> anyhow::Result<bool> {
+fn merge_mcp_json(
+    cursor_dir: &Path,
+    project_root: &Path,
+    mcp_command: &str,
+) -> anyhow::Result<bool> {
     let project_path = project_path_string(project_root);
     merge_json_object(
         &cursor_dir.join("mcp.json"),
@@ -730,7 +835,10 @@ fn merge_mcp_json(cursor_dir: &Path, project_root: &Path) -> anyhow::Result<bool
                 .or_insert(serde_json::json!({}))
                 .as_object_mut()
                 .ok_or_else(|| anyhow::anyhow!(".cursor/mcp.json mcpServers is not an object"))?;
-            servers.insert("morph".to_string(), morph_mcp_server_value(&project_path));
+            servers.insert(
+                "morph".to_string(),
+                morph_mcp_server_value(&project_path, mcp_command),
+            );
             Ok(())
         },
     )
@@ -757,6 +865,61 @@ mod tests {
 
     fn make_morph_repo(dir: &Path) {
         fs::create_dir_all(dir.join(".morph")).unwrap();
+    }
+
+    #[test]
+    fn resolve_mcp_command_honours_env_override() {
+        // SAFETY: this test only mutates one process-wide env var and
+        // restores it before returning. It runs in cargo's default
+        // multi-thread runner, so other tests reading `MORPH_MCP_PATH`
+        // could in principle race — but no other test in this crate
+        // touches that var, and the resolver is the only consumer.
+        let tmp = tempfile::tempdir().unwrap();
+        let fake_mcp = tmp.path().join("custom-morph-mcp");
+        fs::write(&fake_mcp, b"#!/bin/sh\nexit 0\n").unwrap();
+
+        let prior = std::env::var_os("MORPH_MCP_PATH");
+        // SAFETY: see comment above.
+        unsafe {
+            std::env::set_var("MORPH_MCP_PATH", &fake_mcp);
+        }
+        let resolved = resolve_mcp_command();
+        match prior {
+            Some(v) => unsafe { std::env::set_var("MORPH_MCP_PATH", v) },
+            None => unsafe { std::env::remove_var("MORPH_MCP_PATH") },
+        }
+
+        assert_eq!(resolved, fake_mcp.to_string_lossy());
+    }
+
+    #[test]
+    fn resolve_mcp_command_ignores_env_when_path_does_not_exist() {
+        let prior = std::env::var_os("MORPH_MCP_PATH");
+        // SAFETY: see `resolve_mcp_command_honours_env_override`.
+        unsafe {
+            std::env::set_var(
+                "MORPH_MCP_PATH",
+                "/this/path/definitely/does/not/exist/morph-mcp",
+            );
+        }
+        let resolved = resolve_mcp_command();
+        match prior {
+            Some(v) => unsafe { std::env::set_var("MORPH_MCP_PATH", v) },
+            None => unsafe { std::env::remove_var("MORPH_MCP_PATH") },
+        }
+
+        // Should fall through to the sibling/PATH/bare-name branches —
+        // any of which still ends in `morph-mcp` (the binary name on
+        // this OS). Crucially, the bogus override path must not leak
+        // into the result.
+        assert!(!resolved.contains("/this/path/definitely/does/not/exist/"));
+        assert!(
+            resolved == "morph-mcp"
+                || resolved == "morph-mcp.exe"
+                || resolved.ends_with("/morph-mcp")
+                || resolved.ends_with("\\morph-mcp.exe"),
+            "fallback should still name morph-mcp (got {resolved:?})"
+        );
     }
 
     #[test]
@@ -832,7 +995,19 @@ mod tests {
         let val: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&mcp_path).unwrap()).unwrap();
         let morph = &val["mcpServers"]["morph"];
-        assert_eq!(morph["command"].as_str().unwrap(), "morph-mcp");
+        // Command is either an absolute path that ends in `morph-mcp`
+        // (the GUI-app-friendly form) or — only when no `morph-mcp`
+        // sibling/PATH match was found — the bare name. Both end with
+        // the binary name; cargo's deps/ test layout means current_exe()
+        // sits in `target/debug/deps/`, where no `morph-mcp` sibling
+        // exists, so the unit-test layer typically lands on the bare
+        // fallback. The integration specs in `tests/specs/` exercise
+        // the absolute-path branch via `target/debug/morph`.
+        let cmd = morph["command"].as_str().unwrap();
+        assert!(
+            cmd == "morph-mcp" || cmd.ends_with("/morph-mcp") || cmd.ends_with("\\morph-mcp.exe"),
+            "command should resolve to morph-mcp (got {cmd:?})"
+        );
         let ws = morph["env"]["MORPH_WORKSPACE"].as_str().unwrap();
         let expected = tmp.path().canonicalize().unwrap();
         assert_eq!(ws, expected.to_str().unwrap());
@@ -975,7 +1150,11 @@ mod tests {
         let morph = &val["mcp"]["morph"];
         assert_eq!(morph["type"].as_str().unwrap(), "local");
         let cmd = morph["command"].as_array().unwrap();
-        assert_eq!(cmd[0].as_str().unwrap(), "morph-mcp");
+        let cmd0 = cmd[0].as_str().unwrap();
+        assert!(
+            cmd0 == "morph-mcp" || cmd0.ends_with("/morph-mcp") || cmd0.ends_with("\\morph-mcp.exe"),
+            "command[0] should resolve to morph-mcp (got {cmd0:?})"
+        );
         let ws = morph["environment"]["MORPH_WORKSPACE"].as_str().unwrap();
         let expected = tmp.path().canonicalize().unwrap();
         assert_eq!(ws, expected.to_str().unwrap());
@@ -1122,7 +1301,11 @@ mod tests {
         let val: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         let morph = &val["mcpServers"]["morph"];
-        assert_eq!(morph["command"].as_str().unwrap(), "morph-mcp");
+        let cmd = morph["command"].as_str().unwrap();
+        assert!(
+            cmd == "morph-mcp" || cmd.ends_with("/morph-mcp") || cmd.ends_with("\\morph-mcp.exe"),
+            "command should resolve to morph-mcp (got {cmd:?})"
+        );
         let ws = morph["env"]["MORPH_WORKSPACE"].as_str().unwrap();
         let expected = tmp.path().canonicalize().unwrap();
         assert_eq!(ws, expected.to_str().unwrap());

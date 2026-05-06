@@ -32,9 +32,12 @@
     - kind: file_contains
       path: .claude/settings.json
       contents: '"morph"'
+    # Match the trailing quote only — the resolved command may be
+    # either the bare name `"morph-mcp"` or an absolute path like
+    # `"/opt/homebrew/bin/morph-mcp"`. Both end with `morph-mcp"`.
     - kind: file_contains
       path: .claude/settings.json
-      contents: '"morph-mcp"'
+      contents: 'morph-mcp"'
     - kind: file_contains
       path: .claude/settings.json
       contents: 'MORPH_WORKSPACE'
