@@ -409,12 +409,26 @@ fn emit_step(code: &mut String, step: &Step, idx: usize) {
     // unknown". Specs typically set repo-local `git config user.*`
     // in their shell setup, but treating this as a harness-level
     // default keeps a missing config from being a silent foot-gun.
+    //
+    // MORPH_MCP_PATH points at a stub file we plant in OUT_DIR (see
+    // `main()` below). `cargo test --workspace` does NOT build the
+    // `morph-mcp` binary at `target/debug/morph-mcp` (only its
+    // *unit-test* binary in `target/debug/deps/`), so on a clean
+    // CI runner with no globally-installed morph-mcp, the
+    // `morph setup cursor` specs that assert mcp.json contains an
+    // absolute path ending in `/morph-mcp` would fall back to the
+    // bare-name branch of `resolve_mcp_command` and fail. The stub
+    // gives the resolver a deterministic absolute path ending in
+    // `/morph-mcp`, exercising the same code path users hit in
+    // production (their real `morph-mcp` on disk) without the
+    // build-order dependency.
     writeln!(
         code,
         "        cmd.env(\"GIT_AUTHOR_NAME\", \"morph-test\")\n            \
                   .env(\"GIT_AUTHOR_EMAIL\", \"morph-test@example.com\")\n            \
                   .env(\"GIT_COMMITTER_NAME\", \"morph-test\")\n            \
-                  .env(\"GIT_COMMITTER_EMAIL\", \"morph-test@example.com\");"
+                  .env(\"GIT_COMMITTER_EMAIL\", \"morph-test@example.com\")\n            \
+                  .env(\"MORPH_MCP_PATH\", concat!(env!(\"OUT_DIR\"), \"/morph-mcp\"));"
     )
     .unwrap();
 
@@ -694,6 +708,17 @@ fn main() {
 
     let out_dir = env::var("OUT_DIR").unwrap();
     let out_path = Path::new(&out_dir).join("spec_tests.rs");
+
+    // Plant a stub `morph-mcp` file in OUT_DIR. Generated specs set
+    // `MORPH_MCP_PATH=<OUT_DIR>/morph-mcp` so `resolve_mcp_command`
+    // returns this absolute path (ending in `/morph-mcp`) instead
+    // of falling back to the bare name on CI runners that don't
+    // have morph-mcp built or installed. See the long comment in
+    // `emit_step` for why this matters.
+    let stub_mcp_path = Path::new(&out_dir).join("morph-mcp");
+    if !stub_mcp_path.exists() {
+        fs::write(&stub_mcp_path, b"").expect("write stub morph-mcp");
+    }
 
     let mut all_code = String::from(
         "// Auto-generated from tests/specs/*.yaml -- do not edit.\n\

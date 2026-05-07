@@ -343,7 +343,56 @@
 
     <article class="release">
       <header>
-        <span class="version">0.48.2 <span class="latest">Latest</span></span>
+        <span class="version">0.48.3 <span class="latest">Latest</span></span>
+        <span class="date">2026-05-06</span>
+      </header>
+      <p class="summary">
+        <strong>Re-cuts v0.48.2 with a CI-only fix.</strong> The
+        <code>setup_cursor</code> acceptance specs that v0.48.2
+        introduced asserted <code>mcp.json</code> contains an absolute
+        path ending in <code>/morph-mcp</code>. They passed locally
+        (where <code>morph-mcp</code> is on <code>PATH</code> for any
+        active Morph user) but failed on the GitHub Actions runner
+        because <code>cargo test --workspace</code> does <em>not</em>
+        build the actual <code>morph-mcp</code> binary at
+        <code>target/debug/morph-mcp</code> &mdash; only its unit-test
+        binary in <code>target/debug/deps/</code>. With no
+        <code>morph-mcp</code> on <code>PATH</code> and no sibling of
+        <code>morph</code>, the resolver correctly fell back to the
+        bare name and the spec assertion flunked. v0.48.3 carries the
+        same user-visible behaviour as v0.48.2 and ships through the
+        release pipeline cleanly.
+      </p>
+
+      <h3 class="changed"><span class="marker"></span>Fixed</h3>
+      <ul>
+        <li><strong><code>morph-cli/build.rs</code></strong> plants a
+          stub <code>morph-mcp</code> file in <code>OUT_DIR</code> and
+          injects <code>MORPH_MCP_PATH=&lt;OUT_DIR&gt;/morph-mcp</code>
+          into every generated spec-test invocation. The resolver&rsquo;s
+          first resolution branch (env var, validated via
+          <code>is_file()</code>) is now exercised deterministically
+          across local and CI runs without depending on workspace
+          build order or the runner&rsquo;s <code>PATH</code>. The
+          production fallback chain (env &rarr; sibling &rarr;
+          <code>PATH</code> &rarr; bare) is unchanged; only the
+          test-harness path is pinned.</li>
+      </ul>
+
+      <h3 class="tests"><span class="marker"></span>Tests</h3>
+      <ul>
+        <li>Same six <code>setup_cursor</code> cases as v0.48.2; now
+          green on a runner with no installed
+          <code>morph-mcp</code> and no
+          <code>target/debug/morph-mcp</code>. Verified locally with
+          <code>PATH=/tmp/fake-bins:/usr/bin:/bin</code> &mdash; 1220
+          tests passing across the workspace.</li>
+      </ul>
+    </article>
+
+    <article class="release">
+      <header>
+        <span class="version">0.48.2</span>
         <span class="date">2026-05-06</span>
       </header>
       <p class="summary">
@@ -496,116 +545,6 @@
           <code>cargo clippy --all-targets --all-features -- -D
           warnings</code>, and
           <code>cargo fmt -- --check</code> are clean.</li>
-      </ul>
-    </article>
-
-    <article class="release">
-      <header>
-        <span class="version">0.48.0</span>
-        <span class="date">2026-05-02</span>
-      </header>
-      <p class="summary">
-        <strong>Vocabulary unification, part 3 (final).</strong> Sixth
-        and final release of the &ldquo;make morph intuitive&rdquo;
-        effort. The v0.46-deprecated <code>morph run</code> namespace
-        and the nested <code>morph eval add-case</code> /
-        <code>morph eval suite-show</code> /
-        <code>morph eval suite-from-specs</code> aliases are
-        <em>removed</em>. The JSON-ingest path that used to be
-        <code>morph run record &lt;file&gt;</code> lives on as
-        <code>morph session import</code> &mdash; the only piece of
-        the old <code>run</code> namespace that did something
-        <code>morph session record</code> couldn't already cover. No
-        on-disk format changes.
-      </p>
-
-      <h3 class="added"><span class="marker"></span>Added</h3>
-      <ul>
-        <li><strong><code>morph session import &lt;run.json&gt;
-          [--trace &lt;file&gt;] [--artifact &lt;file&gt;...]</code></strong>
-          ingests a pre-built Run JSON (and optional Trace JSON /
-          artifact list) into the store. Used by automation that
-          builds Run objects out of band &mdash; CI pipelines, MCP
-          bridges, the <code>morph_run_record</code> MCP tool, and
-          the <code>claude-code</code> / <code>cursor</code> hook
-          scripts. Replaces the v0.46-removed <code>morph run
-          record &lt;file&gt;</code>. The <code>morph_run_record</code>
-          MCP tool itself is unchanged.</li>
-        <li>New spec <code>removed_session_eval_aliases.yaml</code>
-          (7 cases) pins that every removed spelling now exits with
-          code 2 and &ldquo;unrecognized subcommand&rdquo;, and that
-          <code>morph session import --help</code> is reachable.</li>
-      </ul>
-
-      <h3 class="removed"><span class="marker"></span>Removed</h3>
-      <ul>
-        <li><code>morph run</code> namespace, in full &mdash;
-          <code>morph run list</code>, <code>morph run show</code>,
-          <code>morph run record-session</code>, and
-          <code>morph run record</code>. Use the corresponding
-          <code>morph session</code> subcommand
-          (<code>list</code> / <code>show</code> / <code>record</code>
-          / <code>import</code>). The v0.46 deprecation notice warned
-          every invocation through v0.47. The companion
-          <code>RunCmd</code> enum and <code>Command::Run</code>
-          dispatch arm are gone.</li>
-        <li><code>morph eval add-case</code>,
-          <code>morph eval suite-show</code>, and
-          <code>morph eval suite-from-specs</code> &mdash; use the
-          flat <code>morph eval add</code> /
-          <code>morph eval show</code> / <code>morph eval rebuild</code>
-          spellings introduced in v0.46.</li>
-        <li><code>inspect::deprecation_notice</code> helper in
-          <code>morph-cli/src/inspect.rs</code>. Nothing dispatches
-          to it anymore now that the v0.46 aliases are gone.</li>
-      </ul>
-
-      <h3 class="changed"><span class="marker"></span>Changed</h3>
-      <ul>
-        <li><strong>Hook scripts and asset templates</strong>
-          (<code>claude-code/hooks/morph-record-stop.sh</code>,
-          <code>cursor/morph-record-{stop,response}.sh</code>,
-          <code>.cursor/morph-record-{stop,response}.sh</code>, and
-          their deployable copies under
-          <code>morph-cli/assets/</code>) call
-          <code>morph session import</code> instead of the removed
-          <code>morph run record</code>.</li>
-        <li><code>morph setup aoe</code> writes
-          <code>morph session record</code> into the
-          <code>on_launch</code> and <code>on_destroy</code> hooks of
-          <code>.agent-of-empires/config.toml</code>. The pre-v0.48
-          spelling stays in the cleanup-prefix list so re-running
-          <code>morph setup aoe</code> against an older config scrubs
-          the legacy lines before emitting the new block.</li>
-        <li><strong>Cucumber step definitions</strong> that used to
-          shell out to <code>morph run record-session</code> now
-          shell out to <code>morph session record</code>. The
-          user-facing Gherkin step name is unchanged.</li>
-        <li><strong>Doc + site sweep.</strong> Every
-          <code>morph run record</code> /
-          <code>morph run record-session</code> /
-          <code>morph eval add-case</code> /
-          <code>morph eval suite-show</code> /
-          <code>morph eval suite-from-specs</code> mention in
-          <code>README.md</code>, <code>docs/v0-spec.md</code>,
-          <code>docs/EVAL-DRIVEN.md</code>,
-          <code>docs/CURSOR-SETUP.md</code>,
-          <code>docs/OPENCODE-SETUP.md</code>,
-          <code>docs/CLAUDE-CODE-SETUP.md</code>,
-          <code>docs/MULTI-MACHINE.md</code>,
-          <code>docs/README.md</code>, and the cursor /
-          opencode rule files now refers to the v0.46/v0.48
-          replacement, with a parenthetical noting the prior
-          spelling and the version that removed it. Architectural
-          prose (&ldquo;run = recorded execution&rdquo;) is left
-          alone per the dual-vocabulary rule.</li>
-      </ul>
-
-      <h3 class="tests"><span class="marker"></span>Tests</h3>
-      <ul>
-        <li>Workspace <strong>426 / 426 spec tests passing</strong>;
-          unit tests across the workspace are green.
-          Cucumber 34 / 37 (3 skipped, 0 failed) &mdash; no change.</li>
       </ul>
     </article>
 

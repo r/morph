@@ -16,6 +16,45 @@ metrics — see `.cursor/rules/behavioral-commits.mdc`.
 
 ## [Unreleased]
 
+## [0.48.3] — 2026-05-06
+
+Re-cuts v0.48.2 with a CI-only fix: the `setup_cursor` acceptance
+specs that v0.48.2 introduced asserted `mcp.json` contains an
+absolute path ending in `/morph-mcp`. They passed locally (where
+`morph-mcp` is on `PATH` for any active Morph user) but failed on
+the GitHub Actions runner because `cargo test --workspace` does
+**not** build the actual `morph-mcp` *binary* at
+`target/debug/morph-mcp` — only its unit-test binary in
+`target/debug/deps/`. With no `morph-mcp` on PATH and no sibling
+of `morph`, `resolve_mcp_command()` correctly fell back to the
+bare name and the spec `file_contains: '/morph-mcp"'` assertion
+flunked. Net effect: the v0.48.2 release pipeline never reached
+the `publish` / `update-tap` steps, so v0.48.2 has a tag but no
+Homebrew formula update. v0.48.3 carries the same user-visible
+behaviour and ships through the pipeline cleanly.
+
+### Fixed
+
+- **`morph-cli/build.rs`** plants a stub `morph-mcp` file in
+  `OUT_DIR` and injects `MORPH_MCP_PATH=<OUT_DIR>/morph-mcp` into
+  every generated spec-test invocation. The resolver's first
+  resolution branch (env var, validated via `is_file()`) is now
+  exercised deterministically across local and CI runs without
+  depending on workspace build order or the runner's `PATH`. The
+  production fallback chain (env → sibling → `PATH` → bare) is
+  unchanged; only the test-harness path is pinned.
+
+### Tests
+
+- Same six `setup_cursor` cases as v0.48.2; now green on a
+  runner with no installed morph-mcp and no `target/debug/morph-mcp`.
+  Verified locally by running `cargo test --workspace --locked`
+  with `PATH=/tmp/fake-bins:/usr/bin:/bin` (no morph-mcp anywhere)
+  — 1220 tests passing across the workspace.
+- `morph-cli/tests/specs/version.yaml` updated to assert the new
+  `0.48.3` version string in `--version`, `version`, and
+  `version --json` output.
+
 ## [0.48.2] — 2026-05-06
 
 User-visible bug fix: `morph setup cursor` (and the
@@ -1648,7 +1687,8 @@ Three coordinated changes to repo setup, adoption, and migration.
 - 15 new YAML acceptance spec cases in the default eval suite:
   `init_at_latest:*` ×4, `init_in_git_dir:*` ×6, `upgrade:*` ×5.
 
-[Unreleased]: https://github.com/r/morph/compare/v0.48.2...HEAD
+[Unreleased]: https://github.com/r/morph/compare/v0.48.3...HEAD
+[0.48.3]: https://github.com/r/morph/compare/v0.48.2...v0.48.3
 [0.48.2]: https://github.com/r/morph/compare/v0.48.1...v0.48.2
 [0.48.1]: https://github.com/r/morph/compare/v0.48.0...v0.48.1
 [0.48.0]: https://github.com/r/morph/compare/v0.47.0...v0.48.0
